@@ -19,6 +19,7 @@ from planner.conversation.backends.contracts import (
     ModelThinkingHappenedArguments,
     PermissionAskRaisedArguments,
     PlanUpdatedArguments,
+    ProviderSelectionReportedArguments,
     TokenUsageReportedArguments,
     ToolCallFinishedArguments,
     ToolCallProgressArguments,
@@ -33,6 +34,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
+    ProviderSubmissionFact,
     UserInputAnswer,
 )
 from planner.conversation.message_content import MessageContent
@@ -84,6 +86,7 @@ async def invoke_child(child: BackendChild, command: ChildCommand) -> JsonObject
             )
             return {
                 "kind": "prompt_accepted",
+                "provider_submission": encode_value(result.provider_submission),
                 "composed_content_delivered": result.composed_content_delivered,
             }
         case ChildOperation.steer:
@@ -100,12 +103,19 @@ async def invoke_child(child: BackendChild, command: ChildCommand) -> JsonObject
                 sender_label=args["sender_label"],
             )
             if isinstance(outcome, BackendSteerRefused):
-                return {"kind": "steer_refused", "refusal_reason": outcome.refusal_reason.value}
+                return {
+                    "kind": "steer_refused",
+                    "refusal_reason": outcome.refusal_reason.value,
+                    "provider_submission": encode_value(outcome.provider_submission),
+                }
             return {
                 "kind": "steer_accepted"
                 if isinstance(outcome, BackendSteerAccepted)
                 else "steer_uncertain",
                 "composed_content_delivered": outcome.composed_content_delivered,
+                "provider_submission": encode_value(outcome.provider_submission)
+                if isinstance(outcome, BackendSteerAccepted)
+                else None,
             }
         case ChildOperation.cancel_running_turn:
             await child.cancel_running_turn()
@@ -128,6 +138,8 @@ def decode_event_arguments(event: BackendEvent) -> DecodedBackendEventArguments:
             return TypeAdapter(AgentMessageDeltaArguments).validate_python(event.arguments)
         case BackendEventMethod.model_thinking_happened:
             return TypeAdapter(ModelThinkingHappenedArguments).validate_python(event.arguments)
+        case BackendEventMethod.provider_selection_reported:
+            return TypeAdapter(ProviderSelectionReportedArguments).validate_python(event.arguments)
         case BackendEventMethod.agent_message_completed:
             return TypeAdapter(AgentMessageCompletedArguments).validate_python(event.arguments)
         case BackendEventMethod.tool_call_started:
@@ -158,5 +170,13 @@ def decode_event_arguments(event: BackendEvent) -> DecodedBackendEventArguments:
 
 def decode_prompt_result(result: JsonObject) -> BackendPromptAccepted:
     return BackendPromptAccepted(
-        composed_content_delivered=bool(result["composed_content_delivered"])
+        composed_content_delivered=bool(result["composed_content_delivered"]),
+        provider_submission=decode_provider_submission(result.get("provider_submission")),
     )
+
+
+def decode_provider_submission(raw: object) -> ProviderSubmissionFact | None:
+    """Historical outcomes remain readable without an invented provider fact."""
+    if raw is None:
+        return None
+    return TypeAdapter(ProviderSubmissionFact).validate_python(raw)

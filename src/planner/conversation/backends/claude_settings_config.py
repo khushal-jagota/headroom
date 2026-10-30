@@ -1,4 +1,3 @@
-"""Bounds for destination-private Claude metadata and retained equality."""
+"""Timeout for explicit Claude metadata control requests."""
 
 CONTROL_TIMEOUT_SECONDS = 20.0
-MAX_RETAINED_SCOPES = 128

@@ -49,6 +49,7 @@ export type TranscriptRow =
        *  clock — or the whole second the row was written in, for the messages whose
        *  senders minted no instant. */
       sentAtUnixMilliseconds: number;
+      providerSubmission?: import("./view/contracts").ProviderSubmissionFact | null;
     }
   | {
       key: string;
@@ -59,6 +60,7 @@ export type TranscriptRow =
       senderLabel: string;
       senderMessageId?: string | null;
       reason: PromptDeliveryRefusalReason;
+      providerSubmission?: import("./view/contracts").ProviderSubmissionFact | null;
       modelValidation?: import("./modelResolutionWire").CanonicalModelValidation | null;
       sentence: string;
     }
@@ -146,6 +148,17 @@ export type TranscriptRow =
     }
   | {
       key: string;
+      kind: "provider_selection_reported";
+      sequence: number;
+      createdAt: number;
+      provider: import("./wire").ConversationBackendKey;
+      turnNumber: number;
+      childLifetime: string;
+      model: string;
+      reasoningEffort: string | null;
+    }
+  | {
+      key: string;
       kind: "model_changed";
       sequence: number;
       createdAt: number;
@@ -187,6 +200,7 @@ export type TranscriptRow =
 const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   no_such_conversation: "there is no such conversation to send to",
   model_resolution_failed: "the selected model could not be resolved",
+  backend_rejected_prompt: "the provider rejected this prompt",
   backend_did_not_start: "the backend would not start",
   session_did_not_load: "the backend's session would not load",
   write_to_backend_failed: "the write to the backend did not succeed",
@@ -311,7 +325,8 @@ export function transcriptRows(
           senderLabel: event.payload.sender_label,
           senderMessageId: event.payload.sender_message_id ?? null,
           mode: event.payload.mode,
-          sentAtUnixMilliseconds: sentAtUnixMilliseconds(event.payload, createdAt)
+          sentAtUnixMilliseconds: sentAtUnixMilliseconds(event.payload, createdAt),
+          ...(event.payload.provider_submission ? {providerSubmission: event.payload.provider_submission} : {})
         });
         break;
       case "prompt_delivery_refused":
@@ -325,7 +340,8 @@ export function transcriptRows(
           senderMessageId: event.payload.sender_message_id ?? null,
           reason: event.payload.refusal_reason,
           modelValidation: event.payload.model_validation ?? null,
-          sentence: refusalSentence(event.payload.refusal_reason, event.payload.refusal_detail)
+          sentence: refusalSentence(event.payload.refusal_reason, event.payload.refusal_detail),
+          ...(event.payload.provider_submission ? {providerSubmission: event.payload.provider_submission} : {})
         });
         break;
       case "prompt_delivery_uncertain":
@@ -513,6 +529,9 @@ export function transcriptRows(
           createdAt,
           entries: event.payload.entries
         });
+        break;
+      case "provider_selection_reported":
+        rows.push({key: `e${sequence}`, kind: event.kind, sequence, createdAt, provider: event.payload.provider, turnNumber: event.payload.turn_number, childLifetime: event.payload.child_lifetime, model: event.payload.model, reasoningEffort: event.payload.reasoning_effort});
         break;
       case "model_changed":
         rows.push({

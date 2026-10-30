@@ -511,6 +511,7 @@ class PromptDeliveryRefusalReason(StrEnum):
     running_turn_cannot_accept_steer = "running_turn_cannot_accept_steer"
     message_cannot_be_steered = "message_cannot_be_steered"
     backend_rejected_steer = "backend_rejected_steer"
+    backend_rejected_prompt = "backend_rejected_prompt"
 
 
 @dataclass(frozen=True, slots=True)

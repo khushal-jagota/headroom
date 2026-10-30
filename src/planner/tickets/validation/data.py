@@ -227,7 +227,7 @@ def record_launch_validation_in_transaction(
             ticket_id,
         ),
     )
-    if notify and validation.state is not ValidationState.compatible:
+    if notify and validation.launch_token is None:
         target = (
             Principal(PrincipalKind.manager, ticket.manager_id)
             if ticket.manager_id
@@ -267,7 +267,7 @@ def _prepare_written_configuration_validation(
         raise PlannerError(
             ErrorCode.validation, "validation does not describe the written selection"
         )
-    if validation.state is ValidationState.compatible:
+    if validation.launch_token is not None:
         from planner.conversation.admission.policy import (
             check_policy_dependencies,
             recorded_policy_dependencies,
@@ -275,11 +275,7 @@ def _prepare_written_configuration_validation(
         from planner.conversation.backends.contracts import AdmissionRefused
 
         try:
-            if (
-                validation.evidence is None
-                or validation.launch_token is None
-                or validation.resolved_model_id is None
-            ):
+            if validation.launch_token is None:
                 raise AdmissionRefused(
                     "original catalog evidence missing", reason="catalog_unavailable"
                 )

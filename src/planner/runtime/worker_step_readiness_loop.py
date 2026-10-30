@@ -128,7 +128,6 @@ async def start_ready_worker_step(
     given back only when the send was refused, or when a failure occurred before a fate.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
     """
-    from planner.conversation.model_resolution.contracts import ValidationState
     from planner.tickets.launch_authority import (
         acquire_read,
         acquire_ticket_mutation,
@@ -185,7 +184,7 @@ async def start_ready_worker_step(
                             notify=True,
                             now=now(),
                         )
-                        if classified.state is not ValidationState.compatible:
+                        if classified.launch_token is None:
                             return WorkerStepStartResult(
                                 started=False, launch_validation=classified
                             )
@@ -218,7 +217,7 @@ async def start_ready_worker_step(
                 notify=True,
                 now=now(),
             )
-            if validation.state is not ValidationState.compatible:
+            if validation.launch_token is None:
                 return WorkerStepStartResult(started=False, launch_validation=validation)
         captured_selection = read_launch_selection(conn, ticket_id)
         captured_workspace = conversation_start.workspace_binding_from_start(
@@ -355,7 +354,7 @@ async def start_ready_worker_step(
                 WorkerStepStartResult.from_delivery_fate(fate),
                 launch_validation=(
                     None
-                    if stored is None or stored.validation.state is ValidationState.compatible
+                    if stored is None or stored.validation.launch_token is not None
                     else stored.validation
                 ),
             )

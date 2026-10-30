@@ -21,6 +21,7 @@
     validation,
     onChooseDestination,
     onChooseCanonicalModel,
+    onChooseCustomModel,
     onChooseCanonicalBackend,
     onRetry,
     ticketId,
@@ -38,6 +39,7 @@
     canonicalRows?: readonly PickerRow[];
     validation?: CanonicalModelValidation | null;
     onChooseDestination?: (destination: TicketLocale) => void;
+    onChooseCustomModel?: (model: string, effort: string | null) => void;
     onChooseCanonicalModel?: (row: PickerRow, effort: string | null) => void;
     onChooseCanonicalBackend?: (backend: CanonicalModelValidation["selection"]["backend_key"]) => void;
     onRetry?: () => Promise<void>;
@@ -96,11 +98,11 @@
     {canonicalRows}
     {validation}
     {onRetry}
-    disabled={locked || saving || loading || (canonicalRows !== undefined && (!onChooseCanonicalModel || !onChooseCanonicalBackend))}
+    disabled={locked || saving || (canonicalRows !== undefined && (!onChooseCanonicalModel || !onChooseCanonicalBackend))}
     keepOpenWhenDisabled
     attributes={{ "data-employee-configuration-picker": "" }}
     onChooseBackend={(backend, defaults) => canonicalRows ? onChooseCanonicalBackend?.(backend) : editor.chooseBackend(backend, defaults)}
-    onChooseModel={(model, effort, row) => row ? onChooseCanonicalModel?.(row, effort) : editor.chooseModel(model, effort)}
+    onChooseModel={(model, effort, row) => row ? onChooseCanonicalModel?.(row, effort) : canonical ? onChooseCustomModel?.(model, effort) : editor.chooseModel(model, effort)}
   />
 
   <span data-employee-configuration-loading={loading || undefined}>

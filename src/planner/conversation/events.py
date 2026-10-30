@@ -25,9 +25,10 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, ClassVar, Final, assert_never
+from typing import Any, ClassVar, Final, Literal, assert_never, cast
 
 from planner.conversation.contracts import (
+    ConversationBackendKey,
     DeploymentRecoveryReference,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
@@ -65,6 +66,7 @@ class ConversationEventKind(StrEnum):
     user_input_failed = "user_input_failed"
     plan_updated = "plan_updated"
     model_changed = "model_changed"
+    provider_selection_reported = "provider_selection_reported"
     token_usage = "token_usage"
     context_compacted = "context_compacted"
     turn_ended = "turn_ended"
@@ -189,6 +191,33 @@ class UserInputAnswer:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderSubmissionFact:
+    """A correlated provider event, never a claim about applied model or effort."""
+
+    provider: ConversationBackendKey
+    status: Literal["accepted", "rejected"]
+    observation_kind: str
+    correlation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderSelectionReportedEventPayload:
+    """An actual root response model report, scoped to its captured turn and child."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.provider_selection_reported
+
+    provider: ConversationBackendKey
+    source_kind: str
+    model: str
+    reasoning_effort: str | None
+    turn_number: int
+    child_lifetime: str
+    submitted_token: str | None = None
+    requested_reasoning_effort: str | None = None
+    blocks_submission: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class PromptEventPayload:
     """The message that actually reached the backend, in the mode it was sent under.
 
@@ -223,6 +252,7 @@ class PromptEventPayload:
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
     # Reviewed receipt settlement can identify an earlier unminted uncertainty row.
     reconciles_sequence: int | None = None
+    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +283,7 @@ class PromptDeliveryRefusedEventPayload:
     sender: Principal | None = None
     recipient: Principal | None = None
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
+    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,7 +534,8 @@ class TurnEndedEventPayload:
 
 
 type ConversationEventPayload = (
-    PromptEventPayload
+    ProviderSelectionReportedEventPayload
+    | PromptEventPayload
     | PromptDeliveryRefusedEventPayload
     | PromptDeliveryUncertainEventPayload
     | PromptDiscardedEventPayload
@@ -616,6 +648,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             return {
                 **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
+                **_provider_submission_entries(payload.provider_submission),
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
                 **(
@@ -639,6 +672,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             return {
                 **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
+                **_provider_submission_entries(payload.provider_submission),
                 "mode": str(payload.mode),
                 **(
                     {"model_validation": payload.model_validation}
@@ -793,6 +827,15 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case ModelChangedEventPayload():
             return {"model": payload.model, "reasoning_effort": payload.reasoning_effort}
+        case ProviderSelectionReportedEventPayload():
+            return {
+                "provider": str(payload.provider), "source_kind": payload.source_kind,
+                "model": payload.model, "reasoning_effort": payload.reasoning_effort,
+                "turn_number": payload.turn_number, "child_lifetime": payload.child_lifetime,
+                "submitted_token": payload.submitted_token,
+                "requested_reasoning_effort": payload.requested_reasoning_effort,
+                "blocks_submission": payload.blocks_submission,
+            }
         case TokenUsageEventPayload():
             return {
                 **_entry_if_minted("input_tokens", payload.input_tokens),
@@ -828,6 +871,7 @@ def _payload_from_json_object(
             return PromptEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
+                provider_submission=_optional_provider_submission(stored),
                 mode=_prompt_delivery_mode_from_stored(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
                 recovery_references=tuple(
@@ -844,6 +888,7 @@ def _payload_from_json_object(
             return PromptDeliveryRefusedEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
+                provider_submission=_optional_provider_submission(stored),
                 mode=_prompt_delivery_mode_from_stored(stored),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
                 refusal_detail=_optional_text(stored, "refusal_detail"),
@@ -997,6 +1042,17 @@ def _payload_from_json_object(
                 model=_text(stored, "model"),
                 reasoning_effort=_optional_text(stored, "reasoning_effort"),
             )
+        case ConversationEventKind.provider_selection_reported:
+            return ProviderSelectionReportedEventPayload(
+                provider=ConversationBackendKey(_text(stored, "provider")),
+                source_kind=_text(stored, "source_kind"), model=_text(stored, "model"),
+                reasoning_effort=_optional_text(stored, "reasoning_effort"),
+                turn_number=int(stored["turn_number"]),
+                child_lifetime=_text(stored, "child_lifetime"),
+                submitted_token=_optional_text(stored, "submitted_token"),
+                requested_reasoning_effort=_optional_text(stored, "requested_reasoning_effort"),
+                blocks_submission=stored.get("blocks_submission", False) is True,
+            )
         case ConversationEventKind.token_usage:
             return TokenUsageEventPayload(
                 input_tokens=_optional_whole_number(stored, "input_tokens"),
@@ -1099,3 +1155,26 @@ def _optional_whole_number(stored: dict[str, Any], field_name: str) -> int | Non
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{field_name} must be a whole number or absent")
     return value
+
+
+def _provider_submission_entries(fact: ProviderSubmissionFact | None) -> dict[str, Any]:
+    if fact is None:
+        return {}
+    return {"provider_submission": {
+        "provider": str(fact.provider), "status": fact.status,
+        "observation_kind": fact.observation_kind, "correlation_id": fact.correlation_id,
+    }}
+
+
+def _optional_provider_submission(stored: dict[str, Any]) -> ProviderSubmissionFact | None:
+    value = stored.get("provider_submission")
+    if value is None:
+        return None
+    if not isinstance(value, dict) or value.get("status") not in {"accepted", "rejected"}:
+        raise ValueError("Invalid provider submission fact")
+    return ProviderSubmissionFact(
+        provider=ConversationBackendKey(_text(value, "provider")),
+        status=cast(Literal["accepted", "rejected"], value["status"]),
+        observation_kind=_text(value, "observation_kind"),
+        correlation_id=_text(value, "correlation_id"),
+    )

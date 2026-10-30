@@ -118,7 +118,11 @@ class LaunchAuthorityPermit:
     def release(self, conn: sqlite3.Connection) -> None:
         with _write(conn):
             conn.execute(
-                "DELETE FROM ticket_launch_authority WHERE lease_id=? AND command_id IS NULL",
+                "DELETE FROM ticket_launch_authority WHERE lease_id=? AND command_id IS NULL "
+                "AND (CASE WHEN policy_context_json IS NULL THEN '' "
+                "WHEN json_valid(policy_context_json) THEN "
+                "COALESCE(json_extract(policy_context_json,'$.phase'),'') "
+                "ELSE 'unknown' END) NOT IN ('submitted','unknown')",
                 (self.lease_id,),
             )
             conn.execute(
@@ -339,6 +343,14 @@ def reconcile_abandoned_permits(
         ).fetchall()
         for lease_id, owner, command_id, incarnation in rows:
             if not _owner_gone(str(owner)):
+                continue
+            submitted = conn.execute(
+                "SELECT 1 FROM ticket_launch_authority WHERE lease_id=? "
+                "AND json_valid(policy_context_json) "
+                "AND json_extract(policy_context_json,'$.phase') IN ('submitted','unknown')",
+                (lease_id,),
+            ).fetchone()
+            if command_id is None and submitted is not None:
                 continue
             proved = (
                 unbound_command_absent(str(lease_id))

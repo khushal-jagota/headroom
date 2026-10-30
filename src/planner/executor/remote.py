@@ -17,7 +17,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.executor.codec import decode_prompt_result, encode_value
+from planner.executor.codec import decode_prompt_result, decode_provider_submission, encode_value
 from planner.executor.contracts import (
     CanonicalSkillSnapshot,
     ChildCommand,
@@ -182,6 +182,13 @@ class RemoteBackendChild:
             raise RemoteCommandUncertain(result.command_id)
         if result.disposition is CommandDisposition.refused:
             error_name = str(result.result.get("error_type", "BackendSpawnFailed"))
+            if error_name == "BackendPromptRejected":
+                raise backend.BackendPromptRejected(
+                    str(result.result.get("error_message", "provider rejected prompt")),
+                    provider_submission=decode_provider_submission(
+                        result.result.get("provider_submission")
+                    ),
+                )
             if error_name == "AdmissionRefused":
                 raise backend.AdmissionRefused(
                     str(result.result.get("error_message", "model verification refused")),
@@ -282,12 +289,16 @@ class RemoteBackendChild:
         )
         if result["kind"] == "steer_refused":
             return backend.BackendSteerRefused(
-                PromptDeliveryRefusalReason(str(result["refusal_reason"]))
+                PromptDeliveryRefusalReason(str(result["refusal_reason"])),
+                provider_submission=decode_provider_submission(result.get("provider_submission")),
             )
         if result["kind"] == "steer_uncertain":
             delivered = result.get("composed_content_delivered")
             return backend.BackendSteerUncertain(delivered if isinstance(delivered, bool) else None)
-        return backend.BackendSteerAccepted(bool(result.get("composed_content_delivered", True)))
+        return backend.BackendSteerAccepted(
+            bool(result.get("composed_content_delivered", True)),
+            provider_submission=decode_provider_submission(result.get("provider_submission")),
+        )
 
     async def cancel_running_turn(self) -> None:
         await self._call(ChildOperation.cancel_running_turn)

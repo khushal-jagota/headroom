@@ -45,6 +45,7 @@ export type ToolCallStatus = "completed" | "failed";
 export type PromptDeliveryRefusalReason =
   | "no_such_conversation"
   | "model_resolution_failed"
+  | "backend_rejected_prompt"
   | "backend_did_not_start"
   | "session_did_not_load"
   | "write_to_backend_failed"
@@ -273,6 +274,7 @@ export type ConversationEvent =
         sender_label: string;
         mode: PromptDeliveryMode;
         reconciles_sequence?: number;
+        provider_submission?: import("./view/contracts").ProviderSubmissionFact;
       } & SenderMintedPromptFields
         & AddressedMessageFields
     >
@@ -284,6 +286,7 @@ export type ConversationEvent =
         refusal_reason: PromptDeliveryRefusalReason;
         refusal_detail?: string | null;
         model_validation?: CanonicalModelValidation;
+        provider_submission?: import("./view/contracts").ProviderSubmissionFact;
         sender_message_id?: string;
       } & AddressedMessageFields
     >
@@ -340,6 +343,7 @@ export type ConversationEvent =
       { request_id: string; answers: UserInputAnswers }
     >
   | Row<"user_input_failed", { request_id: string; detail: string }>
+  | Row<"provider_selection_reported", { provider: ConversationBackendKey; source_kind: string; model: string; reasoning_effort: string | null; turn_number: number; child_lifetime: string }>
   | Row<"model_changed", { model: string | null; reasoning_effort: string | null }>
   /** What a turn has cost, as its backend counts it. Every field is absent when the
    *  backend did not say — never zero, because a backend silent about cached tokens has

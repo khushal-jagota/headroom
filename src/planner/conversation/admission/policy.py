@@ -19,13 +19,7 @@ from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
     CatalogEvidenceReference,
     ModelSelection,
-    PrerequisiteStatus,
-    SelectionKind,
-    ValidationState,
 )
-from planner.conversation.model_resolution.data import read_exact_observation
-from planner.conversation.model_resolution.logic.validation import row_facts
-from planner.conversation.model_resolution.logic.variants import recognize_variant
 from planner.tickets.launch_authority import LaunchAuthorityPermit, _write
 
 
@@ -60,88 +54,15 @@ def recorded_policy_dependencies(
     *,
     selection: ModelSelection,
     launch_token: str,
-    resolved_model_id: str,
-    evidence: CatalogEvidenceReference,
+    resolved_model_id: str | None,
+    evidence: CatalogEvidenceReference | None,
 ) -> ModelPolicyDependencies:
-    """Replay the original matching branch, not the current candidate ranking."""
-    if (selection.destination, selection.backend_key) != (
-        evidence.context.destination,
-        evidence.context.backend_key,
-    ):
-        raise _unproved()
-    observation = read_exact_observation(conn, evidence)
-    if observation is None:
-        raise _unproved("catalog_unavailable")
-    if (
-        observation.installation is not PrerequisiteStatus.available
-        or observation.credentials is not PrerequisiteStatus.available
-    ):
-        raise _unproved()
-    rows = tuple(row for row in observation.rows if not row.hidden)
-    matches = tuple(row for row in rows if row.submitted_token == selection.submitted_token)
-    if selection.selection_kind is SelectionKind.panels_alias:
-        variant = recognize_variant(selection.backend_key, selection.submitted_token)
-        if (
-            variant is None
-            or variant.name != selection.submitted_token
-            or recognize_variant(selection.backend_key, launch_token) != variant
-        ):
-            raise _unproved()
-        matches = tuple(row for row in rows if row.submitted_token == launch_token)
-    elif selection.selection_kind is SelectionKind.concrete and not matches:
-        matches = tuple(
-            row
-            for row in rows
-            if row.resolved_model_id == selection.submitted_token
-            and row.identity_preserving_launch_token == selection.submitted_token
-        )
-    elif selection.selection_kind is SelectionKind.legacy_unclassified:
-        raise _unproved()
-    if not matches or any(row_facts(row) != row_facts(matches[0]) for row in matches[1:]):
-        raise _unproved("conflicting_rows" if matches else "identity_unproved")
-    selected = matches[0]
-    if selected.enabled is False:
-        raise _unproved()
-    if selection.selection_kind is SelectionKind.concrete:
-        if (
-            launch_token != selection.submitted_token
-            or resolved_model_id != selection.submitted_token
-        ):
-            raise _unproved()
-        if selected.submitted_token == selection.submitted_token and (
-            selected.selection_kind is not SelectionKind.concrete
-            or selected.resolved_model_id not in (None, selection.submitted_token)
-        ):
-            raise _unproved()
-    else:
-        if (
-            selection.selection_kind is SelectionKind.provider_alias
-            and selected.selection_kind is not SelectionKind.provider_alias
-        ):
-            raise _unproved()
-        own_id = selected.resolved_model_id
-        if own_id is None and selected.selection_kind is not SelectionKind.concrete:
-            raise _unproved()
-        if launch_token != selected.submitted_token or resolved_model_id != (
-            own_id or selected.submitted_token
-        ):
-            raise _unproved()
-    if selection.reasoning_effort is not None and (
-        selected.supported_reasoning_efforts is None
-        or selection.reasoning_effort not in selected.supported_reasoning_efforts
-    ):
+    """Policy covers exact requested and submitted tokens, never inferred targets."""
+    if not selection.submitted_token or not launch_token:
         raise _unproved()
     return ModelPolicyDependencies(
         selection.backend_key,
-        tuple(
-            sorted(
-                {
-                    selection.submitted_token,
-                    selected.submitted_token,
-                    resolved_model_id,
-                }
-            )
-        ),
+        tuple(sorted({selection.submitted_token, launch_token})),
     )
 
 
@@ -192,8 +113,22 @@ class CompletePolicyContext:
     conversation_id: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class LocalSubmissionPolicyContext:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    phase: Literal["submitted", "unknown"]
+    version: Literal[2]
+    validation: CanonicalModelValidation
+    conversation_id: str
+    runtime_id: str
+    child_id: str
+    turn_number: int
+    attempt_id: str
+
+
 PolicyContext = Annotated[
-    PreparationPolicyContext | CompletePolicyContext, Field(discriminator="phase")
+    PreparationPolicyContext | CompletePolicyContext | LocalSubmissionPolicyContext,
+    Field(discriminator="phase"),
 ]
 POLICY_CONTEXT_ADAPTER = TypeAdapter[PolicyContext](PolicyContext)
 
@@ -219,12 +154,7 @@ def protect_validation_policy(
     *,
     conversation_id: str | None = None,
 ) -> ModelPolicyDependencies:
-    if (
-        validation.state is not ValidationState.compatible
-        or validation.evidence is None
-        or validation.launch_token is None
-        or validation.resolved_model_id is None
-    ):
+    if validation.launch_token is None:
         raise _unproved()
     with _write(conn):
         dependencies = recorded_policy_dependencies(
@@ -250,6 +180,71 @@ def protect_validation_policy(
             (POLICY_CONTEXT_ADAPTER.dump_json(context).decode(), permit.lease_id),
         )
     return dependencies
+
+
+def record_local_submission(
+    conn: sqlite3.Connection,
+    permit: LaunchAuthorityPermit,
+    validation: CanonicalModelValidation,
+    *,
+    conversation_id: str,
+    runtime_id: str,
+    child_id: str,
+    turn_number: int,
+    attempt_id: str,
+) -> None:
+    """Persist before possibly emitting local I/O, under the existing source lease."""
+    context = LocalSubmissionPolicyContext(
+        "submitted",
+        2,
+        validation,
+        conversation_id,
+        runtime_id,
+        child_id,
+        turn_number,
+        attempt_id,
+    )
+    with _write(conn):
+        updated = conn.execute(
+            "UPDATE ticket_launch_authority SET policy_context_json=? WHERE lease_id=?",
+            (POLICY_CONTEXT_ADAPTER.dump_json(context).decode(), permit.lease_id),
+        )
+        if updated.rowcount == 0:
+            raise AdmissionRefused("local submission ownership no longer exists")
+
+
+def settle_local_submission(
+    conn: sqlite3.Connection,
+    *,
+    runtime_id: str,
+    conversation_id: str,
+    turn_number: int | None = None,
+    child_id: str | None = None,
+    attempt_id: str | None = None,
+    exclude_lease_id: str | None = None,
+) -> None:
+    """Called only after exact durable acceptance/rejection or proved child retirement."""
+    with _write(conn):
+        rows = conn.execute(
+            "SELECT DISTINCT lease_id,policy_context_json FROM ticket_launch_authority "
+            "WHERE command_id IS NULL"
+        ).fetchall()
+        for lease_id, raw in rows:
+            if lease_id == exclude_lease_id:
+                continue
+            try:
+                context = POLICY_CONTEXT_ADAPTER.validate_json(raw)
+            except (ValueError, TypeError):
+                continue
+            if (
+                isinstance(context, LocalSubmissionPolicyContext)
+                and context.runtime_id == runtime_id
+                and context.conversation_id == conversation_id
+                and (turn_number is None or context.turn_number == turn_number)
+                and (child_id is None or context.child_id == child_id)
+                and (attempt_id is None or context.attempt_id == attempt_id)
+            ):
+                conn.execute("DELETE FROM ticket_launch_authority WHERE lease_id=?", (lease_id,))
 
 
 def recover_policy_ownership(conn: sqlite3.Connection) -> None:
@@ -348,17 +343,13 @@ def recover_policy_ownership(conn: sqlite3.Connection) -> None:
                         (lease_id,),
                     )
                     continue
-            elif isinstance(original_context, CompletePolicyContext):
+            elif isinstance(
+                original_context, (CompletePolicyContext, LocalSubmissionPolicyContext)
+            ):
                 original = original_context.validation
                 backends.add(original.selection.backend_key)
                 try:
-                    if (
-                        original.state is not ValidationState.compatible
-                        or original.evidence is None
-                        or original.launch_token is None
-                        or original.resolved_model_id is None
-                        or len(backends) != 1
-                    ):
+                    if original.launch_token is None or len(backends) != 1:
                         raise _unproved()
                     dependencies = recorded_policy_dependencies(
                         conn,
@@ -402,8 +393,14 @@ def recover_policy_ownership(conn: sqlite3.Connection) -> None:
                     if (
                         expectation.child != command.child
                         or expectation.conversation_id != command.child.conversation_id
-                        or expectation.context != expectation.evidence.context
-                        or expectation.workspace != expectation.context.workspace
+                        or (
+                            expectation.evidence is not None
+                            and expectation.context != expectation.evidence.context
+                        )
+                        or (
+                            expectation.context is not None
+                            and expectation.workspace != expectation.context.workspace
+                        )
                         or expectation.reasoning_effort != expectation.selection.reasoning_effort
                         or len(backends) != 1
                     ):

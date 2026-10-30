@@ -368,3 +368,147 @@ def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
         assert transport._cleanup_process is cast(Process, process)
 
     _run(exercise)
+
+
+@pytest.mark.parametrize("admission", [True, False, None])
+def test_ordinary_send_requires_observed_uuid_admission(
+    tmp_path: Path, admission: bool | None,
+) -> None:
+    from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        clients[0].steer_admission = admission
+        content = text_message_content("exact request")
+        try:
+            if admission is True:
+                result = await child.write_prompt(
+                    TurnToken("c-claude-1", 1), content, sender_content=content,
+                    sender_label="owner", mode=PromptDeliveryMode.queue,
+                    model_change=None, reasoning_effort_change=None,
+                )
+                fact = result.provider_submission
+                assert fact is not None and fact.status == "accepted"
+                assert fact.correlation_id == clients[0].streamed_messages[0]["uuid"]
+            else:
+                expected = BackendPromptRejected if admission is False else PromptWriteFailed
+                with pytest.raises(expected):
+                    await _write(child)
+            assert len(clients[0].watched_user_message_uuids) == 1
+        finally:
+            await child.stop()
+    _run(exercise)
+
+
+def test_early_result_retains_exact_uuid_admission_after_result_consumption() -> None:
+    from tests.unit.test_claude_settings_snapshot import ScriptedTransport
+
+    async def exercise() -> None:
+        transport = _ClaudeProtocolTransport(ScriptedTransport(ClaudeAgentOptions()))
+        transport.watch_user_message("owned")
+        observed = transport._user_messages["owned"]
+        transport._observe({
+            "type": "command_lifecycle", "command_uuid": "other", "state": "queued",
+        })
+        assert not transport._user_messages["owned"].admission.done()
+        transport._observe({"type": "result", "uuid": "result", "user_message_uuid": "owned"})
+        assert transport.user_message_uuids_for_result("result") == frozenset({"owned"})
+        # A later cancellation cannot reverse observed admission, even before consumption.
+        transport._observe({
+            "type": "command_lifecycle", "command_uuid": "owned", "state": "cancelled",
+        })
+        assert await transport.wait_for_user_message_admission("owned") is True
+        assert observed.admission.result() is True
+        assert transport._user_messages == {}
+        transport.watch_user_message("next")
+        transport._observe({
+            "type": "command_lifecycle", "command_uuid": "next", "state": "queued",
+        })
+        assert await transport.wait_for_user_message_admission("next") is True
+        assert set(transport._user_messages) == {"next"}
+        transport._observe({
+            "type": "command_lifecycle", "command_uuid": "next", "state": "completed",
+        })
+        assert transport._user_messages == {}
+    _run(exercise)
+
+
+def test_root_tool_only_model_report_excludes_subagent_model(tmp_path: Path) -> None:
+    from claude_agent_sdk import ToolUseBlock
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        try:
+            await _write(child)
+            clients[0].say(_assistant(ToolUseBlock(id="tool", name="Read", input={})))
+            clients[0].say(_assistant(TextBlock(text="private child"), parent="tool"))
+            await clients[0].until_taken_in()
+            assert len(sink.model_reports) == 1
+            token, fact = sink.model_reports[0]
+            assert token.turn_number == 1
+            assert fact["source_kind"] == "response_model"
+            assert fact["model"] == "claude"
+            assert fact["child_lifetime"] == child._child_lifetime
+            assert sink.message_texts == []
+        finally:
+            await child.stop()
+    _run(exercise)
+
+
+def test_observed_admission_survives_subsequent_query_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        client = clients[0]
+        original = client.query
+
+        async def accepted_then_failed(prompt: object) -> None:
+            await original(prompt)  # type: ignore[arg-type]
+            raise RuntimeError("wire failed after provider admission")
+
+        monkeypatch.setattr(client, "query", accepted_then_failed)
+        content = text_message_content("request")
+        try:
+            result = await child.write_prompt(
+                TurnToken("c-claude-1", 1), content, sender_content=content,
+                sender_label="owner", mode=PromptDeliveryMode.queue,
+                model_change=None, reasoning_effort_change=None,
+            )
+            assert result.provider_submission is not None
+            assert result.provider_submission.status == "accepted"
+            assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
+        finally:
+            await child.stop()
+    _run(exercise)
+
+
+@pytest.mark.parametrize("activity", ["queued", "started", "completed", "result"])
+def test_claude_rejection_followed_by_activity_before_waiter_resumes_is_unknown(
+    activity: str,
+) -> None:
+    from tests.unit.test_claude_settings_snapshot import ScriptedTransport
+
+    async def exercise() -> None:
+        transport = _ClaudeProtocolTransport(ScriptedTransport(ClaudeAgentOptions()))
+        transport.watch_user_message("owned")
+        transport._observe({
+            "type": "command_lifecycle", "command_uuid": "owned", "state": "refused",
+        })
+        if activity == "result":
+            transport._observe({
+                "type": "result", "uuid": "result", "user_message_uuid": "owned",
+            })
+        else:
+            transport._observe({
+                "type": "command_lifecycle", "command_uuid": "owned", "state": activity,
+            })
+        assert await transport.wait_for_user_message_admission("owned") is None
+        assert transport._user_messages == {}
+    _run(exercise)

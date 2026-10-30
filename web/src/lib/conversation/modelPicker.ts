@@ -74,13 +74,6 @@ function snapshotUnavailableReason(snapshot: BackendSnapshot | undefined): strin
     return snapshot.identity.detail
       ?? `${backendName(snapshot.backend_key)} is not signed in.`;
   }
-  if (
-    (snapshot.default_model_id === null || snapshot.default_model_id === undefined)
-    && !snapshot.available_models.some(modelIsEnabled)
-  ) {
-    return snapshot.diagnoses[0]
-      ?? `${backendName(snapshot.backend_key)} offers no models on this machine.`;
-  }
   return null;
 }
 
@@ -104,10 +97,7 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
   );
   const defaultReasoningEffort =
     input.defaultReasoningEffort ?? snapshot?.default_reasoning_effort ?? null;
-  const reasoningEffort = input.reasoningEffort
-    ?? (defaultReasoningEffort !== null && efforts.includes(defaultReasoningEffort)
-      ? defaultReasoningEffort
-      : "");
+  const reasoningEffort = input.reasoningEffort ?? "";
   const staleModel = modelValue !== ""
     && models.length > 0
     && !models.some((candidate) => candidate.model_id === modelValue);
@@ -119,7 +109,7 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     modelValue,
     modelName,
     reasoningEffort,
-    face: [modelFace, efforts.length > 0 ? reasoningEffort : ""].filter(Boolean).join(" "),
+    face: [modelFace, reasoningEffort].filter(Boolean).join(" "),
     backends: MODEL_PICKER_BACKEND_KEYS.map((key) => {
       const candidate = input.backends.find((item) => item.backend_key === key);
       const lockedReason = input.backendLocked && key !== input.backendKey
@@ -141,10 +131,10 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     defaultReasoningEffort,
     catalogueWarning: selectedModel?.catalogue_warning ?? null,
     staleModelReason: staleModel
-      ? `${name || "This backend"} no longer offers ${modelValue}.`
+      ? `${modelValue} is absent from this catalog. You can submit the exact token.`
       : null,
     reasoningUnavailableReason: efforts.length === 0
-      ? `${modelName || "This model"} takes no reasoning effort.`
+      ? `This catalog lists no effort suggestions. You can enter an effort.`
       : null
   };
 }
@@ -174,19 +164,6 @@ export function backendSelectionDefaults(
       ? preferred
       : (efforts[0] ?? null)
   };
-}
-
-export function modelSelectionEffort(
-  models: readonly BackendModel[],
-  backendEfforts: readonly string[],
-  model: string,
-  currentEffort: string | null,
-  defaultEffort: string | null
-): string | null {
-  const efforts = effortOptionsFor(models, model, backendEfforts);
-  if (currentEffort !== null && efforts.includes(currentEffort)) return currentEffort;
-  if (defaultEffort !== null && efforts.includes(defaultEffort)) return defaultEffort;
-  return efforts[0] ?? null;
 }
 
 // Keep this import checked against the closed wire contract if one list changes later.

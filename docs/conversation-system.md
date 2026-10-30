@@ -745,152 +745,90 @@ delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
 
-### Model choices and destination evidence
+### Model choices and provider acceptance
 
-Model verification keeps the requested token and effort separate from the provider's
-resolved identity. Exact concrete choices stay fixed. Aliases follow the destination
-catalog automatically. Their current and previous targets remain facts for visible views.
+Panels keeps four facts separate: the requested token and effort, advertised model
+information, observed provider acceptance, and reported model application. A catalog
+row does not prove that a prompt was accepted or that its model was applied.
 
-Discovery uses the actual launch executable, workspace, and provider configuration.
-Mac observations come from the authenticated executor. Server metadata cannot establish
-native availability. Catalog presence describes advertised support, not execution entitlement.
-List omission alone does not establish incompatibility.
+An explicit provider token is submitted exactly as authored. The effort is its authored
+string, or null for the provider default. Unknown models, unknown efforts, missing
+catalogs, and stale suggestions do not block submission. The provider decides whether
+it accepts them. Setup and composer controls accept an explicit token and effort while
+keeping destination suggestions available.
 
-Scoped evidence lasts less than 300 seconds and requires matching current context.
-Without account-generation evidence, each attempt requires its own fresh observation.
-Legacy backend-only rows retain their original values and timestamps, without verification authority.
+Provider-native aliases retain their exact token even when their target is unknown.
+Claude `opus`, `sonnet`, `haiku`, and their `[1m]` forms are native aliases. Their kind
+in an older saved selection does not turn their concrete response model into a mismatch.
+Panels-only aliases, including Codex family choices, still need a destination mapping.
+If no mapping exists, Panels refuses before emission with `alias_mapping_unavailable`
+and asks for an explicit provider token. It never sends an invented provider alias.
 
-Ticket creation and configuration retain the exact request when destination evidence is
-unresolved. The Ticket stores its verification reason and corrective action. Known
-incompatibility refuses the change. Missing evidence does not make the model invalid.
-Text-only Brief changes introduce no provider discovery requirement.
+Discovery runs at the authorized workspace and destination. Mac discovery belongs to
+the authenticated executor. Suggestions retain their observed time and actual owner;
+the 300-second freshness label is advice. Known Codex login generation can identify
+same-runtime reuse. Missing account attribution limits reuse to the owned operation;
+it is not a prerequisite for an exact provider request. Configuration hashes, settings
+snapshots, source-vector collection, and paired settings reads are not admission gates.
+The retired temporary diagnostic machinery no longer runs in production.
 
-Codex and Claude Ticket execution carries the exact selection, workspace, and evidence
-to the actual executor. A final check follows asynchronous preparation at the provider
-transport write. It compares observable local inputs and prepared process inputs.
-It does not control external credential revocation or establish provider entitlement.
+Submission retains the selection revision, backend, canonical workspace, actual
+executor and child, turn, and attempt. The final write checks the actual prepared
+model, effort, and localized workspace. Direct and held steering use the immutable
+selection already admitted to their active turn, rather than a newer Ticket choice.
+A changed advertised alias target does not replace a child or alter that request.
 
-Claude scope uses a provider-reported snapshot, under the owner's accepted narrower contract.
-The native cache key under `cachedGrowthBookFeatures` is opaque data, not a source selector.
-Panels resolves the provider's global state path and keeps source roles separate.
-Discovery reads settings, current model rows, and settings again in the same child.
-The two source snapshots must match. Actual user emission repeats that sequence in
-its own child and requires a single-use receipt for that exact UUID and attempt.
-Prepared launch checks remain separate from the connected child's snapshot.
+Claude acceptance requires a provider-authored lifecycle or result event naming the
+watched user UUID. Codex acceptance requires a successful correlated `turn/start`
+response with a valid turn ID; a start notification alone cannot acknowledge it.
+Steering requires Claude's matching UUID event or Codex's response naming the expected
+turn. A correlated provider rejection is `backend_rejected_prompt`. A local write or
+process creation alone proves no acceptance. Missing acknowledgment remains unknown.
+Early provider events queue behind the durable prompt without blocking the reader
+that must receive acknowledgment. Live deltas are shown only after the turn is admitted.
 
-Claude discovery and admission use the same private semantic identity for local inputs.
-It includes selected source paths, resolved targets, relevant candidate membership, and
-complete typed JSON content. Object order and formatting do not matter. Boolean,
-integer, and floating-point values remain distinct. Every selected field participates,
-including cache, account, remote-policy, and unknown fields.
+Accepted prompt events and native command outcomes retain the optional provider
+submission fact. A later Claude root response model report appends
+`provider_selection_reported`, including tool-only root messages. It does not rewrite
+the original receipt. Neither the submitted token nor a thread default fills an applied
+model or effort field. Native alias targets may differ naturally from a response model.
+A proved concrete or explicit-effort mismatch remains an accepted attempt, records the
+reported fact, and stops further emission under that selection until a permitted change.
+The guard survives a restart through the existing conversation journal.
 
-An equal-content file replacement, unrelated directory metadata change, or inactive
-legacy global change preserves that identity. A selected content change, source
-selection change, or symlink retarget changes it. Two guarded capture passes must
-agree. This is sampled consistency, not an atomic filesystem transaction.
+Explicit disables check the backend and deduplicated requested/submitted tokens.
+A mapped Panels alias therefore checks its own token and its actual mapped token.
+An unknown native-alias target grants no policy coverage over an inferred concrete
+model. If the owned child later reports a disabled model, its accepted receipt remains,
+but further emission with that known selection stops until a permitted change.
 
-Duplicate JSON keys, nonfinite numbers, invalid encoding, and ambiguous or unsupported
-sources refuse collection. Configuration roots must be absolute. A defined-empty
-normal configuration root also refuses collection. The normal root uses NFC
-normalization. The legacy global selector preserves its raw nonempty override.
+The existing launch permit protects Ticket, Project, and direct model policy sources.
+Local submission records its runtime, child, conversation, turn, and attempt in the
+existing policy context before possibly emitting I/O. Unknown delivery keeps that hold,
+the reservation, and the quarantined child, and does not drain held messages. Caller
+cancellation cannot abandon the owned exchange. Definitive durable acceptance or
+rejection settles admission ownership; exact child retirement may settle the hold
+without claiming that historical delivery was known. Process death is not non-emission.
+Legacy malformed or conflicting recovery facts retain their conservative recovery marker.
 
-The known fallback credential candidate uses metadata only. Its secure-storage
-override preserves the distinct empty and unset cases. Credential-file changes remain
-significant, and candidate symlinks refuse collection. Panels reads no credential bytes,
-helper, or keychain for this marker. The transient storage lock does not affect identity.
-The marker proves neither the active Mac account store nor complete account equality.
+The strict executor protocol is 13. Both mixed peer directions refuse before work or
+replay; there is no protocol-12 fallback. Spool and outbox containers remain version 2.
+Migration `provider_owned_model_choices`, after `claude_policy_snapshot_scope`, fences
+older database readers. Saved selections, old command IDs/arguments, and historical
+outcomes remain unchanged. Known outcomes replay as recorded, without invented receipts.
+Unknown outcomes retain their exact ownership and never authorize automatic redispatch.
+Recovery requires a compatible build or reviewed coherent restoration preserving later
+work. Removing the migration head or restoring a stale backup is not a downgrade path.
 
-Only the current private input vector remains in each existing backend/workspace scope.
-Older contexts retain opaque references. New observer instances cannot reuse old
-finalizations or receipts. No JSON content, environment value, or content digest enters
-public records. The correction introduces no wire field, protocol, spool, or schema change.
-It establishes neither the original Mac cause nor live discovery recovery. Selected cache
-content changes remain significant.
+`POST /api/conversation/backends/model-choices` returns advisory `{validation, rows}`.
+Omitted values preserve saved intent; explicit null effort requests the provider default.
+Ticket detail and workspace reads retain current validation and selection revisions.
+Owner sends may attach `selection_kind` with an explicit model. Held messages preserve
+their original token, kind, nullable effort, and revision. Missing kind alone does not
+block an exact legacy token; missing or conflicting original token facts need correction.
 
-The scope covers reported sources, captured launch inputs, and reported model and effort.
-It does not expose every later applied environment or credential-routing change inside Claude.
-A control reply does not freeze policy until the later user write. Unknown or malformed
-snapshots still refuse admission. Raw settings and credential digests never cross Panels wires.
-The destination compares transient settings privately and sends only opaque scope references.
-
-Direct and held steering validate the immutable selection accepted for the running turn.
-They do not apply newer Ticket choices. Each steer needs fresh attempt-owned evidence
-and a receipt for its watched UUID. A proved pre-write refusal stays a known refusal.
-A failure after possible emission remains uncertain and does not permit automatic replay.
-
-Canonical launch-affecting writers share a narrow durable fence. Uncertain commands
-retain their source ownership until their exact outcome settles. A timeout does not
-release that ownership. A blocked mutation names its affected sources and commands.
-Unrelated sources and ordinary text edits remain available.
-
-For model enablement, that fence covers the requested token, its original supporting
-catalog row, and its resolved identity. Another model's settings remain independent.
-An affected change is refused while admission is unsettled; Panels names the blocked
-scope and command. A lost outcome can keep that scope blocked until definitive
-settlement. Missing original recovery evidence can restrict policy changes for a whole
-backend, or all model-policy changes when even the backend is unknown. That exceptional
-barrier preserves startup and reads, and reports the evidence or settlement needed.
-Turning a model off does not undo prompts already emitted or cancel an active turn. If the
-provider has already accepted a prompt when a disable commits, settlement records the
-actual receipt and its exact authored choice. It retains the admission evidence and
-resolved identity, but marks current validation incompatible with “choose model” and
-no launch token. Later sends still require current admission checks. A newer Ticket
-choice wins the existing revision comparison and is not overwritten by that receipt.
-
-The strict executor protocol is 12. The native spool keeps outcome envelopes in its
-existing format 2 container. The VPS keeps command arguments in the existing
-`executor_core_turns.runtime_json` record. Legacy commands receive no invented
-verification authority. Known outcomes replay as recorded. Unknown outcomes never
-authorize redispatch.
-
-`POST /api/conversation/backends/model-choices` reads `{validation, rows}` without
-changing Ticket settings, claims or launch authority. An existing Ticket request names
-`ticket_id` and may supply `locale`, `employee_backend`, `employee_launch_model`,
-`employee_launch_reasoning_effort` and `selection_kind`. Omitted values preserve saved
-intent, including effort when the model changes. An explicit null effort requests the
-provider default. Omitted kind preserves saved intent when backend and token are
-unchanged. An explicitly different kind previews a deliberate new selection; a different
-backend or token is classified from its own scoped evidence.
-Alias history follows destination changes within the same backend and selection kind;
-another backend or kind does not inherit that history. Authority is checked before discovery.
-The existing creation-draft request remains supported. These reads may cache metadata;
-their answers are advisory and settings writes and admission still revalidate.
-
-Ticket detail and workspace reads expose `launch_validation`: selection, nullable
-validation, whether that validation is current, and its transition revision. Historical
-missing selections also expose the canonical unresolved reason and corrective action.
-Refused prompt replies and events may carry `model_validation`; older records omit it.
-The selected conversation view retains that refusal fact after reload. Projection version
-3 rebuilds its cached bodies from existing events without rewriting the journal. A
-recorded refusal remains separate from the current picker preview and saved launch state.
-
-Ticket setup and composer controls use scoped rows and read-only previews. A deliberate
-row choice retains its submitted token and kind. Owner sends accept `selection_kind`
-only with an explicit model. Omitted effort preserves intent; explicit null requests the
-provider default. Queued messages, promotion and explicit retry retain those distinctions.
-Manager and Chief composers retain their existing authorized behavior. This Ticket-scoped
-catalog path does not establish destination validation for them.
-
-Migration `claude_policy_snapshot_scope`, after `held_selection_kind`, fences older readers
-before the new scope semantics enter saved metadata or held and runtime records. It rewrites
-no history. Protocol 11 expectations grant no new admission authority. Known outcomes remain
-historical receipts, while unknown outcomes retain their existing uncertainty.
-
-Migration `held_selection_kind`, after `ticket_launch_validation`, marks the semantic
-change to `executor_native_messages.held_prompt_json`. Older builds refuse that database
-through the existing version gate before application readiness or dispatch. Legacy rows
-without the field retain their original uncertainty. Native protocol 12 requires the compatible observer and child adapters. Spool 2 does
-not change.
-
-After this migration, rollback requires a compatible build or an explicitly reviewed
-restoration procedure. There is no automatic downgrade. Do not restore a stale backup
-that discards later durable work. An older build's generic pre-collapse migration advice
-does not override this recovery requirement.
-
-The compact controls follow the approved Design. This source requires the combined
-review and matching peers before any later operator application.
-
-Code: `src/planner/conversation/model_resolution/`, `src/planner/executor/`.
+Code: `src/planner/conversation/model_resolution/`, `src/planner/conversation/admission/`,
+`src/planner/executor/`.
 
 Code: `src/planner/conversation/`, `src/planner/runtime/`.
 

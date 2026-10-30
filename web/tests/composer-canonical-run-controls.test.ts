@@ -66,8 +66,38 @@ it("reopens an uncertain outgoing send with the same exact run intent and old ab
 
 it("projects a recorded refusal without calling it current selection validation", () => {
   const row = rowForBody({key:"refused",source_sequence:4,created_at:1}, {
-    kind:"prompt_refused",content:[{piece:"text",text:"refused words"}],sender_label:"owner",reason:"model_resolution_failed",refusal_detail:null,model_validation:pickerValidation
+    provider_submission:null,kind:"prompt_refused",content:[{piece:"text",text:"refused words"}],sender_label:"owner",reason:"model_resolution_failed",refusal_detail:null,model_validation:pickerValidation
   });
   expect(row.kind).toBe("prompt_refused");
   if (row.kind === "prompt_refused") expect(row.modelValidation).toEqual(pickerValidation);
+});
+
+
+it("carries a custom provider token and explicit default effort without catalog substitution", () => {
+  const selection = applyComposerRunSelectionIntent(input, {intent: "choose_model", model: "provider-future", reasoningEffort: null});
+  const view = resolveComposerRunControls({...input, selection});
+  expect(view.carriedRunValues).toMatchObject({model: "provider-future", reasoningEffort: null, selectionKind: "legacy_unclassified", effortIsSet: true});
+});
+
+
+it("preserves custom token, effort, and explicit null in a direct conversation without canonical rows", () => {
+  for (const effort of ["future-effort", null]) {
+    const direct = {...input, canonicalRows: undefined};
+    const selection = applyComposerRunSelectionIntent(direct, {intent: "choose_model", model: "provider-future", reasoningEffort: effort});
+    const view = resolveComposerRunControls({...direct, selection});
+    expect(view.carriedRunValues).toMatchObject({model: "provider-future", reasoningEffort: effort, selectionKind: "legacy_unclassified", effortIsSet: true});
+    expect(view.picker.reasoningEffort).toBe(effort ?? "");
+  }
+});
+
+
+it("shows observed admission separately from a later provider model report", () => {
+  const provider = {provider: "claude" as const, status: "accepted" as const, observation_kind: "command_lifecycle.started", correlation_id: "uuid-1"};
+  const item = {key: "receipt", source_sequence: 1, created_at: 1};
+  const receipt = rowForBody(item, {kind: "prompt", content: [], sender_label: "owner", mode: "queue", sent_at_unix_milliseconds: 1, provider_submission: provider});
+  expect(receipt).toMatchObject({kind: "prompt", providerSubmission: provider});
+  expect(receipt).not.toHaveProperty("model");
+  const report = rowForBody({...item, key: "report"}, {kind: "provider_selection_reported", provider: "claude", source_kind: "response_model", turn_number: 1, child_lifetime: "child-1", model: "claude-reported", reasoning_effort: null});
+  expect(report).toMatchObject({kind: "provider_selection_reported", model: "claude-reported", reasoningEffort: null});
+  expect(report).not.toHaveProperty("providerSubmission");
 });

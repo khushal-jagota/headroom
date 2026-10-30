@@ -38,7 +38,6 @@ from planner.conversation.events import ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
-    CatalogEvidenceReference,
     CatalogWorkspaceBinding,
     LaunchContext,
     ModelSelection,
@@ -78,16 +77,6 @@ from planner.previews.forward import MacPreviewForwards
 from planner.tickets.contracts import TicketLocale
 
 
-class _FixtureContextObserver:
-    """Exact scripted launch facts for tests that exercise other native boundaries."""
-
-    def __init__(self, context: LaunchContext) -> None:
-        self.context = context
-
-    def verify_context(self, expected: LaunchContext) -> bool:
-        return expected == self.context
-
-
 def _fixture_admission(
     registry: NativeChildRegistry,
     reference: ChildReference,
@@ -96,7 +85,7 @@ def _fixture_admission(
     relative: str | None = None,
     localized: Path | None = None,
 ) -> AdmissionExpectation:
-    """Supply explicit synthetic evidence without bypassing the admission checks."""
+    """Supply exact synthetic ownership without catalog or configuration proof."""
     workspace = CatalogWorkspaceBinding(
         resolved.workspace_folder, resolved.workspace_path_policy, relative
     )
@@ -115,7 +104,6 @@ def _fixture_admission(
         None,
     )
     attempt_id = str(uuid4())
-    registry.admission_observer = _FixtureContextObserver(context)
     return AdmissionExpectation(
         ModelSelection(
             TicketLocale.macos,
@@ -127,16 +115,15 @@ def _fixture_admission(
         ),
         workspace,
         context,
-        CatalogEvidenceReference(
-            "fixture-observation", "fixture-revision", context, int(time.time()), attempt_id, 0.0
-        ),
+        None,
         attempt_id,
         resolved.model,
         resolved.reasoning_effort,
         "fixture-policy",
         resolved.conversation_id,
-        resolved_model_id=resolved.model,
+        resolved_model_id=None,
         child=reference,
+        executor_identity=context.executor_identity,
     )
 
 
@@ -1261,7 +1248,6 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
     import socket
     import subprocess
     import sys
-    import time
 
     from planner.executor.contracts import IpcResponse
     from planner.executor.wire import encode_frame
@@ -2496,8 +2482,6 @@ def test_mac_factory_selects_existing_provider_with_inherited_launch_environment
     observed: list[object] = []
 
     def selected(launch: object, **kwargs: object) -> BackendChildFactory:
-        if backend is ConversationBackendKey.claude:
-            assert kwargs["claude_scope_registry"] is executor._claude_scope_registry
         observed.append(launch)
         return cast(BackendChildFactory, object())
 

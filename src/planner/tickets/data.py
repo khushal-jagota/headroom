@@ -21,7 +21,6 @@ from planner.conversation.contracts import require_conversation_backend_key
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
     SelectionKind,
-    ValidationState,
 )
 from planner.core import authority, ticket_blocks
 from planner.core.authority.logic import can_hold_review
@@ -837,9 +836,9 @@ def _explicit_ticket_launch_intent_kind(
     ):
         raise PlannerError(ErrorCode.validation, "explicit effort must be nonblank or null")
     kind = SelectionKind(selection_kind)
-    if validation is not None and validation.state is not ValidationState.compatible:
+    if validation is not None and validation.launch_token is None:
         raise PlannerError(
-            ErrorCode.validation, "explicit departure requires compatible validation"
+            ErrorCode.validation, "explicit departure requires a submitted provider token"
         )
     return kind
 
@@ -1063,7 +1062,11 @@ def write_employee_configuration(
         _txn(conn),
         launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",), authority_permit),
     ):
-        if validation is not None and validation.state is ValidationState.incompatible:
+        if (
+            validation is not None
+            and validation.launch_token is None
+            and validation.reason.value == "model_incompatible"
+        ):
             raise PlannerError(
                 ErrorCode.validation,
                 validation.reason.value,
@@ -1168,7 +1171,11 @@ def create_ticket(
     selection_kind: SelectionKind | str | None = None,
     validation: CanonicalModelValidation | None = None,
 ) -> Ticket:
-    if validation is not None and validation.state is ValidationState.incompatible:
+    if (
+        validation is not None
+        and validation.launch_token is None
+        and validation.reason.value == "model_incompatible"
+    ):
         raise PlannerError(
             ErrorCode.validation,
             validation.reason.value,

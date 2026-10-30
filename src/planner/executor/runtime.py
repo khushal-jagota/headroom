@@ -23,9 +23,9 @@ from planner.conversation.backends.contracts import (
     BackendChildFactory,
     BackendEventSink,
     BackendPermissionAsk,
+    BackendPromptRejected,
     BackendSpawnFailed,
     BackendUserInputRequest,
-    NeedsRebind,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -37,6 +37,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, LaunchContext
 from planner.environments.hermes_home import resolve_planner_home
 from planner.executor.codec import encode_backend_event, encode_value, invoke_child
 from planner.executor.configuration import NATIVE_SKILLS_DIR_ENV, ExecutorPaths
@@ -68,6 +69,7 @@ from planner.executor.contracts import (
 from planner.executor.files import safe_component, snapshot_ticket
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
 from planner.executor.workspace import localize_workspace
+from planner.tickets.contracts import TicketLocale
 
 
 def now_ms() -> int:
@@ -95,6 +97,8 @@ class _Child:
     reasoning_effort: str | None = None
     backend_key: ConversationBackendKey | None = None
     resolved_model_id: str | None = None
+    workspace_binding: CatalogWorkspaceBinding | None = None
+    localized_workspace: Path | None = None
 
 
 class JournalEventSink:
@@ -581,8 +585,8 @@ class NativeChildRegistry:
             child.active_turn = command.turn
         try:
             return await invoke_child(child.native, command)
-        except AdmissionRefused:
-            # A refused final writer emitted no user bytes and owns no new turn.
+        except (AdmissionRefused, BackendPromptRejected):
+            # A proved non-admission owns no new active provider turn.
             child.active_turn = previous_turn
             raise
 
@@ -654,6 +658,13 @@ class NativeChildRegistry:
                             expectation = parse_expectation(raw_expectation)
                         except ValueError as malformed:
                             raise AdmissionRefused("invalid admission expectation") from malformed
+                        if (
+                            expectation.executor_identity is None
+                            or expectation.executor_identity.executor_incarnation
+                            != self.incarnation
+                            or expectation.selection.destination is not TicketLocale.macos
+                        ):
+                            raise AdmissionRefused("destination executor identity changed")
                         if expectation.child != command.child or expectation.turn != command.turn:
                             raise AdmissionRefused("model verification command identity changed")
                 child = self.children.get(command.child.child_id)
@@ -764,6 +775,8 @@ class NativeChildRegistry:
                         native,
                         ticket_id=identity.get("PLAN_TICKET_ID"),
                         launch_context=None if expectation is None else expectation.context,
+                        workspace_binding=None if expectation is None else expectation.workspace,
+                        localized_workspace=resolved.workspace_folder,
                         model=resolved.model,
                         reasoning_effort=resolved.reasoning_effort,
                         backend_key=resolved.backend_key,
@@ -801,7 +814,6 @@ class NativeChildRegistry:
                             or expectation is not None
                         ):
                             from planner.conversation.admission.service import (
-                                AdmissionContextObserver,
                                 admission_scope,
                             )
 
@@ -811,20 +823,16 @@ class NativeChildRegistry:
                                     reason="legacy_unscoped",
                                     corrective_action="classify_selection",
                                 )
-                            if child.launch_context != expectation.context:
-                                raise AdmissionRefused(
-                                    "model verification retained process context changed"
-                                )
                             if (
-                                command.operation
-                                in (ChildOperation.write_prompt, ChildOperation.steer)
-                                and child.backend_key is ConversationBackendKey.claude
-                                and child.model == expectation.launch_token
-                                and child.resolved_model_id != expectation.resolved_model_id
+                                expectation.selection.destination is not TicketLocale.macos
+                                or expectation.selection.backend_key != child.backend_key
+                                or expectation.executor_identity is None
+                                or expectation.executor_identity.executor_incarnation
+                                != self.incarnation
+                                or child.workspace_binding != expectation.workspace
+                                or child.localized_workspace is None
                             ):
-                                raise NeedsRebind(
-                                    "the provider alias target changed before admission"
-                                )
+                                raise AdmissionRefused("destination execution ownership changed")
                             if command.operation in (
                                 ChildOperation.write_prompt,
                                 ChildOperation.steer,
@@ -845,14 +853,45 @@ class NativeChildRegistry:
                                 raise AdmissionRefused(
                                     "model verification prompt parameters changed"
                                 )
-                            observer = cast(
-                                AdmissionContextObserver | None, self.admission_observer
+                            # These facts belong to the actual retained child. Catalog
+                            # configuration, versions and resolved targets grant no authority.
+                            native_context = LaunchContext(
+                                context_ref=f"child:{child.reference.child_id}",
+                                destination=TicketLocale.macos,
+                                backend_key=expectation.selection.backend_key,
+                                executor_identity=expectation.executor_identity,
+                                workspace=expectation.workspace,
+                                localized_workspace_folder=child.localized_workspace,
+                                executable_identity=None,
+                                executable_version=None,
+                                provider_scope=None,
+                                account_generation=None,
                             )
-                            with admission_scope(expectation, observer):
-                                if observer is None or not observer.verify_context(
-                                    expectation.context
-                                ):
-                                    raise AdmissionRefused("model verification context_changed")
+                            registry = self
+                            owned_child = child
+
+                            class NativeOwnership:
+                                def verify_context(self, expected: LaunchContext | None) -> bool:
+                                    return (
+                                        expected == native_context
+                                        and registry.children.get(owned_child.reference.child_id)
+                                        is owned_child
+                                        and owned_child.reference == command.child
+                                        and not registry.admission_stopped
+                                        and command.child.child_id
+                                        not in registry._retiring_children
+                                        and command.child.child_id not in registry._retired_children
+                                    )
+
+                                def verify_prepared_launch(
+                                    self, expected: LaunchContext, prepared: object
+                                ) -> bool:
+                                    return self.verify_context(expected)
+
+                            native_expectation = replace(
+                                expectation, context=native_context, evidence=None
+                            )
+                            with admission_scope(native_expectation, NativeOwnership()):
                                 result = await self._invoke_admitted(child, native_command)
                                 if command.operation == ChildOperation.write_prompt:
                                     child.model = expectation.launch_token
@@ -877,8 +916,24 @@ class NativeChildRegistry:
                                 result = {**result, "answer_application": encode_value(application)}
                             child.user_inputs.pop(str(command.arguments["request_id"]), None)
                         outcome = CommandOutcome(
-                            command.command_id, command.child, CommandDisposition.succeeded, result
+                            command.command_id,
+                            command.child,
+                            CommandDisposition.uncertain
+                            if result.get("kind") == "steer_uncertain"
+                            else CommandDisposition.succeeded,
+                            result,
                         )
+            except BackendPromptRejected as error:
+                outcome = CommandOutcome(
+                    command.command_id,
+                    command.child,
+                    CommandDisposition.refused,
+                    {
+                        "error_type": "BackendPromptRejected",
+                        "error_message": str(error),
+                        "provider_submission": encode_value(error.provider_submission),
+                    },
+                )
             except (_CommandAdmissionRefused, AdmissionRefused) as error:
                 outcome = CommandOutcome(
                     command.command_id,

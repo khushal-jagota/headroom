@@ -93,7 +93,6 @@ async def preview_corrections(
             _authorize(conn, principal, target)
             expected = _read(conn, target)
             if target.kind == "ticket" and expected.backend.value != "hermes":
-                from planner.conversation.model_resolution.contracts import ValidationState
                 from planner.runtime.conversation_start import verify_ticket_launch
                 from planner.tickets import data as ticket_data
 
@@ -108,7 +107,7 @@ async def preview_corrections(
                     persist=persist_ticket_validation,
                     now=checked_at,
                 )
-                if validation.state is not ValidationState.compatible:
+                if validation.launch_token is None:
                     raise PlannerError(
                         ErrorCode.validation,
                         f"{validation.reason.value}: {validation.corrective_action.value}",

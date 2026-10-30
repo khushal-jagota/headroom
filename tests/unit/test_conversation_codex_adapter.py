@@ -123,7 +123,10 @@ def test_an_ordinary_steer_still_carries_its_sender_label(tmp_path: Path) -> Non
                 sender_label="owner",
             )
 
-            assert outcome == BackendSteerAccepted(composed_content_delivered=True)
+            assert isinstance(outcome, BackendSteerAccepted)
+            assert outcome.composed_content_delivered is True
+            assert outcome.provider_submission is not None
+            assert outcome.provider_submission.observation_kind == "turn_steer_response"
             steered = scripted.sent("turn/steer")
             assert "owner" in json.dumps(steered["params"]["input"])
             assert "stop and summarize" in json.dumps(steered["params"]["input"])
@@ -450,4 +453,43 @@ def test_catalog_publication_failures_back_off_and_republish_after_sink_recovery
             assert attempts[0] == 9
             assert coordinator._lanes["installed"].failures == 0
 
+    _run(exercise)
+
+
+@pytest.mark.parametrize("respond", ["never", "error"])
+def test_ordinary_start_needs_correlated_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, respond: str,
+) -> None:
+    from planner.conversation.backends.codex_app_server import client
+    from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
+
+    monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
+
+    async def exercise() -> None:
+        script: dict[str, Any] = {"turns": [{"respond": respond, "actions": []}]}
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            expected = PromptWriteFailed if respond == "never" else BackendPromptRejected
+            with pytest.raises(expected) as failure:
+                await scripted.write_prompt(1, text_message_content("exact provider token"))
+            if isinstance(failure.value, BackendPromptRejected):
+                assert failure.value.provider_submission is not None
+                assert failure.value.provider_submission.status == "rejected"
+            assert scripted.sink.endings == []
+    _run(exercise)
+
+
+def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        script: dict[str, Any] = {"turns": [{
+            "started_turn_id": "stale-turn", "response_order": "after_actions",
+            "actions": [{"do": "agent_delta", "item_id": "a", "text": "early output"},
+                        {"do": "complete", "status": "completed"}],
+        }]}
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("request"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            assert scripted.sink.agent_message_texts == ["early output"]
+            assert len(scripted.sink.endings) == 1
     _run(exercise)

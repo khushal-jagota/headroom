@@ -97,7 +97,7 @@ PY
 
 Check that the resolved commit equals the reviewed full SHA.
 Record the constants printed from the exact candidate source; they govern compatibility.
-The current candidate uses wire protocol 12 and journal format 2.
+The current candidate uses wire protocol 13 and journal format 2.
 Both Mac and VPS peers must match the candidate's wire protocol before work, and
 the existing journal must pass the candidate's spool preflight below. Coordinate
 the peer transition through the Manager and installation Worker before any application.

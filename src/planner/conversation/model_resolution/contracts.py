@@ -131,18 +131,13 @@ class CatalogExpectedContext:
 
 @dataclass(frozen=True, slots=True)
 class LaunchContext:
-    """Safe identity of the actual destination launch, captured around discovery.
+    """Destination observation ownership, including the authorized workspace.
 
-    context_ref names all these facts, including the localized workspace.
-    Executor identity is null only on VPS. The canonical workspace binding and
-    localized directory must both match the captured observation context.
-    executable_identity identifies the selected binary, not an unrelated PATH hit.
-    Claude provider_scope names a private provider-reported source snapshot.
-    It excludes unreported applied state and reply-to-write continuity. Input-only
-    Claude captures have null scope. No raw configuration crosses this boundary.
-    Codex generation reuses the saved account ID and refresh stamp. Missing
-    generation requires a fresh observation owned by each validation attempt.
-    No token, credential digest, raw environment, or credential path belongs here.
+    The opaque reference belongs to a runtime or executor owner. Current discovery
+    does not fingerprint full configuration, environment, or executable content.
+    Optional proof fields remain readable for immutable historical observations.
+    They grant no submission or provider-acceptance authority.
+    No credential bytes, raw environment, or private configuration belongs here.
     """
 
     __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
@@ -193,6 +188,7 @@ class ValidationReason(StrEnum):
     visibility_limited = "visibility_limited"
     unknown_model = "unknown_model"
     unknown_effort = "unknown_effort"
+    alias_mapping_unavailable = "alias_mapping_unavailable"
     legacy_unscoped = "legacy_unscoped"
     conflicting_rows = "conflicting_rows"
     identity_unproved = "identity_unproved"
@@ -318,9 +314,7 @@ class CatalogUnavailable:
     kind: Literal["unavailable"] = "unavailable"
 
 
-type CatalogResult = Annotated[
-    CatalogObservation | CatalogUnavailable, Field(discriminator="kind")
-]
+type CatalogResult = Annotated[CatalogObservation | CatalogUnavailable, Field(discriminator="kind")]
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,8 +403,9 @@ class CatalogResponse:
 class ProviderCatalogObserver(Protocol):
     """Read-only provider discovery in the actual local production launch context.
 
-    Observe captures context before and after probes. It performs no update check
-    or provider prompt. deadline is absolute monotonic time, never a wire field.
+    Observe records the actual authorized launch owner and workspace. It performs
+    no configuration-proof probe, update check, or provider prompt. deadline is
+    absolute monotonic time, never a wire field.
     A remote observer uses its own request ID as attempt_id. VPS correlation binds
     that ID to its caller's attempt and never shares missing-generation evidence.
 
@@ -432,20 +427,3 @@ class ProviderCatalogObserver(Protocol):
         attempt_id: str,
         deadline: float,
     ) -> CatalogResult: ...
-
-
-class CatalogContextFinalizer(Protocol):
-    """Optional observer extension for destination-owned context finalization.
-
-    Observers without this extension retain exact context equality. Input-only
-    Claude captures cannot become observed scopes through that fallback.
-    """
-
-    def verify_observation_basis(
-        self,
-        before: LaunchContext,
-        after: LaunchContext,
-        observation: CatalogObservation,
-        *,
-        attempt_id: str,
-    ) -> bool: ...

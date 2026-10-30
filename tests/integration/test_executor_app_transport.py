@@ -320,3 +320,199 @@ def test_duplicate_hello_preserves_active_file_and_preview_reservations(
             await harness.close()
 
     asyncio.run(run())
+
+
+def test_native_provider_report_reaches_core_once_and_blocks_mismatched_steer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reuse the TLS host to prove native report dispatch and durable replay correlation."""
+    import json
+
+    from pydantic import TypeAdapter
+
+    from planner.conversation.contracts import (
+        ConversationBackendKey,
+        PromptDeliveryMode,
+        PromptDeliveryQueued,
+        PromptDeliveryRefused,
+    )
+    from planner.conversation.message_content import text_message_content
+    from planner.core.db import connect
+    from planner.executor.contracts import QueuedEnvelope, WireMessageKind
+    from planner.executor.mac import as_object
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, backend_key=ConversationBackendKey.claude)
+        try:
+            assert harness.native.sink is not None and harness.native.turn is not None
+            turn = harness.native.turn
+            await harness.native.sink.provider_selection_reported(
+                turn,
+                provider=ConversationBackendKey.claude,
+                source_kind="response_model",
+                model="a-different-concrete-model",
+                child_lifetime="captured-native-lifetime",
+            )
+            await eventually(
+                lambda: harness.events("provider_selection_reported") == 1,
+                "native model report did not reach the durable core",
+            )
+            connection = connect(harness.endpoint.db_path)
+            try:
+                payload = json.loads(
+                    connection.execute(
+                        "SELECT payload FROM conversation_events "
+                        "WHERE conversation_id=? AND kind=?",
+                        ("c_scripted", "provider_selection_reported"),
+                    ).fetchone()[0]
+                )
+                assert payload["turn_number"] == turn.turn_number
+                assert payload["child_lifetime"] == "captured-native-lifetime"
+                assert payload["model"] == "a-different-concrete-model"
+                assert payload["submitted_token"] == "scripted"
+                assert payload["blocks_submission"] is True
+            finally:
+                connection.close()
+            row = harness.mac.spool._db.execute(
+                "SELECT envelope_json FROM envelopes WHERE "
+                "json_extract(envelope_json, '$.payload.method')=?",
+                ("provider_selection_reported",),
+            ).fetchone()
+            assert row is not None
+            envelope = TypeAdapter(QueuedEnvelope).validate_json(row[0])
+            replay = await harness.mac._request(WireMessageKind.envelope, as_object(envelope))
+            assert replay.kind is WireMessageKind.receipt
+            assert harness.events("provider_selection_reported") == 1
+            before = harness.native.prompt_count
+            result = await harness.system.send(
+                "c_scripted",
+                text_message_content("Do not emit under a proved mismatch"),
+                sender_label="Owner",
+                mode=PromptDeliveryMode.steer,
+            )
+            assert isinstance(result, (PromptDeliveryRefused, PromptDeliveryQueued))
+            assert harness.native.prompt_count == before
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("trigger", ["promote", "drain"])
+def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    trigger: str,
+) -> None:
+    """The same TLS host crosses held caller, native uncertainty, core ownership and replay."""
+    import json
+
+    from pydantic import TypeAdapter
+
+    from planner.conversation.backends.contracts import PromptWriteFailed, TurnToken
+    from planner.conversation.contracts import (
+        HeldPromptPromotionMode,
+        PromptDeliveryMode,
+        PromptDeliveryUncertain,
+    )
+    from planner.conversation.events import ConversationTurnEnding
+    from planner.conversation.message_content import text_message_content
+    from planner.core.db import connect
+    from planner.executor.contracts import QueuedEnvelope, WireMessageKind
+    from planner.executor.mac import as_object
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            assert harness.native.sink is not None and harness.native.turn is not None
+            first_turn = harness.native.turn
+            await harness.system.send(
+                "c_scripted",
+                text_message_content("attempt once"),
+                sender_label="Owner",
+                mode=PromptDeliveryMode.queue,
+                sender_message_id="held-unknown",
+            )
+            await harness.system.send(
+                "c_scripted",
+                text_message_content("remain held"),
+                sender_label="Owner",
+                mode=PromptDeliveryMode.queue,
+                sender_message_id="must-not-drain",
+                model_change="separate-held-intent",
+            )
+            held = await harness.system.held_prompts("c_scripted")
+            assert len(held) == 2
+
+            async def uncertain_write(turn: TurnToken, *args: object, **kwargs: object) -> None:
+                harness.native.prompt_count += 1
+                harness.native.turn = turn
+                raise PromptWriteFailed("native acknowledgment lost after possible write")
+
+            async def cancel() -> None:
+                assert harness.native.sink is not None
+                await harness.native.sink.turn_ended(
+                    first_turn,
+                    ending=ConversationTurnEnding.interrupted,
+                    error_summary=None,
+                    standard_error_tail=None,
+                )
+
+            monkeypatch.setattr(harness.native, "write_prompt", uncertain_write)
+            monkeypatch.setattr(harness.native, "cancel_running_turn", cancel, raising=False)
+            if trigger == "promote":
+                result = await harness.system.promote_held_prompt(
+                    "c_scripted",
+                    held[0].held_prompt_id,
+                    HeldPromptPromotionMode.send_now,
+                )
+                assert isinstance(result, PromptDeliveryUncertain)
+            else:
+                await harness.native.sink.turn_ended(
+                    first_turn,
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                )
+            await eventually(
+                lambda: harness.events("prompt_delivery_uncertain") == 1,
+                "native held uncertainty did not become durable",
+            )
+            state = await harness.system._conversation_state("c_scripted")
+            assert state is not None
+            assert state.child_is_quarantined and state.reserved_turn is not None
+            assert harness.native.prompt_count == 2
+            connection = connect(harness.endpoint.db_path)
+            try:
+                runtime = json.loads(
+                    connection.execute(
+                        "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                        ("c_scripted",),
+                    ).fetchone()[0]
+                )
+                assert runtime["delivery_uncertain"] is True
+                assert (
+                    connection.execute(
+                        "SELECT count(*) FROM ticket_launch_authority WHERE command_id IS NOT NULL",
+                    ).fetchone()[0]
+                    > 0
+                )
+            finally:
+                connection.close()
+            row = harness.mac.spool._db.execute(
+                "SELECT envelope_json FROM envelopes WHERE "
+                "json_extract(envelope_json, '$.payload.disposition')='uncertain'",
+            ).fetchone()
+            assert row is not None
+            envelope = TypeAdapter(QueuedEnvelope).validate_json(row[0])
+            replay = await harness.mac._request(WireMessageKind.envelope, as_object(envelope))
+            assert replay.kind is WireMessageKind.receipt
+            assert harness.native.prompt_count == 2
+            assert harness.events("prompt_delivery_uncertain") == 1
+            remaining = await harness.system.held_prompts("c_scripted")
+            assert any(item.sender_message_id == "must-not-drain" for item in remaining)
+        finally:
+            await harness.close()
+
+    asyncio.run(run())

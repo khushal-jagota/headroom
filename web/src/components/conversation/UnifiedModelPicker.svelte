@@ -4,7 +4,6 @@
   import { tick } from "svelte";
   import {
     backendSelectionDefaults,
-    modelSelectionEffort,
     type ModelPickerChoice,
     type ModelPickerView
   } from "../../lib/conversation/modelPicker";
@@ -78,6 +77,8 @@
 
   let showing = $state<"models" | "efforts">("models");
   let whyOpen = $state(false);
+  let customToken = $state("");
+  let customEffort = $state("");
   let pendingCanonicalRow = $state.raw<PickerRow | null>(null);
   let pendingModel = $state<string | null>(null);
   let feedback = $state<string | null>(null);
@@ -131,6 +132,15 @@
     pendingCanonicalRow = null;
     whyOpen = false;
     feedback = null;
+    customToken = effectiveValidation?.selection.submitted_token ?? view.modelValue;
+    customEffort = currentEffort ?? "";
+  }
+
+  function chooseCustom(): void {
+    if (pickerBusy || !customToken.trim()) return;
+    onChooseModel(customToken, customEffort === "" ? null : customEffort);
+    picker.close(!afterChoose);
+    if (afterChoose) void tick().then(afterChoose);
   }
 
   function take(choice: ModelPickerChoice): void {
@@ -146,15 +156,9 @@
         return;
       }
       pendingCanonicalRow = row ?? null;
-      const effort = row ? (currentEffort !== null && row.supported_reasoning_efforts?.includes(currentEffort) ? currentEffort : row.supported_reasoning_efforts?.[0] ?? null) : modelSelectionEffort(
-        models,
-        backendEffortOptions,
-        choice.value,
-        view.reasoningEffort || null,
-        view.defaultReasoningEffort
-      );
+      const effort = currentEffort;
       if (effort === null) {
-        onChooseModel(model, null);
+        onChooseModel(model, null, row);
         picker.close(!afterChoose);
         if (afterChoose) void tick().then(afterChoose);
         return;
@@ -170,7 +174,7 @@
         showing = "models";
         return;
       }
-      onChooseModel(row?.submitted_token ?? pendingModel ?? view.modelValue, choice.value, row);
+      onChooseModel(row?.submitted_token ?? pendingModel ?? view.modelValue, choice.value === "" ? null : choice.value, row);
       pendingModel = null;
     }
     picker.close(!afterChoose);
@@ -189,10 +193,6 @@
     pendingCanonicalRow = null;
     if (key === activeBackendKey) {
       picker.setActiveValue(canonicalRows ? chosenValue : view.modelValue);
-      return;
-    }
-    if (canonicalRows !== undefined && !effectiveValidation && !canonicalSelection) {
-      feedback = "Current selection is unresolved. Choose a model row first.";
       return;
     }
     onChooseBackend(key, canonicalRows !== undefined
@@ -375,6 +375,12 @@
     {/if}
   {/snippet}
   {#snippet afterList()}
+    <form class="model-picker-custom" onsubmit={(event) => { event.preventDefault(); chooseCustom(); }}>
+      <label>Provider token<input aria-label="Provider token" data-model-picker-token bind:value={customToken} disabled={disabled} autocomplete="off" spellcheck="false" /></label>
+      <label>Effort<input aria-label="Provider effort" data-model-picker-effort bind:value={customEffort} disabled={disabled} placeholder="Provider default" autocomplete="off" spellcheck="false" /></label>
+      <button type="submit" data-listbox-picker-action disabled={pickerBusy || !customToken.trim()}>Use</button>
+      <span>Catalog suggestions are advisory. Blank effort uses the provider default.</span>
+    </form>
     {#if foot}
       <div class="model-picker-foot" data-conversation-picker-feedback>
         <div class="model-picker-summary" aria-live="polite">{foot}</div>
@@ -392,6 +398,11 @@
 
 <style>
   :global([data-canonical-model-picker] .picker-rail-row.dim) { color: var(--text-muted); opacity: 1; }
+  .model-picker-custom { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-top: var(--border-hairline) solid var(--border-color); }
+  .model-picker-custom label { min-width: 0; font-size: var(--type-xs); color: var(--text-muted); }
+  .model-picker-custom input { display: block; width: 100%; min-width: 0; box-sizing: border-box; margin-top: var(--space-1); padding: var(--space-1) var(--space-2); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); background: var(--surface-recessed); color: var(--text-default); font: inherit; }
+  .model-picker-custom button { align-self: end; min-height: 28px; padding: var(--space-1) var(--space-2); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-default); background: var(--surface-recessed); cursor: pointer; }
+  .model-picker-custom span { grid-column: 1 / -1; font-size: var(--type-xs); color: var(--text-muted); }
   .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }

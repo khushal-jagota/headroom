@@ -76,6 +76,7 @@ def expectation(workspace: Path) -> AdmissionExpectation:
         "[]",
         "conversation",
         "exact",
+        executor_identity=context.executor_identity,
     )
 
 
@@ -121,6 +122,7 @@ def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
 
     async def prove() -> None:
         exact = expectation(tmp_path)
+        assert exact.context is not None
         assert exact.context.executor_identity is not None
         child = ChildReference(
             exact.context.executor_identity.executor_incarnation, "old-child", "conversation"
@@ -278,18 +280,18 @@ def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
                 == 2
             )
             assert executor.spool.pending_count() == 0 and not executor.registry.children
-            assert PROTOCOL_VERSION == 12 and SPOOL_FORMAT_VERSION == 2
+            assert PROTOCOL_VERSION == 13 and SPOOL_FORMAT_VERSION == 2
             with pytest.raises(ProtocolRefused):
                 parse_identity(
                     encode_value(
-                        replace(executor.identity, protocol_version=11, connection_generation=1)
+                        replace(executor.identity, protocol_version=12, connection_generation=1)
                     )
                 )
             assert (
                 parse_identity(
                     encode_value(replace(executor.identity, connection_generation=1))
                 ).protocol_version
-                == 12
+                == 13
             )
         finally:
             executor.spool.close()
@@ -297,59 +299,14 @@ def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
     asyncio.run(prove())
 
 
-def test_native_expectation_rejects_nested_identity_and_attempt_changes(tmp_path: Path) -> None:
+def test_native_expectation_rejects_malformed_identity_without_catalog_gate(tmp_path: Path) -> None:
     exact = expectation(tmp_path)
     raw = cast(dict[str, Any], encode_value(exact))
-    raw["context"]["executor_identity"]["connection_generation"] = True
+    raw["executor_identity"]["connection_generation"] = True
     with pytest.raises(ValueError, match="identity integer"):
         parse_expectation(raw)
-    with pytest.raises(AdmissionRefused, match="account_observation_required"):
-        check_expectation(replace(exact, attempt_id="unrelated"))
-
-
-def test_prepared_launch_uses_actual_executable_and_provider_environment(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from planner.conversation.backends.contracts import BackendEmissionInputs
-    from planner.conversation.model_resolution.observer import ProductionCatalogObserver
-
-    observer = ProductionCatalogObserver(
-        destination=TicketLocale.macos,
-        panels_server_url="https://invalid.test",
-        executor_identity=expectation(tmp_path).context.executor_identity,
-    )
-    monkeypatch.setattr(
-        observer,
-        "_launch",
-        lambda _: (
-            "/exact/provider",
-            {"PROVIDER_SCOPE": "canonical", "PLAN_TICKET_ID": "parent"},
-        ),
-    )
-    monkeypatch.setattr(
-        "planner.conversation.model_resolution.observer._resolve_launch_executable",
-        lambda executable, environment, workspace: Path(executable),
-    )
-    prepared = BackendEmissionInputs(
-        "exact",
-        None,
-        tmp_path,
-        "/exact/provider",
-        {"PROVIDER_SCOPE": "canonical", "PLAN_TICKET_ID": "child"},
-    )
-    context = expectation(tmp_path).context
-    assert observer.verify_prepared_launch(context, prepared)
-    assert not observer.verify_prepared_launch(
-        context, replace(prepared, executable="/old/provider")
-    )
-    assert not observer.verify_prepared_launch(
-        context,
-        replace(
-            prepared,
-            environment={"PROVIDER_SCOPE": "old", "PLAN_TICKET_ID": "child"},
-        ),
-    )
+    # Catalog age, account observation and concrete resolution are advisory.
+    check_expectation(replace(exact, context=None, evidence=None, resolved_model_id=None))
 
 
 def test_codex_guard_runs_after_owned_write_lock_and_cleans_pending_request() -> None:
@@ -505,6 +462,7 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
                 nonlocal valid, prepared
                 prepared = True
                 valid = False
+                registry._retiring_children.add(reference.child_id)
                 check = current_emission_check()
                 assert check is not None
                 check()
@@ -527,6 +485,8 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
             cast(Any, Native()),
             ticket_id="ticket",
             launch_context=exact.context,
+            workspace_binding=exact.workspace,
+            localized_workspace=tmp_path,
             model="exact",
             backend_key=ConversationBackendKey.codex,
         )
@@ -554,8 +514,9 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
     asyncio.run(run())
 
 
-def test_claude_changed_alias_target_requires_rebind_before_native_prompt(tmp_path: Path) -> None:
-    from planner.conversation.backends.contracts import TurnToken
+def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: Path) -> None:
+    from planner.conversation.backends.contracts import BackendPromptAccepted, TurnToken
+    from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.executor.contracts import (
         ChildCommand,
@@ -568,13 +529,14 @@ def test_claude_changed_alias_target_requires_rebind_before_native_prompt(tmp_pa
 
     async def run() -> None:
         base = expectation(tmp_path)
+        assert base.context is not None
         context = replace(base.context, backend_key=ConversationBackendKey.claude)
         reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
         turn = TurnToken("conversation", 1)
         exact = replace(
             base,
             context=context,
-            evidence=replace(base.evidence, context=context),
+            evidence=None,
             selection=replace(
                 base.selection,
                 backend_key=ConversationBackendKey.claude,
@@ -584,37 +546,187 @@ def test_claude_changed_alias_target_requires_rebind_before_native_prompt(tmp_pa
             child=reference,
             turn=turn,
             launch_token="alias",
-            resolved_model_id="new-target",
+            resolved_model_id=None,
         )
+        writes: list[object] = []
+
+        class Native:
+            async def write_prompt(self, *args: object, **kwargs: object) -> BackendPromptAccepted:
+                writes.append(kwargs.get("model_change"))
+                return BackendPromptAccepted(True)
+
         registry = NativeChildRegistry(
-            incarnation="11111111-1111-4111-8111-111111111111",
+            incarnation=reference.executor_incarnation,
             spool=FilesystemSpool(tmp_path / "spool"),
             factory=cast(Any, None),
             message_files=ConversationMessageFiles(tmp_path / "db"),
-            admission_observer=SimpleNamespace(verify_context=lambda _: True),
         )
         child = _Child(
             reference,
             "capability",
-            cast(Any, None),
+            cast(Any, Native()),
             ticket_id="ticket",
             launch_context=context,
+            workspace_binding=exact.workspace,
+            localized_workspace=tmp_path,
             model="alias",
-            resolved_model_id="old-target",
+            resolved_model_id="old-advertised-target",
             backend_key=ConversationBackendKey.claude,
         )
         registry.children[reference.child_id] = child
-        outcome = await registry.execute_command(
-            ChildCommand(
-                "prompt",
-                reference,
-                ChildOperation.write_prompt,
-                turn,
-                {"admission_expectation": encode_value(exact)},
-            )
+        content = encode_value(text_message_content("exact request"))
+        command = ChildCommand(
+            "prompt",
+            reference,
+            ChildOperation.write_prompt,
+            turn,
+            {
+                "admission_expectation": encode_value(exact),
+                "content": content,
+                "sender_content": content,
+                "sender_label": "Owner",
+                "mode": "queue",
+                "model_change": "alias",
+            },
         )
-        assert outcome.disposition is CommandDisposition.refused
-        assert outcome.result["error_type"] == "NeedsRebind", outcome.result
-        assert child.active_turn is None and child.resolved_model_id == "old-target"
+        outcome = await registry.execute_command(command)
+        assert outcome.disposition is CommandDisposition.succeeded, outcome.result
+        assert writes == ["alias"]
+        assert await registry.execute_command(command) == outcome
+        assert writes == ["alias"]
+        cast(FilesystemSpool, registry.spool).close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("fate", ["accepted", "rejected", "unknown"])
+def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fate: str,
+) -> None:
+    """The real native codec and remote decoder must agree before ownership can settle."""
+    from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+    from planner.conversation.admission.service import admission_scope
+    from planner.conversation.backends.contracts import (
+        BackendPromptAccepted,
+        BackendPromptRejected,
+        PromptWriteFailed,
+        TurnToken,
+    )
+    from planner.conversation.contracts import (
+        ConversationAccess,
+        PromptDeliveryMode,
+        ResolvedConversationStart,
+    )
+    from planner.conversation.events import ProviderSubmissionFact
+    from planner.conversation.message_content import text_message_content
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.executor.configuration import ExecutorPaths
+    from planner.executor.contracts import ChildCommand, ChildReference, CommandDisposition
+    from planner.executor.journal import FilesystemSpool
+    from planner.executor.remote import RemoteBackendChild, RemoteCommandUncertain
+    from planner.executor.runtime import NativeChildRegistry
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "provider-home"))
+
+    async def run() -> None:
+        reference = ChildReference("11111111-1111-4111-8111-111111111111", "native", "conversation")
+        turn = TurnToken("conversation", 1)
+        writes: list[TurnToken] = []
+        fact = ProviderSubmissionFact(
+            ConversationBackendKey.codex,
+            "rejected" if fate == "rejected" else "accepted",
+            "rpc_error" if fate == "rejected" else "turn/start",
+            "correlated-request",
+        )
+
+        class Native:
+            async def start(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            async def write_prompt(
+                self, token: TurnToken, *args: object, **kwargs: object
+            ) -> BackendPromptAccepted:
+                writes.append(token)
+                if fate == "unknown":
+                    raise PromptWriteFailed("acknowledgment missing after possible write")
+                if fate == "rejected":
+                    raise BackendPromptRejected(
+                        "provider refused request", provider_submission=fact
+                    )
+                return BackendPromptAccepted(True, provider_submission=fact)
+
+        native = Native()
+        spool = FilesystemSpool(tmp_path / "spool")
+        registry = NativeChildRegistry(
+            paths=ExecutorPaths(tmp_path / "native"),
+            incarnation=reference.executor_incarnation,
+            spool=spool,
+            factory=cast(Any, lambda *args: lambda **kwargs: native),
+            message_files=ConversationMessageFiles(tmp_path / "db"),
+        )
+        commands: list[ChildCommand] = []
+
+        async def send(command: ChildCommand) -> Any:
+            commands.append(command)
+            return await registry.execute_command(command)
+
+        remote = RemoteBackendChild(reference, send, lambda _: canonical_snapshot())
+        exact = replace(expectation(tmp_path), context=None, evidence=None, resolved_model_id=None)
+        resolved = ResolvedConversationStart(
+            "conversation",
+            ConversationBackendKey.codex,
+            "exact",
+            None,
+            None,
+            tmp_path,
+            ConversationAccess.full,
+            workspace_path_policy=WorkspacePathPolicy.native_absolute,
+        )
+        try:
+            with admission_scope(exact):
+                await remote.start(resolved, vendor_session_cursor=None)
+            exact = replace(exact, turn=turn)
+            content = text_message_content("literal intent without catalog")
+
+            async def write() -> BackendPromptAccepted:
+                with admission_scope(exact):
+                    return await remote.write_prompt(
+                        turn,
+                        content,
+                        sender_content=content,
+                        sender_label="Owner",
+                        mode=PromptDeliveryMode.queue,
+                        model_change="exact",
+                        reasoning_effort_change=None,
+                    )
+
+            if fate == "unknown":
+                with pytest.raises(RemoteCommandUncertain):
+                    await write()
+            elif fate == "rejected":
+                with pytest.raises(BackendPromptRejected) as refused:
+                    await write()
+                assert refused.value.provider_submission == fact
+            else:
+                accepted = await write()
+                assert accepted.provider_submission == fact
+            command = commands[-1]
+            recorded = registry.outcomes[command.command_id]
+            expected = {
+                "accepted": CommandDisposition.succeeded,
+                "rejected": CommandDisposition.refused,
+                "unknown": CommandDisposition.uncertain,
+            }[fate]
+            assert recorded.disposition is expected
+            assert await registry.execute_command(command) == recorded
+            assert writes == [turn]
+            assert registry.children[reference.child_id].active_turn == (
+                None if fate == "rejected" else turn
+            )
+        finally:
+            spool.close()
 
     asyncio.run(run())

@@ -58,29 +58,29 @@ def test_exact_alias_support_fences_canonical_writer_and_allows_unrelated_policy
     result = validate_model_selection(
         selection(), context(), source, now=1000, attempt_id="attempt-1"
     )
-    assert result.state is ValidationState.compatible
+    assert result.launch_token == "gpt-6-sol"
     permit = authority.acquire_read(tmp_db, ticket.id)
     dependencies = protect_validation_policy(tmp_db, permit, result)
-    assert dependencies.model_ids == ("gpt-6-sol", "provider-current")
+    assert dependencies.model_ids == ("gpt-6-sol",)
     assert permit.lease_id
     other = connect(path)
     try:
         with pytest.raises(PlannerError, match="unsettled operation"):
-            write_model_enablement(other, Backend.codex, "provider-current", False)
+            write_model_enablement(other, Backend.codex, "gpt-6-sol", False)
         write_model_enablement(other, Backend.codex, "gpt-other", False)
         check_policy_dependencies(tmp_db, dependencies)
-        write_model_enablement(other, Backend.codex, "provider-current", True)  # semantic no-op
+        write_model_enablement(other, Backend.codex, "gpt-6-sol", True)  # semantic no-op
         # A canonical exclusive writer wins before same-lease extension.
         permit.release(tmp_db)
-        writer = authority.acquire_mutation(other, (policy_key(Backend.codex, "provider-current"),))
-        pending = authority.acquire_read(tmp_db, ticket.id)
-        with pytest.raises(PlannerError, match="exclusive writer"):
-            protect_validation_policy(tmp_db, pending, result)
+        writer = authority.acquire_mutation(other, (policy_key(Backend.codex, "gpt-6-sol"),))
+        with pytest.raises(PlannerError, match="unsettled operation"):
+            authority.acquire_read(tmp_db, ticket.id)
         writer.release(other)
+        pending = authority.acquire_read(tmp_db, ticket.id)
         protect_validation_policy(tmp_db, pending, result)
         pending.release(tmp_db)
-        write_model_enablement(other, Backend.codex, "provider-current", False)
-        assert not model_is_enabled(other, Backend.codex, "provider-current")
+        write_model_enablement(other, Backend.codex, "gpt-6-sol", False)
+        assert not model_is_enabled(other, Backend.codex, "gpt-6-sol")
     finally:
         other.close()
 
@@ -198,8 +198,9 @@ def test_recovery_extends_existing_lease_from_original_evidence_and_keeps_unknow
         reopened.execute("DELETE FROM scoped_model_catalog_rows")
         reopened.execute("DELETE FROM scoped_model_catalog_observations")
         recover_policy_ownership(reopened)
-        with pytest.raises(PlannerError, match="scope"):
-            write_model_enablement(reopened, Backend.codex, "unrelated", False)
+        write_model_enablement(reopened, Backend.codex, "unrelated", False)
+        with pytest.raises(PlannerError):
+            write_model_enablement(reopened, Backend.codex, "gpt-6-sol", False)
         write_model_enablement(reopened, Backend.claude, "unrelated", False)
         authority.settle_command(reopened, command.command_id, child.executor_incarnation)
         write_model_enablement(reopened, Backend.codex, "unrelated", False)
@@ -344,7 +345,10 @@ def test_complete_local_proof_stays_narrow_but_preparation_crash_cleans_safely(
         reopened.execute("DELETE FROM scoped_model_catalog_rows")
         reopened.execute("DELETE FROM scoped_model_catalog_observations")
         report = authority.reconcile_persisted_launch_authority(reopened)
-        assert "model-policy-recovery:codex" in report.blocked_authority_keys
+        assert "model-policy:codex:gpt-6-sol" in report.blocked_authority_keys
+        assert not any(
+            key.startswith("model-policy-recovery:") for key in report.blocked_authority_keys
+        )
         permit.release(reopened)
     finally:
         reopened.close()
@@ -385,8 +389,8 @@ def test_configuration_commit_rechecks_alias_policy_and_downgrades_missing_origi
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     ModelResolutionStore(path).keep_observation(source)
     result = validate_model_selection(desired, launch, source, now=1000, attempt_id="attempt-1")
-    assert result.state is ValidationState.compatible
-    write_model_enablement(tmp_db, Backend.codex, "supporting-alias", False)
+    assert result.launch_token == "gpt-6-sol"
+    write_model_enablement(tmp_db, Backend.codex, "gpt-6-sol", False)
 
     def commit_configuration() -> None:
         tickets.write_employee_configuration(
@@ -409,14 +413,14 @@ def test_configuration_commit_rechecks_alias_policy_and_downgrades_missing_origi
     assert refused.value.detail["reason"] == "model_incompatible"
     assert refused.value.detail["corrective_action"] == "choose_model"
     assert tickets.employee_launch_configuration(tickets.read_ticket(tmp_db, ticket.id)) == expected
-    write_model_enablement(tmp_db, Backend.codex, "supporting-alias", True)
+    write_model_enablement(tmp_db, Backend.codex, "gpt-6-sol", True)
     tmp_db.execute("DELETE FROM scoped_model_catalog_rows")
     tmp_db.execute("DELETE FROM scoped_model_catalog_observations")
     commit_configuration()
     current = validation_data.read_launch_validation(tmp_db, ticket.id)
     assert current is not None and current.current
     assert current.validation.state is ValidationState.unresolved
-    assert current.validation.reason.value == "catalog_unavailable"
-    assert current.validation.corrective_action.value == "verify_launch_context"
+    assert current.validation.reason.value == "unknown_model"
+    assert current.validation.launch_token == "gpt-6-sol"
     assert current.validation.selection.submitted_token == "gpt-6-sol"
     assert current.validation.selection.reasoning_effort == "high"

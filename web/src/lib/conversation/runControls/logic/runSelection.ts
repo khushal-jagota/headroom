@@ -5,7 +5,7 @@
  * picker presentation, and the exact values carried by a send as one answer, without
  * putting policy or a second selection owner in the renderer.
  */
-import { effortOptionsFor, preselectedValue } from "../../composer";
+import { preselectedValue } from "../../composer";
 import type {
   BackendModel,
   ConversationBackendKey
@@ -16,7 +16,7 @@ import type {
   ComposerRunSelection,
   ComposerRunSelectionIntent
 } from "../contracts";
-import { MODEL_PICKER_BACKEND_KEYS, modelIsEnabled, resolveModelPicker } from "../../modelPicker";
+import { MODEL_PICKER_BACKEND_KEYS, resolveModelPicker } from "../../modelPicker";
 
 type ActiveCatalog = Readonly<{
   models: readonly BackendModel[];
@@ -53,29 +53,6 @@ function shownBackend(
   return input.conversationExists
     ? input.backendKey
     : (input.selection.pickedBackend ?? input.backendKey);
-}
-
-function normalizedModel(
-  pickedModel: string | null,
-  models: readonly BackendModel[]
-): string | null {
-  if (
-    pickedModel !== null
-    && models.length > 0
-    && !models.some((model) => model.model_id === pickedModel && modelIsEnabled(model))
-  ) {
-    return null;
-  }
-  return pickedModel;
-}
-
-function normalizedEffort(
-  pickedEffort: string | null,
-  offeredEfforts: readonly string[]
-): string | null {
-  return pickedEffort !== null && !offeredEfforts.includes(pickedEffort)
-    ? null
-    : pickedEffort;
 }
 
 function submitProjection(
@@ -136,24 +113,13 @@ export function resolveComposerRunControls(
     };
   }
   const catalog = activeCatalog(input);
-  const pickedModel = normalizedModel(
-    input.selection.pickedModel,
-    catalog.models
-  );
+  const pickedModel = input.selection.pickedModel;
   const shownModel =
     pickedModel
     ?? preselectedValue(input.current.model, catalog.startsOnModel)
     ?? "";
-  const offeredEfforts = effortOptionsFor(
-    catalog.models,
-    shownModel === "" ? null : shownModel,
-    catalog.effortOptions
-  );
-  const pickedReasoningEffort = normalizedEffort(
-    input.selection.pickedReasoningEffort,
-    offeredEfforts
-  );
-  const shownEffort =
+  const pickedReasoningEffort = input.selection.pickedReasoningEffort;
+  const shownEffort = input.selection.effortIsSet ? pickedReasoningEffort ?? "" :
     pickedReasoningEffort
     ?? preselectedValue(
       input.current.reasoningEffort,
@@ -175,7 +141,9 @@ export function resolveComposerRunControls(
       reasoningEffort: pickedReasoningEffort,
       backendKey: input.conversationExists
         ? null
-        : input.selection.pickedBackend
+        : input.selection.pickedBackend,
+      ...(input.selection.selectionKind === undefined ? {} : {selectionKind: input.selection.selectionKind}),
+      ...(input.selection.effortIsSet === undefined ? {} : {effortIsSet: input.selection.effortIsSet})
     },
     disabled: input.inputDisabled,
     picker: resolveModelPicker({
@@ -222,12 +190,12 @@ export function applyComposerRunSelectionIntent(
       return {
         ...input.selection,
         pickedModel: intent.model,
-        pickedReasoningEffort: intent.row && !intent.row.supported_reasoning_efforts?.length
-          ? input.selection.pickedReasoningEffort : intent.reasoningEffort,
+        pickedReasoningEffort: intent.reasoningEffort,
+        selectionKind: intent.row?.selection_kind ?? "legacy_unclassified",
+        effortIsSet: true,
         ...(intent.row ? {
           pickedBackend: input.conversationExists ? null : intent.row.validation.selection.backend_key,
           selectionKind: intent.row.selection_kind,
-          effortIsSet: intent.row.supported_reasoning_efforts?.length ? true : input.selection.effortIsSet
         } : {})
       };
     case "choose_reasoning_effort":

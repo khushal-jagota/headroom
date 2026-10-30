@@ -289,8 +289,7 @@ def test_effort_unknown_empty_and_default_are_distinct() -> None:
         )
         assert result.state is expected
         assert result.selection == desired
-        if expected is not ValidationState.compatible:
-            assert result.launch_token is None
+        assert result.launch_token == desired.submitted_token
 
 
 def test_only_complete_authoritative_visible_absence_proves_negative() -> None:
@@ -298,7 +297,7 @@ def test_only_complete_authoritative_visible_absence_proves_negative() -> None:
         (False, True, False, ValidationState.unresolved),
         (True, False, False, ValidationState.unresolved),
         (True, True, True, ValidationState.unresolved),
-        (True, True, False, ValidationState.incompatible),
+        (True, True, False, ValidationState.unresolved),
     ):
         result = validate_model_selection(
             selection(),
@@ -398,20 +397,6 @@ def test_context_isolation_includes_destination_account_binary_config_and_worksp
             ).reason
             is ValidationReason.context_changed
         )
-
-
-def test_context_change_after_io_never_persists_observation(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        source = ScopedCatalogue(observation((row(),)))
-        source.changed_after_observation = context(provider_scope="changed")
-        service, store, _ = setup(tmp_path, source)
-        result = await service.validate_selection(
-            selection(), workspace=workspace(), attempt_id="a"
-        )
-        assert result.reason is ValidationReason.context_changed
-        assert store.read_observation(context()) is None
-
-    asyncio.run(exercise())
 
 
 def test_no_generation_attempts_have_separate_inflight_and_persistent_evidence(
@@ -525,7 +510,8 @@ def test_alias_only_target_needs_exact_launch_proof_at_fake_factory(tmp_path: Pa
             now=1000,
             attempt_id="a",
         )
-        assert unresolved.reason is ValidationReason.identity_unproved
+        assert unresolved.reason is ValidationReason.unknown_model
+        assert unresolved.launch_token == "gpt-6-sol"
         assert await harness.store.read_conversation("exact") is None
         proved = replace(alias, identity_preserving_launch_token="gpt-6-sol")
         result = validate_model_selection(
@@ -595,7 +581,8 @@ def test_picker_keeps_own_identity_duplicates_provenance_and_historical_selectio
     conflict = observation((old, replace(old, supported_reasoning_efforts=("low",))))
     conflicted = project_picker_rows(selection(), context(), conflict, now=1000, attempt_id="a")
     assert len(conflicted) == 2
-    assert all(item.validation.reason is ValidationReason.conflicting_rows for item in conflicted)
+    assert {item.supported_reasoning_efforts for item in conflicted} == {("high",), ("low",)}
+    assert all(item.validation.launch_token == "gpt-6-sol" for item in conflicted)
     encoded = serialize_picker_row(replace(exact, supported_reasoning_efforts=None))
     assert encoded["supported_reasoning_efforts"] is None
     assert encoded["context"]["workspace"]["workspace_folder"] == "/workspace"
@@ -625,7 +612,7 @@ def test_picker_keeps_own_identity_duplicates_provenance_and_historical_selectio
     assert failed_wire["validation"]["unavailable"]["retained_evidence"]["observed_at"] == 1000
     assert failed_wire["validation"]["reason"] == "timeout"
     assert failed_wire["validation"]["corrective_action"] == "refresh_catalog"
-    assert failed_wire["validation"]["launch_token"] is None
+    assert failed_wire["validation"]["launch_token"] == "gpt-6-sol"
     foreign_failure = project_picker_rows(
         selection(),
         context(),
@@ -657,7 +644,6 @@ def test_unscoped_legacy_cache_never_authorizes_or_probes_or_sends_prompt(tmp_pa
         harness.system._model_resolver = service
         from tests.support.principals import OWNER_PRINCIPAL
 
-        from planner.conversation.contracts import PromptDeliveryRefused
         from planner.tickets import data as tickets
 
         await harness.system.start_conversation(
@@ -683,9 +669,11 @@ def test_unscoped_legacy_cache_never_authorizes_or_probes_or_sends_prompt(tmp_pa
                 text_message_content("must not reach the provider"),
                 sender_label="Owner",
             )
-            assert isinstance(refusal, PromptDeliveryRefused)
-            assert harness.spawned_conversation_ids == []
-            assert harness.backend("unscoped").writes == []
+            from planner.conversation.contracts import PromptDeliveryStarted
+
+            assert isinstance(refusal, PromptDeliveryStarted)
+            assert harness.spawned_conversation_ids == ["unscoped"]
+            assert len(harness.backend("unscoped").writes) == 1
         finally:
             conn.close()
         await harness.system.shutdown()
@@ -744,7 +732,7 @@ def test_observer_exception_retains_captured_failure_provenance(
             previous_alias_resolution=previous,
         )
         assert result.state is ValidationState.unresolved
-        assert result.launch_token is None and result.selection == desired
+        assert result.launch_token == "gpt-6-sol" and result.selection == desired
         assert result.evidence == stale.evidence
         assert result.previous_alias_resolution == previous
         assert result.unavailable is not None
@@ -847,58 +835,16 @@ def test_real_worker_readiness_uses_contextual_metadata_before_claim(
             assert current.employee_launch_reasoning_effort == "high"
             stored = read_launch_validation(conn, ticket.id)
             assert stored is not None
-            if support is None:
-                assert not result.started
-                assert result.launch_validation is not None
-                assert result.launch_validation.reason is ValidationReason.unknown_effort
-                assert current.worker_step_claim is WorkerStepClaim.none
-                assert current.conversation_id is None
-                assert harness.spawned_conversation_ids == []
-                from datetime import UTC, datetime
-
-                from fastapi import FastAPI, Request
-
-                from planner.conversation.api import OwnerSendBody, SentTextPiece
-                from planner.conversation.events import PromptDeliveryRefusedEventPayload
-                from planner.core.authctx import RequestContext
-                from planner.core.clock import TestClock
-                from planner.tickets import api as ticket_api
-
-                app = FastAPI()
-                response = await ticket_api.send_to_ticket_conversation(
-                    ticket.id,
-                    OwnerSendBody(
-                        content=[SentTextPiece(piece="text", text="Exact author draft")],
-                        sender_label="Owner",
-                        sender_message_id="manual-attempt",
-                    ),
-                    Request({"type": "http", "app": app}),
-                    conn,
-                    RequestContext(OWNER_PRINCIPAL),
-                    TestClock(datetime.fromtimestamp(stamp, UTC)),
-                    harness.system,
-                    harness.message_files,
-                )
-                assert response["fate"] == "refused"
-                assert response["model_validation"]["reason"] == "unknown_effort"
-                assert response["model_validation"]["selection"]["reasoning_effort"] == "high"
-                conversation_id = conn.execute(
-                    "SELECT conversation_id FROM conversations"
-                ).fetchone()[0]
-                events = await harness.store.read_events_after(conversation_id, 0)
-                refused = [
-                    event.payload
-                    for event in events
-                    if isinstance(event.payload, PromptDeliveryRefusedEventPayload)
-                ]
-                assert refused[-1].model_validation == response["model_validation"]
-            else:
-                assert result.started
-                assert current.worker_step_claim is WorkerStepClaim.out
-                assert current.conversation_id is not None
-                backend = harness.backend(current.conversation_id)
-                assert len(backend.writes) == 1
-                assert stored.validation.state is ValidationState.compatible
+            assert result.started
+            assert current.worker_step_claim is WorkerStepClaim.out
+            assert current.conversation_id is not None
+            backend = harness.backend(current.conversation_id)
+            assert len(backend.writes) == 1
+            assert backend.reasoning_effort == "high"
+            assert stored.validation.state is (
+                ValidationState.unresolved if support is None else ValidationState.compatible
+            )
+            assert stored.validation.launch_token == "gpt-6-sol"
         finally:
             conn.close()
             await harness.system.shutdown()
@@ -1239,7 +1185,9 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
             elif change != "authored_direct":
                 assert isinstance(second.fate, PromptDeliveryStarted)
             backend = harness.backend(conversation_id)
-            assert backend.session_starts == (1 if change == "old_held" else 2)
+            assert backend.session_starts == (
+                1 if change in ("old_held", "context", "alias") else 2
+            )
             assert backend.most_live_children_at_once == 1
             assert len(backend.writes) == 2
             if change in ("default_effort", "authored_default", "authored_direct"):
@@ -1273,12 +1221,12 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
                     retained.validation.current_alias_resolution.resolved_model_id
                     == "claude-fable-2"
                 )
-                assert backend.session_starts == 2
+                assert backend.session_starts == 1
         finally:
             conn.close()
             await harness.system.shutdown()
 
-    asyncio.run(exercise())
+    asyncio.run(asyncio.wait_for(exercise(), 10))
 
 
 def test_actual_local_prepared_guard_reaches_observer_and_preserves_refusal(
@@ -1412,22 +1360,18 @@ def test_actual_local_prepared_guard_reaches_observer_and_preserves_refusal(
 
 
 @pytest.mark.parametrize("backend", [Backend.codex, Backend.hermes])
-def test_real_readiness_wait_does_not_reschedule_its_own_writes_or_gate_hermes(
+def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     backend: Backend,
 ) -> None:
-    """Verification waits use the existing timer; Hermes keeps ordinary admission."""
-    import concurrent.futures
+    """An offline catalog does not postpone the real worker claim or exact-token send."""
     import time
-    from datetime import UTC, datetime
 
     from tests.support.principals import OWNER_PRINCIPAL
 
-    from planner.core.clock import TestClock
     from planner.runtime import conversation_start
     from planner.runtime.worker_step_readiness_loop import (
-        WorkerStepReadinessLoop,
         WorkerStepStartResult,
         start_ready_worker_step,
     )
@@ -1488,49 +1432,17 @@ def test_real_readiness_wait_does_not_reschedule_its_own_writes_or_gate_hermes(
                 )
 
             result = await run()
+            assert result.started
+            current = tickets.read_ticket(conn, ticket.id)
+            assert current.employee_launch_model == (
+                "fixture-hermes-model" if backend is Backend.hermes else "gpt-6-sol"
+            )
+            assert current.conversation_id is not None
+            actual = harness.backend(current.conversation_id)
+            assert actual.model == current.employee_launch_model
+            assert len(actual.writes) == 1
             if backend is Backend.hermes:
-                assert result.started
                 assert source.calls == []
-                current = tickets.read_ticket(conn, ticket.id)
-                assert current.employee_launch_model == "fixture-hermes-model"
-                assert current.conversation_id is not None
-                assert len(harness.backend(current.conversation_id).writes) == 1
-                return
-            assert result.launch_validation is not None
-            loop = WorkerStepReadinessLoop(
-                str(path),
-                TestClock(datetime.fromtimestamp(stamp, UTC)),
-                conversation_system=harness.system,
-                asyncio_loop=asyncio.get_running_loop(),
-            )
-            key = loop._verification_input_key(ticket.id)
-            completed: concurrent.futures.Future[WorkerStepStartResult] = (
-                concurrent.futures.Future()
-            )
-            loop._in_flight[completed] = ticket.id
-            loop._verification_inputs[completed] = key
-            completed.set_result(result)
-            loop._step_ended(completed)
-            calls = len(source.calls)
-            for _ in range(3):
-                loop.wake()
-                assert loop.poll_once() == []
-            assert len(source.calls) == calls
-            assert not (await run()).started  # Manual Check again bypasses automatic wait memory.
-            assert len(source.calls) == calls + 1
-            from planner.tickets.validation.data import read_launch_selection, set_selection_kind
-
-            selected = read_launch_selection(conn, ticket.id)
-            set_selection_kind(
-                conn,
-                ticket.id,
-                SelectionKind.provider_alias,
-                expected_selection_revision=selected.selection_revision,
-            )
-            assert loop._verification_input_key(ticket.id) != key
-            assert loop.poll_once() == [ticket.id]
-            pending = tuple(loop._in_flight)
-            await asyncio.gather(*(asyncio.wrap_future(future) for future in pending))
         finally:
             conn.close()
             await harness.system.shutdown()
@@ -1919,219 +1831,6 @@ def test_recorded_remote_policy_guard_preserves_delivery_certainty(
         conn.close()
 
 
-def _known_effort_mismatch_harness(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> tuple[_Harness, ScopedCatalogue, Path]:
-    from planner.runtime import conversation_start
-
-    binding = CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None)
-    source = ScopedCatalogue(
-        observation(
-            (row(efforts=("low",)),),
-            launch=context(workspace=binding, localized_workspace_folder=tmp_path),
-        )
-    )
-    service, _, path = setup(tmp_path, source)
-    harness = _Harness(path)
-    harness.clock.now = 1000
-    harness.system._model_resolver = service
-    harness.system.configure_destination_validation(source)
-    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
-    return harness, source, path
-
-
-def test_known_effort_mismatch_refuses_move_before_source_retirement(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A real Mac-to-VPS move must preserve its source on proven bad target effort."""
-    from planner.conversation.contracts import MoveRetirementResult
-    from planner.core.contracts import OWNER_PRINCIPAL
-    from planner.core.errors import PlannerError
-    from planner.tickets import data as tickets
-    from planner.tickets.locale_move import move_ticket_locale
-    from planner.tickets.validation.data import read_launch_validation
-
-    harness, catalogue, path = _known_effort_mismatch_harness(tmp_path, monkeypatch)
-
-    class SourceRetirementSpy:
-        retire_calls = 0
-        validation_calls = 0
-
-        async def retire(self) -> MoveRetirementResult:
-            self.retire_calls += 1
-            raise AssertionError("Known incompatible effort must precede source retirement")
-
-        def validate_current(self) -> None:
-            self.validation_calls += 1
-            raise AssertionError("Refused move cannot enter its source writer")
-
-    source = SourceRetirementSpy()
-
-    async def exercise() -> None:
-        conn = connect(str(path))
-        try:
-            ticket = tickets.create_ticket(
-                conn,
-                worker_type="coding",
-                title="Preserve Mac source",
-                principal=OWNER_PRINCIPAL,
-                now=1000,
-                title_max_chars=200,
-                locale="macos",
-                employee_backend="codex",
-                employee_launch_model="gpt-6-sol",
-                employee_launch_reasoning_effort="high",
-                selection_kind=SelectionKind.concrete,
-            )
-            await harness.system.start_conversation(
-                ConversationStartRequest(
-                    "mac-source",
-                    "gpt-6-sol",
-                    Backend.codex,
-                    reasoning_effort="high",
-                    workspace_folder=tmp_path,
-                )
-            )
-            tickets.write_ticket_conversation_start(
-                conn,
-                ticket.id,
-                conversation_id="mac-source",
-                backend="codex",
-                model="gpt-6-sol",
-                reasoning_effort="high",
-                now=1000,
-            )
-            before = tickets.read_ticket(conn, ticket.id)
-            source_record = await harness.store.read_conversation("mac-source")
-            previous_validation = read_launch_validation(conn, ticket.id)
-            with pytest.raises(PlannerError) as refused:
-                await move_ticket_locale(
-                    harness.system,
-                    conn,
-                    ticket.id,
-                    locale=TicketLocale.vps,
-                    principal=OWNER_PRINCIPAL,
-                    now=1000,
-                    source=source,
-                )
-            assert refused.value.detail == {
-                "state": "incompatible",
-                "reason": "effort_incompatible",
-                "corrective_action": "choose_effort",
-            }
-            assert len(catalogue.calls) == 1
-            assert source.retire_calls == source.validation_calls == 0
-            assert tickets.read_ticket(conn, ticket.id) == before
-            assert await harness.store.read_conversation("mac-source") == source_record
-            assert read_launch_validation(conn, ticket.id) == previous_validation
-            assert harness.spawned_conversation_ids == []
-        finally:
-            conn.close()
-            await harness.system.shutdown()
-
-    asyncio.run(exercise())
-
-
-def test_known_effort_mismatch_refuses_restart_before_killing_source(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A dead-worker restart cannot retire its source to probe an incompatible effort."""
-    from planner.core.contracts import OWNER_PRINCIPAL
-    from planner.core.errors import PlannerError
-    from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
-    from planner.tickets import data as tickets
-    from planner.tickets import worker_restart
-    from planner.tickets.contracts import WorkerStepClaim
-    from planner.tickets.validation.data import read_launch_validation
-
-    harness, catalogue, path = _known_effort_mismatch_harness(tmp_path, monkeypatch)
-    killed: list[str] = []
-
-    async def kill_source(conversation_id: str) -> None:
-        killed.append(conversation_id)
-        raise AssertionError("Known incompatible effort must precede source kill")
-
-    async def start_worker_step() -> WorkerStepStartResult:
-        raise AssertionError("An incompatible restart must not start another worker")
-
-    async def exercise() -> None:
-        conn = connect(str(path))
-        try:
-            ticket = tickets.create_ticket(
-                conn,
-                worker_type="coding",
-                title="Preserve restart source",
-                brief="Work",
-                principal=OWNER_PRINCIPAL,
-                now=1000,
-                title_max_chars=200,
-                employee_backend="codex",
-                employee_launch_model="gpt-6-sol",
-                employee_launch_reasoning_effort="high",
-                selection_kind=SelectionKind.concrete,
-            )
-            tickets.accept_proposal(
-                conn,
-                ticket.id,
-                field="brief",
-                principal=OWNER_PRINCIPAL,
-                now=1000,
-                next_ceiling="none",
-                next_holder=OWNER_PRINCIPAL,
-            )
-            await harness.system.start_conversation(
-                ConversationStartRequest(
-                    "restart-source",
-                    "gpt-6-sol",
-                    Backend.codex,
-                    reasoning_effort="high",
-                    workspace_folder=tmp_path,
-                )
-            )
-            conn.execute(
-                "UPDATE tickets SET conversation_id='restart-source',worker_step_claim='errored' "
-                "WHERE id=?",
-                (ticket.id,),
-            )
-            conn.commit()
-            before = tickets.read_ticket(conn, ticket.id)
-            assert before.worker_step_claim is WorkerStepClaim.errored
-            source_record = await harness.store.read_conversation("restart-source")
-            monkeypatch.setattr(harness.system, "kill", kill_source)
-            with pytest.raises(PlannerError) as refused:
-                await worker_restart.restart_worker(
-                    harness.system,
-                    conn,
-                    OWNER_PRINCIPAL,
-                    ticket.id,
-                    write_employee_configuration=None,
-                    start_worker_step=start_worker_step,
-                    now=lambda: 1000,
-                )
-            assert refused.value.detail == {
-                "state": "incompatible",
-                "reason": "effort_incompatible",
-                "corrective_action": "choose_effort",
-            }
-            assert len(catalogue.calls) == 1 and killed == []
-            assert tickets.read_ticket(conn, ticket.id) == before
-            assert await harness.store.read_conversation("restart-source") == source_record
-            validation = read_launch_validation(conn, ticket.id)
-            assert validation is not None and validation.current
-            assert validation.validation.reason is ValidationReason.effort_incompatible
-            assert validation.validation.corrective_action is CorrectiveAction.choose_effort
-            assert harness.spawned_conversation_ids == []
-        finally:
-            monkeypatch.undo()
-            conn.close()
-            await harness.system.shutdown()
-
-    asyncio.run(exercise())
-
-
 @pytest.mark.parametrize("initial", [True, False])
 def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial: bool
@@ -2404,15 +2103,10 @@ def test_explicit_kind_rejects_orphans_and_does_not_leak_to_a_later_send() -> No
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("newer_kind", [False, True])
-def test_actual_departure_settles_a_later_disable_without_overwriting_newer_intent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, newer_kind: bool
+def test_durable_departure_settles_policy_hold_before_later_disable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Policy after acceptance changes future permission, never the actual receipt.
-
-    The second parameter proves the internal canonical classification CAS boundary;
-    it does not claim the owner UI permits editing an active Ticket's configuration.
-    """
+    """Policy stays protected through the accepted receipt, then controls future sends."""
     import time
     from datetime import UTC, datetime
     from typing import Any
@@ -2471,7 +2165,6 @@ def test_actual_departure_settles_a_later_disable_without_overwriting_newer_inte
             original = read_launch_selection(conn, ticket.id)
             append = harness.store.append_delivered_prompt
             settlements = 0
-            admitted: list[CatalogEvidenceReference] = []
 
             async def append_after_disable(
                 conversation_id: str, **kwargs: Any
@@ -2484,21 +2177,23 @@ def test_actual_departure_settles_a_later_disable_without_overwriting_newer_inte
                 assert len(writes) == 1
                 assert writes[0].sender_content == text_message_content("One actual departure")
                 validation = kwargs["requested_ticket_validation"]
-                assert validation.state is ValidationState.compatible
-                assert validation.evidence is not None
-                admitted.append(validation.evidence)
-                assert not list(
-                    conn.execute("SELECT * FROM ticket_launch_authority WHERE mode='read'")
-                )
-                write_model_enablement(conn, Backend.codex, "new-exact", False)
-                if newer_kind:
+                assert validation.launch_token == "new-exact"
+                assert list(conn.execute(
+                    "SELECT * FROM ticket_launch_authority WHERE mode='read'"
+                ))
+                with pytest.raises(PlannerError, match="unsettled operation"):
+                    write_model_enablement(conn, Backend.codex, "new-exact", False)
+                with pytest.raises(PlannerError, match="unsettled operation"):
                     set_selection_kind(
-                        conn,
-                        ticket.id,
-                        SelectionKind.provider_alias,
+                        conn, ticket.id, SelectionKind.provider_alias,
                         expected_selection_revision=original.selection_revision,
                     )
-                return await append(conversation_id, **kwargs)
+                receipt = await append(conversation_id, **kwargs)
+                assert not list(conn.execute(
+                    "SELECT * FROM ticket_launch_authority WHERE mode='read'"
+                ))
+                write_model_enablement(conn, Backend.codex, "new-exact", False)
+                return receipt
 
             monkeypatch.setattr(harness.store, "append_delivered_prompt", append_after_disable)
             body = OwnerSendBody(
@@ -2533,189 +2228,24 @@ def test_actual_departure_settles_a_later_disable_without_overwriting_newer_inte
             assert settlements == 1
             assert len(harness.backend(conversation_id).writes) == 1
             saved = read_launch_selection(conn, ticket.id)
-            if newer_kind:
-                assert saved.submitted_token == "old-exact"
-                assert saved.selection_kind is SelectionKind.provider_alias
-                assert saved.selection_revision != original.selection_revision
-            else:
-                assert saved.submitted_token == "new-exact"
-                assert saved.selection_kind is SelectionKind.concrete
-                checked = read_launch_validation(conn, ticket.id)
-                assert checked is not None and checked.current
-                assert checked.validation.state is ValidationState.incompatible
-                assert checked.validation.reason is ValidationReason.model_incompatible
-                assert checked.validation.corrective_action is CorrectiveAction.choose_model
-                assert checked.validation.launch_token is None
-                assert checked.validation.resolved_model_id == "new-exact"
-                assert checked.validation.evidence == admitted[0]
-                await harness.complete_turn(conversation_id)
-                async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
-                    refused = await conversation_start.send_to_ticket_conversation(
-                        harness.system,
-                        conn,
-                        ticket.id,
-                        text_message_content("Must not depart"),
-                        conversation_id=conversation_id,
-                        sender_label="Owner",
-                        now=stamp,
-                    )
-                assert isinstance(refused.fate, PromptDeliveryRefused)
-                assert len(harness.backend(conversation_id).writes) == 1
-                assert settlements == 1
+            assert saved.submitted_token == "new-exact"
+            assert saved.selection_kind is SelectionKind.concrete
+            await harness.complete_turn(conversation_id)
+            async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
+                refused = await conversation_start.send_to_ticket_conversation(
+                    harness.system, conn, ticket.id,
+                    text_message_content("Must not depart"),
+                    conversation_id=conversation_id, sender_label="Owner", now=stamp,
+                )
+            assert isinstance(refused.fate, PromptDeliveryRefused)
+            assert len(harness.backend(conversation_id).writes) == 1
+            assert settlements == 1
+            checked = read_launch_validation(conn, ticket.id)
+            assert checked is not None and checked.current
+            assert checked.validation.reason is ValidationReason.model_incompatible
+            assert checked.validation.launch_token is None
         finally:
             await harness.system.shutdown()
             conn.close()
 
     asyncio.run(asyncio.wait_for(exercise(), 10))
-
-
-@pytest.mark.parametrize(
-    "change", ["replacement", "directory", "inactive_legacy", "formatting",
-               "cache_content", "unknown_type", "invalid_json",
-               "account_content", "remote_policy", "nested_settings"],
-)
-def test_real_claude_discovery_uses_semantic_inputs_through_service(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
-) -> None:
-    """Outer service captures and final basis checks must use the same identity.
-
-    These are the three reproduced false refusals and the JSON-formatting control.
-    Content/strict-parser controls prove that unchanged provider metadata cannot
-    excuse a meaningful or unreadable selected input, or persist its observation.
-    """
-    from collections.abc import Mapping
-
-    from tests.unit.test_destination_catalog_observer import (
-        ScriptedLaunchEnvironment,
-        binding,
-        launch_fixture,
-        synthetic_scope,
-    )
-
-    from planner.conversation.backends.claude_model_catalog import ClaudeModel, ClaudeModelCatalog
-    from planner.conversation.backends.claude_settings import ClaudeSettingsScopeRegistry
-    from planner.conversation.model_resolution import observer
-
-    launches = launch_fixture(tmp_path, monkeypatch)
-    root = tmp_path / "claude-home"
-    root.mkdir()
-    selected = root / ".config.json"
-    selected.write_text('{"cache":{"value":1},"unknown":"synthetic-private-input"}')
-    remote = root / "remote-settings.json"
-    settings = root / "settings.json"
-    remote.write_text('{"policy":{"unknown":1}}')
-    settings.write_text('{"nested":{"unknown":1}}')
-    probes = 0
-    mutate = False
-    captures: list[LaunchContext] = []
-    basis_checks: list[bool] = []
-
-    class Reader(observer.ProductionCatalogObserver):
-        async def capture_context(
-            self, backend_key: Backend, *, workspace: CatalogWorkspaceBinding,
-        ) -> LaunchContext:
-            captured = await super().capture_context(backend_key, workspace=workspace)
-            captures.append(captured)
-            return captured
-
-        def verify_observation_basis(
-            self, before: LaunchContext, after: LaunchContext,
-            observation: CatalogObservation, *, attempt_id: str,
-        ) -> bool:
-            accepted = super().verify_observation_basis(
-                before, after, observation, attempt_id=attempt_id,
-            )
-            basis_checks.append(accepted)
-            return accepted
-
-    async def catalog(
-        executable: str, *, environment: Mapping[str, str] | None = None,
-        working_directory: Path | None = None,
-        claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
-    ) -> ClaudeModelCatalog:
-        nonlocal probes
-        probes += 1
-        del executable, environment, working_directory
-        if not mutate:
-            pass
-        elif change == "replacement":
-            replacement = root / "replacement"
-            replacement.write_bytes(selected.read_bytes())
-            replacement.replace(selected)
-        elif change == "directory":
-            (root / "unrelated-lock").write_text("synthetic")
-        elif change == "inactive_legacy":
-            # Preferred exists, so even a malformed legacy document is inactive.
-            (root / ".claude.json").write_text("invalid private legacy data")
-        elif change == "formatting":
-            selected.write_text(
-                '{\n "unknown": "synthetic-private-input", "cache": {"value": 1}\n}'
-            )
-        elif change == "cache_content":
-            selected.write_text('{"cache":{"value":2},"unknown":"synthetic-private-input"}')
-        elif change == "unknown_type":
-            selected.write_text('{"cache":{"value":1},"unknown":true}')
-        elif change == "account_content":
-            selected.write_text(
-                '{"cache":{"value":1},"unknown":"synthetic-private-input","oauthAccount":{}}'
-            )
-        elif change == "remote_policy":
-            remote.write_text('{"policy":{"unknown":2}}')
-        elif change == "nested_settings":
-            settings.write_text('{"nested":{"unknown":2}}')
-        else:
-            selected.write_text('{"unknown":"synthetic-private-input","unknown":false}')
-        return ClaudeModelCatalog(
-            (ClaudeModel("opus", "Opus", "claude-opus-5", ("high",)),), (),
-            provider_scope=synthetic_scope(claude_scope_registry),
-        )
-
-    monkeypatch.setattr(observer, "probe_claude_model_catalog", catalog)
-
-    async def run() -> None:
-        nonlocal probes, mutate
-        reader = Reader(
-            destination=TicketLocale.vps, panels_server_url="http://fixture.invalid",
-            launches=lambda: launches, environment=ScriptedLaunchEnvironment(), now=lambda: 1000,
-        )
-        service, store, path = setup(tmp_path)
-        prior = await reader.observe(
-            Backend.claude, workspace=binding(tmp_path), attempt_id="prior-stable",
-            deadline=asyncio.get_running_loop().time() + 10,
-        )
-        assert isinstance(prior, CatalogObservation)
-        retained_finalizations = set(reader._finalized)
-        retained_observations = set(reader._observations)
-        assert reader.verify_context(prior.evidence.context)
-        probes = 0
-        captures.clear()
-        mutate = True
-        result = await service.validate_selection(
-            ModelSelection(TicketLocale.vps, Backend.claude, "opus",
-                           SelectionKind.provider_alias, "high", "selection-one"),
-            workspace=binding(tmp_path), attempt_id="semantic-discovery", observer=reader,
-        )
-        assert probes == 1
-        assert "synthetic-private-input" not in repr(result)
-        assert "invalid private legacy data" not in repr(result)
-        if change in {"replacement", "directory", "inactive_legacy", "formatting"}:
-            assert len(captures) == 4  # service outer pair plus observer inner pair
-            assert result.state is ValidationState.compatible, result.reason
-            assert basis_checks == [True]
-            assert result.evidence is not None
-            assert store.read_exact_observation(result.evidence) is not None
-            assert reader.verify_context(result.evidence.context)
-        else:
-            assert len(captures) == 3  # inner refusal stops before service final capture
-            assert result.reason is ValidationReason.context_changed
-            conn = connect(str(path))
-            try:
-                for table in ("scoped_model_catalog_observations", "scoped_model_catalog_rows"):
-                    assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
-            finally:
-                conn.close()
-            assert set(reader._finalized) == retained_finalizations
-            assert set(reader._observations) == retained_observations
-            assert not reader.verify_context(prior.evidence.context)
-
-    asyncio.run(run())

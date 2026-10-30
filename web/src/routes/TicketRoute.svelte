@@ -551,6 +551,7 @@
                 canonicalError={setupChoices.error} canonicalSaveError={setupChoices.saveError}
                 onChooseDestination={(locale) => void setupModelChoices.chooseDestination(locale)}
                 onChooseCanonicalBackend={(backend) => void setupModelChoices.previewBackend(backend)}
+                onChooseCustomModel={(model, effort) => void setupModelChoices.chooseCustomModel(model, effort)}
                 onChooseCanonicalModel={(row, effort) => void setupModelChoices.chooseModel(row, effort)}
                 onRetry={() => setupModelChoices.retry()}
                 onSave={saveEmployeeConfiguration} />

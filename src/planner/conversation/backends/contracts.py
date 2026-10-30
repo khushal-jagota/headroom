@@ -23,7 +23,7 @@ and is not translated into a refusal.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -32,6 +32,7 @@ from typing import Protocol
 
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
+    ConversationBackendKey,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
@@ -40,6 +41,7 @@ from planner.conversation.events import (
     ConversationTurnEnding,
     PermissionAskOption,
     PlanEntry,
+    ProviderSubmissionFact,
     ToolCallStatus,
     UserInputAnswer,
     UserInputQuestion,
@@ -80,49 +82,6 @@ def emission_check_scope(check: EmissionCheck) -> Iterator[None]:
         _emission_check.reset(token)
 
 
-@dataclass(frozen=True, slots=True)
-class BackendUserEmissionReceipt:
-    """One destination-private proof bound to an actual child and user frame."""
-
-    receipt_ref: str
-    scope_ref: str
-    child_lifetime: str
-    message_uuid: str
-    attempt_id: str
-    turn: TurnToken | None
-    resolved_model: str
-    reasoning_effort: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class UserEmissionRequirement:
-    scope_ref: str
-    submitted_token: str
-    resolved_model: str
-    reasoning_effort: str | None
-    attempt_id: str
-    turn: TurnToken | None
-    check: Callable[[BackendUserEmissionReceipt], None]
-
-
-_user_emission_requirement: ContextVar[UserEmissionRequirement | None] = ContextVar(
-    "provider_user_emission_requirement", default=None
-)
-
-
-def current_user_emission_requirement() -> UserEmissionRequirement | None:
-    return _user_emission_requirement.get()
-
-
-@contextmanager
-def user_emission_requirement_scope(requirement: UserEmissionRequirement) -> Iterator[None]:
-    token = _user_emission_requirement.set(requirement)
-    try:
-        yield
-    finally:
-        _user_emission_requirement.reset(token)
-
-
 class BackendAdapterError(Exception):
     """Something an adapter was asked to do could not be done. Always say which."""
 
@@ -159,6 +118,16 @@ class SessionLoadFailed(BackendAdapterError):
 
 class PromptWriteFailed(BackendAdapterError):
     """The prompt write did not complete, so an automatic retry is not safe."""
+
+
+class BackendPromptRejected(BackendAdapterError):
+    """The provider explicitly rejected this correlated prompt before admission."""
+
+    def __init__(
+        self, message: str, *, provider_submission: ProviderSubmissionFact | None = None
+    ) -> None:
+        super().__init__(message)
+        self.provider_submission = provider_submission
 
 
 class PermissionAnswerWriteFailed(BackendAdapterError):
@@ -222,6 +191,7 @@ class BackendPromptAccepted:
     """
 
     composed_content_delivered: bool
+    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +199,7 @@ class BackendSteerAccepted:
     """The provider admitted the message to the exact turn that the token names."""
 
     composed_content_delivered: bool = True
+    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +207,7 @@ class BackendSteerRefused:
     """The adapter proved that the message was not admitted to the target turn."""
 
     refusal_reason: PromptDeliveryRefusalReason
+    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +243,17 @@ class BackendUserInputRequest:
 
 
 class BackendEventSink(Protocol):
+    async def provider_selection_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        provider: ConversationBackendKey,
+        source_kind: str,
+        model: str,
+        child_lifetime: str,
+        reasoning_effort: str | None = None,
+    ) -> None: ...
+
     """How an adapter tells the core what its backend just did.
 
     Every turn fact carries the turn token it belongs to, because the core alone decides
@@ -619,6 +602,15 @@ class AgentMessageCompletedArguments:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ProviderSelectionReportedArguments:
+    provider: ConversationBackendKey
+    source_kind: str
+    model: str
+    child_lifetime: str
+    reasoning_effort: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ToolCallStartedArguments:
     tool_call_id: str
     title: str
@@ -691,7 +683,8 @@ class ComposerCatalogReportedArguments:
 
 
 type DecodedBackendEventArguments = (
-    AgentMessageDeltaArguments
+    ProviderSelectionReportedArguments
+    | AgentMessageDeltaArguments
     | ModelThinkingHappenedArguments
     | AgentMessageCompletedArguments
     | ToolCallStartedArguments

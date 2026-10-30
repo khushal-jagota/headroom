@@ -6,8 +6,6 @@ import asyncio
 import sqlite3
 import time
 from collections.abc import Callable
-from dataclasses import replace
-from typing import cast
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.contracts import ConversationBackendKey
@@ -15,7 +13,6 @@ from planner.conversation.model_resolution.config import CATALOGUE_COLD_START_TI
 from planner.conversation.model_resolution.contracts import (
     AliasResolutionFact,
     CanonicalModelValidation,
-    CatalogContextFinalizer,
     CatalogObservation,
     CatalogUnavailable,
     CatalogWorkspaceBinding,
@@ -25,12 +22,10 @@ from planner.conversation.model_resolution.contracts import (
     ModelSelection,
     ProviderCatalogObserver,
     ValidationReason,
-    ValidationState,
 )
 from planner.conversation.model_resolution.data import ModelResolutionStore
 from planner.conversation.model_resolution.logic.validation import (
-    evidence_reason,
-    unresolved_validation,
+    submission_validation,
     validate_model_selection,
 )
 from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
@@ -113,47 +108,22 @@ class ModelResolutionService:
         observer: ProviderCatalogObserver | None = None,
         previous_alias_resolution: AliasResolutionFact | None = None,
     ) -> CanonicalModelValidation:
-        """Capture current context, observe if required, then fence before persistence.
-
-        No in-flight discovery is shared across attempts. Observer cleanup owns
-        physical probes through timeout or cancellation before capacity release.
-        """
+        """Observe advisory rows in one owned operation; no proof gates a literal token."""
         source = observer or self._observer
+        disabled = self._backend_state.read_disabled_models(selection.backend_key)
         if source is None:
-            return unresolved_validation(selection, ValidationReason.catalog_unavailable)
-        deadline = time.monotonic() + CATALOGUE_COLD_START_TIMEOUT_SECONDS
-
-        async def capture() -> LaunchContext:
-            return await asyncio.wait_for(
-                source.capture_context(selection.backend_key, workspace=workspace),
-                timeout=max(0, deadline - time.monotonic()),
-            )
-
-        context: LaunchContext | None = None
-        cached: CatalogObservation | None = None
+            return submission_validation(selection, disabled_models=disabled)
+        context = None
+        observation = None
+        unavailable = None
         try:
-            context = await capture()
-            if (
-                context.destination != selection.destination
-                or context.backend_key != selection.backend_key
-                or context.workspace != workspace
-            ):
-                return unresolved_validation(selection, ValidationReason.context_changed)
+            context = await source.capture_context(selection.backend_key, workspace=workspace)
             cached = self._store.read_observation(context)
-            if (
-                cached is not None
-                and evidence_reason(cached, context, now=self._now(), attempt_id=attempt_id) is None
+            if cached is not None and (
+                context.account_generation is not None or cached.evidence.attempt_id == attempt_id
             ):
-                # A captured current context, not an old backend cache, admits reuse.
-                return validate_model_selection(
-                    selection,
-                    context,
-                    cached,
-                    now=self._now(),
-                    attempt_id=attempt_id,
-                    disabled_models=self._backend_state.read_disabled_models(selection.backend_key),
-                    previous_alias_resolution=previous_alias_resolution,
-                )
+                observation = cached
+            deadline = time.monotonic() + CATALOGUE_COLD_START_TIMEOUT_SECONDS
             result = await asyncio.wait_for(
                 source.observe(
                     selection.backend_key,
@@ -161,100 +131,54 @@ class ModelResolutionService:
                     attempt_id=attempt_id,
                     deadline=deadline,
                 ),
-                timeout=max(0, deadline - time.monotonic()),
+                timeout=CATALOGUE_COLD_START_TIMEOUT_SECONDS,
             )
-            if isinstance(result, CatalogUnavailable):
+            if isinstance(result, CatalogObservation):
+                actual = result.evidence.context
                 if (
-                    result.backend_key != selection.backend_key
-                    or result.destination != selection.destination
-                    or (
-                        result.attempted_context is not None and result.attempted_context != context
-                    )
+                    actual.destination == selection.destination
+                    and actual.backend_key == selection.backend_key
+                    and actual.workspace == workspace
+                    and result.evidence.attempt_id == attempt_id
                 ):
-                    return unresolved_validation(selection, ValidationReason.context_changed)
-                validation = unresolved_validation(
-                    selection,
-                    result.reason,
-                    unavailable=result,
-                    observation=cached,
-                    previous_alias_resolution=previous_alias_resolution,
-                )
-                if result.reason in (
-                    ValidationReason.installation_unavailable,
-                    ValidationReason.credentials_unavailable,
-                ):
-                    return replace(validation, state=ValidationState.unavailable)
-                return validation
-            after = await capture()
-            verify_basis = getattr(source, "verify_observation_basis", None)
-            basis_valid = (
-                cast(CatalogContextFinalizer, source).verify_observation_basis(
-                    context, after, result, attempt_id=attempt_id
-                )
-                if callable(verify_basis)
-                else after == context == result.evidence.context
-            )
-            if not basis_valid:
-                return unresolved_validation(selection, ValidationReason.context_changed)
-            context = result.evidence.context
-            if result.evidence.attempt_id != attempt_id:
-                return unresolved_validation(
-                    selection, ValidationReason.account_observation_required
-                )
-            # No network I/O occurs inside this write. The final lifecycle writer
-            # must still recheck context and the captured selection revision.
-            self._store.keep_observation(result)
-            return validate_model_selection(
-                selection,
+                    observation = result
+                    context = actual
+                    self._store.keep_observation(result)
+            else:
+                unavailable = result
+                context = result.attempted_context or context
+        except Exception as error:
+            # Exact provider requests survive advisory failures; unsafe provider text
+            # is never copied into user-facing failure details.
+            unavailable = CatalogUnavailable(
+                selection.backend_key,
+                selection.destination,
                 context,
-                result,
-                now=self._now(),
-                attempt_id=attempt_id,
-                disabled_models=self._backend_state.read_disabled_models(selection.backend_key),
-                previous_alias_resolution=previous_alias_resolution,
+                ValidationReason.timeout
+                if isinstance(error, TimeoutError)
+                else ValidationReason.catalog_unavailable,
+                CorrectiveAction.refresh_catalog,
+                "Destination suggestions are unavailable.",
+                int(self._now()),
+                observation.evidence if observation else None,
             )
-        except TimeoutError:
-            return self._failure(
-                selection,
-                ValidationReason.timeout,
-                context=context,
-                observation=cached,
-                previous_alias_resolution=previous_alias_resolution,
-            )
-        except Exception:
-            # Provider exceptions can carry credentials or environment details.
-            return self._failure(
-                selection,
+        if observation is None and unavailable is None:
+            unavailable = CatalogUnavailable(
+                selection.backend_key,
+                selection.destination,
+                context,
                 ValidationReason.catalog_unavailable,
-                context=context,
-                observation=cached,
-                previous_alias_resolution=previous_alias_resolution,
+                CorrectiveAction.refresh_catalog,
+                "Destination model suggestions are unavailable.",
+                int(self._now()),
+                None,
             )
-
-    def _failure(
-        self,
-        selection: ModelSelection,
-        reason: ValidationReason,
-        *,
-        context: LaunchContext | None,
-        observation: CatalogObservation | None,
-        previous_alias_resolution: AliasResolutionFact | None,
-    ) -> CanonicalModelValidation:
-        return unresolved_validation(
+        return submission_validation(
             selection,
-            reason,
-            unavailable=CatalogUnavailable(
-                backend_key=selection.backend_key,
-                destination=selection.destination,
-                attempted_context=context,
-                reason=reason,
-                corrective_action=CorrectiveAction.refresh_catalog,
-                detail="Destination model verification did not complete.",
-                observed_at=int(self._now()),
-                retained_evidence=observation.evidence if observation else None,
-            ),
-            observation=observation,
+            observation,
+            disabled_models=disabled,
             previous_alias_resolution=previous_alias_resolution,
+            unavailable=unavailable,
         )
 
 

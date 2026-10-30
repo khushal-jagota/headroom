@@ -16,6 +16,10 @@ def classify_new_selection(
 ) -> ModelSelection:
     if selection.selection_kind is not SelectionKind.legacy_unclassified:
         return selection
+    if selection.backend_key.value == "claude" and selection.submitted_token.removesuffix(
+        "[1m]"
+    ) in {"opus", "sonnet", "haiku"}:
+        return replace(selection, selection_kind=SelectionKind.provider_alias)
     variant = recognize_variant(selection.backend_key, selection.submitted_token)
     if variant is not None and variant.name == selection.submitted_token:
         return replace(selection, selection_kind=SelectionKind.panels_alias)
@@ -32,7 +36,8 @@ def classify_new_selection(
 
 
 def preserve_alias_history(
-    validation: CanonicalModelValidation, prior: CanonicalModelValidation | None,
+    validation: CanonicalModelValidation,
+    prior: CanonicalModelValidation | None,
 ) -> CanonicalModelValidation:
     """Repeated checks retain the last distinct target and its original evidence."""
     if (

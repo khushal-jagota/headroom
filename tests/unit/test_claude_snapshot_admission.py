@@ -1,8 +1,7 @@
-"""Running-turn authority and final snapshot receipts use the existing core harness."""
+"""Running-turn intent and exact prewrite checks use the existing core harness."""
 
 import asyncio
 import time
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,13 +15,14 @@ from tests.unit.test_current_model_resolution import (
     setup,
 )
 
+from planner.conversation.admission.contracts import AdmissionExpectation
+from planner.conversation.admission.service import current_admission_expectation
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
+    BackendEmissionInputs,
     BackendSteerOutcome,
-    BackendUserEmissionReceipt,
     TurnToken,
-    UserEmissionRequirement,
-    current_user_emission_requirement,
+    current_emission_check,
 )
 from planner.conversation.contracts import (
     ConversationBackendKey,
@@ -75,7 +75,7 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
     harness.system.configure_destination_validation(source)
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
     original_steer = _FakeBackendChild.steer
-    requirements: list[UserEmissionRequirement] = []
+    requirements: list[AdmissionExpectation] = []
 
     async def guarded_steer(
         self: _FakeBackendChild,
@@ -85,23 +85,17 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
         sender_content: MessageContent | None = None,
         sender_label: str,
     ) -> BackendSteerOutcome:
-        requirement = current_user_emission_requirement()
+        requirement = current_admission_expectation()
         assert requirement is not None
         requirements.append(requirement)
-        assert requirement.submitted_token == "haiku"
-        receipt = BackendUserEmissionReceipt(
-            receipt_ref="receipt",
-            scope_ref=requirement.scope_ref,
-            child_lifetime="child",
-            message_uuid="watched",
-            attempt_id=requirement.attempt_id,
-            turn=requirement.turn,
-            resolved_model=requirement.resolved_model,
-            reasoning_effort=requirement.reasoning_effort,
-        )
+        assert requirement.launch_token == "haiku"
+        assert requirement.turn == turn_token
+        check = current_emission_check()
+        assert check is not None
+        prepared = BackendEmissionInputs("haiku", None, tmp_path)
         with pytest.raises(AdmissionRefused):
-            requirement.check(replace(receipt, attempt_id="another-attempt"))
-        requirement.check(receipt)
+            check(BackendEmissionInputs("sonnet", None, tmp_path))
+        check(prepared)
         if reject_final:
             raise AdmissionRefused("known refusal before user bytes")
         return await original_steer(
@@ -145,7 +139,7 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
             assert state is not None and state.running_turn is not None
             basis = state.running_turn.launch_validation
             assert basis is not None and basis.selection.submitted_token == "haiku"
-            assert basis.evidence is not None
+            assert basis.launch_token == "haiku"
             # This later authored choice belongs to the next turn, not to the steer.
             conn.execute(
                 "UPDATE tickets SET employee_launch_model='sonnet' WHERE id=?", (ticket.id,)
@@ -172,7 +166,7 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
                     mode=PromptDeliveryMode.steer,
                 )
             assert len(requirements) == 1
-            assert requirements[0].attempt_id != basis.evidence.attempt_id
+            assert requirements[0].selection == basis.selection
             assert (
                 conn.execute(
                     "SELECT employee_launch_model FROM tickets WHERE id=?", (ticket.id,)

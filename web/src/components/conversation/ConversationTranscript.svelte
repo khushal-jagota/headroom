@@ -232,6 +232,10 @@
           </div>
         {/if}
       </div>
+    {:else if item.row.kind === "provider_selection_reported"}
+      <div class="acp-compaction" role="status" data-conversation-row="provider_selection_reported">
+        <span title={`Provider response from child ${item.row.childLifetime}`}>Turn {item.row.turnNumber} · {item.row.provider} reported model: {item.row.model} · effort {item.row.reasoningEffort ?? "unreported"}</span>
+      </div>
     {:else if item.row.kind === "model_changed"}
       <div class="acp-compaction" role="separator" data-conversation-row="model_changed">
         <span>{runValuesLine(item.row.model, item.row.reasoningEffort)}</span>

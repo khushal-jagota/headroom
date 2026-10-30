@@ -94,6 +94,17 @@ export function createTicketSetupModelChoices(dependencies: {
         selection_kind: row.selection_kind
       }));
     },
+    chooseCustomModel(model: string, effort: string | null): Promise<void> {
+      if (!current || !model.trim()) return Promise.resolve();
+      const ticketId = current.id;
+      const backend = state.request?.employee_backend ?? current.employee_backend;
+      return mutate(() => dependencies.save(ticketId, {
+        employee_backend: backend,
+        employee_launch_model: model,
+        employee_launch_reasoning_effort: effort,
+        selection_kind: "legacy_unclassified"
+      }));
+    },
     chooseDestination(locale: TicketLocale): Promise<void> {
       if (!current || locale === current.locale) return Promise.resolve();
       const captured = current;

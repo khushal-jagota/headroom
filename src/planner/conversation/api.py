@@ -925,47 +925,6 @@ def _model_choices_ticket_arguments(
     }
 
 
-@router.post("/backends/model-choices/diagnostic-reservation")
-async def reserve_catalog_diagnostic(
-    raw: dict[str, Any],
-    runtime: Runtime,
-    ctx: Ctx,
-) -> dict[str, Any]:
-    from planner.core.errors import ErrorCode, PlannerError
-    from planner.executor.catalog_diagnostics import DiagnosticReservation
-    from planner.runtime.conversation_start import resolve_ticket_launch_selection
-
-    require_owner(ctx)
-    try:
-        with closing(connect(runtime.database_path)) as conn:
-            ticket, arguments = _model_choices_ticket_arguments(raw, conn, ctx)
-            arguments.pop("classify_new")
-            selection, workspace = resolve_ticket_launch_selection(conn, ticket, **arguments)
-            system = runtime.system
-            if system._catalog_diagnostic_used:
-                raise ValueError("catalog diagnostic reservation lifecycle is already used")
-            reservation = DiagnosticReservation.create(
-                ticket.id,
-                selection,
-                workspace,
-                system._catalog_endpoint,
-            )
-            system._catalog_diagnostic_reservation = reservation
-            system._catalog_diagnostic_used = True
-            from planner.executor.catalog_diagnostics import DIAGNOSTIC_LIFETIME_SECONDS
-
-            asyncio.get_running_loop().call_later(
-                DIAGNOSTIC_LIFETIME_SECONDS,
-                setattr,
-                system,
-                "_catalog_diagnostic_reservation",
-                None,
-            )
-            return reservation.operational_result()
-    except ValueError as error:
-        raise PlannerError(ErrorCode.validation, str(error), {}) from error
-
-
 @router.post("/backends/model-choices")
 async def read_destination_model_choices(
     request: Request,
@@ -973,61 +932,7 @@ async def read_destination_model_choices(
     runtime: Runtime,
     ctx: Ctx,
 ) -> dict[str, Any]:
-    from planner.core.errors import ErrorCode, PlannerError
-    from planner.executor.catalog_diagnostics import reservation_scope
-    from planner.runtime.conversation_start import resolve_ticket_launch_selection
-
-    token = request.headers.get("X-Panels-Catalog-Diagnostic-Reservation")
-    if token is None:
-        return await _read_destination_model_choices(raw, runtime, ctx)
-    require_owner(ctx)
-    reservation = runtime.system._catalog_diagnostic_reservation
-    consumed_here = False
-    settled = False
-    try:
-        if reservation is None or reservation.consumed or token != reservation.token:
-            raise ValueError("catalog diagnostic reservation is unavailable")
-        # Consumption precedes all preview work and remains terminal on refusal.
-        reservation.consumed = True
-        consumed_here = True
-        with closing(connect(runtime.database_path)) as conn:
-            ticket, arguments = _model_choices_ticket_arguments(raw, conn, ctx)
-            arguments.pop("classify_new")
-            selection, workspace = resolve_ticket_launch_selection(conn, ticket, **arguments)
-            from planner.executor.catalog_diagnostics import require_selection
-
-            require_selection(ticket.id, selection, workspace)
-            reservation.check(selection, workspace, runtime.system._catalog_endpoint)
-        with reservation_scope(reservation):
-            result = await _read_destination_model_choices(raw, runtime, ctx)
-            settled = True
-            return result
-    except ValueError as error:
-        raise PlannerError(ErrorCode.validation, str(error), {}) from error
-    finally:
-        if (
-            reservation is not None
-            and consumed_here
-            and (not settled or not reservation.dispatched)
-        ):
-            endpoint = runtime.system._catalog_endpoint
-            if endpoint is not None:
-                from planner.conversation.model_resolution.contracts import (
-                    CatalogExpectedContext,
-                    CatalogRequest,
-                )
-
-                with suppress(Exception):
-                    await endpoint._cancel_catalog(
-                        reservation.request_id,
-                        CatalogRequest(
-                            reservation.selection.backend_key,
-                            CatalogExpectedContext(reservation.identity, reservation.workspace),
-                        ),
-                        reservation.identity,
-                        reservation.writer,
-                        diagnostic=True,
-                    )
+    return await _read_destination_model_choices(raw, runtime, ctx)
 
 
 async def _read_destination_model_choices(

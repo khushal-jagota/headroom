@@ -27,13 +27,13 @@ describe("current model variants in the shared picker", () => {
     expect(view.catalogueWarning).toBeNull();
   });
 
-  it("does not manufacture effort support from a backend union", () => {
+  it("keeps explicit effort while catalog support remains unknown", () => {
     const view = picker([{
       model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,
       reasoning_effort_options: null,
     }]);
     expect(view.efforts).toEqual([]);
-    expect(view.face).toBe("GPT 6.1 Sol");
+    expect(view.face).toBe("GPT 6.1 Sol medium");
   });
 
   it("keeps the last known-good model selectable and reports the catalogue failure", () => {
@@ -70,7 +70,7 @@ describe("current model variants in the shared picker", () => {
     { resolved: "opus", expected: "Opus medium" },
     { resolved: "unrecognized-model-vNext", expected: "unrecognized-model-vNext medium" },
     { resolved: "claude-opus-5-5[1m]", expected: "Opus 5.5 (1M) medium" },
-    { resolved: "claude-haiku-4-5-20251001", expected: "Haiku 4.5", efforts: [] },
+    { resolved: "claude-haiku-4-5-20251001", expected: "Haiku 4.5 medium", efforts: [] },
     { resolved: "gpt-6.1-sol", expected: "GPT 6.1 Sol medium", model: "gpt-6.1-sol", alias: "sol" }
   ])("uses resolved evidence without invented versions or unsupported effort: $expected", ({
     resolved, expected, efforts, model = "opus", alias = "opus"
@@ -106,7 +106,7 @@ import { pickerRows, pickerValidation } from "./fixtures/modelPickerFacts";
 
 describe("canonical picker presentation", () => {
   it("keeps alias intent, exact concrete identity and retained offer facts distinct", () => {
-    expect(pickerRowName(pickerRows[0])).toBe("opus → claude-opus-5 · was claude-opus-4-5 · unverified · current selection · catalog unknown");
+    expect(pickerRowName(pickerRows[0])).toBe("opus → claude-opus-5 (advertised) · was claude-opus-4-5 · unverified · current selection · catalog unknown");
     expect(pickerRowName(pickerRows[1])).toBe("Opus 5 · claude-opus-5 · stale · catalog present");
     expect(pickerRowName(pickerRows[2])).toContain("catalog absent");
     expect(pickerRowDetail(pickerRows[0])).toContain("Effort: unknown.");
@@ -114,12 +114,12 @@ describe("canonical picker presentation", () => {
   });
 
   it("keeps canonical destination, reason and corrective action without claiming native failure", () => {
-    expect(validationSummary(pickerValidation)).toBe("Model unavailable for Mac.");
+    expect(validationSummary(pickerValidation)).toBe("Catalog unavailable for Mac.");
     expect(validationDetail(pickerValidation)).toContain("Reason: catalog_unavailable.");
     expect(validationDetail(pickerValidation)).toContain("Required action: refresh catalog.");
     expect(validationDetail(pickerValidation)).toContain("Context: fixture-context.");
     expect(validationDetail(pickerValidation)).toContain("revision fixture-revision");
-    expect(validationSummary({...pickerValidation, selection: {...pickerValidation.selection, destination: "vps"}})).toBe("Model unavailable for VPS.");
+    expect(validationSummary({...pickerValidation, selection: {...pickerValidation.selection, destination: "vps"}})).toBe("Catalog unavailable for VPS.");
     expect(pickerRowDetail(pickerRows[0])).toContain("Source: fixture-observation, revision fixture-revision, row 0.");
   });
 });

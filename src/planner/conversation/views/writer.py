@@ -326,6 +326,14 @@ def _layout_row(
     changed_sequence: int,
 ) -> tuple[str | None, str | None]:
     """Apply chronological row placement using only current turn/group metadata."""
+    if isinstance(payload, event.ProviderSelectionReportedEventPayload):
+        # Captured provider correlation never borrows a later active turn.
+        conn.execute(
+            "UPDATE conversation_view_rows SET turn_key=NULL,work_group_key=NULL,"
+            "changed_sequence=? WHERE conversation_id=? AND sequence=?",
+            (changed_sequence, conversation_id, sequence),
+        )
+        return turn_key, group_key
     row_group = None
     if row_kind == "tool_call":
         if group_key is None:

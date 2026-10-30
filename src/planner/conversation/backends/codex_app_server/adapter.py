@@ -82,6 +82,7 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
+    BackendPromptRejected,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
@@ -100,6 +101,7 @@ from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
+    ConversationBackendKey,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
@@ -109,6 +111,7 @@ from planner.conversation.events import (
     PermissionAskOption,
     PlanEntry,
     PlanEntryStatus,
+    ProviderSubmissionFact,
     ToolCallStatus,
     UserInputAnswer,
     UserInputOption,
@@ -320,6 +323,9 @@ class _TurnInFlight:
     # It is what a cancel waits on, so the turn after it is not written into the middle of
     # codex still stopping this one.
     ended: asyncio.Event = field(default_factory=asyncio.Event)
+    pending_notifications: list[tuple[str, BaseModel]] = field(default_factory=list)
+    pending_requests: list[tuple[str, Any, BaseModel]] = field(default_factory=list)
+    awaiting_start_response: bool = False
 
 
 class CodexAppServerBackendChild:
@@ -502,7 +508,7 @@ class CodexAppServerBackendChild:
                     invocation=invocation,
                 )
                 turn.turn_id = await self._start_the_turn(parameters, turn)
-        except (PromptWriteFailed, AdmissionRefused):
+        except (PromptWriteFailed, AdmissionRefused, BackendPromptRejected):
             # No turn started, so there is no ending to report and nothing to settle: the
             # core hears one refusal and the conversation is idle again.
             if self._turn is turn:
@@ -512,7 +518,14 @@ class CodexAppServerBackendChild:
         if not native_command:
             self._model = model
             self._reasoning_effort = reasoning_effort
-        return BackendPromptAccepted(composed_content_delivered=not native_command)
+        return BackendPromptAccepted(
+            composed_content_delivered=not native_command,
+            provider_submission=(None if native_command else ProviderSubmissionFact(
+                provider=ConversationBackendKey.codex, status="accepted",
+                    observation_kind="turn_start_response",
+                correlation_id=turn.turn_id or "",
+            )),
+        )
 
     async def steer(
         self,
@@ -590,7 +603,14 @@ class CodexAppServerBackendChild:
             return BackendSteerUncertain()
         if response.turnId != captured_native_turn_id:
             return BackendSteerUncertain()
-        return BackendSteerAccepted(composed_content_delivered=True)
+        return BackendSteerAccepted(
+            composed_content_delivered=True,
+            provider_submission=ProviderSubmissionFact(
+                provider=ConversationBackendKey.codex, status="accepted",
+                    observation_kind="turn_steer_response",
+                correlation_id=captured_native_turn_id,
+            ),
+        )
 
     async def cancel_running_turn(self) -> None:
         """Stop the running turn, and return once codex says it has stopped.
@@ -610,6 +630,15 @@ class CodexAppServerBackendChild:
         if turn is None:
             return
         interrupt_turn_id = turn.interrupt_turn_id or turn.turn_id
+        if interrupt_turn_id is None and turn.awaiting_start_response:
+            try:
+                interrupt_turn_id = await asyncio.wait_for(
+                    asyncio.shield(turn.started), CANCEL_SETTLING_TIMEOUT_SECONDS
+                )
+            except TimeoutError as unknown_start:
+                raise PromptWriteFailed(
+                    "codex start remains unknown during cancellation"
+                ) from unknown_start
         if interrupt_turn_id is None:
             return
         thread_id = self._bound_thread()
@@ -1076,37 +1105,47 @@ class CodexAppServerBackendChild:
     async def _start_the_turn(
         self, parameters: bindings.TurnStartParams, turn: _TurnInFlight
     ) -> str:
-        """Put ``turn/start`` on the wire and return the turn's id once codex has taken it.
-
-        Codex says it has taken the turn in two ways — the response, and the ``turn/started``
-        notification — and either one is enough. Waiting for both would mean waiting on
-        whichever is slower for no more certainty, and waiting for the turn itself would
-        mean a send that returns when the agent has finished.
-        """
+        """Accept only the correlated response; notifications cannot identify a request."""
+        turn.awaiting_start_response = True
         try:
             answer = await self._client.begin_request("turn/start", _wire(parameters))
-        except CodexAppServerError as did_not_reach:
-            raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
-        accepted = asyncio.create_task(
-            self._client.finish_request("turn/start", answer),
-            name=f"planner.conversation.codex.turn.{turn.token.conversation_id}",
-        )
-        await asyncio.wait({accepted, turn.started}, return_when=asyncio.FIRST_COMPLETED)
-        if turn.started.done() and not turn.started.cancelled():
-            # The turn is running. Its response is still on its way and says nothing more
-            # than that, so it is read for its failures and let go.
-            self._forget(accepted, "turn/start")
-            return turn.started.result()
+            result = await self._client.finish_request("turn/start", answer)
+        except CodexRequestRejected as rejected:
+            # Activity can contradict non-admission. Keep ownership uncertain in that case.
+            if turn.pending_notifications or turn.pending_requests:
+                raise PromptWriteFailed(
+                    "codex rejected start after provisional activity"
+                ) from rejected
+            raise BackendPromptRejected(
+                str(rejected), provider_submission=ProviderSubmissionFact(
+                    provider=ConversationBackendKey.codex, status="rejected",
+                    observation_kind="turn_start_error",
+                    correlation_id=rejected.request_id or str(turn.token.turn_number),
+                ),
+            ) from rejected
+        except CodexAppServerError as failed:
+            raise PromptWriteFailed(str(failed)) from failed
         try:
-            result = await accepted
-        except CodexAppServerError as would_not_start:
-            raise PromptWriteFailed(str(would_not_start)) from would_not_start
-        try:
-            return bindings.TurnStartResponse.model_validate(result).turn.id
-        except ValidationError as would_not_decode:
-            raise PromptWriteFailed(
-                f"codex answered turn/start with something this cannot read: {would_not_decode}"
-            ) from would_not_decode
+            turn_id = bindings.TurnStartResponse.model_validate(result).turn.id
+            if not turn_id:
+                raise ValueError("missing turn id")
+        except (ValidationError, ValueError) as invalid:
+            raise PromptWriteFailed("codex returned an invalid turn/start response") from invalid
+        turn.turn_id = turn_id
+        turn.interrupt_turn_id = turn_id
+        turn.awaiting_start_response = False
+        if not turn.started.done():
+            turn.started.set_result(turn_id)
+        pending = turn.pending_notifications
+        turn.pending_notifications = []
+        for method, notification in pending:
+            # Once the response names the turn, normal handlers exclude stale turn IDs.
+            await self._on_notification(method, notification)
+        requests = turn.pending_requests
+        turn.pending_requests = []
+        for method, request_id, params in requests:
+            await self._on_server_request(method, request_id, params)
+        return turn_id
 
     def _bound_thread(self) -> str:
         thread_id = self._thread_id
@@ -1258,6 +1297,13 @@ class CodexAppServerBackendChild:
     # --- what codex says ------------------------------------------------------------------
 
     async def _on_notification(self, method: str, notification: BaseModel) -> None:
+        thread_id = getattr(notification, "threadId", None)
+        if thread_id is not None and thread_id != self._thread_id:
+            return
+        turn = self._turn
+        if turn is not None and turn.awaiting_start_response and thread_id is not None:
+            turn.pending_notifications.append((method, notification))
+            return
         match notification:
             case bindings.TurnStartedNotification():
                 self._on_turn_started(notification)
@@ -1297,7 +1343,7 @@ class CodexAppServerBackendChild:
 
     def _on_turn_started(self, notification: bindings.TurnStartedNotification) -> None:
         turn = self._turn
-        if turn is None:
+        if turn is None or notification.threadId != self._thread_id:
             return
         if turn.kind == "review":
             turn.interrupt_turn_id = notification.turn.id
@@ -1463,6 +1509,15 @@ class CodexAppServerBackendChild:
 
     async def _on_server_request(self, method: str, request_id: Any, params: BaseModel) -> None:
         """Hold Codex's permission or user-input request until its turn resolves it."""
+        if getattr(params, "threadId", self._thread_id) != self._thread_id:
+            await self._client.respond_with_error(
+                request_id, code=-32600, message="request names another thread"
+            )
+            return
+        turn = self._turn
+        if turn is not None and turn.awaiting_start_response:
+            turn.pending_requests.append((method, request_id, params))
+            return
         if isinstance(params, bindings.ToolRequestUserInputParams):
             await self._on_user_input_request(request_id, params)
             return

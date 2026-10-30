@@ -134,6 +134,9 @@ class _ScriptedClaudeSdkClient:
             return
         async for message in prompt:
             self.streamed_messages.append(message)
+            blocks = message.get("message", {}).get("content", [])
+            if len(blocks) == 1 and blocks[0].get("type") == "text":
+                self.prompts.append(blocks[0]["text"])
 
     def receive_messages(self) -> AsyncIterator[Message]:
         return self._drain()
@@ -229,6 +232,7 @@ class _RecordingSink:
         self.composer_catalog: list[tuple[ComposerCatalogEntry, ...]] = []
         self.token_usage: list[dict[str, Any]] = []
         self.compactions: list[TurnToken] = []
+        self.model_reports: list[tuple[TurnToken, dict[str, Any]]] = []
         # The order the facts a result message carries were told in. What is said about a
         # turn after its ending is said about a turn that has stopped running, and is
         # dropped — so the order is the whole of whether the counts arrive at all.
@@ -243,6 +247,9 @@ class _RecordingSink:
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         self.deltas.append((turn_token, text_delta))
+
+    async def provider_selection_reported(self, turn_token: TurnToken, **facts: Any) -> None:
+        self.model_reports.append((turn_token, facts))
 
     async def model_thinking_happened(self, turn_token: TurnToken) -> None:
         self.thinking_pulses.append(turn_token)

@@ -1039,6 +1039,7 @@ class ConversationStore:
         executor_turn: tuple[str, str, str] | None = None,
         original_ticket_selection: ModelSelection | None = None,
         requested_ticket_validation: CanonicalModelValidation | None = None,
+        local_runtime_id: str | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -1077,6 +1078,7 @@ class ConversationStore:
                 executor_turn,
                 original_ticket_selection,
                 requested_ticket_validation,
+                local_runtime_id,
             )
 
     async def read_events_after(
@@ -1422,6 +1424,7 @@ class ConversationStore:
         executor_turn: tuple[str, str, str] | None = None,
         original_ticket_selection: ModelSelection | None = None,
         requested_ticket_validation: CanonicalModelValidation | None = None,
+        local_runtime_id: str | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -1478,6 +1481,17 @@ class ConversationStore:
                 )
                 if executor_turn is not None:
                     self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
+                if local_runtime_id is not None:
+                    from planner.conversation.admission.policy import settle_local_submission
+
+                    turn_facts = [fact for fact in lifecycle if fact.kind.value == "turn"]
+                    if turn_facts:
+                        settle_local_submission(
+                            conn,
+                            runtime_id=local_runtime_id,
+                            conversation_id=conversation_id,
+                            turn_number=turn_facts[0].turn_number,
+                        )
                 if (
                     original_ticket_selection is not None
                     and requested_ticket_validation is not None

@@ -136,10 +136,10 @@ def _failure(conn: Connection, ticket_id: str) -> CanonicalModelValidation:
     return CanonicalModelValidation(
         selected,
         ValidationState.incompatible,
-        ValidationReason.effort_incompatible,
-        CorrectiveAction.choose_effort,
+        ValidationReason.model_incompatible,
+        CorrectiveAction.choose_model,
         selected.submitted_token,
-        selected.submitted_token,
+        None,
         evidence,
         None,
         None,
@@ -647,8 +647,8 @@ def test_validation_notice_reaches_actual_manager_prompt_and_queue_is_not_delive
                 writes = harness.backend(str(row[0])).writes
                 assert len(writes) == 1
                 assert ticket_id in writes[0].text
-                assert "effort_incompatible" in writes[0].text
-                assert "choose_effort" in writes[0].text
+                assert "model_incompatible" in writes[0].text
+                assert "choose_model" in writes[0].text
                 assert (
                     tmp_db.execute(
                         "SELECT closed_at FROM manager_wakes WHERE source_kind='launch_validation'",

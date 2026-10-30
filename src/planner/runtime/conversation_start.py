@@ -394,9 +394,8 @@ async def verify_ticket_launch(
 
 def refuse_known_incompatibility(validation: CanonicalModelValidation) -> None:
     """Unknown support preserves configuration. Only a known mismatch refuses a write."""
-    from planner.conversation.model_resolution.contracts import ValidationState
 
-    if validation.state is ValidationState.incompatible:
+    if validation.launch_token is None:
         raise PlannerError(
             ErrorCode.validation,
             f"{validation.reason.value}: {validation.corrective_action.value}",
@@ -939,6 +938,10 @@ async def _make_a_conversation_and_send_into_it(
                 source_type="sender_override",
                 now=now,
             )
+    except asyncio.CancelledError:
+        # The conversation core owns the shielded exchange and its recording.
+        # A departing caller cannot retire that source while acknowledgment is pending.
+        raise
     except BaseException:
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now

@@ -102,7 +102,6 @@ def _alias_candidate(
         if not row.hidden
         and row.enabled is not False
         and row.submitted_token not in disabled_models
-        and row.resolved_model_id not in disabled_models
         and recognize_variant(selection.backend_key, row.submitted_token) == variant
     ]
     if not candidates:
@@ -117,6 +116,145 @@ def _alias_candidate(
     return max(candidates, key=lambda row: numerical_version(row.submitted_token))
 
 
+def submission_validation(
+    selection: ModelSelection,
+    observation: CatalogObservation | None = None,
+    *,
+    disabled_models: frozenset[str] = frozenset(),
+    previous_alias_resolution: AliasResolutionFact | None = None,
+    unavailable: CatalogUnavailable | None = None,
+) -> CanonicalModelValidation:
+    """Bind authored intent; advertised capabilities never grant permission to emit."""
+    token = selection.submitted_token
+    kind = selection.selection_kind
+    native_claude_alias = (
+        selection.backend_key is ConversationBackendKey.claude
+        and token.removesuffix("[1m]") in {"opus", "sonnet", "haiku"}
+    )
+    panels_alias = kind is SelectionKind.panels_alias or (
+        kind is SelectionKind.legacy_unclassified
+        and not native_claude_alias
+        and (variant := recognize_variant(selection.backend_key, token)) is not None
+        and variant.name == token
+    )
+    selected = None
+    if panels_alias and not native_claude_alias:
+        selected = (
+            _alias_candidate(selection, observation.rows, disabled_models) if observation else None
+        )
+        if selected is None:
+            return CanonicalModelValidation(
+                selection,
+                ValidationState.unresolved,
+                ValidationReason.alias_mapping_unavailable,
+                CorrectiveAction.choose_model,
+                None,
+                None,
+                observation.evidence if observation else None,
+                None,
+                previous_alias_resolution,
+                unavailable,
+            )
+        token = selected.submitted_token
+    elif observation is not None:
+        matches = [
+            row for row in observation.rows if not row.hidden and row.submitted_token == token
+        ]
+        if matches and all(row_facts(row) == row_facts(matches[0]) for row in matches):
+            selected = matches[0]
+    # Resolved means advertised, never applied. Unknown aliases stay unknown.
+    resolved = (
+        (selected.resolved_model_id if selected is not None else None)
+        if native_claude_alias
+        else (
+            token
+            if kind is SelectionKind.concrete
+            else selected.resolved_model_id
+            if selected is not None
+            else None
+        )
+    )
+    if (
+        panels_alias
+        and not native_claude_alias
+        and selected is not None
+        and selected.selection_kind is SelectionKind.concrete
+    ):
+        resolved = token
+    alias = (
+        AliasResolutionFact(selection.submitted_token, resolved, observation.evidence)
+        if observation is not None
+        and resolved is not None
+        and (
+            kind in (SelectionKind.provider_alias, SelectionKind.panels_alias)
+            or native_claude_alias
+        )
+        else None
+    )
+    disabled = selection.submitted_token in disabled_models or token in disabled_models
+    reason = (
+        ValidationReason.catalog_unavailable
+        if observation is None
+        else ValidationReason.unknown_model
+        if selected is None
+        else ValidationReason.unknown_effort
+        if selection.reasoning_effort is not None and selected.supported_reasoning_efforts is None
+        else ValidationReason.effort_incompatible
+        if selection.reasoning_effort is not None
+        and selection.reasoning_effort not in (selected.supported_reasoning_efforts or ())
+        else ValidationReason.supported
+    )
+    if unavailable is not None:
+        reason = unavailable.reason
+    return CanonicalModelValidation(
+        selection,
+        ValidationState.incompatible
+        if disabled or reason is ValidationReason.effort_incompatible
+        else ValidationState.compatible
+        if reason is ValidationReason.supported
+        else ValidationState.unresolved,
+        ValidationReason.model_incompatible if disabled else reason,
+        CorrectiveAction.choose_model if disabled else CorrectiveAction.none,
+        resolved,
+        None if disabled else token,
+        observation.evidence if observation else None,
+        alias,
+        previous_alias_resolution,
+        unavailable,
+    )
+
+
+def reported_selection_blocks(
+    validation: CanonicalModelValidation,
+    *,
+    reported_model: str,
+    reported_effort: str | None,
+    disabled_models: frozenset[str],
+) -> bool:
+    """Unknown native alias targets cannot establish a concrete mismatch."""
+    native_alias = (
+        validation.selection.backend_key is ConversationBackendKey.claude
+        and validation.launch_token is not None
+        and validation.launch_token.removesuffix("[1m]") in {"opus", "sonnet", "haiku"}
+    )
+    concrete = not native_alias and (
+        validation.selection.selection_kind is SelectionKind.concrete
+        or (
+            validation.selection.selection_kind is SelectionKind.panels_alias
+            and validation.launch_token == validation.resolved_model_id
+        )
+    )
+    return (
+        reported_model in disabled_models
+        or (concrete and validation.launch_token != reported_model)
+        or (
+            validation.selection.reasoning_effort is not None
+            and reported_effort is not None
+            and validation.selection.reasoning_effort != reported_effort
+        )
+    )
+
+
 def validate_model_selection(
     selection: ModelSelection,
     context: LaunchContext,
@@ -127,166 +265,32 @@ def validate_model_selection(
     disabled_models: frozenset[str] = frozenset(),
     previous_alias_resolution: AliasResolutionFact | None = None,
 ) -> CanonicalModelValidation:
-    """Return metadata facts only. Final admission must recheck intent and context."""
-    if previous_alias_resolution is not None and (
-        previous_alias_resolution.submitted_token != selection.submitted_token
-        or selection.selection_kind
-        not in (SelectionKind.provider_alias, SelectionKind.panels_alias)
-    ):
-        previous_alias_resolution = None
+    """Keep catalog attribution local to its observed execution owner.
 
-    def unresolved(reason: ValidationReason) -> CanonicalModelValidation:
-        return unresolved_validation(
-            selection,
-            reason,
-            observation=observation,
-            previous_alias_resolution=previous_alias_resolution,
-        )
-
-    if (selection.destination, selection.backend_key) != (
-        context.destination,
-        context.backend_key,
+    Freshness labels and effort advertisements are advisory. Missing resolution
+    cannot reject an exact provider token. Wrong-owner rows cannot map an alias.
+    """
+    scoped = observation
+    if observation is not None and (
+        observation.evidence.context != context
+        or (context.account_generation is None and observation.evidence.attempt_id != attempt_id)
     ):
-        return unresolved(ValidationReason.context_changed)
-    if selection.submitted_token in disabled_models:
-        return replace(
-            unresolved(ValidationReason.model_incompatible),
-            state=ValidationState.incompatible,
-            corrective_action=CorrectiveAction.choose_model,
-        )
-    if observation is None:
-        return unresolved(ValidationReason.catalog_unavailable)
-    freshness = evidence_reason(observation, context, now=now, attempt_id=attempt_id)
-    if freshness is not None:
-        return unresolved(freshness)
-    for status, reason, action in (
-        (
-            observation.installation,
-            ValidationReason.installation_unavailable,
-            CorrectiveAction.install_provider,
-        ),
-        (
-            observation.credentials,
-            ValidationReason.credentials_unavailable,
-            CorrectiveAction.authenticate_provider,
-        ),
-    ):
-        if status is PrerequisiteStatus.unavailable:
-            return replace(
-                unresolved(reason), state=ValidationState.unavailable, corrective_action=action
-            )
-        if status is PrerequisiteStatus.unknown:
-            return unresolved(ValidationReason.catalog_unavailable)
-    if selection.selection_kind is SelectionKind.legacy_unclassified:
-        return unresolved(ValidationReason.legacy_unscoped)
-    rows = tuple(row for row in observation.rows if not row.hidden)
-    matches = tuple(row for row in rows if row.submitted_token == selection.submitted_token)
-    selected: CatalogRow | None = None
-    if selection.selection_kind is SelectionKind.panels_alias:
-        selected = _alias_candidate(selection, rows, disabled_models)
-        if selected is not None:
-            matches = tuple(row for row in rows if row.submitted_token == selected.submitted_token)
-    elif matches:
-        selected = matches[0]
-    elif selection.selection_kind is SelectionKind.concrete:
-        # An alias target is usable as an exact token only with affirmative adapter proof.
-        matches = tuple(
-            row
-            for row in rows
-            if row.resolved_model_id == selection.submitted_token
-            and row.identity_preserving_launch_token == selection.submitted_token
-        )
-        selected = matches[0] if matches else None
-    if matches and any(row_facts(row) != row_facts(matches[0]) for row in matches[1:]):
-        return unresolved(ValidationReason.conflicting_rows)
-    if selected is None:
-        # No family allowlist can turn unfamiliar advertised tokens into a negative.
-        if any(row.resolved_model_id == selection.submitted_token for row in rows):
-            return unresolved(ValidationReason.identity_unproved)
-        if (
-            selection.selection_kind is SelectionKind.concrete
-            and observation.complete
-            and observation.absence_authoritative
-            and not observation.visibility_limited
-            and not any(row.hidden for row in observation.rows)
-        ):
-            return replace(
-                unresolved(ValidationReason.model_incompatible),
-                state=ValidationState.incompatible,
-                corrective_action=CorrectiveAction.choose_model,
-            )
-        reason = (
-            ValidationReason.partial_catalog
-            if not observation.complete
-            else ValidationReason.visibility_limited
-            if observation.visibility_limited
-            else ValidationReason.unknown_model
-        )
-        return unresolved(reason)
-    if selection.selection_kind is SelectionKind.provider_alias and (
-        selected.selection_kind is not SelectionKind.provider_alias
-    ):
-        return unresolved(ValidationReason.identity_unproved)
-    if selection.selection_kind is SelectionKind.concrete:
-        if selected.submitted_token == selection.submitted_token and (
-            selected.selection_kind is not SelectionKind.concrete
-            or selected.resolved_model_id not in (None, selection.submitted_token)
-        ):
-            return unresolved(ValidationReason.identity_unproved)
-        resolved_id = selection.submitted_token
-        launch_token = selection.submitted_token
-    else:
-        own_id = selected.resolved_model_id
-        if own_id is None and selected.selection_kind is not SelectionKind.concrete:
-            return unresolved(ValidationReason.identity_unproved)
-        resolved_id = own_id or selected.submitted_token
-        launch_token = selected.submitted_token
-    alias = (
-        AliasResolutionFact(selection.submitted_token, resolved_id, observation.evidence)
-        if selection.selection_kind in (SelectionKind.provider_alias, SelectionKind.panels_alias)
+        scoped = None
+    result = submission_validation(
+        selection,
+        scoped,
+        disabled_models=disabled_models,
+        previous_alias_resolution=previous_alias_resolution,
+    )
+    reason = (
+        ValidationReason.account_observation_required
+        if observation is not None and scoped is None and observation.evidence.context == context
+        else ValidationReason.context_changed
+        if observation is not None and scoped is None
+        else evidence_reason(scoped, context, now=now, attempt_id=attempt_id)
+        if scoped is not None
         else None
     )
-    base = CanonicalModelValidation(
-        selection=selection,
-        state=ValidationState.compatible,
-        reason=ValidationReason.supported,
-        corrective_action=CorrectiveAction.none,
-        resolved_model_id=resolved_id,
-        launch_token=launch_token,
-        evidence=observation.evidence,
-        current_alias_resolution=alias,
-        previous_alias_resolution=previous_alias_resolution,
-        unavailable=None,
-    )
-    if (
-        selected.enabled is False
-        or selection.submitted_token in disabled_models
-        or selected.submitted_token in disabled_models
-        or resolved_id in disabled_models
-    ):
-        return replace(
-            base,
-            state=ValidationState.incompatible,
-            reason=ValidationReason.model_incompatible,
-            corrective_action=CorrectiveAction.choose_model,
-            launch_token=None,
-        )
-    if selection.reasoning_effort is not None:
-        support = selected.supported_reasoning_efforts
-        if support is None:
-            return replace(
-                base,
-                state=ValidationState.unresolved,
-                reason=ValidationReason.unknown_effort,
-                corrective_action=CorrectiveAction.refresh_catalog,
-                launch_token=None,
-            )
-        if selection.reasoning_effort not in support:
-            return replace(
-                base,
-                state=ValidationState.incompatible,
-                reason=ValidationReason.effort_incompatible,
-                corrective_action=CorrectiveAction.choose_effort,
-                launch_token=None,
-            )
-    return base
+    if reason is not None and result.launch_token is not None:
+        result = replace(result, state=ValidationState.unresolved, reason=reason)
+    return result

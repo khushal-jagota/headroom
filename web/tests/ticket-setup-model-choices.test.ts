@@ -78,3 +78,22 @@ it("keeps unknown effort intent and uses captured move preconditions without opt
   expect(read.mock.calls).toHaveLength(calls);
   controller.dispose();
 });
+
+
+it("saves exact custom intent despite a failed catalog read", async () => {
+  const read = vi.fn(async () => { throw new Error("Destination offline"); });
+  const save = vi.fn(async () => {});
+  const controller = createTicketSetupModelChoices({read, save, move: vi.fn(async () => {}), onChange: () => {}});
+  controller.sync(ticket); await settle();
+  await controller.chooseCustomModel("provider-next[1m]", "future-effort");
+  expect(save).toHaveBeenLastCalledWith(ticket.id, {
+    employee_backend: "claude", employee_launch_model: "provider-next[1m]",
+    employee_launch_reasoning_effort: "future-effort", selection_kind: "legacy_unclassified"
+  });
+  await controller.chooseCustomModel("opus", null);
+  expect(save).toHaveBeenLastCalledWith(ticket.id, {
+    employee_backend: "claude", employee_launch_model: "opus",
+    employee_launch_reasoning_effort: null, selection_kind: "legacy_unclassified"
+  });
+  controller.dispose();
+});

@@ -107,8 +107,7 @@ HERMES_MODEL_QUESTION = (
 )
 
 real_hermes_only = pytest.mark.skipif(
-    os.environ.get(REAL_HERMES_TESTS_ENVIRONMENT_NAME) != "1"
-    or not HERMES_EXECUTABLE.is_file(),
+    os.environ.get(REAL_HERMES_TESTS_ENVIRONMENT_NAME) != "1" or not HERMES_EXECUTABLE.is_file(),
     reason=f"set {REAL_HERMES_TESTS_ENVIRONMENT_NAME}=1 with hermes installed to run this",
 )
 
@@ -118,12 +117,6 @@ def _run(exercise: Callable[[], Awaitable[None]], *, seconds: float = 60.0) -> N
 
 
 # --- the values a conversation was started with, at the child ------------------------------
-
-
-
-
-
-
 
 
 # --- correlated steering ---------------------------------------------------------------
@@ -315,14 +308,6 @@ def test_a_send_now_waits_for_the_cancelled_turn_to_be_over_at_the_agent(tmp_pat
 # --- against the hermes on this machine -----------------------------------------------------------
 
 
-
-
-
-
-
-
-
-
 # --- the pieces the tests above are made of ------------------------------------------------------
 
 
@@ -380,6 +365,18 @@ async def _real_turn(
 class _RecordingSink:
     """Everything the adapter reported, for a test driving one child directly."""
 
+    async def provider_selection_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        provider: ConversationBackendKey,
+        source_kind: str,
+        model: str,
+        child_lifetime: str,
+        reasoning_effort: str | None = None,
+    ) -> None:
+        raise AssertionError("this provider does not report an applied selection")
+
     def __init__(self) -> None:
         self.agent_contents: list[MessageContent] = []
         self.message_files: ConversationMessageFiles | None = None
@@ -410,9 +407,7 @@ class _RecordingSink:
     async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
         return None
 
-    async def agent_message_completed(
-        self, turn_token: TurnToken, content: MessageContent
-    ) -> None:
+    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
         self.agent_contents.append(content)
 
     async def tool_call_started(self, turn_token: TurnToken, **kwargs: object) -> None:
@@ -463,9 +458,7 @@ class _RecordingSink:
         self.compactions += 1
         self._a_compaction_arrived.set()
 
-    async def permission_ask_raised(
-        self, turn_token: TurnToken, ask: BackendPermissionAsk
-    ) -> None:
+    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
         self.asks.append(ask)
         self._an_ask_arrived.set()
 
@@ -537,20 +530,17 @@ async def _start_a_due_hermes_conversation(
             workspace_folder=workspace,
         )
     )
-    assert await subject.system.send(
-        "c", text_message_content("first"), sender_label="owner"
-    ) == PromptDeliveryStarted()
-    await subject.tell_agent(
-        "c", {"command": "emit_agent_message", "text": "first answer"}
+    assert (
+        await subject.system.send("c", text_message_content("first"), sender_label="owner")
+        == PromptDeliveryStarted()
     )
+    await subject.tell_agent("c", {"command": "emit_agent_message", "text": "first answer"})
     await subject.complete_running_turn("c")
     await subject.tell_agent(
         "c",
         {
             "command": "emit_available_commands",
-            "commands": [
-                {"name": "compress", "description": "Compress conversation context"}
-            ],
+            "commands": [{"name": "compress", "description": "Compress conversation context"}],
         },
     )
     before = await subject.conversation_record("c")
@@ -567,9 +557,7 @@ def test_real_core_and_scripted_acp_persist_confirmed_compaction_and_release_the
     async def exercise() -> None:
         clock = _CoreIntegrationClock()
         async with open_conversation_system_under_test(clock=clock) as subject:
-            activity_sequence = await _start_a_due_hermes_conversation(
-                subject, tmp_path, clock
-            )
+            activity_sequence = await _start_a_due_hermes_conversation(subject, tmp_path, clock)
             assert [
                 write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
             ] == ["owner:\nfirst", "/compress"]
@@ -597,10 +585,10 @@ def test_real_core_and_scripted_acp_persist_confirmed_compaction_and_release_the
             assert after is not None
             assert after.automatically_compacted_through_sequence == activity_sequence
             events = await subject.recorded_events("c")
-            assert sum(
-                isinstance(event.payload, ContextCompactedEventPayload)
-                for event in events
-            ) == 1
+            assert (
+                sum(isinstance(event.payload, ContextCompactedEventPayload) for event in events)
+                == 1
+            )
             assert [
                 message_content_text(event.payload.content)
                 for event in events
@@ -620,9 +608,7 @@ def test_real_core_and_scripted_acp_settle_unconfirmed_compaction_without_a_retr
     async def exercise() -> None:
         clock = _CoreIntegrationClock()
         async with open_conversation_system_under_test(clock=clock) as subject:
-            activity_sequence = await _start_a_due_hermes_conversation(
-                subject, tmp_path, clock
-            )
+            activity_sequence = await _start_a_due_hermes_conversation(subject, tmp_path, clock)
             held = await subject.system.send(
                 "c", text_message_content("released after failure"), sender_label="owner"
             )
@@ -664,7 +650,8 @@ def test_real_core_and_scripted_acp_settle_unconfirmed_compaction_without_a_retr
 
 
 def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_prompt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from collections.abc import AsyncIterator
     from contextlib import asynccontextmanager
@@ -675,14 +662,17 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
 
     @asynccontextmanager
     async def unavailable_transport(
-        executable: str, *args: object, **kwargs: object,
+        executable: str,
+        *args: object,
+        **kwargs: object,
     ) -> AsyncIterator[object]:
         launches.append(executable)
         raise failure
         yield  # pragma: no cover - an async context manager that refuses entry
 
     monkeypatch.setattr(
-        "planner.conversation.backends.hermes_acp.spawn_stdio_transport", unavailable_transport,
+        "planner.conversation.backends.hermes_acp.spawn_stdio_transport",
+        unavailable_transport,
     )
 
     async def exercise() -> None:
@@ -690,7 +680,9 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
         sink = _RecordingSink()
         child = HermesAcpBackendChild(
             launch=AcpChildLaunch((str(missing_interpreter), "-m", "hermes.acp")),
-            resolved_start=start, event_sink=sink, message_files=_message_files(),
+            resolved_start=start,
+            event_sink=sink,
+            message_files=_message_files(),
         )
         with pytest.raises(BackendSpawnFailed) as refusal:
             await child.start(start, vendor_session_cursor=None)

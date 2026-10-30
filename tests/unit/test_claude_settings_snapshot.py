@@ -4,9 +4,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import nullcontext
-from dataclasses import replace
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -18,16 +16,11 @@ from planner.conversation.backends.claude_agent_sdk import (
     _ObservedClaudeSdkClient,
 )
 from planner.conversation.backends.claude_settings import (
-    ClaudeSettingsScopeRegistry,
     ClaudeSettingsUnavailable,
-    read_claude_catalog_settings_snapshot,
 )
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
-    BackendUserEmissionReceipt,
-    UserEmissionRequirement,
     emission_check_scope,
-    user_emission_requirement_scope,
 )
 
 SECRET = "synthetic-never-disclose-settings-value"
@@ -63,6 +56,10 @@ class ScriptedTransport(_ClaudeCleanupTransport):
     async def send(self, data: str) -> None:
         frame = json.loads(data)
         self.frames.append(frame)
+        if frame.get("type") == "user":
+            self.replies.put_nowait({"type": "command_lifecycle",
+                                    "command_uuid": frame["uuid"], "state": "queued"})
+            return
         if frame.get("type") != "control_request":
             return
         subtype = frame["request"]["subtype"]
@@ -97,13 +94,12 @@ class ScriptedTransport(_ClaudeCleanupTransport):
 
 
 def bench() -> tuple[_ObservedClaudeSdkClient, _ClaudeProtocolTransport,
-                     ScriptedTransport, ClaudeSettingsScopeRegistry]:
+                     ScriptedTransport]:
     options = ClaudeAgentOptions(model="opus", effort="high")
     inner = ScriptedTransport(options)
     transport = _ClaudeProtocolTransport(inner)
-    registry = ClaudeSettingsScopeRegistry()
-    client = _ObservedClaudeSdkClient(options, transport, claude_scope_registry=registry)
-    return client, transport, inner, registry
+    client = _ObservedClaudeSdkClient(options, transport)
+    return client, transport, inner
 
 
 async def message(identity: str) -> AsyncIterator[dict[str, Any]]:
@@ -111,96 +107,13 @@ async def message(identity: str) -> AsyncIterator[dict[str, Any]]:
            "message": {"role": "user", "content": "synthetic text"}}
 
 
-def requirement(scope: str, accepted: list[BackendUserEmissionReceipt]) -> UserEmissionRequirement:
-    return UserEmissionRequirement(scope, "opus", "claude-opus-5", "high", "attempt", None,
-                                   accepted.append)
-
-
-def test_sdk_control_reader_proves_each_actual_uuid_and_keeps_sources_private(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    async def exercise() -> None:
-        client, transport, inner, registry = bench()
-        await client.connect()
-        try:
-            sample = await read_claude_catalog_settings_snapshot(transport)
-            scope = registry.retain(sample.settings)
-            assert SECRET not in repr(sample)
-            assert SECRET not in repr(registry)
-            accepted: list[BackendUserEmissionReceipt] = []
-            with emission_check_scope(lambda prepared=None: None), user_emission_requirement_scope(
-                requirement(scope, accepted)
-            ):
-                await asyncio.gather(client.query(message("first")), client.query(message("steer")))
-            assert [frame["uuid"] for frame in inner.frames if frame["type"] == "user"] == [
-                "first", "steer",
-            ]
-            assert [receipt.message_uuid for receipt in accepted] == ["first", "steer"]
-            for receipt in accepted:
-                with pytest.raises(AdmissionRefused):
-                    registry.consume(receipt, child_lifetime=receipt.child_lifetime,
-                                     message_uuid=receipt.message_uuid)
-            subtypes = [frame["request"]["subtype"] for frame in inner.frames
-                        if frame["type"] == "control_request"]
-            assert subtypes == ["initialize"] + ["get_settings", "list_models", "get_settings"] * 3
-            assert not transport._metadata_responses
-            assert SECRET not in caplog.text
-        finally:
-            await client.disconnect()
-    asyncio.run(exercise())
-
-
-@pytest.mark.parametrize("failure", ["scope", "disabled", "hidden", "alias", "effort", "conflict",
-                                     "error", "missing-proof"])
-def test_actual_child_refuses_before_user_bytes(failure: str) -> None:
-    async def exercise() -> None:
-        client, transport, inner, registry = bench()
-        await client.connect()
-        try:
-            sample = await read_claude_catalog_settings_snapshot(transport)
-            scope = registry.retain(sample.settings)
-            if failure == "scope":
-                inner.settings["effective"]["model"] = "sonnet"
-            elif failure == "disabled":
-                inner.models["models"][0]["disabled"] = True
-            elif failure == "hidden":
-                inner.models["models"][0]["hidden"] = True
-            elif failure == "alias":
-                inner.models["models"][0]["resolvedModel"] = "claude-opus-6"
-            elif failure == "effort":
-                inner.settings["applied"]["effort"] = "max"
-            elif failure == "conflict":
-                duplicate = copy.deepcopy(inner.models["models"][0])
-                duplicate["supportedEffortLevels"] = ["high"]
-                inner.models["models"].append(duplicate)
-            elif failure == "error":
-                inner.error = True
-            accepted: list[BackendUserEmissionReceipt] = []
-            with emission_check_scope(lambda prepared=None: None):
-                with pytest.raises(AdmissionRefused) as refused:
-                    if failure == "missing-proof":
-                        await client.query(message("never-written"))
-                    else:
-                        with user_emission_requirement_scope(requirement(scope, accepted)):
-                            await client.query(message("never-written"))
-            assert SECRET not in str(refused.value)
-            assert SECRET not in repr(refused.value)
-            assert not accepted
-            assert not [frame for frame in inner.frames if frame["type"] == "user"]
-            assert not transport._metadata_responses
-            assert not registry._receipts
-        finally:
-            await client.disconnect()
-    asyncio.run(exercise())
-
-
 def test_control_cancellation_disconnect_and_late_reply_release_owned_futures() -> None:
     async def exercise() -> None:
-        client, transport, inner, _registry = bench()
+        client, transport, inner = bench()
         await client.connect()
         try:
             inner.pause = True
-            waiting = asyncio.create_task(transport.control_request("get_settings"))
+            waiting = asyncio.create_task(transport.control_request("list_models"))
             await inner.requests.wait()
             identity = inner.frames[-1]["request_id"]
             assert identity.startswith("panels-metadata-")
@@ -212,7 +125,7 @@ def test_control_cancellation_disconnect_and_late_reply_release_owned_futures() 
                 "subtype": "success", "request_id": identity, "response": settings(),
             }})
             inner.requests.clear()
-            waiting = asyncio.create_task(transport.control_request("get_settings"))
+            waiting = asyncio.create_task(transport.control_request("list_models"))
             await inner.requests.wait()
             transport.settle_control()
             with pytest.raises(ClaudeSettingsUnavailable):
@@ -223,164 +136,41 @@ def test_control_cancellation_disconnect_and_late_reply_release_owned_futures() 
     asyncio.run(exercise())
 
 
-def test_receipt_cannot_transfer_child_uuid_or_forged_scope() -> None:
+
+
+
+
+
+def test_user_emission_needs_only_final_token_policy_guard() -> None:
     async def exercise() -> None:
-        client, transport, _inner, registry = bench()
+        client, _transport, inner = bench()
         await client.connect()
         try:
-            sample = await read_claude_catalog_settings_snapshot(transport)
-            scope = registry.retain(sample.settings)
-            receipt = registry.issue_receipt(sample, requirement(scope, []),
-                                             child_lifetime="child", message_uuid="uuid")
-            with pytest.raises(AdmissionRefused):
-                registry.consume(receipt, child_lifetime="other", message_uuid="uuid")
-            with pytest.raises(AdmissionRefused):
-                registry.consume(receipt, child_lifetime="child", message_uuid="uuid")
-            receipt = registry.issue_receipt(sample, requirement(scope, []),
-                                             child_lifetime="child", message_uuid="uuid")
-            with pytest.raises(AdmissionRefused):
-                registry.consume(replace(receipt, message_uuid="different"),
-                                 child_lifetime="child", message_uuid="different")
-            with pytest.raises(AdmissionRefused):
-                registry.issue_receipt(sample, requirement("forged", []),
-                                       child_lifetime="child", message_uuid="uuid")
+            inner.error = True  # Metadata cannot veto a literal provider token.
+            checks: list[object] = []
+            with emission_check_scope(lambda prepared=None: checks.append(prepared)):
+                await client.query(message("exact-uuid"))
+            users = [frame for frame in inner.frames if frame["type"] == "user"]
+            assert [frame["uuid"] for frame in users] == ["exact-uuid"]
+            assert len(checks) == 1
+            assert checks[0] is not None
+            assert [frame["request"]["subtype"] for frame in inner.frames
+                    if frame["type"] == "control_request"] == ["initialize"]
         finally:
             await client.disconnect()
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("change", ["between-replies", "malformed-effort", "final-policy"])
-def test_snapshot_change_malformed_metadata_and_final_policy_refuse_without_bytes(
-    change: str,
-) -> None:
+def test_final_policy_refusal_reaches_actual_user_write_lock() -> None:
     async def exercise() -> None:
-        client, transport, inner, registry = bench()
+        client, _transport, inner = bench()
         await client.connect()
         try:
-            sample = await read_claude_catalog_settings_snapshot(transport)
-            scope = registry.retain(sample.settings)
-            if change == "between-replies":
-                original_send = inner.send
-
-                async def changing_send(data: str) -> None:
-                    await original_send(data)
-                    frame = json.loads(data)
-                    if frame.get("request", {}).get("subtype") == "list_models":
-                        inner.settings["sources"][0]["settings"]["effortLevel"] = "max"
-
-                inner.send = changing_send  # type: ignore[method-assign]
-            elif change == "malformed-effort":
-                inner.settings["applied"]["effort"] = [SECRET]
-            accepted: list[BackendUserEmissionReceipt] = []
-            requested = requirement(scope, accepted)
-            if change == "final-policy":
-                def refuse(_receipt: BackendUserEmissionReceipt) -> None:
-                    raise AdmissionRefused("model verification policy changed")
-                requested = replace(requested, check=refuse)
-            with emission_check_scope(lambda prepared=None: None), user_emission_requirement_scope(
-                requested
-            ):
-                with pytest.raises(AdmissionRefused) as refused:
-                    await client.query(message("refused"))
-            assert SECRET not in str(refused.value)
+            def refuse(prepared: object = None) -> None:
+                raise AdmissionRefused("explicit token disabled")
+            with emission_check_scope(refuse), pytest.raises(AdmissionRefused):
+                await client.query(message("never-written"))
             assert not [frame for frame in inner.frames if frame["type"] == "user"]
-            assert not registry._receipts
-            assert not transport._metadata_responses
         finally:
             await client.disconnect()
     asyncio.run(exercise())
-
-
-def test_scope_comparison_preserves_json_types_configured_effort_and_null_launch_intent() -> None:
-    async def exercise() -> None:
-        options = ClaudeAgentOptions(model="opus")
-        inner = ScriptedTransport(options)
-        transport = _ClaudeProtocolTransport(inner)
-        registry = ClaudeSettingsScopeRegistry()
-        client = _ObservedClaudeSdkClient(options, transport, claude_scope_registry=registry)
-        await client.connect()
-        try:
-            inner.settings["effective"]["someSwitch"] = True
-            inner.settings["sources"][0]["settings"]["effortLevel"] = "max"
-            sample = await read_claude_catalog_settings_snapshot(transport)
-            scope = registry.retain(sample.settings)
-            accepted: list[BackendUserEmissionReceipt] = []
-            requested = replace(requirement(scope, accepted), reasoning_effort=None)
-            with emission_check_scope(lambda prepared=None: None), user_emission_requirement_scope(
-                requested
-            ):
-                await client.query(message("provider-default"))
-            assert accepted[0].reasoning_effort is None
-            # Source effort remains max while observed runtime default is high.
-            inner.settings["effective"]["someSwitch"] = 1
-            changed = await read_claude_catalog_settings_snapshot(transport)
-            assert not registry.matches(scope, changed.settings)
-            inner.settings["effective"]["someSwitch"] = True
-            inner.settings["sources"][0]["settings"]["effortLevel"] = "high"
-            changed = await read_claude_catalog_settings_snapshot(transport)
-            assert not registry.matches(scope, changed.settings)
-        finally:
-            await client.disconnect()
-    asyncio.run(exercise())
-
-
-@pytest.mark.parametrize("changed", [False, True])
-def test_diagnostic_uses_existing_provider_boolean_without_extra_calls(
-    monkeypatch: pytest.MonkeyPatch, changed: bool,
-) -> None:
-    from planner.conversation.backends.claude_settings import ClaudeSettingsSnapshot
-    from planner.conversation.model_resolution.diagnostics import (
-        DiagnosticSink,
-        diagnostic_observation,
-        diagnostic_scope,
-    )
-
-    original = ClaudeSettingsSnapshot.same_sources
-    comparisons: list[bool] = []
-
-    def compared(before: ClaudeSettingsSnapshot, after: ClaudeSettingsSnapshot) -> bool:
-        equal = original(before, after)
-        comparisons.append(equal)
-        return equal
-
-    monkeypatch.setattr(ClaudeSettingsSnapshot, "same_sources", compared)
-
-    async def run() -> None:
-        traces: list[list[str]] = []
-        for enabled in (False, True):
-            client, transport, inner, _ = bench()
-            sink = DiagnosticSink(clock=lambda: 0.0)
-            await client.connect()
-            original_request = transport.control_request
-
-            async def request(
-                subtype: str,
-                original_request: Callable[[str], Awaitable[dict[str, Any]]] = original_request,
-                inner: ScriptedTransport = inner,
-            ) -> dict[str, Any]:
-                response = await original_request(subtype)
-                if changed and subtype == "list_models":
-                    inner.settings["effective"]["model"] = "changed"
-                return response
-
-            monkeypatch.setattr(transport, "control_request", request)
-            try:
-                with diagnostic_scope(sink), diagnostic_observation() if enabled else nullcontext():
-                    if changed:
-                        with pytest.raises(ClaudeSettingsUnavailable):
-                            await read_claude_catalog_settings_snapshot(transport)
-                    else:
-                        await read_claude_catalog_settings_snapshot(transport)
-                traces.append([frame["request"]["subtype"] for frame in inner.frames])
-                record = sink.finish()
-                assert record["provider_source_snapshot"] == (
-                    ("changed" if changed else "equal") if enabled else "unavailable"
-                )
-            finally:
-                await client.disconnect()
-        assert traces[0] == traces[1] == [
-            "initialize", "get_settings", "list_models", "get_settings",
-        ]
-        assert comparisons == [not changed, not changed]
-
-    asyncio.run(run())

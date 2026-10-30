@@ -113,9 +113,6 @@ def test_claude_probe_keeps_unknown_effort_distinct_and_no_prompt(
             disconnected.append(True)
 
         async def control_request(self, subtype: str) -> dict[str, object]:
-            if subtype == "get_settings":
-                return {"effective": {}, "sources": [],
-                        "applied": {"model": "claude-opus-5", "effort": "high"}}
             assert subtype == "list_models"
             return {"models": [
                 {"value": "opus", "resolvedModel": "claude-opus-5"},
@@ -124,6 +121,7 @@ def test_claude_probe_keeps_unknown_effort_distinct_and_no_prompt(
                 {"value": "bad-effort", "resolvedModel": "bad-effort",
                  "supportedEffortLevels": [42]},
                 {"value": "hidden", "resolvedModel": "hidden", "hidden": True},
+                {"value": "sonnet"},
             ]}
 
     monkeypatch.setattr(claude, "ClaudeSDKClient", Client)
@@ -134,9 +132,14 @@ def test_claude_probe_keeps_unknown_effort_distinct_and_no_prompt(
             working_directory=tmp_path,
         )
         assert [entry.model_id for entry in result.models] == [
-            "opus", "claude-opus-4", "bad-effort"
+            "opus", "claude-opus-4", "bad-effort", "hidden", "sonnet"
         ]
-        assert [entry.reasoning_effort_options for entry in result.models] == [None, (), None]
+        assert [entry.reasoning_effort_options for entry in result.models] == [
+            None, (), None, None, None,
+        ]
+        assert result.models[-2].hidden is True
+        assert result.models[-1].resolved_model_id is None
+        assert result.provider_scope is not None
         assert options[0].cli_path == "/selected/claude"
         assert options[0].cwd == tmp_path
         assert options[0].env == {"PROVIDER_FIXTURE": "selected"}

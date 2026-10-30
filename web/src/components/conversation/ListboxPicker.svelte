@@ -316,6 +316,11 @@
 
   function onPanelKeydown(event: KeyboardEvent): void {
     const target = event.target;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
     if (!(target instanceof HTMLButtonElement) || !target.hasAttribute("data-listbox-picker-action")) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();

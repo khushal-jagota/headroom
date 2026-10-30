@@ -5,8 +5,8 @@
 def run(browser, urls):
 
     import base64
-    import os
     import json
+    import os
     from pathlib import Path
 
     INPUT = "[data-conversation-input]"
@@ -422,6 +422,25 @@ def run(browser, urls):
         trigger.press("ArrowDown")
         page.keyboard.press("Enter")
         assert page.evaluate("window.__pickerChoices.at(-1)") == {"model": "opus", "effort": "high"}
+        # Exact provider intent stays usable despite unavailable advisory metadata.
+        trigger.click()
+        token = picker.get_by_role("textbox", name="Provider token", exact=True)
+        effort = picker.get_by_role("textbox", name="Provider effort", exact=True)
+        token.fill("provider-future[1m]")
+        effort.fill("future-effort")
+        picker.get_by_role("button", name="Use", exact=True).click()
+        assert page.evaluate("window.__pickerChoices.at(-1)") == {"model": "provider-future[1m]", "effort": "future-effort"}
+        trigger.click()
+        token.fill("opus")
+        effort.fill("")
+        if output:
+            page.screenshot(path=str(Path(output) / f"provider-token-{width}.png"))
+        effort.press("Enter")
+        assert page.evaluate("window.__pickerChoices.at(-1)") == {"model": "opus", "effort": None}
+        trigger.click()
+        token.focus()
+        token.press("Escape")
+        assert trigger.evaluate("e => e === document.activeElement")
     page.goto(urls[0] + "?picker&missingRetry", wait_until="domcontentloaded")
     picker = page.locator(".picker-proof > [data-conversation-model-picker]")
     picker.locator("[data-conversation-picker-trigger]").click()

@@ -78,7 +78,6 @@ def project_picker_rows(
             state=state,
             reason=unavailable.reason,
             corrective_action=unavailable.corrective_action,
-            launch_token=None,
             unavailable=unavailable,
         )
 

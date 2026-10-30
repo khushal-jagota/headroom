@@ -116,12 +116,16 @@ class CodexWireFailed(CodexAppServerError):
 class CodexRequestRejected(CodexAppServerError):
     """The child answered the request with an error rather than a result."""
 
-    def __init__(self, method: str, code: int | None, message: str, data: Any = None) -> None:
+    def __init__(
+        self, method: str, code: int | None, message: str, data: Any = None,
+        *, request_id: str | None = None,
+    ) -> None:
         super().__init__(f"{method} was rejected: {message}")
         self.method = method
         self.code = code
         self.message = message
         self.data = data
+        self.request_id = request_id
 
 
 class CodexLoginIsDuplicated(CodexChildWouldNotStart):
@@ -373,6 +377,7 @@ class CodexAppServerClient:
                 error.get("code") if isinstance(error, dict) else None,
                 str(error.get("message")) if isinstance(error, dict) else str(error),
                 error.get("data") if isinstance(error, dict) else None,
+                request_id=str(envelope["id"]) if "id" in envelope else None,
             )
         return envelope.get("result")
 

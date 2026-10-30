@@ -17,17 +17,15 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
+from uuid import uuid4
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from planner.conversation.backends.claude_settings import (
     ClaudeControlTransport,
-    ClaudeSettingsScopeRegistry,
-    read_claude_catalog_settings_snapshot,
 )
 from planner.conversation.backends.probe_lifetime import owned_probe
-from planner.conversation.model_resolution.diagnostics import _ProviderOperation
 
 # The whole probe — spawn, init handshake, stop — against a local child. Long enough
 # for a cold start on a slow machine, short enough that a card is never left waiting.
@@ -52,9 +50,10 @@ class ClaudeModel:
 
     model_id: str
     display_name: str
-    resolved_model_id: str
+    resolved_model_id: str | None
     reasoning_effort_options: tuple[str, ...] | None
     enabled: bool | None = None
+    hidden: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,21 +102,12 @@ async def probe_claude_model_catalog(
     *,
     environment: Mapping[str, str] | None = None,
     working_directory: Path | None = None,
-    claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
-    _diagnostic_provider_operation: _ProviderOperation | None = None,
 ) -> ClaudeModelCatalog:
     """Ask the installed claude what it can be run as. Raises when it will not say."""
     async def operation() -> tuple[list[object], str | None]:
-        if _diagnostic_provider_operation is None:
-            return await _read_models_from_init(
-                claude_executable, environment=environment, working_directory=working_directory,
-                claude_scope_registry=claude_scope_registry,
-            )
-        with _diagnostic_provider_operation.claim():
-            return await _read_models_from_init(
-                claude_executable, environment=environment, working_directory=working_directory,
-                claude_scope_registry=claude_scope_registry,
-            )
+        return await _read_models_from_init(
+            claude_executable, environment=environment, working_directory=working_directory,
+        )
 
     try:
         reported, provider_scope = await owned_probe(
@@ -135,14 +125,16 @@ async def probe_claude_model_catalog(
     efforts_in_listed_order: list[str] = []
     default_resolves_to: str | None = None
     for entry in reported:
-        if not isinstance(entry, dict) or entry.get("hidden") is True:
+        if not isinstance(entry, dict):
             continue
         if entry.get("disabled") is not None and not isinstance(entry["disabled"], bool):
             raise ClaudeModelCatalogUnavailable("Claude model enablement is incompatible")
         value = entry.get("value")
         resolved = entry.get("resolvedModel")
-        if not isinstance(value, str) or not value or not isinstance(resolved, str) or not resolved:
+        if not isinstance(value, str) or not value:
             continue
+        if not isinstance(resolved, str) or not resolved:
+            resolved = None
         if value == _DEFAULT_PSEUDO_MODEL_VALUE:
             # Not an option — "default" is not a model anybody can be shown as running.
             # What it resolves to is a model, and that is the part worth keeping.
@@ -161,9 +153,10 @@ async def probe_claude_model_catalog(
         models.append(
             ClaudeModel(
                 model_id=value,
-                display_name=versioned_display_name(resolved),
+                display_name=versioned_display_name(resolved or value),
                 resolved_model_id=resolved,
                 reasoning_effort_options=efforts,
+                hidden=entry.get("hidden") is True,
                 enabled=(False if entry.get("disabled") is True else
                          True if entry.get("disabled") is False else None),
             )
@@ -199,7 +192,6 @@ async def _read_models_from_init(
     *,
     environment: Mapping[str, str] | None = None,
     working_directory: Path | None = None,
-    claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
 ) -> tuple[list[object], str | None]:
     options = ClaudeAgentOptions(
         cli_path=claude_executable,
@@ -215,7 +207,11 @@ async def _read_models_from_init(
         SubprocessCLITransport(prompt=empty_prompt(), options=options)
     )
     async with ClaudeSDKClient(options=options, transport=transport):
-        sample = await read_claude_catalog_settings_snapshot(transport)
-        scope = claude_scope_registry.retain(sample.settings) if claude_scope_registry else None
-        return list(sample.models), scope
-    raise ClaudeModelCatalogUnavailable("Claude metadata client closed without a snapshot")
+        # Listing offers is advisory. A settings snapshot does not prove admission
+        # of a later user message and is not a condition for listing these offers.
+        reported = await transport.control_request("list_models")
+        models = reported.get("models")
+        if not isinstance(models, list):
+            raise ClaudeModelCatalogUnavailable("Claude model list is unavailable")
+        return models, f"claude-probe-{uuid4().hex}"
+    raise ClaudeModelCatalogUnavailable("Claude metadata client closed without a model list")

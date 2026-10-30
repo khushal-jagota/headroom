@@ -3,7 +3,7 @@ import type { CanonicalModelValidation, PickerRow } from "./modelResolutionWire"
 /** Presentation only. Selection, support, evidence and validity come from the read model. */
 export function pickerRowName(row: PickerRow): string {
   const identity = row.selection_kind === "provider_alias" || row.selection_kind === "panels_alias"
-    ? `${row.submitted_token} → ${row.resolved_model_id ?? "unresolved"}`
+    ? `${row.submitted_token} → ${row.resolved_model_id ?? "target unreported"} (advertised)`
     : [row.display_name, row.submitted_token].filter((part, index, parts) => part && parts.indexOf(part) === index).join(" · ");
   const previous = row.previous_alias_resolution?.resolved_model_id;
   return [identity, previous && previous !== row.resolved_model_id ? `was ${previous}` : null,
@@ -13,7 +13,7 @@ export function pickerRowName(row: PickerRow): string {
 }
 
 export function validationSummary(validation: CanonicalModelValidation): string {
-  return `Model ${validation.state} for ${validation.selection.destination === "macos" ? "Mac" : "VPS"}.`;
+  return `Catalog ${validation.state} for ${validation.selection.destination === "macos" ? "Mac" : "VPS"}.`;
 }
 
 export function validationDetail(validation: CanonicalModelValidation): string {
@@ -22,10 +22,10 @@ export function validationDetail(validation: CanonicalModelValidation): string {
   const context = unavailable?.attempted_context ?? evidence?.context;
   return [unavailable?.detail, `Reason: ${validation.reason}.`,
     context ? `Context: ${context.context_ref}. Destination: ${context.destination}. Workspace: ${context.localized_workspace_folder}.` : "No launch context was observed.",
-    evidence ? `Observation: ${evidence.observation_id}, revision ${evidence.observation_revision}, at ${evidence.observed_at}.` : "No catalog evidence was supplied.",
+    evidence ? `Observation: ${evidence.observation_id}, revision ${evidence.observation_revision}, at ${evidence.observed_at}.` : "No catalog evidence was supplied. Exact provider tokens do not require a catalog match.",
     unavailable ? `Unavailable attempt observed at: ${unavailable.observed_at}.` : null,
     `Required action: ${validation.corrective_action.replaceAll("_", " ")}.`,
-    "Check again repeats the same read. A server observation does not establish a native destination failure."
+    "Catalog facts do not prove provider acceptance or model application. Check again repeats the same read."
   ].filter(Boolean).join(" ");
 }
 

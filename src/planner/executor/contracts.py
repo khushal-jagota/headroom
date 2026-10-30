@@ -384,6 +384,7 @@ class BackendEventMethod(StrEnum):
     agent_message_delta = "agent_message_delta"
     model_thinking_happened = "model_thinking_happened"
     agent_message_completed = "agent_message_completed"
+    provider_selection_reported = "provider_selection_reported"
     tool_call_started = "tool_call_started"
     tool_call_progress = "tool_call_progress"
     tool_call_finished = "tool_call_finished"
@@ -613,8 +614,6 @@ class IpcOperation(StrEnum):
     retry = "retry"
     health = "health"
     quiesce = "quiesce"
-    catalog_diagnostic_arm = "catalog_diagnostic_arm"
-    catalog_diagnostic_result = "catalog_diagnostic_result"
 
 
 @dataclass(frozen=True, slots=True)
@@ -747,19 +746,3 @@ class FrameWriter(ByteWriter, Protocol):
 
 class RemoteInputTransferFailed(RuntimeError):
     """Local input failure before any native command emission."""
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogDiagnosticArm:
-    """Owner-only local binding; never a peer wire payload."""
-
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-    request_id: str
-    backend_key: str
-    expected_context: JsonObject
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogDiagnosticResult:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-    request_id: str
