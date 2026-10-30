@@ -1013,7 +1013,7 @@ the code was still valid up to that point.
 
 **The protocol shapes are pinned separately.** The login messages are vendored as their
 own subset with their own pin header. Both the login and thread-and-turn subsets are
-generated against `codex-cli 0.163.0`, matching the installed runtime. They retain separate
+generated against `codex-cli 0.166.0`, matching the installed runtime. They retain separate
 pins so a future change to either surface is deliberate. Their definitions remain
 disjoint; generating both together refuses if they reach the same definition.
 
