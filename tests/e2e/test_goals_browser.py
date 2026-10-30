@@ -457,6 +457,40 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     )
     expect(page.get_by_role("button", name="Mark done", exact=True)).to_have_count(0)
     expect(page.get_by_role("checkbox", name="Review the draft", exact=True)).to_have_count(1)
+    # The controlled browser fixture cannot prove that a date edit crosses the real
+    # writer, saved page JSON, query invalidation, and a subsequent reload. Reuse
+    # this selected-checklist scenario rather than another connected server/host.
+    def persist_item_deadline(value: str | None) -> None:
+        before = api.get(server, path)
+        with page.expect_response(
+            lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+            timeout=WAIT_MS,
+        ) as date_saved:
+            field = primary.get_by_label("Deadline for Review the draft", exact=True)
+            field.fill(value or "", timeout=WAIT_MS)
+            field.press("Enter", timeout=WAIT_MS)
+        assert date_saved.value.ok
+        body = date_saved.value.request.post_data_json
+        assert isinstance(body, dict)
+        assert body["expected_revision"] == before["revision"]
+        accepted = api.get(server, path)
+        expected_page = before["page"]
+        expected_page["blocks"][0]["items"][1]["deadline"] = value
+        assert accepted["page"] == expected_page
+        assert accepted["revision"] == before["revision"] + 1
+        for key in ("completed", "active", "primary_checklist_block_id", "deadline"):
+            assert accepted[key] == before[key], key
+        page.reload()
+        expect(primary.get_by_label("Deadline for Review the draft", exact=True)).to_have_value(
+            value or "", timeout=WAIT_MS
+        )
+        expect(primary.get_by_role("progressbar")).to_have_attribute(
+            "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
+        )
+
+    persist_item_deadline("2031-10-30")
+    persist_item_deadline("2031-11-02")
+    persist_item_deadline(None)
     # An ordinary checklist still saves without contributing to effective completion.
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",

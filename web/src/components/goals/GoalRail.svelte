@@ -10,7 +10,7 @@
  const navigation=navigationApplication();
  import {createQuery} from '@tanstack/svelte-query';
  import {goalQueries} from '../../lib/goals/queries';
- import {refreshAtBoundary,goalDateText} from '../../lib/goals/presentation';
+ import {refreshAtBoundary,goalDateText,deadlineTone,deadlineColor} from '../../lib/goals/presentation';
  import {createGoalRequestSessions} from '../../lib/goals/requestSessions';
  import {createGoalRailPreviewInput} from '../../lib/goals/railPreview';
  import GoalRailPreview from './GoalRailPreview.svelte';
@@ -33,7 +33,7 @@
 </script>
 <section class="goals-rail" aria-label="Goals">
  {#each visible as goal (goal.id)}
-  <a class:selected={selectedId===goal.id} class="goal" href={workspaceAddress({kind:'goal',id:goal.id})} data-goal-id={goal.id} aria-current={selectedId===goal.id?'page':undefined} aria-describedby={previewId===goal.id?`goal-preview-${goal.id}`:undefined} use:previewInput.row={{show:(target,immediate)=>onHover(target,goal.id,immediate),leave:onLeave}} onclick={onDismiss}><div class="row-heading"><span class="row-title">{goal.title}</span><ConversationSignalMark signal={navigationConversationSignal(navigation?.selectors.effective,goal.conversation_id)} conversationId={goal.conversation_id}/></div><small><GoalReading {goal}/>{#if goal.deadline}<time datetime={goal.deadline}>Due {goalDateText(goal.deadline)}</time>{:else}<span class="no-deadline">No deadline</span>{/if}</small></a>
+  <a class:selected={selectedId===goal.id} class="goal" href={workspaceAddress({kind:'goal',id:goal.id})} data-goal-id={goal.id} aria-current={selectedId===goal.id?'page':undefined} aria-describedby={previewId===goal.id?`goal-preview-${goal.id}`:undefined} use:previewInput.row={{show:(target,immediate)=>onHover(target,goal.id,immediate),leave:onLeave}} onclick={onDismiss}><div class="row-heading"><span class="row-title">{goal.title}</span><ConversationSignalMark signal={navigationConversationSignal(navigation?.selectors.effective,goal.conversation_id)} conversationId={goal.conversation_id}/></div><small><GoalReading {goal}/>{#if goal.deadline}<time datetime={goal.deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>Due {goalDateText(goal.deadline)}</time>{:else}<span class="no-deadline" data-deadline-tone="neutral" style:color={deadlineColor('neutral')}>No deadline</span>{/if}</small></a>
   {#if previewId===goal.id}{#key goal.id}<GoalRailPreview id={goal.id} target={previewTarget} {rail} {instant} {sessions} bind:element {onKeepOpen} {onLeave}/>{/key}{/if}
  {:else}{#if goalWindow}<p>No active goals</p>{/if}{/each}
  <NavigationWindowPages window={goalWindow} onPage={(anchor,direction)=>page={anchor,direction}}/>

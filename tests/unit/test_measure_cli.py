@@ -214,6 +214,23 @@ def test_contract_guidance_is_discoverable_without_transport_or_stdin(
             assert guidance["examples"]["binary_goal"]["primary_checklist_block_id"] is None
             assert guidance["examples"]["checklist_goal"]["primary_checklist_block_id"]
             assert guidance["examples"]["chief_goal"]["primary_chart"]["kind"]
+            items = guidance["examples"]["checklist_goal"]["page"]["blocks"][0]["items"]
+            assert items[0]["deadline"] == "2026-11-06"
+            assert "deadline" not in items[1]
+        if arguments in (["goal", "schema", "create"], ["goal", "schema", "edit"]):
+            item_schema = guidance["schema"]["$defs"]["ChecklistItem"]
+            assert "deadline" not in item_schema["required"]
+            assert item_schema["properties"]["deadline"]["anyOf"] == [
+                {"type": "string"}, {"type": "null"}
+            ]
+        if arguments == ["goal", "schema", "edit"]:
+            for name, deadline in (
+                ("change_checklist_deadline", "2026-11-09"),
+                ("clear_checklist_deadline", None),
+            ):
+                example = guidance["examples"][name]
+                assert example["expected_revision"] == 1
+                assert example["page"]["blocks"][0]["items"][0]["deadline"] == deadline
     default = runner.invoke(main, ["measure-source", "schema", "--json"])
     explicit = runner.invoke(main, ["measure-source", "schema", "create", "--json"])
     assert json.loads(default.output) == json.loads(explicit.output)

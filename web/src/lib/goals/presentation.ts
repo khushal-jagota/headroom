@@ -1,4 +1,13 @@
 import type {GoalResponse,Block} from './contracts';
+/** The server calendar owns date status. Undated values never acquire a tone. */
+export function deadlineTone(deadline:string|null|undefined,completed:boolean,today:string|undefined):GoalResponse['status'] {
+ if(!deadline||!today)return 'neutral';
+ if(completed)return 'good';
+ return deadline<today?'bad':deadline===today?'attention':'neutral';
+}
+export function deadlineColor(tone:GoalResponse['status']):string {
+ return tone==='bad'?'var(--accent-error)':tone==='attention'?'var(--accent-attention)':tone==='good'?'var(--accent-done)':'var(--text-muted)';
+}
 export function goalStatusText(goal:GoalResponse):string {
  if(goal.kind!=='binary')return goal.status==='good'?'On target':goal.status==='bad'?'Below target':'No readings';
  return goal.completed?'Done':goal.status==='attention'?'Due today':goal.status==='bad'?'Overdue':'Not done';

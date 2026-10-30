@@ -82,6 +82,67 @@ def test_saved_items_drive_completion_without_synchronizing_binary_input(
     assert json.loads(stored["page"]) == document
 
 
+def test_item_deadline_changes_preserve_saved_completion_selection_and_active_state(
+    tmp_db: Connection,
+) -> None:
+    # The nested saved checklist is authoritative. Dates are neither completion input
+    # nor a forecast for the independent overall deadline.
+    initial = create(tmp_db, deadline="2026-11-20", active=False)
+    document = deepcopy(initial.page)
+    checklist = selected_checklist(document, "delivery")
+    assert checklist is not None
+    item = checklist["items"][0]
+    assert "deadline" not in item
+    item["deadline"] = "2028-02-29"
+    dated = edit(tmp_db, initial, page=document)
+    assert data.read_goal(tmp_db, dated.id).page == document
+    assert dated.primary_checklist_block_id == "delivery"
+    assert effective_completion(dated.binary_checked, dated.page, "delivery")
+    assert not dated.active and dated.deadline == initial.deadline
+    assert dated.binary_checked == initial.binary_checked
+
+    item["deadline"] = "2026-10-30"
+    changed = edit(tmp_db, dated, page=document)
+    assert data.read_goal(tmp_db, changed.id).page == document
+    assert effective_completion(changed.binary_checked, changed.page, "delivery")
+    assert not changed.active and changed.deadline == initial.deadline
+
+    # A date write with an old revision cannot replace a newer completion or page.
+    item["state"] = "open"
+    reopened = edit(tmp_db, changed, page=document, active=True)
+    assert not effective_completion(reopened.binary_checked, reopened.page, "delivery")
+    assert reopened.active and reopened.deadline == initial.deadline
+    reopened_checklist = selected_checklist(reopened.page, "delivery")
+    assert reopened_checklist is not None
+    assert reopened_checklist["items"][0]["deadline"] == "2026-10-30"
+    stale_document = deepcopy(changed.page)
+    stale_checklist = selected_checklist(stale_document, "delivery")
+    assert stale_checklist is not None
+    stale_checklist["items"][0]["deadline"] = None
+    with pytest.raises(PlannerError, match="goal changed"):
+        edit(tmp_db, changed, page=stale_document)
+    assert data.read_goal(tmp_db, reopened.id) == reopened
+
+    item["deadline"] = None
+    cleared = edit(tmp_db, reopened, page=document)
+    assert data.read_goal(tmp_db, cleared.id).page == document
+    assert not effective_completion(cleared.binary_checked, cleared.page, "delivery")
+    assert cleared.active and cleared.primary_checklist_block_id == "delivery"
+    item.pop("deadline")
+    item["state"] = "done"
+    omitted = edit(tmp_db, cleared, page=document)
+    assert data.read_goal(tmp_db, omitted.id).page == document
+    assert effective_completion(omitted.binary_checked, omitted.page, "delivery")
+    assert omitted.active and omitted.deadline == initial.deadline
+    assert omitted.binary_checked == initial.binary_checked
+
+    # Invalid date edits fail atomically, including otherwise valid metadata changes.
+    item["deadline"] = "2026-02-29"
+    with pytest.raises(PlannerError, match="ISO calendar date"):
+        edit(tmp_db, omitted, page=document, title="Rejected replacement", active=False)
+    assert data.read_goal(tmp_db, omitted.id) == omitted
+
+
 def test_reselection_uses_resulting_page_and_ordinary_checklists_stay_independent(
     tmp_db: Connection,
 ) -> None:

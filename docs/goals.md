@@ -48,6 +48,24 @@ Text blocks retain Markdown, artifact previews, source links, and download fallb
 
 Each text draft retains its original goal and revision through background refreshes. A stale write fails visibly instead of replacing newer data. The draft remains until an explicit retry or discard. Accepted edits survive reload.
 
+## Checklist item deadlines
+
+Each saved checklist item accepts an optional `deadline` as an exact `YYYY-MM-DD` calendar date. An omitted date or null means undated. An empty string, timestamp, or invalid date fails validation. Existing undated items remain valid without conversion.
+
+Normal and small checklists show one compact date control beside each dated item. Undated items show a discreet calendar icon. Keyboard and phone controls set, change, or clear the date without item expansion. The completed group retains its existing disclosure. Checklist text remains agent-authored.
+
+Enter or focus loss saves a changed valid date. Escape discards the draft. A clear action appears during date interaction. An incomplete native date stays invalid and does not clear the saved date. Failed drafts retain explicit retry and discard controls, including after preview dismissal. Accepted saves add no success text.
+
+Only the date value receives deadline color. An unfinished item is red before today, yellow on today, and neutral for a future date. A completed dated item is green. An undated item remains neutral. Reopening restores the date-based color. Nonvisual descriptions expose status without extra visible labels.
+
+Dates use the existing server calendar: process `TZ`, or `/etc/localtime` when `TZ` is unset. A deadline stays due today throughout that calendar date. It becomes overdue at the next local midnight, including daylight-saving transitions. Open views refresh at the server-provided midnight and after browser suspension. The browser timezone does not change the date status.
+
+The overall deadline uses the same colors only on its existing date value. This covers the goal header, overview card and table, sidebar row, and preview header. Effective completion takes precedence when a date exists. Titles, backgrounds, progress rings, and numeric comparison colors retain their behavior. Item dates do not create a forecast or change the overall deadline, completion, or active state.
+
+Agents use the existing revision-checked goal writer. `panels goal schema create --json` includes dated and undated items in `checklist_goal`. `panels goal schema edit --json` includes complete-page examples for date replacement and null clearing. The dates and identifiers in these examples are illustrative.
+
+Before a real edit, read the accepted goal with `panels goal show GOAL_ID --json`. Copy its complete page and current revision. Keep every block, item ID, state, and unrelated field. Change only the intended item's `deadline`, and submit the page with `expected_revision`. Use null to clear the date. Never replace an owner page with a schema example.
+
 ## Sidebar previews
 
 Active goals appear inside the full Chief card, before its Worker groups. Each row links to its goal page. Hover, keyboard focus, or a touch hold opens the goal preview. The preview shows the Project, deadline, full title, and primary content.
