@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from threading import Barrier
 from typing import TYPE_CHECKING, Any, cast
 
 from tests.support.executor_control import MessageReader
@@ -31,9 +29,7 @@ from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.protocol import (
     AnswerApplication,
-    AskReachability,
     ChildCommand,
-    ChildInventory,
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
@@ -92,16 +88,8 @@ def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObje
     return {"first": envelope.submission_id}
 
 
-def inventory(
-    *children: ChildInventory, identity: ExecutorIdentity = IDENTITY
-) -> tuple[ExecutorIdentity, tuple[ChildInventory, ...]]:
-    return identity, children
 
 
-def ready_ask(store: InboxStore) -> None:
-    store.runs.publish_ask(ASK, ("allow", "deny"), 1000)
-    store.runs.observe_children(*inventory(ChildInventory(CHILD, ASK.turn, (ASK,), ())), 1001)
-    store.runs.mark_ready(IDENTITY, 1002)
 
 
 def test_effect_and_first_result_survive_lost_ack_and_changed_stage(store: InboxStore) -> None:
@@ -198,162 +186,18 @@ def test_stale_generation_cannot_write_after_replacement_and_old_close_is_harmle
         connection.close()
 
 
-def test_first_answer_after_loss_is_durable_without_current_generation_or_readiness(
-    store: InboxStore,
-) -> None:
-    ready_ask(store)
-    store.runs.mark_lost(IDENTITY, 1100)
-    with pytest.raises(PlannerError, match="option"):
-        store.runs.choose_answer(ASK, "not-an-option", 999, 1102)
-    answer = store.runs.choose_answer(ASK, "allow", 999, 1103)
-    assert answer.accepted_at_vps_ms == 1103
-    assert store.runs.choose_answer(ASK, "allow", 1, 1110) == answer
-    assert not store.runs.answer_is_deliverable(answer, IDENTITY)
-    with pytest.raises(PlannerError, match="already"):
-        store.runs.choose_answer(ASK, "deny", 1, 1110)
 
 
-@pytest.mark.parametrize(
-    "closure",
-    [
-        "assignment",
-        "ended",
-        "source_retired",
-        "delivery_uncertain",
-        "pending",
-        "child",
-        "turn",
-        "missing",
-        "malformed",
-    ],
-)
-def test_first_answer_requires_open_assignment_and_exact_persisted_pending_turn(
-    store: InboxStore,
-    closure: str,
-) -> None:
-    ready_ask(store)
-    if closure == "assignment":
-        store.runs.close_child(CHILD, 1100)
-    elif closure in {"ended", "source_retired", "delivery_uncertain"}:
-        persist_pending_turn(store.runs, ASK, runtime_overrides={closure: True})
-    elif closure == "pending":
-        persist_pending_turn(store.runs, ASK, runtime_overrides={"pending_permission_ask_ids": []})
-    elif closure == "child":
-        store.runs.close_child(CHILD, 1100)
-        persist_pending_turn(store.runs, replace(ASK, child=replace(CHILD, child_id="replacement")))
-    elif closure == "turn":
-        persist_pending_turn(store.runs, replace(ASK, turn=TurnToken("conversation", 2)))
-    else:
-        connection = connect(store.db_path)
-        try:
-            if closure == "missing":
-                connection.execute("DELETE FROM mac_runs")
-            else:
-                connection.execute("DELETE FROM conversation_lifecycle_facts WHERE kind='turn'")
-        finally:
-            connection.close()
-    with pytest.raises(PlannerError):
-        store.runs.choose_answer(ASK, "allow", 1, 1200)
-    assert store.runs.recorded_answer(ASK) is None
 
 
-def test_identical_answer_receipt_survives_closure_and_application(store: InboxStore) -> None:
-    ready_ask(store)
-    answer = store.runs.choose_answer(ASK, "allow", 1, 1100)
-    store.runs.close_child(CHILD, 1101)
-    assert not store.runs.answer_is_deliverable(answer, IDENTITY)
-    store.runs.record_application(AnswerApplication(answer.answer_id, ASK, 1102), identity=IDENTITY)
-    assert store.runs.choose_answer(ASK, "allow", 2, 9999) == answer
-    with pytest.raises(PlannerError, match="already"):
-        store.runs.choose_answer(ASK, "deny", 2, 9999)
-    assert not store.runs.answer_is_deliverable(answer, IDENTITY)
 
 
-def test_concurrent_first_choices_commit_one_original_receipt(store: InboxStore) -> None:
-    ready_ask(store)
-    store.runs.mark_lost(IDENTITY, 1100)
-
-    barrier = Barrier(2)
-
-    def choose(option: str) -> object:
-        barrier.wait(timeout=2)
-        try:
-            return store.runs.choose_answer(ASK, option, 1, 1200)
-        except PlannerError as error:
-            return error
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = tuple(pool.map(choose, ("allow", "deny")))
-    assert sum(isinstance(result, PlannerError) for result in outcomes) == 1
-    answer = store.runs.recorded_answer(ASK)
-    assert answer is not None and answer in outcomes
-    assert store.runs.choose_answer(ASK, answer.option_id or "", 1, 9999) == answer
 
 
-@pytest.mark.parametrize("terminal", [AskReachability.child_gone, AskReachability.callback_gone])
-def test_terminal_evidence_survives_loss_reconnect_reconcile_and_late_observation(
-    store: InboxStore,
-    terminal: AskReachability,
-) -> None:
-    ready_ask(store)
-    store.runs.observe_children(
-        *inventory()
-        if terminal == AskReachability.child_gone
-        else inventory(ChildInventory(CHILD, ASK.turn, (), ())),
-        1100,
-    )
-    store.runs.mark_lost(IDENTITY, 1101)
-    replacement = replace(IDENTITY, connection_generation=2)
-    store.runs.begin_connection(replacement, 1200)
-    store.runs.observe_children(
-        *inventory(ChildInventory(CHILD, ASK.turn, (ASK,), ()), identity=replacement), 1201
-    )
-    connection = connect(store.db_path)
-    try:
-        store.runs.observe_callback_in_transaction(connection, ASK, replacement, 1202)
-    finally:
-        connection.close()
-    evidence = store.runs.ask_evidence(ASK)
-    assert evidence is not None and evidence.reachability == terminal
-    with pytest.raises(PlannerError):
-        store.runs.choose_answer(ASK, "allow", 2, 1203)
 
 
-def test_old_durable_answer_reconciles_once_and_retains_application(
-    store: InboxStore,
-) -> None:
-    ready_ask(store)
-    answer = store.runs.choose_answer(ASK, "allow", 1, 1100)
-    store.runs.mark_lost(IDENTITY, 1101)
-    replacement = replace(IDENTITY, connection_generation=2)
-    store.runs.begin_connection(replacement, 3600000)
-    store.runs.observe_children(
-        *inventory(ChildInventory(CHILD, ASK.turn, (ASK,), ()), identity=replacement), 3600001
-    )
-    assert store.runs.unapplied_answers() == (answer,)
-    assert store.runs.ask_evidence(ASK).reachability == AskReachability.reachable  # type: ignore[union-attr]
-    store.runs.record_application(
-        AnswerApplication(answer.answer_id, ASK, 3600110), identity=replacement
-    )
-    store.runs.observe_children(*inventory(identity=replacement), 3600300)
-    assert store.runs.unapplied_answers() == ()
-    evidence = store.runs.ask_evidence(ASK)
-    assert evidence is not None
-    assert evidence.applied_at_mac_ms == 3600110
 
 
-def test_missing_child_and_missing_callback_publish_distinct_evidence(store: InboxStore) -> None:
-    ready_ask(store)
-    store.runs.observe_children(*inventory(ChildInventory(CHILD, ASK.turn, (), ())), 1200)
-    evidence = store.runs.ask_evidence(ASK)
-    assert evidence is not None
-    assert evidence.reachability == AskReachability.callback_gone
-    store.runs.observe_children(*inventory(), 1300)
-    evidence = store.runs.ask_evidence(ASK)
-    assert evidence is not None
-    assert evidence.reachability == AskReachability.callback_gone
-    with pytest.raises(PlannerError, match="closed or unknown"):
-        store.runs.choose_answer(ASK, "allow", 1, 1400)
 
 
 def manifest(contents: bytes) -> FileManifest:

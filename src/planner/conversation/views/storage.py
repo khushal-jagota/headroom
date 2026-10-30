@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterator
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from typing import Literal, cast
 
 from pydantic import TypeAdapter
 
 from planner.conversation import events as event
-from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.contracts import AnswerFate, ConversationBackendKey
 from planner.conversation.model_resolution.contracts import CanonicalModelValidation
 from planner.conversation.retention.read import sequence_expired
 from planner.conversation.views.configuration import (
@@ -122,8 +122,27 @@ def _body(
     settlement = (
         _payload(conn, conversation_id, settlement_sequence) if settlement_sequence else None
     )
+    saved = (
+        isinstance(
+            settlement, (event.PermissionAnsweredEventPayload, event.UserInputAnsweredEventPayload)
+        )
+        and settlement.fate is AnswerFate.saved
+    )
+    if saved:
+        assert isinstance(
+            settlement, (event.PermissionAnsweredEventPayload, event.UserInputAnsweredEventPayload)
+        )
+        applied = conn.execute(
+            "SELECT 1 FROM conversation_view_lookups WHERE conversation_id=? "
+            "AND lookup_kind='applied_answer' AND lookup_id=?",
+            (conversation_id, settlement.answer_id),
+        ).fetchone()
+        if applied:
+            settlement = replace(settlement, fate=AnswerFate.applied)
     dead: AskDeadReason | None = None
-    if row["row_kind"] in ("permission_ask", "user_input") and settlement_sequence is None:
+    if row["row_kind"] in ("permission_ask", "user_input") and (
+        settlement_sequence is None or saved
+    ):
         ending = conn.execute(
             "SELECT sequence FROM conversation_view_rows WHERE conversation_id=? "
             "AND row_kind='turn_ended' AND sequence>? ORDER BY sequence LIMIT 1",

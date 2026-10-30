@@ -33,6 +33,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
@@ -60,7 +61,6 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
-from planner.core.errors import PlannerError
 from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.configuration import ExecutorPaths
@@ -68,11 +68,11 @@ from planner.executor.link import Link
 from planner.executor.mac_service import MacService
 from planner.executor.protocol import (
     AcceptanceReceipt,
-    AskReachability,
     CommandDisposition,
     ConnectionState,
     ControlMessageReader,
     ControlMessageWriter,
+    DurableAnswer,
     EnvelopeKind,
     IpcOperation,
     IpcRequest,
@@ -136,13 +136,17 @@ class ScriptedNativeChild:
             )
         return BackendPromptAccepted(True)
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         self.answers.append((ask_id, option_id))
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self, request_id: str, answers: tuple[UserInputAnswer, ...], **kwargs: object
+    ) -> AnswerFate:
         self.user_answers.append((request_id, answers))
+        return AnswerFate.applied
 
     async def raise_user_input(self, request_id: str = "request_input") -> None:
         assert self.sink is not None and self.turn is not None
@@ -294,18 +298,97 @@ class ExecutorHarness:
         return AskReference(child.reference, self.native.turn, "request_input", AskKind.user_input)
 
     async def wait_input_reachable(self) -> None:
-        def reachable() -> bool:
-            evidence = self.endpoint.runs.store.ask_evidence(self.input_ask)
-            return evidence is not None and evidence.reachability is AskReachability.reachable
-
-        await eventually(reachable, "Input callback did not get current evidence")
+        await eventually(
+            lambda: bool(
+                self.system._conversations["c_scripted"].running_turn.pending_user_input_questions
+            ),
+            "input did not reach conversation",
+        )
 
     async def wait_ask_reachable(self) -> None:
-        def reachable() -> bool:
-            evidence = self.endpoint.runs.store.ask_evidence(self.ask)
-            return evidence is not None and evidence.reachability == AskReachability.reachable
+        await eventually(
+            lambda: bool(
+                self.system._conversations["c_scripted"].running_turn.pending_permission_ask_ids
+            ),
+            "ask did not reach conversation",
+        )
 
-        await eventually(reachable, "No current callback evidence for the real pending ask")
+    def saved_answer(self, ask: AskReference) -> DurableAnswer | None:
+        connection = connect(self.endpoint.db_path)
+        try:
+            key = "ask_id" if ask.kind is AskKind.permission else "request_id"
+            row = connection.execute(
+                "SELECT payload,created_at FROM conversation_events "
+                "WHERE conversation_id=? AND kind=? "
+                "AND json_extract(payload,?)=? ORDER BY sequence DESC LIMIT 1",
+                (
+                    ask.child.conversation_id,
+                    "permission_answered"
+                    if ask.kind is AskKind.permission
+                    else "user_input_answered",
+                    f"$.{key}",
+                    public_ask_id(ask),
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            value = json.loads(row[0])
+            return DurableAnswer(
+                value["answer_id"],
+                ask,
+                value.get("option_id"),
+                row[1],
+                tuple(
+                    UserInputAnswer(key, tuple(answer["answers"]))
+                    for key, answer in value["answers"].items()
+                )
+                if "answers" in value
+                else None,
+            )
+        finally:
+            connection.close()
+
+    def answer_applied(self, ask: AskReference) -> bool:
+        answer = self.saved_answer(ask)
+        if answer is None:
+            return False
+        connection = connect(self.endpoint.db_path)
+        try:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM conversation_events WHERE conversation_id=? "
+                    "AND kind='answer_applied' "
+                    "AND json_extract(payload,'$.answer_id')=?",
+                    (ask.child.conversation_id, answer.answer_id),
+                ).fetchone()
+                is not None
+            )
+        finally:
+            connection.close()
+
+    async def choose_answer(self, ask: AskReference, option_id: str) -> DurableAnswer:
+        assert (
+            await self.system.answer_permission_ask(
+                ask.child.conversation_id, public_ask_id(ask), option_id
+            )
+            is AnswerFate.saved
+        )
+        answer = self.saved_answer(ask)
+        assert answer is not None
+        return answer
+
+    async def choose_input(
+        self, ask: AskReference, answers: tuple[UserInputAnswer, ...]
+    ) -> DurableAnswer:
+        assert (
+            await self.system.answer_user_input(
+                ask.child.conversation_id, public_ask_id(ask), answers
+            )
+            is AnswerFate.saved
+        )
+        answer = self.saved_answer(ask)
+        assert answer is not None
+        return answer
 
     async def restart_vps_core(self, *, wait_ready: bool = True) -> None:
         await asyncio.wait_for(self.endpoint.close(), 2)
@@ -1098,12 +1181,7 @@ def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
             generation = harness.mac.identity.connection_generation
-            answer = harness.endpoint.runs.store.choose_answer(
-                harness.ask,
-                "allow",
-                generation,
-                1000,
-            )
+            answer = await harness.choose_answer(harness.ask, "allow")
             assert harness.endpoint.runs.link is not None
             harness.endpoint.runs.link.close()
             await eventually(
@@ -1119,12 +1197,11 @@ def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
             )
 
             def application_recorded() -> bool:
-                evidence = harness.endpoint.runs.store.ask_evidence(harness.ask)
-                return evidence is not None and evidence.applied_at_mac_ms is not None
+                return harness.answer_applied(harness.ask)
 
             await eventually(application_recorded, "Callback application did not become canonical")
             assert harness.native.start_count == harness.native.prompt_count == 1
-            assert harness.endpoint.runs.store.recorded_answer(harness.ask) == answer
+            assert harness.saved_answer(harness.ask) == answer
             assert harness.events("permission_asked") == 1
         finally:
             await harness.close()
@@ -1428,8 +1505,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
             assert len(endings) == 1
             assert endings[0].ending is ConversationTurnEnding.interrupted
             assert harness.endpoint.runs.store.has_closed_child_assignment(ask.child)
-            evidence = harness.endpoint.runs.store.ask_evidence(ask)
-            assert evidence is not None and evidence.reachability is AskReachability.child_gone
+            assert not harness.answer_applied(ask)
             state = harness.system._conversations["c_scripted"]
             assert not state.child_is_quarantined
             assert state.executor_child_reference is None
@@ -1524,12 +1600,12 @@ def test_remote_replayed_usage_compaction_and_ending_preserve_core_rules(
             assert harness.events("context_compacted") == 1
             assert harness.events("explicit_reply_missing") == 1
             assert not await harness.system.is_running("c_scripted")
-            evidence = harness.endpoint.runs.store.ask_evidence(harness.ask)
-            assert evidence is not None and evidence.reachability != AskReachability.reachable
-            with pytest.raises(PlannerError):
-                harness.endpoint.runs.store.choose_answer(
-                    harness.ask, "allow", harness.mac.identity.connection_generation, 1000
+            assert (
+                await harness.system.answer_permission_ask(
+                    "c_scripted", public_ask_id(harness.ask), "allow"
                 )
+                is AnswerFate.refused
+            )
         finally:
             await harness.close()
 
@@ -1637,11 +1713,11 @@ def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
         try:
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
-            assert await harness.endpoint.runs.answer_permission(
-                "c_scripted", public_ask_id(harness.ask), "allow", executor_ask=harness.ask
-            )
+            assert (await harness.system.answer_permission_ask(
+                "c_scripted", public_ask_id(harness.ask), "allow"
+            )) is AnswerFate.saved
             await eventually(
-                lambda: harness.events("permission_answered") == 1, "first answer did not commit"
+                lambda: harness.events("answer_applied") == 1, "first answer did not apply"
             )
             first_ask = harness.ask
             assert harness.native.sink is not None and harness.native.turn is not None
@@ -1658,18 +1734,13 @@ def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
             assert harness.ask != first_ask and harness.ask.ask_id == first_ask.ask_id
-            assert (
-                harness.endpoint.runs.ask_status("c_scripted", public_ask_id(harness.ask))[
-                    "answer_available"
-                ]
-                is True
-            )
-            assert await harness.endpoint.runs.answer_permission(
-                "c_scripted", public_ask_id(harness.ask), "deny", executor_ask=harness.ask
-            )
+            assert await harness.system.has_pending_permission_ask("c_scripted")
+            assert (await harness.system.answer_permission_ask(
+                "c_scripted", public_ask_id(harness.ask), "deny"
+            )) is AnswerFate.saved
             await eventually(
-                lambda: harness.events("permission_answered") == 2,
-                "second exact ask did not get its own answer row",
+                lambda: harness.events("answer_applied") == 2,
+                "second exact ask did not apply its own answer",
             )
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "answer receipts did not drain"
@@ -1937,34 +2008,6 @@ def test_concurrent_identical_inputs_keep_independent_downloads(
     asyncio.run(run())
 
 
-def test_historical_permission_evidence_cannot_overflow_reconnect_frame(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        try:
-            child = next(iter(harness.mac.runner._children.values())).reference
-            for index in range(600):
-                # This history exceeds the 1MiB frame bound when evidence is
-                # echoed as one list. It remains available in the VPS read store.
-                ask = AskReference(
-                    child,
-                    TurnToken("c_scripted", index + 2),
-                    f"historical_{index}_" + "x" * 2048,
-                    AskKind.permission,
-                )
-                harness.endpoint.runs.store.publish_ask(ask, ("allow", "deny"), 1000)
-            await harness.restart_vps_core()
-            assert harness.endpoint.runs.ready
-            assert len(harness.endpoint.runs.store.evidence_for_conversation("c_scripted")) == 600
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
-
-
 INPUT_ANSWERS = (UserInputAnswer("q_two", ("Red", "Blue")), UserInputAnswer("q_one", ("Yes",)))
 ORDERED_INPUT_ANSWERS = (INPUT_ANSWERS[1], INPUT_ANSWERS[0])
 
@@ -1986,17 +2029,16 @@ def test_complete_user_input_map_is_durable_before_drop_and_normalized_once(
                 (INPUT_ANSWERS[0], INPUT_ANSWERS[0]),
             )
             for answers in invalid_maps:
-                assert not await harness.endpoint.runs.answer_user_input(
-                    "c_scripted",
-                    public_ask_id(harness.input_ask),
-                    answers,
-                    executor_ask=harness.input_ask,
-                )
-            assert harness.endpoint.runs.store.recorded_answer(harness.input_ask) is None
+                assert (
+                    await harness.system.answer_user_input(
+                        "c_scripted",
+                        public_ask_id(harness.input_ask),
+                        answers,
+                    )
+                ) is AnswerFate.refused
+            assert harness.saved_answer(harness.input_ask) is None
             generation = harness.mac.identity.connection_generation
-            answer = harness.endpoint.runs.store.choose_user_input_answer(
-                harness.input_ask, INPUT_ANSWERS, generation, 1000
-            )
+            answer = await harness.choose_input(harness.input_ask, INPUT_ANSWERS)
             assert answer.option_id is None and answer.user_input_answers == ORDERED_INPUT_ANSWERS
             assert harness.endpoint.runs.link is not None
             harness.endpoint.runs.link.close()
@@ -2012,10 +2054,10 @@ def test_complete_user_input_map_is_durable_before_drop_and_normalized_once(
                 "stored map did not reach native callback",
             )
             await eventually(
-                lambda: harness.events("user_input_answered") == 1,
+                lambda: harness.answer_applied(harness.input_ask),
                 "application did not become canonical",
             )
-            assert harness.endpoint.runs.store.recorded_answer(harness.input_ask) == answer
+            assert harness.saved_answer(harness.input_ask) == answer
             await harness.restart_vps_core()
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "input application receipts did not drain"
@@ -2040,9 +2082,7 @@ def test_selected_user_input_map_survives_missing_callback_without_application(
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
             ask = harness.input_ask
-            answer = harness.endpoint.runs.store.choose_user_input_answer(
-                ask, INPUT_ANSWERS, harness.mac.identity.connection_generation, 1000
-            )
+            answer = await harness.choose_input(ask, INPUT_ANSWERS)
             child = next(iter(harness.mac.runner._children.values()))
             if loss == "callback":
                 child.user_inputs.clear()
@@ -2058,14 +2098,11 @@ def test_selected_user_input_map_survives_missing_callback_without_application(
                 ),
                 "missing input did not reconcile",
             )
-            evidence = harness.endpoint.runs.store.ask_evidence(ask)
-            assert evidence is not None and evidence.reachability is (
-                AskReachability.callback_gone if loss == "callback" else AskReachability.child_gone
-            )
-            assert evidence.applied_at_mac_ms is None
-            assert harness.endpoint.runs.store.recorded_answer(ask) == answer
+            assert not harness.answer_applied(ask)
+            assert harness.saved_answer(ask) == answer
             assert harness.native.user_answers == []
-            assert harness.events("user_input_answered") == 0
+            assert harness.events("user_input_answered") == 1
+            assert harness.events("answer_applied") == 0
         finally:
             await harness.close()
 
@@ -2083,14 +2120,15 @@ def test_user_input_request_id_reuse_gets_separate_answer_history(
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
             first = harness.input_ask
-            assert await harness.endpoint.runs.answer_user_input(
-                "c_scripted",
-                public_ask_id(harness.input_ask),
-                INPUT_ANSWERS,
-                executor_ask=harness.input_ask,
-            )
+            assert (
+                await harness.system.answer_user_input(
+                    "c_scripted",
+                    public_ask_id(harness.input_ask),
+                    INPUT_ANSWERS,
+                )
+            ) is AnswerFate.saved
             await eventually(
-                lambda: harness.events("user_input_answered") == 1,
+                lambda: harness.events("answer_applied") == 1,
                 "first input answer did not apply",
             )
             assert harness.native.sink is not None and harness.native.turn is not None
@@ -2113,15 +2151,16 @@ def test_user_input_request_id_reuse_gets_separate_answer_history(
                 UserInputAnswer("q_two", ("Blue",)),
             )
             assert harness.input_ask != first
-            assert await harness.endpoint.runs.answer_user_input(
-                "c_scripted",
-                public_ask_id(harness.input_ask),
-                second_answers,
-                executor_ask=harness.input_ask,
-            )
+            assert (
+                await harness.system.answer_user_input(
+                    "c_scripted",
+                    public_ask_id(harness.input_ask),
+                    second_answers,
+                )
+            ) is AnswerFate.saved
             await eventually(
-                lambda: harness.events("user_input_answered") == 2,
-                "reused input request lacked new history",
+                lambda: harness.events("answer_applied") == 2,
+                "reused input request lacked application proof",
             )
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "input results did not drain"
@@ -2161,19 +2200,19 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
                 message_files=ConversationMessageFiles(harness.endpoint.db_path),
                 database_path=harness.endpoint.db_path,
                 sse_heartbeat_ms=1000,
-                executor_endpoint=harness.endpoint.runs,
             )
             pending = await _pending_user_input(runtime, "c_scripted")
-            assert pending is not None and pending["answer_available"] is True
+            assert pending is not None
             assert len(pending["questions"]) == 2
             generation = harness.mac.identity.connection_generation
             harness.endpoint.cut_user_input_application = True
-            assert await harness.endpoint.runs.answer_user_input(
-                "c_scripted",
-                public_ask_id(harness.input_ask),
-                INPUT_ANSWERS,
-                executor_ask=harness.input_ask,
-            )
+            assert (
+                await harness.system.answer_user_input(
+                    "c_scripted",
+                    public_ask_id(harness.input_ask),
+                    INPUT_ANSWERS,
+                )
+            ) is AnswerFate.saved
             await eventually(
                 lambda: harness.endpoint.cut_count == 1,
                 "input application acknowledgment was not cut",
@@ -2191,12 +2230,13 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
             assert harness.native.user_answers == [("request_input", ORDERED_INPUT_ANSWERS)]
             assert harness.events("user_input_answered") == 1
             replacement = (UserInputAnswer("q_one", ("No",)), UserInputAnswer("q_two", ("Blue",)))
-            assert not await harness.endpoint.runs.answer_user_input(
-                "c_scripted",
-                public_ask_id(harness.input_ask),
-                replacement,
-                executor_ask=harness.input_ask,
-            )
+            assert (
+                await harness.system.answer_user_input(
+                    "c_scripted",
+                    public_ask_id(harness.input_ask),
+                    replacement,
+                )
+            ) is AnswerFate.refused
             assert harness.events("user_input_answered") == 1
         finally:
             await harness.close()
@@ -2450,22 +2490,20 @@ async def hold_reconnection(
     return resume
 
 
-async def post_owner_answer(harness: ExecutorHarness, ask: AskReference) -> dict[str, bool]:
+async def post_owner_answer(harness: ExecutorHarness, ask: AskReference) -> dict[str, str]:
     import httpx
     from fastapi import FastAPI
 
     from planner.conversation.api import _runtime, router
-    from planner.executor.protocol import encode_value
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
     runtime = SimpleNamespace(
         system=harness.system,
         database_path=harness.endpoint.db_path,
-        executor_endpoint=harness.endpoint.runs,
     )
     app.dependency_overrides[_runtime] = lambda: runtime
-    body = {"executor_ask": encode_value(ask)}
+    body: dict[str, Any] = {}
     if ask.kind is AskKind.permission:
         path = "permission-answers"
         body.update(ask_id=public_ask_id(ask), option_id="allow")
@@ -2482,7 +2520,7 @@ async def post_owner_answer(harness: ExecutorHarness, ask: AskReference) -> dict
     ) as client:
         response = await client.post(f"/api/conversations/c_scripted/{path}", json=body)
     assert response.status_code == 200, response.text
-    return cast(dict[str, bool], response.json())
+    return cast(dict[str, str], response.json())
 
 
 @pytest.mark.parametrize("kind", [AskKind.permission, AskKind.user_input])
@@ -2504,28 +2542,24 @@ def test_saved_answer_after_vps_restart_remains_unapplied(
                 await harness.wait_input_reachable()
                 ask = harness.input_ask
             resume = await hold_reconnection(harness, monkeypatch)
-            assert await post_owner_answer(harness, ask) == {"landed": True}
-            answer = harness.endpoint.runs.store.recorded_answer(ask)
+            assert await post_owner_answer(harness, ask) == {"fate": "saved"}
+            answer = harness.saved_answer(ask)
             assert answer is not None
             assert harness.endpoint.runs.pending_commands == {}
             assert harness.native.answers == [] and harness.native.user_answers == []
-            # Both accepted receipt and durable remote provenance survive without inventory.
             await harness.restart_vps_core(wait_ready=False)
-            assert harness.endpoint.runs.owns_conversation("c_scripted")
-            assert harness.endpoint.runs.conversation_context("c_scripted") is not None
-            assert await post_owner_answer(harness, ask) == {"landed": True}
-            assert harness.endpoint.runs.store.recorded_answer(ask) == answer
+            assert not harness.endpoint.runs.children
+            assert await post_owner_answer(harness, ask) == {"fate": "refused"}
+            assert harness.saved_answer(ask) == answer
             assert harness.endpoint.runs.pending_commands == {}
             resume.set()
             await eventually(lambda: harness.native.stop_count == 1, "old child was not stopped")
             state = harness.system._conversations["c_scripted"]
             await eventually(lambda: not state.child_is_quarantined, "stop proof did not settle")
             assert harness.native.answers == [] and harness.native.user_answers == []
-            evidence = harness.endpoint.runs.store.ask_evidence(ask)
-            assert evidence is not None and evidence.applied_at_mac_ms is None
-            assert harness.endpoint.runs.store.recorded_answer(ask) == answer
-            assert not harness.endpoint.runs.store.answer_target_is_open(ask)
-            assert await post_owner_answer(harness, ask) == {"landed": True}
+            assert not harness.answer_applied(ask)
+            assert harness.saved_answer(ask) == answer
+            assert await post_owner_answer(harness, ask) == {"fate": "refused"}
         finally:
             if resume is not None:
                 resume.set()
@@ -2553,24 +2587,24 @@ def test_ready_transition_sweeps_answer_saved_after_reconciliation(
                 await harness.wait_input_reachable()
                 ask = harness.input_ask
             resume = await hold_reconnection(harness, monkeypatch)
-            request = Link.request
+            request = Link.tell
 
             async def pause_ready(
                 self: Link, message_kind: WireMessageKind, payload: JsonObject, **kwargs: Any
-            ) -> WireMessage:
+            ) -> bool:
                 if message_kind is WireMessageKind.reconciliation_ready:
                     reached.set()
                     await ready_release.wait()
                 return await request(self, message_kind, payload, **kwargs)
 
-            monkeypatch.setattr(Link, "request", pause_ready)
+            monkeypatch.setattr(Link, "tell", pause_ready)
             resume.set()
             await asyncio.wait_for(reached.wait(), 5)
             assert not harness.endpoint.runs.ready
-            assert await post_owner_answer(harness, ask) == {"landed": True}
+            assert await post_owner_answer(harness, ask) == {"fate": "saved"}
             assert harness.endpoint.runs.pending_commands == {}
             ready_release.set()
-            event = "permission_answered" if kind is AskKind.permission else "user_input_answered"
+            event = "answer_applied"
             await eventually(
                 lambda: harness.events(event) == 1, "ready sweep missed durable answer"
             )
@@ -2605,8 +2639,8 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
                 await harness.wait_input_reachable()
                 ask = harness.input_ask
             resume = await hold_reconnection(harness, monkeypatch)
-            assert await post_owner_answer(harness, ask) == {"landed": True}
-            answer = harness.endpoint.runs.store.recorded_answer(ask)
+            assert await post_owner_answer(harness, ask) == {"fate": "saved"}
+            answer = harness.saved_answer(ask)
 
             async def stalled_cancel(*args: object) -> None:
                 cancel_entered.set()
@@ -2616,14 +2650,9 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
             old_system = harness.system
             interrupt = asyncio.create_task(old_system.interrupt("c_scripted"))
             await asyncio.wait_for(cancel_entered.wait(), 2)
-            evidence = harness.endpoint.runs.store.ask_evidence(ask)
-            assert evidence is not None and evidence.applied_at_mac_ms is None
-            # Conversation facts revoke answer authority before native cancel waits;
-            # the Mac's last reachability observation is no second copy of that fact.
-            assert not harness.endpoint.runs.store.answer_target_is_open(ask)
-            context = harness.endpoint.runs.store.turn_context("c_scripted")
-            assert context is not None and not context.ended
-            assert context.pending_permission_ask_ids == context.pending_user_input_ids == ()
+            assert not harness.answer_applied(ask)
+            state = old_system._conversations["c_scripted"]
+            assert state.running_turn is not None and state.running_turn.callbacks_revoked
             # A callback announced after revocation cannot create a newly answerable ask.
             await harness.native.raise_user_input("request_late")
             # Simulate a crash without permitting the pending native cancellation to finish.
@@ -2633,32 +2662,21 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
             await asyncio.gather(*tuple(state.settlement_tasks), return_exceptions=True)
             await asyncio.gather(interrupt, return_exceptions=True)
             await harness.restart_vps_core(wait_ready=False)
-            assert await post_owner_answer(harness, ask) == {"landed": True}
-            assert harness.endpoint.runs.store.recorded_answer(ask) == answer
+            assert await post_owner_answer(harness, ask) == {"fate": "refused"}
+            assert harness.saved_answer(ask) == answer
             resume.set()
             await eventually(lambda: harness.endpoint.runs.ready, "revoked turn did not reconcile")
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "late callback did not drain"
             )
             assert harness.native.answers == [] and harness.native.user_answers == []
-            assert (
-                harness.events("permission_answered") == harness.events("user_input_answered") == 0
-            )
-            assert (
-                harness.endpoint.runs._current_ask_evidence(
-                    "c_scripted",
-                    f"{ask.turn.turn_number}:user_input:request_late",
-                    AskKind.user_input,
-                )
-                is None
-            )
+            assert harness.events("answer_applied") == 0
+            assert not await harness.system.has_pending_user_input("c_scripted")
             state = harness.system._conversations["c_scripted"]
             await eventually(lambda: not state.child_is_quarantined, "restart stop did not settle")
             assert harness.native.stop_count == 1
             assert harness.endpoint.runs.pending_commands == {}
-            evidence = harness.endpoint.runs.store.ask_evidence(ask)
-            assert evidence is not None and evidence.reachability is AskReachability.child_gone
-            assert evidence.applied_at_mac_ms is None
+            assert not harness.answer_applied(ask)
             assert not await harness.system.is_running("c_scripted")
         finally:
             native_cancel.set()
@@ -2702,9 +2720,9 @@ def test_revocation_before_emission_blocks_immediate_send_and_pending_replay(
 
             monkeypatch.setattr(harness.endpoint.runs, "_emit_command", prepare)
             monkeypatch.setattr(harness.system, "_cancel_child_turn", stalled_cancel)
-            assert await post_owner_answer(harness, harness.ask) == {"landed": True}
+            assert await post_owner_answer(harness, harness.ask) == {"fate": "saved"}
             await asyncio.wait_for(prepared.wait(), 2)
-            answer = harness.endpoint.runs.store.recorded_answer(harness.ask)
+            answer = harness.saved_answer(harness.ask)
             assert answer is not None
             interrupt = asyncio.create_task(harness.system.interrupt("c_scripted"))
             await asyncio.wait_for(cancel_entered.wait(), 2)
@@ -2720,9 +2738,8 @@ def test_revocation_before_emission_blocks_immediate_send_and_pending_replay(
             )
             assert preparations == 2
             assert harness.native.answers == []
-            evidence = harness.endpoint.runs.store.ask_evidence(harness.ask)
-            assert evidence is not None and evidence.applied_at_mac_ms is None
-            assert harness.endpoint.runs.store.recorded_answer(harness.ask) == answer
+            assert not harness.answer_applied(harness.ask)
+            assert harness.saved_answer(harness.ask) == answer
             cancel_finish.set()
             await asyncio.wait_for(interrupt, 2)
         finally:
@@ -2763,14 +2780,14 @@ def test_frame_before_revocation_preserves_native_application_after_assignment_c
 
             monkeypatch.setattr(harness.native, "answer_permission_ask", delayed_native_answer)
             monkeypatch.setattr(harness.system, "_cancel_child_turn", stalled_cancel)
-            assert await post_owner_answer(harness, harness.ask) == {"landed": True}
+            assert await post_owner_answer(harness, harness.ask) == {"fate": "saved"}
             await asyncio.wait_for(callback_entered.wait(), 5)
             interrupt = asyncio.create_task(harness.system.interrupt("c_scripted"))
             await asyncio.wait_for(cancel_entered.wait(), 2)
             harness.endpoint.runs.store.close_child(harness.ask.child, 1000)
             applied.set()
             await eventually(
-                lambda: harness.events("permission_answered") == 1,
+                lambda: harness.answer_applied(harness.ask),
                 "retrospective closed-child application was discarded",
             )
             await eventually(
@@ -2778,9 +2795,8 @@ def test_frame_before_revocation_preserves_native_application_after_assignment_c
                 "nested outcome or standalone application was rejected",
             )
             assert harness.native.answers == [("ask_permission", "allow")]
-            evidence = harness.endpoint.runs.store.ask_evidence(harness.ask)
-            assert evidence is not None and evidence.applied_at_mac_ms is not None
-            assert await post_owner_answer(harness, harness.ask) == {"landed": True}
+            assert harness.answer_applied(harness.ask)
+            assert await post_owner_answer(harness, harness.ask) == {"fate": "refused"}
             cancel_finish.set()
             await asyncio.wait_for(interrupt, 2)
             assert harness.events("permission_answered") == 1
@@ -2811,7 +2827,7 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
         try:
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
-            emit_original = harness.system.emit_executor_answer
+            emit_original = harness.system.emit_answer
             calls = 0
 
             async def pause_emission(
@@ -2826,12 +2842,14 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
                 else:
                     replay_entered.set()
                     await replay_release.wait()
-                await emit_original(conversation_id, emit)
-                if first:
-                    first_returned.set()
+                try:
+                    await emit_original(conversation_id, emit)
+                finally:
+                    if first:
+                        first_returned.set()
 
-            monkeypatch.setattr(harness.system, "emit_executor_answer", pause_emission)
-            assert await post_owner_answer(harness, harness.ask) == {"landed": True}
+            monkeypatch.setattr(harness.system, "emit_answer", pause_emission)
+            assert await post_owner_answer(harness, harness.ask) == {"fate": "saved"}
             await asyncio.wait_for(first_entered.wait(), 2)
             generation = harness.mac.identity.connection_generation
             resume = await hold_reconnection(harness, monkeypatch)
@@ -2843,11 +2861,11 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
             # Stale generation is temporary. It must not cancel the shared result future.
             command, future = next(iter(harness.endpoint.runs.pending_commands.values()))
             assert not future.done()
-            answer = harness.endpoint.runs.store.recorded_answer(harness.ask)
+            answer = harness.saved_answer(harness.ask)
             assert answer is not None and command.command_id == answer.answer_id
             replay_release.set()
             await eventually(
-                lambda: harness.events("permission_answered") == 1,
+                lambda: harness.answer_applied(harness.ask),
                 "current generation replay lost the durable answer",
             )
             assert harness.native.answers == [("ask_permission", "allow")]
@@ -2931,7 +2949,7 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             monkeypatch.setattr(harness.native, "stop", final_native_event)
             monkeypatch.setattr(harness.endpoint.inbox, "accept", withheld_event)
             monkeypatch.setattr(harness.endpoint.runs, "_resolve_command", observed_hint)
-            assert await post_owner_answer(harness, harness.ask) == {"landed": True}
+            assert await post_owner_answer(harness, harness.ask) == {"fate": "saved"}
             await asyncio.wait_for(application_waiting.wait(), 5)
             killing = asyncio.create_task(harness.system.kill("c_scripted"))
             await asyncio.wait_for(stopping.wait(), 5)

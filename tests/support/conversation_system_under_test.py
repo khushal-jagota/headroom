@@ -70,6 +70,7 @@ from planner.conversation.backends.hermes_acp import (
     HermesAcpBackendChild,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationSystem,
@@ -395,14 +396,18 @@ class _CountedChild:
         await self._child.cancel_running_turn()
         self._conversation.expected_cancellations += 1
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         await self._child.answer_permission_ask(ask_id, option_id)
         self._conversation.expected_permission_answers += 1
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self, request_id: str, answers: tuple[UserInputAnswer, ...], **kwargs: object
+    ) -> AnswerFate:
         await self._child.answer_user_input(request_id, answers)
+        return AnswerFate.applied
 
     @property
     def stop_outside_lock(self) -> bool:
@@ -611,8 +616,8 @@ class ConversationSystemUnderTest:
         )
 
     async def answer_permission_ask(
-        self, conversation_id: str, ask_id: str, option_id: str
-    ) -> bool:
+        self, conversation_id: str, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         landed = await self._system.answer_permission_ask(conversation_id, ask_id, option_id)
         await self.settle()
         return landed

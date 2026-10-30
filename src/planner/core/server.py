@@ -273,9 +273,7 @@ def create_app(
                 run_automatic_recovery(conversation.system, conversation.store)
             )
             if executor_endpoint is not None:
-                from dataclasses import replace
 
-                conversation = replace(conversation, executor_endpoint=executor_endpoint.runs)
                 executor_endpoint.configure(conversation.system, app)
             from planner.conversation.model_resolution.observer import ProductionCatalogObserver
             from planner.tickets.contracts import TicketLocale

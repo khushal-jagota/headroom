@@ -3,7 +3,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../../lib/queryCatalogue";
   import { macActivityKnown, type TicketLocale } from "../../lib/ticketMachines";
-  import { executorAnswerAvailable, currentExecutorAnswers, currentExecutorAskRecord, executorAnswerSentence, executorUnavailableSentence } from "../../lib/conversation/executorEvidence";
+  import { executorAnswerAvailable, executorAnswerSentence, EXECUTOR_ASK_UNCERTAIN } from "../../lib/conversation/executorEvidence";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** A conversation, bound to the system that runs it.
    *
@@ -196,7 +196,7 @@
     if (capturedPickerRequest) untrack(() => void readScopedChoices(capturedPickerRequest!));
   });
 
-  let remote = $derived(locale === "macos" || view?.executor_context != null);
+  let remote = $derived(locale === "macos");
   const healthQuery = createQuery(() => ({...queries.executorHealth(), enabled:remote}), () => queryClient);
   let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
   $effect(() => {
@@ -270,13 +270,11 @@
     reader?.status?.pending_permission?.request_id === ask?.askId));
   let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
     reader?.status?.pending_user_input?.request_id === userInput?.requestId));
-  let executorAnswers = $derived(currentExecutorAnswers(view));
-  let permissionRecord = $derived(currentExecutorAskRecord(view,"permission",ask?.askId));
-  let userInputRecord = $derived(currentExecutorAskRecord(view,"user_input",userInput?.requestId));
-  let permissionNote = $derived(executorAnswerSentence(permissionRecord) ?? (askNoteKey === `permission:${ask?.askId}` ? askNote : null) ??
-    (remote && !permissionAvailable ? executorUnavailableSentence(view?.pending_permission_ask?.executor_evidence) : null));
-  let userInputNote = $derived(executorAnswerSentence(userInputRecord) ?? (askNoteKey === `user_input:${userInput?.requestId}` ? askNote : null) ??
-    (remote && !userInputAvailable ? executorUnavailableSentence(view?.pending_user_input?.executor_evidence) : null));
+  let executorAnswers = $derived(rows.filter(row => (row.kind === "permission_ask" || row.kind === "user_input") && row.answerFate).map(row => ({answerId:row.key,sentence:executorAnswerSentence((row as {answerFate:"saved"|"applied"|"unconfirmed"}).answerFate)})));
+  let permissionNote = $derived((askNoteKey === `permission:${ask?.askId}` ? askNote : null) ??
+    (remote && !permissionAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
+  let userInputNote = $derived((askNoteKey === `user_input:${userInput?.requestId}` ? askNote : null) ??
+    (remote && !userInputAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
   const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
@@ -897,9 +895,9 @@
     askNote = null;
     busy = true;
     try {
-      const { landed } = await answerPermissionAsk(openedId, askId, optionId, view?.pending_permission_ask?.executor_evidence?.ask);
-      askNote = landed
-        ? remote ? "Answer saved on VPS; delivery to Mac is pending." : null
+      const { fate } = await answerPermissionAsk(openedId, askId, optionId);
+      askNote = fate !== "refused"
+        ? fate === "saved" ? "Answer saved on VPS; delivery to Mac is pending." : null
         : "The backend did not take that answer. Cancelling the turn always works.";
       await refreshView();
     } catch (error) {
@@ -916,9 +914,9 @@
     askNote = null;
     busy = true;
     try {
-      const { landed } = await answerUserInput(openedId, requestId, answers, view?.pending_user_input?.executor_evidence?.ask);
-      askNote = landed
-        ? remote ? "Answer saved on VPS; delivery to Mac is pending." : null
+      const { fate } = await answerUserInput(openedId, requestId, answers);
+      askNote = fate !== "refused"
+        ? fate === "saved" ? "Answer saved on VPS; delivery to Mac is pending." : null
         : "The backend did not take those answers. You can try again or stop the turn.";
       await refreshView();
     } catch (error) {
@@ -1021,8 +1019,8 @@
   });
 </script>
 
-{#each executorAnswers as record (record.answer?.answer_id)}
-  <p class="executor-answer-status" data-executor-answer-status role="status">{executorAnswerSentence(record)}</p>
+{#each executorAnswers as record (record.answerId)}
+  <p class="executor-answer-status" data-executor-answer-status role="status">{record.sentence}</p>
 {/each}
 <ConversationPane
   roleLabel={label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}

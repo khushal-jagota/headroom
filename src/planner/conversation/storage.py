@@ -1673,6 +1673,21 @@ class ConversationStore:
         append_projection(conn, written)
         return tuple(written)
 
+    @staticmethod
+    def read_answer_events_in_transaction(
+        conn: sqlite3.Connection, conversation_id: str, answer_id: str
+    ) -> tuple[StoredConversationEvent, ...]:
+        return tuple(
+            _stored_event(row)
+            for row in conn.execute(
+                "SELECT conversation_id,sequence,kind,payload,created_at FROM conversation_events "
+                "WHERE conversation_id=? "
+                "AND kind IN ('permission_answered','user_input_answered','answer_applied') "
+                "AND json_extract(payload,'$.answer_id')=? ORDER BY sequence",
+                (conversation_id, answer_id),
+            )
+        )
+
     def _read_events_after_sync(
         self, conversation_id: str, after_sequence: int
     ) -> tuple[StoredConversationEvent, ...]:

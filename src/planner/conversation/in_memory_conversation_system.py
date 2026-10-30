@@ -19,6 +19,7 @@ from enum import StrEnum
 
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
+    AnswerFate,
     ConversationAlreadyStarted,
     ConversationStartRequest,
     ConversationTurnReference,
@@ -815,19 +816,21 @@ class InMemoryConversationSystem:
         )
         return ask_id
 
-    def answer_permission_ask(self, conversation_id: str, ask_id: str, option_id: str) -> bool:
+    def answer_permission_ask(
+        self, conversation_id: str, ask_id: str, option_id: str
+    ) -> AnswerFate:
         """Answer an ask, as the browser would. Only a still-pending ask of the live turn
         takes the answer; anything else changes nothing and reports that it did not land.
         """
         state = self._conversations.get(conversation_id)
         if state is None:
-            return False
+            return AnswerFate.refused
         running_turn = state.running_turn
         session = state.backend_session
         if running_turn is None or session is None:
-            return False
+            return AnswerFate.refused
         if ask_id not in running_turn.pending_permission_ask_ids:
-            return False
+            return AnswerFate.refused
         running_turn.pending_permission_ask_ids.remove(ask_id)
         session.pending_permission_answers[ask_id] = option_id
         state.observations.append(
@@ -836,7 +839,7 @@ class InMemoryConversationSystem:
                 permission_ask_id=ask_id,
             )
         )
-        return True
+        return AnswerFate.applied
 
     def raise_user_input(
         self, conversation_id: str, questions: tuple[UserInputQuestion, ...]
@@ -865,10 +868,10 @@ class InMemoryConversationSystem:
         conversation_id: str,
         request_id: str,
         answers: tuple[UserInputAnswer, ...],
-    ) -> bool:
+    ) -> AnswerFate:
         state = self._conversations.get(conversation_id)
         if state is None or state.running_turn is None or state.backend_session is None:
-            return False
+            return AnswerFate.refused
         questions = state.running_turn.pending_user_input_questions.get(request_id)
         answers_by_question_id = {answer.question_id: answer for answer in answers}
         if (
@@ -876,7 +879,7 @@ class InMemoryConversationSystem:
             or len(answers_by_question_id) != len(answers)
             or set(answers_by_question_id) != {question.question_id for question in questions}
         ):
-            return False
+            return AnswerFate.refused
         ordered_answers = tuple(
             answers_by_question_id[question.question_id] for question in questions
         )
@@ -893,7 +896,7 @@ class InMemoryConversationSystem:
             )
             for question, answer in zip(questions, ordered_answers, strict=True)
         ):
-            return False
+            return AnswerFate.refused
         del state.running_turn.pending_user_input_questions[request_id]
         state.backend_session.pending_user_input_answers[request_id] = ordered_answers
         state.observations.append(
@@ -903,7 +906,7 @@ class InMemoryConversationSystem:
                 user_input_answers=ordered_answers,
             )
         )
-        return True
+        return AnswerFate.applied
 
     def arm_backend_start_failure(self, conversation_id: str) -> None:
         """The backend process will not spawn when this conversation next needs it."""

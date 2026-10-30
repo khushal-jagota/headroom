@@ -23,6 +23,7 @@ from planner.conversation.backends.contracts import (
     PermissionAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     ConversationAttention,
     ConversationBackendKey,
     ConversationStartRequest,
@@ -211,29 +212,33 @@ def test_actual_turn_pending_answer_and_end_share_source_boundary(
             request = await runtime.request_user_input("c")
             assert _latest_attention(batches).awaiting_answer
             runtime.backend("c").permission_answer_write_fails = True
-            assert not await runtime.system.answer_permission_ask("c", permission, "allow-once")
+            assert (
+                await runtime.system.answer_permission_ask("c", permission, "allow-once")
+            ) is AnswerFate.refused
             assert await runtime.system.has_pending_permission_ask("c")
             runtime.backend("c").permission_answer_write_fails = False
-            assert await runtime.system.answer_permission_ask("c", permission, "deny")
+            assert (
+                await runtime.system.answer_permission_ask("c", permission, "deny")
+            ) is AnswerFate.applied
             state = runtime.system._conversations["c"]
             assert state.running_turn is not None
             assert state.running_turn.user_input_provider_ids[request.request_id] == "input-1"
             runtime.backend("c").user_input_answer_write_fails = True
-            assert not await runtime.system.answer_user_input(
+            assert (await runtime.system.answer_user_input(
                 "c",
                 request.request_id,
                 (UserInputAnswer("scope", ("Backend",)), UserInputAnswer("timing", ("Now",))),
-            )
+            )) is AnswerFate.refused
             assert await runtime.system.has_pending_user_input("c")
             runtime.backend("c").user_input_answer_write_fails = False
-            assert await runtime.system.answer_user_input(
+            assert (await runtime.system.answer_user_input(
                 "c",
                 request.request_id,
                 (
                     UserInputAnswer("scope", ("Backend",)),
                     UserInputAnswer("timing", ("Now",)),
                 ),
-            )
+            )) is AnswerFate.applied
             assert not _latest_attention(batches).awaiting_answer
             assert not await runtime.system.has_pending_permission_ask("c")
             assert not await runtime.system.has_pending_user_input("c")
@@ -366,7 +371,7 @@ def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
             assert running is not None
             entered, release = asyncio.Event(), asyncio.Event()
 
-            async def blocked_send(*args: object) -> None:
+            async def blocked_send(*args: object, **kwargs: object) -> None:
                 assert not _latest_attention(batches).awaiting_answer
                 assert not running.pending_permission_ask_ids
                 entered.set()
@@ -387,7 +392,7 @@ def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
                 None,
             )
             release.set()
-            assert not await answer
+            assert await answer is AnswerFate.refused
             assert state.running_turn is None
             assert not await runtime.system.has_pending_permission_ask("c")
             assert await runtime.system.pending_permission_ask_ids("c") == frozenset()

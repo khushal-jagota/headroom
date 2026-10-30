@@ -27,6 +27,7 @@ import pytest
 
 import planner.conversation.contracts as conversation_contracts
 from planner.conversation.contracts import (
+    AnswerFate,
     ConversationAlreadyStarted,
     ConversationBackendKey,
     ConversationStartRequest,
@@ -185,8 +186,8 @@ class ConversationSystemUnderTest(Protocol):
         Returns the ask's id."""
 
     async def answer_permission_ask(
-        self, conversation_id: str, ask_id: str, option_id: str
-    ) -> bool:
+        self, conversation_id: str, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         """Answer an ask as the browser would, returning whether it landed. The system
         has finished reacting to it by the time this returns."""
 
@@ -1267,7 +1268,9 @@ class ConversationContractConformanceSuite:
             assert await subject.system.is_running("c") is True
             ask_id = await subject.raise_permission_ask("c")
             assert await subject.system.is_running("c") is True
-            assert await subject.answer_permission_ask("c", ask_id, "allow-once") is True
+            assert (
+                await subject.answer_permission_ask("c", ask_id, "allow-once")
+            ) is AnswerFate.applied
             await subject.complete_running_turn("c")
             assert await subject.system.is_running("c") is False
 
@@ -1397,7 +1400,9 @@ class ConversationContractConformanceSuite:
                 _facts_of_kind(await subject.recorded_facts("c"), RecordedFactKind.turn_ended) == ()
             )
 
-            assert await subject.answer_permission_ask("c", ask_id, "allow-once") is True
+            assert (
+                await subject.answer_permission_ask("c", ask_id, "allow-once")
+            ) is AnswerFate.applied
             await subject.complete_running_turn("c")
             assert await subject.system.is_running("c") is False
             assert tuple(
@@ -1416,7 +1421,9 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(_start_request("c"))
             await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             ask_id = await subject.raise_permission_ask("c")
-            assert await subject.answer_permission_ask("c", ask_id, "allow-once") is True
+            assert (
+                await subject.answer_permission_ask("c", ask_id, "allow-once")
+            ) is AnswerFate.applied
             assert await subject.backend_permission_answer("c", ask_id) == "allow-once"
             assert _facts_of_kind(
                 await subject.recorded_facts("c"), RecordedFactKind.permission_answered
@@ -1450,15 +1457,19 @@ class ConversationContractConformanceSuite:
             )
             ask_id = await subject.raise_permission_ask("live")
 
-            assert await subject.answer_permission_ask("live", "no-such-ask", "allow") is False
+            assert (
+                await subject.answer_permission_ask("live", "no-such-ask", "allow")
+            ) is AnswerFate.refused
             assert await subject.backend_permission_answer("live", "no-such-ask") is None
             assert _facts_of_kind(
                 await subject.recorded_facts("live"), RecordedFactKind.permission_answered
             ) == ()
 
-            assert await subject.answer_permission_ask("live", ask_id, "allow-once") is True
+            assert (
+                await subject.answer_permission_ask("live", ask_id, "allow-once")
+            ) is AnswerFate.applied
             facts_after_the_real_answer = await subject.recorded_facts("live")
-            assert await subject.answer_permission_ask("live", ask_id, "deny") is False
+            assert await subject.answer_permission_ask("live", ask_id, "deny") is AnswerFate.refused
             assert await subject.backend_permission_answer("live", ask_id) == "allow-once"
             assert await subject.recorded_facts("live") == facts_after_the_real_answer
 
@@ -1470,7 +1481,9 @@ class ConversationContractConformanceSuite:
             )
             dead_ask_id = await subject.raise_permission_ask("dead")
             await subject.system.interrupt("dead")
-            assert await subject.answer_permission_ask("dead", dead_ask_id, "allow") is False
+            assert (
+                await subject.answer_permission_ask("dead", dead_ask_id, "allow")
+            ) is AnswerFate.refused
             assert await subject.backend_permission_answer("dead", dead_ask_id) is None
             assert _facts_of_kind(
                 await subject.recorded_facts("dead"), RecordedFactKind.permission_answered
@@ -1677,7 +1690,7 @@ class ConversationContractConformanceSuite:
             ask_id = await subject.raise_permission_ask("c")
             assert await subject.system.has_pending_permission_ask("c")
 
-            assert await subject.answer_permission_ask("c", ask_id, "allow")
+            assert (await subject.answer_permission_ask("c", ask_id, "allow")) is AnswerFate.applied
             assert not await subject.system.has_pending_permission_ask("c")
 
             await subject.raise_permission_ask("c")

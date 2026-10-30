@@ -28,6 +28,7 @@ from enum import StrEnum
 from typing import Any, ClassVar, Final, Literal, assert_never, cast
 
 from planner.conversation.contracts import (
+    AnswerFate,
     ConversationBackendKey,
     DeploymentRecoveryReference,
     PromptDeliveryMode,
@@ -61,6 +62,7 @@ class ConversationEventKind(StrEnum):
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
+    answer_applied = "answer_applied"
     user_input_requested = "user_input_requested"
     user_input_answered = "user_input_answered"
     user_input_failed = "user_input_failed"
@@ -416,6 +418,16 @@ class PermissionAnsweredEventPayload:
 
     ask_id: str
     option_id: str
+    fate: AnswerFate = AnswerFate.applied
+    answer_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerAppliedEventPayload:
+    """Proof that the original callback took a previously saved answer."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.answer_applied
+    answer_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,6 +448,8 @@ class UserInputAnsweredEventPayload:
 
     request_id: str
     answers: tuple[UserInputAnswer, ...]
+    fate: AnswerFate = AnswerFate.applied
+    answer_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -545,6 +559,7 @@ type ConversationEventPayload = (
     | ToolCallStartedEventPayload
     | ToolCallFinishedEventPayload
     | PermissionAskedEventPayload
+    | AnswerAppliedEventPayload
     | PermissionAnsweredEventPayload
     | UserInputRequestedEventPayload
     | UserInputAnsweredEventPayload
@@ -787,7 +802,17 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 ],
             }
         case PermissionAnsweredEventPayload():
-            return {"ask_id": payload.ask_id, "option_id": payload.option_id}
+            return {
+                "ask_id": payload.ask_id,
+                "option_id": payload.option_id,
+                **(
+                    {"fate": payload.fate.value, "answer_id": payload.answer_id}
+                    if payload.answer_id is not None
+                    else {}
+                ),
+            }
+        case AnswerAppliedEventPayload():
+            return {"answer_id": payload.answer_id}
         case UserInputRequestedEventPayload():
             return {
                 "request_id": payload.request_id,
@@ -811,6 +836,11 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case UserInputAnsweredEventPayload():
             return {
+                **(
+                    {"fate": payload.fate.value, "answer_id": payload.answer_id}
+                    if payload.answer_id is not None
+                    else {}
+                ),
                 "request_id": payload.request_id,
                 "answers": {
                     answer.question_id: {"answers": list(answer.answers)}
@@ -829,9 +859,12 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             return {"model": payload.model, "reasoning_effort": payload.reasoning_effort}
         case ProviderSelectionReportedEventPayload():
             return {
-                "provider": str(payload.provider), "source_kind": payload.source_kind,
-                "model": payload.model, "reasoning_effort": payload.reasoning_effort,
-                "turn_number": payload.turn_number, "child_lifetime": payload.child_lifetime,
+                "provider": str(payload.provider),
+                "source_kind": payload.source_kind,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "turn_number": payload.turn_number,
+                "child_lifetime": payload.child_lifetime,
                 "submitted_token": payload.submitted_token,
                 "requested_reasoning_effort": payload.requested_reasoning_effort,
                 "blocks_submission": payload.blocks_submission,
@@ -984,8 +1017,13 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.permission_answered:
             return PermissionAnsweredEventPayload(
-                ask_id=_text(stored, "ask_id"), option_id=_text(stored, "option_id")
+                ask_id=_text(stored, "ask_id"),
+                option_id=_text(stored, "option_id"),
+                fate=AnswerFate(stored.get("fate", "applied")),
+                answer_id=stored.get("answer_id"),
             )
+        case ConversationEventKind.answer_applied:
+            return AnswerAppliedEventPayload(answer_id=_text(stored, "answer_id"))
         case ConversationEventKind.user_input_requested:
             return UserInputRequestedEventPayload(
                 request_id=_text(stored, "request_id"),
@@ -1012,6 +1050,8 @@ def _payload_from_json_object(
             if not isinstance(answers, dict):
                 raise ValueError("answers must be an object")
             return UserInputAnsweredEventPayload(
+                fate=AnswerFate(stored.get("fate", "applied")),
+                answer_id=stored.get("answer_id"),
                 request_id=_text(stored, "request_id"),
                 answers=tuple(
                     UserInputAnswer(
@@ -1045,7 +1085,8 @@ def _payload_from_json_object(
         case ConversationEventKind.provider_selection_reported:
             return ProviderSelectionReportedEventPayload(
                 provider=ConversationBackendKey(_text(stored, "provider")),
-                source_kind=_text(stored, "source_kind"), model=_text(stored, "model"),
+                source_kind=_text(stored, "source_kind"),
+                model=_text(stored, "model"),
                 reasoning_effort=_optional_text(stored, "reasoning_effort"),
                 turn_number=int(stored["turn_number"]),
                 child_lifetime=_text(stored, "child_lifetime"),

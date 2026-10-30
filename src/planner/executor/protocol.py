@@ -147,47 +147,6 @@ class ExecutorHealthRead(TypedDict):
     last_contact_source: Literal["vps_received_valid_executor_frame"]
 
 
-class AskReachability(StrEnum):
-    uncertain = "uncertain"
-    reachable = "reachable"
-    child_gone = "child_gone"
-    callback_gone = "callback_gone"
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutorTurnContext:
-    """Durable provenance and closure for the canonical remote turn."""
-
-    child: ChildReference
-    turn: TurnToken
-    pending_permission_ask_ids: tuple[str, ...]
-    pending_user_input_ids: tuple[str, ...]
-    ended: bool
-    source_retired: bool
-    delivery_uncertain: bool
-    callbacks_revoked: bool
-
-
-@dataclass(frozen=True, slots=True)
-class AnswerAdmission:
-    ask: AskReference
-    context: ExecutorTurnContext | None
-    assignment_open: bool
-    reachability: AskReachability
-
-
-@dataclass(frozen=True, slots=True)
-class AskEvidence:
-    """Reachability and durable answer/application are independent facts."""
-
-    ask: AskReference
-    connection_generation: int
-    reachability: AskReachability
-    observed_at_ms: int
-    answer_id: str | None = None
-    applied_at_mac_ms: int | None = None
-
-
 @dataclass(frozen=True, slots=True)
 class DurableAnswer:
     answer_id: str
@@ -922,8 +881,8 @@ def as_object(value: object) -> JsonObject:
 
 
 class MacRunConversations(Protocol):
-    async def emit_executor_answer(
-        self, conversation_id: str, emit: Callable[[], Coroutine[Any, Any, None]]
+    async def emit_answer(
+        self, turn: TurnToken, emit: Callable[[], Coroutine[Any, Any, None]]
     ) -> None: ...
 
     async def interrupt_replaced_executor_runs(self, current_incarnation: str) -> None: ...
@@ -943,10 +902,11 @@ class MacInboxConversations(Protocol):
         conversation_id: str | None = None,
     ) -> AcceptedEvent: ...
 
-    async def receive_remote_answer_application(
+    async def take_answer_application(
         self,
-        application: AnswerApplication,
+        turn: TurnToken,
+        answer_id: str,
+        provider_id: str,
+        kind: str,
         in_commit: CommitParticipant,
-        record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
-        public_request_id: str | None,
-    ) -> AcceptanceReceipt: ...
+    ) -> AcceptedEvent: ...

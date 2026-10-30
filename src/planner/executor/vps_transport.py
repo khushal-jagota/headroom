@@ -49,6 +49,7 @@ from planner.executor.protocol import (
     WireMessage,
     WireMessageKind,
     WritePrompt,
+    decode_event_arguments,
     encode_value,
 )
 from planner.executor.vps_inbox import MacInbox, MissingFiles
@@ -254,7 +255,9 @@ class VpsExecutor:
                     raise ValueError("live frame must not carry a recorded event")
                 if event.child.executor_incarnation != identity.executor_incarnation:
                     raise ValueError("live event incarnation conflicts with connection")
-                await self.conversations.receive_remote_live_backend_event(event)
+                await self.conversations.receive_remote_live_backend_event(
+                    event.child, event.turn, decode_event_arguments(event)
+                )
                 return
             elif message.kind is WireMessageKind.envelope:
                 envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)

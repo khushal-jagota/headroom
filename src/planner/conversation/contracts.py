@@ -429,6 +429,14 @@ class ResolvedConversationStart:
     workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
 
 
+class AnswerFate(StrEnum):
+    """Applied by the backend, saved in this process, or refused."""
+
+    applied = "applied"
+    saved = "saved"
+    refused = "refused"
+
+
 class PromptDeliveryMode(StrEnum):
     """How a sent message should meet the agent. One parameter, three values.
 

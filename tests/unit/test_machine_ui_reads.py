@@ -13,7 +13,6 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI, Request
 from tests.support.executor_control import MessageReader, message_link
-from tests.support.executor_turns import persist_pending_turn
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -22,12 +21,10 @@ from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor import link as link_module
 from planner.executor import vps_transport as vps
 from planner.executor.protocol import (
-    AskEvidence,
-    AskReachability,
     ConnectionState,
     ExecutorHealth,
     JsonObject,
@@ -169,50 +166,6 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
     asyncio.run(run())
 
 
-def test_durable_context_matches_exact_child_after_restart_and_allows_offline_answer(
-    tmp_db: Connection,
-    fake_clock: ClockForTest,
-) -> None:
-    from planner.conversation.backends.contracts import TurnToken
-
-    endpoint = _endpoint(tmp_db, fake_clock)
-    actual = ChildReference("inc", "actual", "conversation")
-    ask = AskReference(actual, TurnToken("conversation", 1), "ask", AskKind.permission)
-    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
-    endpoint.runs.store.begin_connection(identity, 100)
-    # This fixture represents a new combined-release ask with an explicit public/provider map.
-    persist_pending_turn(
-        endpoint.runs.store,
-        ask,
-        runtime_overrides={
-            "pending_permission_ask_ids": ["1:permission:ask"],
-            "permission_provider_ids": {"1:permission:ask": "ask"},
-            "user_input_provider_ids": {},
-        },
-    )
-    old = replace(ask, child=replace(actual, child_id="old"))
-    endpoint.runs.store.publish_ask(old, ("allow", "deny"), 100)
-    assert endpoint.runs._current_ask_evidence("conversation", "1:permission:ask") is None
-    endpoint.runs.store.publish_ask(ask, ("allow", "deny"), 101)
-    # A new endpoint has no live children, runtime state, connection or inventory.
-    restored = _endpoint(tmp_db, fake_clock)
-    assert restored.runs.children == {} and restored.runs.identity is None
-    assert restored.runs.owns_conversation("conversation")
-    assert restored.runs.conversation_context("conversation") == {
-        "child": encode_value(actual),
-        "turn": encode_value(ask.turn),
-    }
-    status = restored.runs.ask_status("conversation", "1:permission:ask")
-    assert status["answer_available"] is True
-    assert restored.runs.ask_status("conversation", "other")["answer_available"] is False
-    answer = restored.runs.store.choose_answer(ask, "allow", 999, 200)
-    assert restored.runs.ask_status("conversation", "1:permission:ask")["answer_available"] is False
-    assert restored.runs.conversation_asks("conversation")[-1]["answer"] == encode_value(answer)
-    restored.runs.store.close_child(actual, 201)
-    final = _endpoint(tmp_db, fake_clock)
-    assert final.runs.ask_status("conversation", "1:permission:ask")["answer_available"] is False
-    evidence = final.runs._current_ask_evidence("conversation", "1:permission:ask")
-    assert evidence is not None and evidence.reachability == AskReachability.child_gone
 
 
 def test_draft_inherits_project_matches_write_and_never_writes(
@@ -345,10 +298,6 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
     async def handle(message: WireMessage, identity: ExecutorIdentity, writer: Any) -> None:
         assert endpoint.last_contact_at_ms == 200
         assert endpoint.observed_at_ms == 100
-        assert (
-            endpoint.runs.ask_status("conversation", "1:permission:ask")["answer_available"]
-            is False
-        )
         await original_handle(message, identity, writer)
         received.set()
 
@@ -369,14 +318,6 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
         endpoint.bind_conversations(
             cast(Any, SimpleNamespace(_conversations={"conversation": state}))
         )
-        evidence = AskEvidence(
-            AskReference(child_reference, turn, "ask", AskKind.permission),
-            identity.connection_generation,
-            AskReachability.uncertain,
-            100,
-        )
-        monkeypatch.setattr(endpoint.runs.store, "evidence_for_conversation", lambda _: (evidence,))
-        # A control receipt shows contact, but this ask still lacks liveness.
         endpoint.runs.ready = True
         tick[0] = 200
         request_id = str(uuid4())
@@ -389,10 +330,6 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
         await asyncio.wait_for(response, 1)
         assert response.done()
         assert response.result().kind is WireMessageKind.transport_opened
-        assert (
-            endpoint.runs.ask_status("conversation", "1:permission:ask")["answer_available"]
-            is False
-        )
         assert endpoint.health()["last_contact_at_ms"] == 200
         await endpoint.close()
         reader.feed_eof()

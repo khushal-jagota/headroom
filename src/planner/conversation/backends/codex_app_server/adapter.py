@@ -103,6 +103,7 @@ from planner.conversation.backends.contracts import (
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
@@ -686,7 +687,14 @@ class CodexAppServerBackendChild:
                 self._resolved_start.conversation_id,
             )
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self,
+        ask_id: str,
+        option_id: str,
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give codex the option a person chose, as the answer to the request it is holding."""
         turn = self._turn
         parked = None if turn is None else turn.parked_asks.pop(ask_id, None)
@@ -705,10 +713,16 @@ class CodexAppServerBackendChild:
             # The answer has not landed, so the ask is still waiting for one.
             turn.parked_asks[ask_id] = parked
             raise PermissionAnswerWriteFailed(str(did_not_reach)) from did_not_reach
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Return every answer to the Codex request that is still held open."""
         turn = self._turn
         parked = None if turn is None else turn.parked_user_inputs.pop(request_id, None)
@@ -726,6 +740,7 @@ class CodexAppServerBackendChild:
         except CodexAppServerError as did_not_reach:
             turn.parked_user_inputs[request_id] = parked
             raise UserInputAnswerWriteFailed(str(did_not_reach)) from did_not_reach
+        return AnswerFate.applied
 
     @property
     def stop_outside_lock(self) -> bool:

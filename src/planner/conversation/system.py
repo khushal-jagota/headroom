@@ -99,6 +99,7 @@ from planner.conversation.backends.contracts import (
 )
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
+    AnswerFate,
     ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationStartRequest,
@@ -121,6 +122,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
+    AnswerAppliedEventPayload,
     AutomaticCompactionResult,
     ContextCompactedEventPayload,
     ConversationEventPayload,
@@ -204,11 +206,6 @@ from planner.core import change_signal
 from planner.core.commit_capture import register_capture_task
 from planner.core.contracts import JsonDict, PlannerError, Principal, PrincipalKind
 from planner.execution_identity import ChildReference
-from planner.executor.protocol import (
-    AcceptanceReceipt,
-    AnswerApplication,
-    BackendEvent,
-)
 
 LOGGER = logging.getLogger("planner.conversation")
 
@@ -1946,36 +1943,36 @@ class SqliteProcessConversationSystem:
 
     async def answer_permission_ask(
         self, conversation_id: str, ask_id: str, option_id: str
-    ) -> bool:
+    ) -> AnswerFate:
         state = await self._conversation_state(conversation_id)
         if state is None:
-            return False
+            return AnswerFate.refused
         return await self._own_settlement(
             state, self._answer_permission_ask(conversation_id, ask_id, option_id)
         )
 
     async def _answer_permission_ask(
         self, conversation_id: str, ask_id: str, option_id: str
-    ) -> bool:
-        """Give the backend the option a person chose, and say whether it landed.
+    ) -> AnswerFate:
+        """Apply or save the option chosen for the live pending request.
 
-        It lands only if the ask is still pending on the turn that is live now *and* the
-        backend took the answer. Answering an unknown ask, an already-answered ask, or an
+        A saved choice is accepted for delivery; only application proof says it landed.
+        Answering an unknown ask, an already-answered ask, or an
         ask whose turn has ended changes nothing and records nothing. An answer the backend
         would not take leaves the ask waiting, so it can be given again.
         """
         state = await self._conversation_state(conversation_id)
         if state is None:
-            return False
+            return AnswerFate.refused
         state.last_touched_monotonic = self._monotonic_now()
 
         async with state.lock:
             running = state.running_turn
             child = state.child
             if running is None or child is None:
-                return False
+                return AnswerFate.refused
             if ask_id not in running.pending_permission_ask_ids:
-                return False
+                return AnswerFate.refused
             # Taken out of the pending set before the wire write, so a second answer
             # arriving at the same time finds nothing to answer.
             provider_id = running.permission_provider_ids[ask_id]
@@ -2006,16 +2003,35 @@ class SqliteProcessConversationSystem:
                 running.pending_permission_ask_ids.discard(ask_id)
             answered_turn_token = running.token
 
-        reached_the_backend = True
+        fate = AnswerFate.applied
         try:
-            await child.answer_permission_ask(provider_id, option_id)
+            fate = (
+                await child.answer_permission_ask(
+                    provider_id,
+                    option_id,
+                    answer_id=attempt.identity,
+                    turn_token=answered_turn_token,
+                )
+            )
         except PermissionAnswerWriteFailed:
-            reached_the_backend = False
+            fate = AnswerFate.refused
 
         async with state.lock:
             running = state.running_turn
             if running is None or running.token != answered_turn_token:
                 # The turn ended while the answer was on its way, so the ask died with it.
+                if fate is AnswerFate.saved:
+                    await self._append_event(
+                        state,
+                        PermissionAnsweredEventPayload(
+                            ask_id=ask_id,
+                            option_id=option_id,
+                            fate=fate,
+                            answer_id=attempt.identity,
+                        ),
+                        lifecycle=(replace(attempt, status=LifecycleStatus.accepted),),
+                    )
+                    return fate
                 await self._persist(
                     state,
                     partial(
@@ -2026,15 +2042,15 @@ class SqliteProcessConversationSystem:
                                 attempt,
                                 status=(
                                     LifecycleStatus.accepted
-                                    if reached_the_backend
+                                    if fate is not AnswerFate.refused
                                     else LifecycleStatus.refused
                                 ),
                             ),
                         ),
                     ),
                 )
-                return False
-            if not reached_the_backend:
+                return AnswerFate.refused
+            if fate is AnswerFate.refused:
                 # The backend never got it, so the ask is still waiting to be answered.
                 await self._persist(
                     state,
@@ -2057,23 +2073,33 @@ class SqliteProcessConversationSystem:
                 )
                 if self._signal is None:
                     running.pending_permission_ask_ids.add(ask_id)
-                return False
+                return AnswerFate.refused
             await self._append_event(
                 state,
-                PermissionAnsweredEventPayload(ask_id=ask_id, option_id=option_id),
+                PermissionAnsweredEventPayload(
+                    ask_id=ask_id,
+                    option_id=option_id,
+                    fate=fate,
+                    answer_id=attempt.identity if fate is AnswerFate.saved else None,
+                ),
                 lifecycle=(
                     replace(attempt, status=LifecycleStatus.accepted),
-                    replace(request_fact, status=LifecycleStatus.answered),
+                    replace(
+                        request_fact,
+                        status=LifecycleStatus.answering
+                        if fate is AnswerFate.saved
+                        else LifecycleStatus.answered,
+                    ),
                 ),
             )
-            return True
+            return fate
 
     async def answer_user_input(
         self, conversation_id: str, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> bool:
+    ) -> AnswerFate:
         state = await self._conversation_state(conversation_id)
         if state is None:
-            return False
+            return AnswerFate.refused
         return await self._own_settlement(
             state, self._answer_user_input(conversation_id, request_id, answers)
         )
@@ -2083,26 +2109,26 @@ class SqliteProcessConversationSystem:
         conversation_id: str,
         request_id: str,
         answers: tuple[UserInputAnswer, ...],
-    ) -> bool:
+    ) -> AnswerFate:
         """Deliver one complete answer map and record it only after the backend takes it."""
         state = await self._conversation_state(conversation_id)
         if state is None:
-            return False
+            return AnswerFate.refused
         state.last_touched_monotonic = self._monotonic_now()
 
         async with state.lock:
             running = state.running_turn
             child = state.child
             if running is None or child is None:
-                return False
+                return AnswerFate.refused
             questions = running.pending_user_input_questions.get(request_id)
             if questions is None:
-                return False
+                return AnswerFate.refused
             from planner.conversation.logic.user_input import ordered_user_input_answers
 
             ordered_answers = ordered_user_input_answers(questions, answers)
             if ordered_answers is None:
-                return False
+                return AnswerFate.refused
             provider_id = running.user_input_provider_ids[request_id]
             request_fact = LifecycleFact(
                 LifecycleKind.request,
@@ -2135,15 +2161,34 @@ class SqliteProcessConversationSystem:
                 del running.pending_user_input_questions[request_id]
             answered_turn_token = running.token
 
-        reached_the_backend = True
+        fate = AnswerFate.applied
         try:
-            await child.answer_user_input(provider_id, ordered_answers)
+            fate = (
+                await child.answer_user_input(
+                    provider_id,
+                    ordered_answers,
+                    answer_id=attempt.identity,
+                    turn_token=answered_turn_token,
+                )
+            )
         except UserInputAnswerWriteFailed:
-            reached_the_backend = False
+            fate = AnswerFate.refused
 
         async with state.lock:
             running = state.running_turn
             if running is None or running.token != answered_turn_token:
+                if fate is AnswerFate.saved:
+                    await self._append_event(
+                        state,
+                        UserInputAnsweredEventPayload(
+                            request_id=request_id,
+                            answers=ordered_answers,
+                            fate=fate,
+                            answer_id=attempt.identity,
+                        ),
+                        lifecycle=(replace(attempt, status=LifecycleStatus.accepted),),
+                    )
+                    return fate
                 await self._persist(
                     state,
                     partial(
@@ -2154,15 +2199,15 @@ class SqliteProcessConversationSystem:
                                 attempt,
                                 status=(
                                     LifecycleStatus.accepted
-                                    if reached_the_backend
+                                    if fate is not AnswerFate.refused
                                     else LifecycleStatus.refused
                                 ),
                             ),
                         ),
                     ),
                 )
-                return False
-            if not reached_the_backend:
+                return AnswerFate.refused
+            if fate is AnswerFate.refused:
                 await self._persist(
                     state,
                     partial(
@@ -2184,16 +2229,26 @@ class SqliteProcessConversationSystem:
                 )
                 if self._signal is None:
                     running.pending_user_input_questions[request_id] = questions
-                return False
+                return AnswerFate.refused
             await self._append_event(
                 state,
-                UserInputAnsweredEventPayload(request_id=request_id, answers=ordered_answers),
+                UserInputAnsweredEventPayload(
+                    request_id=request_id,
+                    answers=ordered_answers,
+                    fate=fate,
+                    answer_id=attempt.identity if fate is AnswerFate.saved else None,
+                ),
                 lifecycle=(
                     replace(attempt, status=LifecycleStatus.accepted),
-                    replace(request_fact, status=LifecycleStatus.answered),
+                    replace(
+                        request_fact,
+                        status=LifecycleStatus.answering
+                        if fate is AnswerFate.saved
+                        else LifecycleStatus.answered,
+                    ),
                 ),
             )
-            return True
+            return fate
 
     # --- running the system -------------------------------------------------------------
 
@@ -5063,19 +5118,17 @@ class SqliteProcessConversationSystem:
         self._set_phase(state, phase)
         reservation.resolved.set()
 
-    async def emit_executor_answer(
-        self, conversation_id: str, emit: Callable[[], Coroutine[Any, Any, None]]
+    async def emit_answer(
+        self, turn: TurnToken, emit: Callable[[], Coroutine[Any, Any, None]]
     ) -> None:
-        """Order the bounded answer frame with durable local callback revocation.
-
-        This lock covers emission only, never a native result or application wait.
-        The emitter rechecks durable identity after its asynchronous preparation.
-        """
-        state = await self._conversation_state(conversation_id)
+        """Order bounded answer emission with callback revocation."""
+        state = await self._conversation_state(turn.conversation_id)
         if state is None:
             return
         async with state.lock:
-            await emit()
+            running = state.running_turn
+            if running is not None and running.token == turn and not running.callbacks_revoked:
+                await emit()
 
     async def _revoke_turn_requests(self, state: _ConversationState, running: _RunningTurn) -> None:
         if state.executor_child_reference is not None:
@@ -5860,163 +5913,138 @@ class SqliteProcessConversationSystem:
             state.child = child
             self._schedule_remote_retirement(state, child)
 
-    async def receive_remote_answer_application(
+    async def take_answer_application(
         self,
-        application: AnswerApplication,
+        turn: TurnToken,
+        answer_id: str,
+        provider_id: str,
+        kind: str,
         in_commit: CommitParticipant,
-        record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
-        public_request_id: str | None,
-    ) -> AcceptanceReceipt:
-        """Commit native application, lifecycle, answer row, and receipt together."""
-
-        state = await self._conversation_state(application.ask.child.conversation_id)
+    ) -> AcceptedEvent:
+        """Record late proof without reopening an ended or unavailable request."""
+        state = await self._conversation_state(turn.conversation_id)
         if state is None:
             raise ValueError("answer application names unknown conversation")
         return await self._own_settlement(
             state,
-            self._receive_remote_answer_application_owned(
-                state, application, in_commit, record_application, public_request_id
-            ),
+            self._take_answer_application(state, turn, answer_id, provider_id, kind, in_commit),
         )
 
-    async def _receive_remote_answer_application_owned(
+    async def _take_answer_application(
         self,
         state: _ConversationState,
-        application: AnswerApplication,
+        turn: TurnToken,
+        answer_id: str,
+        provider_id: str,
+        kind: str,
         in_commit: CommitParticipant,
-        record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
-        public_request_id: str | None,
-    ) -> AcceptanceReceipt:
-        from pydantic import TypeAdapter
-
-        from planner.execution_identity import AskKind
-
-        written: tuple[StoredConversationEvent, ...] = ()
+    ) -> AcceptedEvent:
         async with state.lock:
-            ask = application.ask
-            user_input = ask.kind is AskKind.user_input
-            operation = (
-                LifecycleOperation.user_input if user_input else LifecycleOperation.permission
-            )
-            public_id = public_request_id
-            if public_id is None:
-                raise ValueError("answer application lacks an original public request identity")
-            running = state.running_turn
-            predicted = None
-            if running is not None and running.token == ask.turn:
-                predicted = replace(
-                    running,
-                    pending_permission_ask_ids=(
-                        set(running.pending_permission_ask_ids)
-                        if user_input
-                        else running.pending_permission_ask_ids - {public_id}
-                    ),
-                    pending_user_input_questions={
-                        key: value
-                        for key, value in running.pending_user_input_questions.items()
-                        if not user_input or key != public_id
-                    },
-                )
-            mutation = (
-                self._runtime_mutation(state, PlainFieldMutation(state, "running_turn", predicted))
-                if predicted is not None
-                else None
-            )
-
-            conversation_id = state.record.conversation_id
 
             def write(
                 connection: sqlite3.Connection,
             ) -> tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]:
-                written: tuple[StoredConversationEvent, ...] = ()
-                answer = connection.execute(
-                    "SELECT option_id,user_input_answers_json,applied_at_mac_ms "
-                    "FROM executor_asks WHERE answer_id=?",
-                    (application.answer_id,),
-                ).fetchone()
-                if answer is None:
-                    raise ValueError("answer application lacks authoritative choice")
-                first_application = answer[2] is None
-                record_application(connection, application)
-                if first_application:
-                    payload: ConversationEventPayload = (
-                        UserInputAnsweredEventPayload(
-                            request_id=public_id,
-                            answers=TypeAdapter(tuple[UserInputAnswer, ...]).validate_json(
-                                str(answer[1])
-                            ),
+                facts = self._store.lifecycle_facts_in_transaction(connection, turn.conversation_id)
+                attempt = next(
+                    (
+                        fact
+                        for fact in facts
+                        if fact.kind is LifecycleKind.attempt
+                        and fact.identity == answer_id
+                        and fact.turn_number == turn.turn_number
+                        and fact.operation
+                        in (
+                            LifecycleOperation.permission_answer,
+                            LifecycleOperation.user_input_answer,
                         )
-                        if user_input
-                        else PermissionAnsweredEventPayload(
-                            ask_id=public_id, option_id=str(answer[0])
+                    ),
+                    None,
+                )
+                if (
+                    attempt is None
+                    or attempt.status is not LifecycleStatus.accepted
+                    or attempt.provider_identity != provider_id
+                    or attempt.operation.value != f"{kind}_answer"
+                ):
+                    raise ValueError("answer application lacks an accepted original answer")
+                rows = self._store.read_answer_events_in_transaction(
+                    connection, turn.conversation_id, answer_id
+                )
+                if any(
+                    isinstance(row.payload, AnswerAppliedEventPayload)
+                    and row.payload.answer_id == answer_id
+                    for row in rows
+                ):
+                    return {"recorded": True}, ()
+                choice = next(
+                    (
+                        row.payload
+                        for row in rows
+                        if isinstance(
+                            row.payload,
+                            (PermissionAnsweredEventPayload, UserInputAnsweredEventPayload),
                         )
-                    )
-                    previous = next(
-                        (
-                            fact
-                            for fact in self._store.lifecycle_facts_in_transaction(
-                                connection, conversation_id
-                            )
-                            if fact.kind is LifecycleKind.request and fact.identity == public_id
-                        ),
-                        None,
-                    )
-                    lifecycle = (
-                        ()
-                        if previous is not None and previous.status is LifecycleStatus.unavailable
-                        else (
-                            LifecycleFact(
-                                LifecycleKind.request,
-                                public_id,
-                                ask.turn.turn_number,
-                                operation,
-                                LifecycleStatus.answered,
-                                ask.ask_id,
-                            ),
-                        )
-                    )
-                    written = self._store.append_in_transaction(
-                        connection,
-                        conversation_id,
-                        (payload,),
-                        lifecycle=lifecycle,
-                    )
+                        and row.payload.answer_id == answer_id
+                        and row.payload.fate is AnswerFate.saved
+                    ),
+                    None,
+                )
+                if choice is None:
+                    raise ValueError("answer application lacks its saved choice")
+                request_id = (
+                    choice.ask_id
+                    if isinstance(choice, PermissionAnsweredEventPayload)
+                    else choice.request_id
+                )
+                request = next(
+                    (
+                        fact
+                        for fact in facts
+                        if fact.kind is LifecycleKind.request and fact.identity == request_id
+                    ),
+                    None,
+                )
+                lifecycle = (
+                    (replace(request, status=LifecycleStatus.answered),)
+                    if request is not None and request.status is LifecycleStatus.answering
+                    else ()
+                )
+                written = self._store.append_in_transaction(
+                    connection,
+                    turn.conversation_id,
+                    (AnswerAppliedEventPayload(answer_id),),
+                    lifecycle=lifecycle,
+                )
                 return {"recorded": True}, written
 
             result = await self._persist(
-                state,
-                partial(self._store.accept_executor_effect, write, in_commit, mutation),
-                runtime_mutation=mutation,
+                state, partial(self._store.accept_executor_effect, write, in_commit, None)
             )
-            receipt = TypeAdapter(AcceptanceReceipt).validate_python(result.result)
-            written = result.written
             if result.taken:
-                if self._signal is None and predicted is not None:
-                    state.running_turn = predicted
-                self._take_in_written_rows(state, written)
-            return receipt
+                self._take_in_written_rows(state, result.written)
+            return AcceptedEvent(result.result, result.taken)
 
-    async def receive_remote_live_backend_event(self, event: BackendEvent) -> None:
-        from planner.executor.protocol import decode_event_arguments
-
-        state = await self._conversation_state(event.child.conversation_id)
-        if state is None or event.turn is None:
+    async def receive_remote_live_backend_event(
+        self,
+        child_reference: ChildReference,
+        turn: TurnToken | None,
+        args: DecodedBackendEventArguments,
+    ) -> None:
+        state = await self._conversation_state(child_reference.conversation_id)
+        if state is None or turn is None:
             return
         child = state.child
-        if not child_stops_outside_lock(child) or state.executor_child_reference != event.child:
+        if not child_stops_outside_lock(child) or state.executor_child_reference != child_reference:
             return
         sink = state.child_event_sink
         if not isinstance(sink, _CoreBackendEventSink):
             return
-        args = decode_event_arguments(event)
         if isinstance(args, AgentMessageDeltaArguments):
-            await sink.agent_message_delta(event.turn, args.text_delta)
+            await sink.agent_message_delta(turn, args.text_delta)
         elif isinstance(args, ModelThinkingHappenedArguments):
-            await sink.model_thinking_happened(event.turn)
+            await sink.model_thinking_happened(turn)
         elif isinstance(args, ToolCallProgressArguments):
-            await sink.tool_call_progress(
-                event.turn, tool_call_id=args.tool_call_id, detail=args.detail
-            )
+            await sink.tool_call_progress(turn, tool_call_id=args.tool_call_id, detail=args.detail)
 
     async def take_backend_event(
         self,

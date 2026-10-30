@@ -23,7 +23,11 @@ from planner.conversation.backends.contracts import (
     BackendUserInputRequest,
     TurnToken,
 )
-from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
+from planner.conversation.contracts import (
+    AnswerFate,
+    ConversationBackendKey,
+    ConversationStartRequest,
+)
 from planner.conversation.events import (
     ConversationTurnEnding,
     UserInputAnswer,
@@ -69,13 +73,15 @@ class ScriptedChild:
     async def cancel_running_turn(self) -> None:
         self.token = None
 
-    async def answer_permission_ask(self, *args: Any, **kwargs: Any) -> None:
+    async def answer_permission_ask(self, *args: Any, **kwargs: Any) -> AnswerFate:
         pass
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...],
-    ) -> None:
+        self, request_id: str, answers: tuple[UserInputAnswer, ...], **kwargs: object
+    ) -> AnswerFate:
         self.answers[request_id] = answers
+        return AnswerFate.applied
 
     async def request_questions(self) -> None:
         assert self.token is not None

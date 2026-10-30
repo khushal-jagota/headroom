@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from planner.executor.vps_runs import MacRuns
-
 import sqlite3
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, closing
@@ -179,7 +174,6 @@ class ConversationRuntime:
     message_files: ConversationMessageFiles
     database_path: str
     sse_heartbeat_ms: int
-    executor_endpoint: MacRuns | None = None
     backend_state: BackendStateStore | None = None
     # Absent when this process has no backend that can start a sign-in. The routes say
     # so rather than pretending the affordance exists.

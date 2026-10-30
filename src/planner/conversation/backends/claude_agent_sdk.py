@@ -131,6 +131,7 @@ from planner.conversation.backends.contracts import (
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
@@ -1296,7 +1297,14 @@ class ClaudeAgentSdkBackendChild:
                 "claude cancelled its queue but did not settle the active command"
             ) from did_not_settle
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self,
+        ask_id: str,
+        option_id: str,
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give the SDK the option a person chose, and wait for its callback to take it.
 
         The answer is what the held-open callback returns, so it has been given only once
@@ -1319,10 +1327,16 @@ class ClaudeAgentSdkBackendChild:
             await parked.handed_over
         except Exception as never_given:
             raise PermissionAnswerWriteFailed(ask_id) from never_given
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give Claude's held callback its complete answer map."""
         turn = self._turn
         parked = None if turn is None else turn.parked_user_inputs.get(request_id)
@@ -1340,6 +1354,7 @@ class ClaudeAgentSdkBackendChild:
             await parked.handed_over
         except Exception as never_given:
             raise UserInputAnswerWriteFailed(request_id) from never_given
+        return AnswerFate.applied
 
     @property
     def stop_outside_lock(self) -> bool:

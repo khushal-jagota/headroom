@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from planner.execution_identity import ChildReference
 
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ConversationBackendKey,
     PromptDeliveryMode,
@@ -561,7 +562,14 @@ class BackendChild(Protocol):
         record: the core wrote the ending when it decided on it, and it stands either way.
         """
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self,
+        ask_id: str,
+        option_id: str,
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give the backend the option a person chose for one of its asks.
 
         Raises ``PermissionAnswerWriteFailed`` if it did not reach the backend, in which
@@ -569,8 +577,13 @@ class BackendChild(Protocol):
         """
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give the backend every answer for one pending question request.
 
         Raises ``UserInputAnswerWriteFailed`` when the answer map did not land.

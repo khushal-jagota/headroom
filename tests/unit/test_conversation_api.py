@@ -26,7 +26,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
-from tests.support.executor_turns import persist_pending_turn
 from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
@@ -65,6 +64,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     ConversationBackendKey,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -224,13 +224,17 @@ class _FakeBackendChild:
         self._backend.cancellations += 1
         self._backend.live_turn_token = None
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         self._backend.permission_answers[ask_id] = option_id
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self, request_id: str, answers: tuple[UserInputAnswer, ...], **kwargs: object
+    ) -> AnswerFate:
         self._backend.user_input_answers[request_id] = answers
+        return AnswerFate.applied
 
     @property
     def stop_outside_lock(self) -> bool:
@@ -956,11 +960,11 @@ def test_a_stale_http_answer_cannot_target_a_reused_provider_request(
 
             stale = await answer(old_id)
             assert stale.status_code == 200
-            assert stale.json() == {"landed": False}
+            assert stale.json() == {"fate": "refused"}
             assert not harness.backend("c").permission_answers
             assert not harness.backend("c").user_input_answers
             current = await answer(new_id)
-            assert current.json() == {"landed": True}
+            assert current.json() == {"fate": "applied"}
             if request_kind == "permission":
                 assert harness.backend("c").permission_answers == {"ask-1": "deny"}
             else:
@@ -1005,7 +1009,7 @@ def test_user_input_replays_after_refresh_and_posts_a_complete_answer_map(
                     },
                 },
             )
-            assert response.json() == {"landed": True}
+            assert response.json() == {"fate": "applied"}
             assert harness.backend("c").user_input_answers["input-1"] == (
                 UserInputAnswer("scope", ("Backend", "Frontend")),
                 UserInputAnswer("timing", ("Tomorrow",)),
@@ -1071,129 +1075,6 @@ def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
     _run(exercise)
 
 
-@pytest.mark.parametrize("kind", ["permission", "user_input"])
-def test_remote_answer_requires_original_reference_and_accepts_first_choice_offline(
-    harness: _Harness,
-    kind: str,
-) -> None:
-    from dataclasses import replace
-
-    from planner.core.clock import RealClock
-    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-    from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
-    from planner.executor.protocol import encode_value
-    from planner.executor.vps_transport import VpsExecutor
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            endpoint = VpsExecutor(str(harness.db_path), RealClock())
-            harness.runtime = replace(harness.runtime, executor_endpoint=endpoint.runs)
-            harness.app.state.conversation = harness.runtime
-            identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
-            endpoint.inbox.store.runs.begin_connection(identity, 100)
-            ask = AskReference(
-                ChildReference("inc", "child", "c"), TurnToken("c", 1), "ask", AskKind(kind)
-            )
-            public_id = f"1:{kind}:ask"
-            persist_pending_turn(
-                endpoint.runs.store,
-                ask,
-                runtime_overrides={
-                    "pending_permission_ask_ids": [public_id] if kind == "permission" else [],
-                    "permission_provider_ids": {public_id: "ask"} if kind == "permission" else {},
-                    "user_input_provider_ids": {public_id: "ask"} if kind == "user_input" else {},
-                },
-            )
-            if kind == "permission":
-                endpoint.inbox.store.runs.publish_ask(ask, ("allow", "deny"), 100)
-                route = "permission-answers"
-                body: dict[str, Any] = {"ask_id": "1:permission:ask", "option_id": "allow"}
-            else:
-                questions = (UserInputQuestion("q", "Question", "Choose", (), False, True),)
-                persist_pending_turn(
-                    endpoint.runs.store,
-                    ask,
-                    runtime_overrides={
-                        "pending_user_input_questions": {public_id: encode_value(questions)},
-                        "permission_provider_ids": {},
-                        "user_input_provider_ids": {public_id: "ask"},
-                    },
-                )
-                endpoint.inbox.store.runs.publish_user_input_request(ask, questions, 100)
-                route = "user-input-answers"
-                body = {"request_id": "1:user_input:ask", "answers": {"q": {"answers": ["answer"]}}}
-            endpoint.inbox.store.runs.mark_lost(identity, 101)
-            path = f"/api/conversation/conversations/c/{route}"
-            # Neither an ID nor an identity partly copied from another ask grants admission.
-            assert (await client.post(path, json=body)).json() == {"landed": False}
-            mismatches = (
-                replace(ask, ask_id="other"),
-                replace(
-                    ask,
-                    child=replace(ask.child, conversation_id="elsewhere"),
-                    turn=TurnToken("elsewhere", 1),
-                ),
-                replace(
-                    ask, kind=AskKind.user_input if kind == "permission" else AskKind.permission
-                ),
-                replace(ask, child=replace(ask.child, child_id="replacement")),
-                replace(ask, turn=TurnToken("c", 2)),
-                replace(ask, child=replace(ask.child, executor_incarnation="replacement")),
-            )
-            for mismatch in mismatches:
-                response = await client.post(
-                    path, json={**body, "executor_ask": encode_value(mismatch)}
-                )
-                assert response.status_code == 200, response.text
-                assert response.json() == {"landed": False}
-            assert endpoint.inbox.store.runs.recorded_answer(ask) is None
-            malformed = encode_value(ask)
-            assert isinstance(malformed, dict)
-            malformed["unexpected"] = True
-            assert (
-                await client.post(path, json={**body, "executor_ask": malformed})
-            ).status_code == 422
-            malformed = encode_value(ask)
-            assert isinstance(malformed, dict) and isinstance(malformed["turn"], dict)
-            malformed["turn"]["turn_number"] = "1"
-            assert (
-                await client.post(path, json={**body, "executor_ask": malformed})
-            ).status_code == 422
-            exact = {**body, "executor_ask": encode_value(ask)}
-            for actor in ("chief", "worker"):
-                headers = {"X-Plan-Actor": actor, "X-Plan-Ticket-ID": "test-ticket"}
-                with pytest.raises(PlannerError, match="only to the owner"):
-                    await client.post(path, json=exact, headers=headers)
-            assert endpoint.inbox.store.runs.recorded_answer(ask) is None
-            response = await client.post(path, json=exact)
-            assert response.status_code == 200 and response.json() == {"landed": True}
-            answer = endpoint.inbox.store.runs.recorded_answer(ask)
-            assert answer is not None
-            evidence = endpoint.inbox.store.runs.ask_evidence(ask)
-            assert evidence is not None and evidence.applied_at_mac_ms is None
-            endpoint.inbox.store.runs.close_child(ask.child, 102)
-            assert not endpoint.runs.owns_conversation("c")
-            assert (await client.post(path, json=exact)).json() == {"landed": True}
-            changed = (
-                {**exact, "option_id": "deny"}
-                if kind == "permission"
-                else {**exact, "answers": {"q": {"answers": ["different"]}}}
-            )
-            assert (await client.post(path, json=changed)).json() == {"landed": False}
-            assert (
-                await client.post(
-                    path,
-                    json={
-                        **exact,
-                        "executor_ask": encode_value(replace(ask, ask_id="new-closed-ask")),
-                    },
-                )
-            ).json() == {"landed": False}
-            assert not endpoint.runs.pending_commands
-            assert endpoint.inbox.store.runs.recorded_answer(ask) == answer
-
-    _run(exercise)
 
 
 @pytest.mark.parametrize("kind", ["permission", "user_input"])
@@ -1233,7 +1114,7 @@ def test_remote_reference_never_falls_through_to_local_callback(
                 ChildReference("inc", "child", "c"), TurnToken("c", 1), ask_id, AskKind(kind)
             )
             response = await client.post(path, json={**body, "executor_ask": encode_value(ask)})
-            assert response.status_code == 200 and response.json() == {"landed": False}
+            assert response.status_code == 422
             assert harness.backend("c").permission_answers == {}
             assert harness.backend("c").user_input_answers == {}
 
@@ -1578,45 +1459,9 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     def conn_factory() -> sqlite3.Connection:
         return connect(str(db_path))
 
-    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-    from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
-    from planner.executor.protocol import AskReachability, ChildInventory
-    from planner.executor.vps_inbox import InboxStore
-
-    executor_store = InboxStore(str(db_path))
-    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
-    executor_store.runs.begin_connection(identity, 100)
-    asks = tuple(
-        AskReference(
-            ChildReference("inc", name, name), TurnToken(name, 1), "ask", AskKind.permission
-        )
-        for name in ("child-gone", "callback-gone", "live")
-    )
-    for ask in asks:
-        executor_store.runs.publish_ask(ask, ("allow", "deny"), 100)
-    executor_store.runs.observe_children(
-        identity,
-        (
-            ChildInventory(asks[1].child, asks[1].turn, (), ()),
-            ChildInventory(asks[2].child, asks[2].turn, (asks[2],), ()),
-        ),
-        101,
-    )
     app = create_app(config, build_clock(config), conn_factory)
     with TestClient(app) as client:
         # This wiring proof creates a row without any provider catalogue probe.
-        # Startup discards live reachability but retains conclusive callback closure.
-        for ask, expected in zip(
-            asks,
-            (
-                AskReachability.child_gone,
-                AskReachability.callback_gone,
-                AskReachability.callback_gone,
-            ),
-            strict=True,
-        ):
-            evidence = executor_store.runs.ask_evidence(ask)
-            assert evidence is not None and evidence.reachability == expected
         assert client.get("/api/conversation/conversations/nobody").status_code == 404
 
         created = client.post(

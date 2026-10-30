@@ -12,32 +12,24 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import cast
 
-import pytest
 from tests.unit.test_conversation_api import _Harness, _start
 
 from planner.conversation.backend_event_contracts import (
-    AcceptedEvent,
     CommitParticipant,
-    EventTaken,
 )
-from planner.conversation.backends.contracts import BackendPermissionAsk, BackendUserInputRequest
-from planner.conversation.contracts import SignalBatch
-from planner.conversation.events import PermissionAskOption, UserInputAnswer, UserInputQuestion
-from planner.conversation.lifecycle import LifecycleStatus, LifecycleTransition
+from planner.conversation.lifecycle import LifecycleStatus
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
     AcceptanceReceipt,
-    AnswerApplication,
     BackendEvent,
     BackendEventMethod,
     EnvelopeKind,
     JsonObject,
     QueuedEnvelope,
-    as_object,
     decode_event_arguments,
     encode_value,
     envelope_payload_digest,
@@ -84,191 +76,6 @@ async def _take_event(
     return TypeAdapter(AcceptanceReceipt).validate_python(result.result)
 
 
-@pytest.mark.parametrize("kind", list(AskKind))
-def test_native_request_receipt_runtime_publication_and_application_share_boundary(
-    tmp_path: Path, kind: AskKind
-) -> None:
-    async def exercise() -> None:
-        async with AsyncExitStack() as cleanup:
-            composition = SignalRuntimeComposition(str(tmp_path / "mixed.db"), 1000)
-            cleanup.callback(composition.close)
-            composition.bootstrap()
-            harness = _Harness(
-                tmp_path / "mixed.db", signal_composition=composition, cleanup=cleanup
-            )
-            composition.initialize()
-            batches: list[SignalBatch] = []
-            attachment = composition.coordinator.attach_signal_publication(
-                install=lambda conn, snapshot: None,
-                participate=lambda conn, batch: batches.append(batch),
-                unavailable=lambda reason: None,
-            )
-            cleanup.callback(attachment.close)
-            async with harness.client() as client:
-                await _start(client, "c")
-            await harness.system.send("c", text_message_content("work"), sender_label="owner")
-            state = harness.system._conversations["c"]
-            assert state.running_turn is not None
-            token = state.running_turn.token
-            child = ChildReference("native-process", "native-child", "c")
-            state.executor_child_reference = child
-            store = InboxStore(str(harness.db_path))
-            identity = ExecutorIdentity(
-                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native-process", 1
-            )
-            store.runs.begin_connection(identity, 100)
-            store.runs.register_child(child, "chief", "chief", 100)
-            ask = AskReference(child, token, "reused-provider-id", kind)
-            questions = (UserInputQuestion("q", "Scope", "Choose", (), False, True),)
-            arguments = (
-                {
-                    "ask": encode_value(
-                        BackendPermissionAsk(
-                            ask.ask_id,
-                            "Run?",
-                            None,
-                            (PermissionAskOption("allow", "Allow", "allow_once"),),
-                        )
-                    )
-                }
-                if kind is AskKind.permission
-                else {"request": encode_value(BackendUserInputRequest(ask.ask_id, questions))}
-            )
-            event = BackendEvent(
-                child,
-                BackendEventMethod.permission_ask_raised
-                if kind is AskKind.permission
-                else BackendEventMethod.user_input_requested,
-                token,
-                arguments,
-            )
-            envelope = _envelope(1, EnvelopeKind.backend_event, event)
-
-            def accept(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
-                def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-                    conn = connection
-                    result = take()
-                    if kind is AskKind.permission:
-                        store.runs.publish_ask_in_transaction(conn, ask, ("allow",), 101)
-                    else:
-                        store.runs.publish_user_input_request_in_transaction(
-                            conn, ask, questions, 101
-                        )
-                    return result
-
-                receipt, taken = store.accept_in_transaction(
-                    connection, envelope, effect, 101, identity=identity
-                )
-                return AcceptedEvent(as_object(receipt), taken)
-
-            def fail(conn: sqlite3.Connection, candidate: LifecycleTransition) -> None:
-                assert conn.in_transaction
-                assert any(f.provider_identity == ask.ask_id for f in candidate.facts)
-                raise RuntimeError("mixed participant refused")
-
-            harness.store._transaction_participant = fail
-            pending = asyncio.create_task(_take_event(harness.system, event, envelope, accept))
-            for _ in range(500):
-                if harness.store.recording_failures("c"):
-                    break
-                await asyncio.sleep(0.002)
-            assert harness.store.recording_failures("c")
-            assert store.lookup_receipt("native", "native-1") is None
-            assert state.running_turn is not None
-            assert not state.running_turn.pending_permission_ask_ids
-            assert not state.running_turn.pending_user_input_questions
-            harness.store._transaction_participant = None
-            harness.store.resume_recording("c")
-            receipt = await asyncio.wait_for(pending, 5)
-            assert await _take_event(harness.system, event, envelope, accept) == receipt
-            public_id = f"{token.turn_number}:{kind.value}:{ask.ask_id}"
-            facts = await harness.store.lifecycle_facts("c")
-            assert any(
-                f.identity == public_id and f.status is LifecycleStatus.pending for f in facts
-            )
-            latest = next(
-                v.attention
-                for b in reversed(batches)
-                for v in b.replacements
-                if v.conversation_id == "c"
-            )
-            assert latest.awaiting_answer
-            context = store.runs.turn_context("c")
-            assert context is not None
-            assert ask.ask_id in (
-                context.pending_permission_ask_ids
-                if kind is AskKind.permission
-                else context.pending_user_input_ids
-            )
-            store.runs.mark_lost(identity, 102)
-            choice = (
-                store.runs.choose_answer(ask, "allow", 1, 103)
-                if kind is AskKind.permission
-                else store.runs.choose_user_input_answer(
-                    ask, (UserInputAnswer("q", ("answer",)),), 1, 103
-                )
-            )
-            evidence = store.runs.ask_evidence(ask)
-            assert evidence is not None and evidence.applied_at_mac_ms is None
-            application = AnswerApplication(choice.answer_id, ask, 104)
-            applied_envelope = _envelope(2, EnvelopeKind.answer_application, application)
-
-            def accept_application(
-                connection: sqlite3.Connection, take: EventTaken
-            ) -> AcceptedEvent:
-                receipt, taken = store.accept_in_transaction(
-                    connection,
-                    applied_envelope,
-                    lambda connection, envelope: take(),
-                    105,
-                    identity=identity,
-                )
-                return AcceptedEvent(as_object(receipt), taken)
-
-            # Reconnect the same process with a fresh generation before native evidence arrives.
-            identity = ExecutorIdentity(
-                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native-process", 2
-            )
-            store.runs.begin_connection(identity, 104)
-            applied = await harness.system.receive_remote_answer_application(
-                application,
-                accept_application,
-                store.runs.record_application_in_transaction,
-                store.runs.public_request_id(application.ask),
-            )
-            assert (
-                await harness.system.receive_remote_answer_application(
-                    application,
-                    accept_application,
-                    store.runs.record_application_in_transaction,
-                    store.runs.public_request_id(application.ask),
-                )
-                == applied
-            )
-            assert not await harness.system.has_pending_permission_ask("c")
-            assert not await harness.system.has_pending_user_input("c")
-            latest = next(
-                v.attention
-                for b in reversed(batches)
-                for v in b.replacements
-                if v.conversation_id == "c"
-            )
-            assert not latest.awaiting_answer
-            facts = await harness.store.lifecycle_facts("c")
-            assert any(
-                f.identity == public_id and f.status is LifecycleStatus.answered for f in facts
-            )
-            events = await harness.store.read_events_after("c", 0)
-            assert (
-                sum(
-                    getattr(e.payload, "ask_id", None) == public_id
-                    or getattr(e.payload, "request_id", None) == public_id
-                    for e in events
-                )
-                == 2
-            )
-
-    asyncio.run(exercise())
 
 
 def test_restart_closes_native_request_before_initial_signal_snapshot(

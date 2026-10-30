@@ -133,6 +133,7 @@ export type TranscriptRow =
       state: PermissionAskState;
       deadReason: PermissionAskDeadReason | null;
       answeredOptionLabel: string | null;
+      answerFate?: "saved" | "applied" | "unconfirmed";
     }
   | {
       key: string;
@@ -145,6 +146,7 @@ export type TranscriptRow =
       deadReason: PermissionAskDeadReason | null;
       answers: UserInputAnswers | null;
       failureDetail: string | null;
+      answerFate?: "saved" | "applied" | "unconfirmed";
     }
   | {
       key: string;

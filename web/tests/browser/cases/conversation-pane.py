@@ -4145,7 +4145,7 @@ def _machine_evidence(browser, url):
     expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
     post=page.evaluate('()=>window.__machine.posts[0]')
     assert post['ask_id']=='public-turn:permission:native-ask'
-    assert post['executor_ask']['ask_id']=='native-ask'
+    assert set(post)=={'ask_id','option_id'}
     page.evaluate('()=>window.__machine.change({applied:true})')
     expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer applied on Mac.')
     page.evaluate('()=>window.__machine.change({questions:true})')
@@ -4157,7 +4157,7 @@ def _machine_evidence(browser, url):
     expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
     post=page.evaluate('()=>window.__machine.posts[1]')
     assert post['request_id']=='public-turn:user_input:native-questions'
-    assert post['executor_ask']['ask_id']=='native-questions'
+    assert set(post)=={'request_id','answers'}
     assert len(post['answers'])==2
     assert not errors,errors
     page.close()
