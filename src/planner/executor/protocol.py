@@ -962,4 +962,5 @@ class MacInboxConversations(Protocol):
         envelope: QueuedEnvelope,
         acceptor: ExecutorEffectAcceptor,
         record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
+        public_request_id: str | None,
     ) -> AcceptanceReceipt: ...

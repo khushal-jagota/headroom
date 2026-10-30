@@ -27,10 +27,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from planner.conversation.admission.contracts import AdmissionExpectation
+    from planner.execution_identity import ChildReference
 
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
@@ -423,6 +424,33 @@ class BackendChild(Protocol):
     same moment, so an ask settled this way never carries a person's answer.
     """
 
+    @property
+    def stop_outside_lock(self) -> bool:
+        """Whether termination needs conversation callbacks to run while it waits.
+
+        Until the turn-table split, these children also participate in the
+        RetainedDeliveryChild contract for atomic delivery and retirement facts.
+        """
+        ...
+
+    async def withdraw_delivery(self) -> bool:
+        """Fence the pending delivery. True proves it never reached the provider.
+
+        False preserves uncertainty; it must never trigger a retry. This does not
+        terminate the child. Local writes finish under their existing owner before
+        withdrawal, so local adapters return true.
+        """
+        ...
+
+    async def detach(self) -> None:
+        """Release this process's handle during shutdown.
+
+        A separately owned agent keeps running. A locally owned process is stopped.
+        This is not termination evidence for a separately owned agent; use stop for
+        that, and retain its identity until termination is confirmed.
+        """
+        ...
+
     async def start(
         self,
         resolved_start: ResolvedConversationStart,
@@ -564,6 +592,13 @@ class BackendChild(Protocol):
         The session cursor is already stored, so a conversation whose child was stopped
         picks up again by resuming, with nothing said about it.
         """
+
+
+@runtime_checkable
+class RetainedBackendChildFactory(Protocol):
+    """Recover an exact retained child without allocating or starting an agent."""
+
+    def recover(self, reference: ChildReference) -> BackendChild | None: ...
 
 
 class BackendChildFactory(Protocol):

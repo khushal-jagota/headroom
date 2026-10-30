@@ -404,6 +404,16 @@ class _CountedChild:
     ) -> None:
         await self._child.answer_user_input(request_id, answers)
 
+    @property
+    def stop_outside_lock(self) -> bool:
+        return self._child.stop_outside_lock
+
+    async def withdraw_delivery(self) -> bool:
+        return await self._child.withdraw_delivery()
+
+    async def detach(self) -> None:
+        await self.stop()
+
     async def stop(self) -> None:
         # Read the agent one last time while it is still there, so what it saw stays with
         # the conversation rather than going with the process.

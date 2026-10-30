@@ -48,6 +48,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import ConversationTurnEnding, PlanEntry, ToolCallStatus
+from planner.conversation.logic.addressed_reply import with_runtime_prompt_context
 from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.conversation.message_content import MessageContent, MessageFile
 from planner.conversation.message_files import ConversationMessageFiles
@@ -60,6 +61,7 @@ from planner.execution_identity import (
 )
 from planner.executor.configuration import (
     NATIVE_SKILLS_DIR_ENV,
+    NATIVE_WORKER_CONTEXT,
     ExecutorPaths,
 )
 from planner.executor.files import (
@@ -948,6 +950,17 @@ class MacRunner:
         ):
             raise _CommandAdmissionRefused("source child identity is retiring")
 
+    @staticmethod
+    def _with_native_worker_context(
+        resolved_start: ResolvedConversationStart | None, content: MessageContent
+    ) -> MessageContent:
+        """Tell Mac Workers about the skills and Ticket files on this host."""
+        materials = None if resolved_start is None else resolved_start.role_materials
+        identity = {} if materials is None else dict(materials.identity_environment_variables)
+        if identity.get("PLAN_ACTOR") == "worker" and identity.get("PLAN_TICKET_ID"):
+            return with_runtime_prompt_context(content, NATIVE_WORKER_CONTEXT)
+        return content
+
     async def _write_prompt(
         self, child: RunningChild, command: ChildCommand, args: WritePrompt
     ) -> JsonObject:
@@ -969,7 +982,7 @@ class MacRunner:
         try:
             result = await child.native.write_prompt(
                 command.turn,
-                args.content,
+                self._with_native_worker_context(child.localized_start, args.content),
                 sender_label=args.sender_label,
                 sender_content=args.sender_content,
                 sender_message_count=args.sender_message_count,
@@ -1005,7 +1018,7 @@ class MacRunner:
         self._mark_invoking(command)
         outcome = await child.native.steer(
             command.turn,
-            args.content,
+            self._with_native_worker_context(child.localized_start, args.content),
             sender_content=args.sender_content,
             sender_label=args.sender_label,
             emission_check=guard,

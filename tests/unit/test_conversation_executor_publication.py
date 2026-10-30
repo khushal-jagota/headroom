@@ -202,6 +202,7 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
                 applied_envelope,
                 accept_application,
                 store.runs.record_application_in_transaction,
+                store.runs.public_request_id(application.ask),
             )
             assert (
                 await harness.system.receive_remote_answer_application(
@@ -209,6 +210,7 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
                     applied_envelope,
                     accept_application,
                     store.runs.record_application_in_transaction,
+                    store.runs.public_request_id(application.ask),
                 )
                 == applied
             )

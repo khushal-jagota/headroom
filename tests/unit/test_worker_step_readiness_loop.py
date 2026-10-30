@@ -134,6 +134,9 @@ class _ScopedMetadataConversationSystem(InMemoryConversationSystem):
 class _MetadataDelegate:
     _validation_source: _ScopedMetadataConversationSystem
 
+    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
+        return await self._validation_source.retirement_is_confirmed(conversation_id)
+
     async def validate_launch_selection(
         self,
         selection: ModelSelection,

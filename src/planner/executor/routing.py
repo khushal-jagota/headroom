@@ -8,14 +8,13 @@ from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
     BackendEventSink,
+    RetainedBackendChildFactory,
 )
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect
 from planner.execution_identity import ChildReference
 from planner.executor.store import ExecutorStore
-from planner.executor.vps_remote_child import MacRemoteChild, MacRemoteChildFactory
-from planner.executor.vps_runs import MacRuns
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,11 +23,11 @@ class LocaleBackendChildFactory:
     local_factory: BackendChildFactory
     remote_factory: BackendChildFactory
 
-    def recover_remote_child(self, reference: ChildReference) -> MacRemoteChild:
+    def recover(self, reference: ChildReference) -> BackendChild | None:
         """Recover only retained authority, without allocation or native execution."""
         if ExecutorStore(self.db_path).child_assignment(reference) is None:
-            raise ValueError("Retained remote child has no open assignment")
-        if not isinstance(self.remote_factory, (MacRuns, MacRemoteChildFactory)):
+            return None
+        if not isinstance(self.remote_factory, RetainedBackendChildFactory):
             raise ValueError("Configured remote factory cannot recover an exact child")
         return self.remote_factory.recover(reference)
 

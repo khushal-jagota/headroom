@@ -2391,11 +2391,6 @@ class ConversationStore:
 
         return await asyncio.to_thread(read)
 
-    def executor_public_request_id(self, ask: Any) -> str | None:
-        from planner.executor.store import ExecutorStore
-
-        return ExecutorStore(self._db_path).public_request_id(ask)
-
     async def accept_executor_effect(
         self,
         envelope: QueuedEnvelope,

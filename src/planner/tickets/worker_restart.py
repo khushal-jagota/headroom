@@ -222,13 +222,8 @@ async def _prepare_worker_restart(
             # this conversation if the Ticket moves while kill is awaited.
             await conversations.kill(killed_conversation_id)
 
-        from planner.conversation.system import SqliteProcessConversationSystem
-
         source_retirement_proven = False
-        if (
-            isinstance(conversations, SqliteProcessConversationSystem)
-            and killed_conversation_id is not None
-        ):
+        if killed_conversation_id is not None:
             source_retirement_proven = await conversations.retirement_is_confirmed(
                 killed_conversation_id
             )

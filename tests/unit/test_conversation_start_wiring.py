@@ -254,6 +254,9 @@ class _LinkWatchingConversationSystem:
     async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
         return await self._system.discard_held_prompt(conversation_id, held_prompt_id)
 
+    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
+        return await self._system.retirement_is_confirmed(conversation_id)
+
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
 

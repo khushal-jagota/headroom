@@ -106,7 +106,9 @@ class MacRuns:
             assignment_principal=Principal(PrincipalKind.ticket, ticket_id),
         )
 
-    def recover(self, reference: ChildReference) -> MacRemoteChild:
+    def recover(self, reference: ChildReference) -> MacRemoteChild | None:
+        if self.store.child_assignment(reference) is None:
+            return None
         return self.recover_child(reference)
 
     @staticmethod

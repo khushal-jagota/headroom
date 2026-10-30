@@ -6,6 +6,9 @@ import asyncio
 from pathlib import Path
 from sqlite3 import Connection
 
+import pytest
+
+from planner.conversation.backends.contracts import BackendChild, RemoteCommandUncertain
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
@@ -26,7 +29,7 @@ from planner.executor.protocol import (
     StartRun,
     encode_value,
 )
-from planner.executor.vps_remote_child import MacRemoteChildFactory
+from planner.executor.vps_remote_child import MacRemoteChild, MacRemoteChildFactory
 
 
 def test_unknown_prompt_is_durable_and_quarantined_across_vps_restart(
@@ -535,3 +538,35 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         await quarantined.shutdown()
 
     asyncio.run(run())
+
+
+def test_neutral_detach_does_not_stop_or_confirm_a_remote_agent() -> None:
+    """Detach releases a proxy; stop still needs the exact native command outcome."""
+    from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+    async def exercise() -> None:
+        reference = ChildReference("incarnation", "child", "conversation")
+        commands: list[ChildCommand] = []
+        detached: list[ChildReference] = []
+
+        async def dispatch(command: ChildCommand) -> CommandOutcome:
+            commands.append(command)
+            return CommandOutcome(command.command_id, reference, CommandDisposition.uncertain, {})
+
+        child: BackendChild = MacRemoteChild(
+            reference,
+            dispatch,
+            lambda start: canonical_snapshot(),
+            retire_reference=detached.append,
+        )
+        assert child.stop_outside_lock
+        assert await child.withdraw_delivery()
+        await child.detach()
+        assert detached == [reference]
+        assert commands == []
+        with pytest.raises(RemoteCommandUncertain):
+            await child.stop()
+        assert [command.operation for command in commands] == [ChildOperation.stop]
+        assert commands[0].child == reference
+
+    asyncio.run(exercise())

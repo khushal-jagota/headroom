@@ -540,6 +540,7 @@ class MacInbox:
                     **publication,
                 ),
                 self.runs.store.record_application_in_transaction,
+                self.runs.store.public_request_id(application.ask),
             )
         raise ValueError("unknown executor envelope")
 

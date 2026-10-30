@@ -231,6 +231,16 @@ class _FakeBackendChild:
     ) -> None:
         self._backend.user_input_answers[request_id] = answers
 
+    @property
+    def stop_outside_lock(self) -> bool:
+        return False
+
+    async def withdraw_delivery(self) -> bool:
+        return True
+
+    async def detach(self) -> None:
+        await self.stop()
+
     async def stop(self) -> None:
         self._backend.live_turn_token = None
 
