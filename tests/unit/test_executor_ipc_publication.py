@@ -26,8 +26,9 @@ from planner.execution_identity import ChildReference
 from planner.executor import ipc_client
 from planner.executor.cli import executor_group
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.mac import MacExecutor
 from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_runner import RunningChild
+from planner.executor.mac_service import MacService
 from planner.executor.protocol import (
     AcceptanceReceipt,
     ChildCommand,
@@ -43,26 +44,25 @@ from planner.executor.protocol import (
     encode_frame,
     read_typed_frame,
 )
-from planner.executor.runtime import _Child
 
 
 @asynccontextmanager
 async def ipc_service(
     root: Path, monkeypatch: pytest.MonkeyPatch
-) -> AsyncIterator[tuple[MacExecutor, _Child]]:
-    executor = MacExecutor(
+) -> AsyncIterator[tuple[MacService, RunningChild]]:
+    executor = MacService(
         paths=ExecutorPaths(root),
         revision="a" * 40,
         executor_id="synthetic",
         panels_server_url="https://unused",
     )
-    child = _Child(
+    child = RunningChild(
         ChildReference(executor.identity.executor_incarnation, "child", "c_one"),
         "capability",
         cast(BackendChild, object()),
         ticket_id="t_example",
     )
-    executor.registry.children["child"] = child
+    executor.runner._children["child"] = child
     monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(root))
     monkeypatch.setenv("PLAN_TICKET_ID", "t_example")
     monkeypatch.setenv("PLAN_EXECUTOR_CHILD_ID", "child")
@@ -77,7 +77,7 @@ async def ipc_service(
         assert task is not None
         handlers.add(task)
         try:
-            await executor._ipc_client(reader, writer)
+            await executor.gateway._ipc_client(reader, writer)
         finally:
             handlers.discard(task)
 
@@ -88,14 +88,14 @@ async def ipc_service(
     finally:
         if handlers:
             await asyncio.gather(*handlers)
-        if executor._publications:
-            await asyncio.gather(*(row.task for row in executor._publications.values()))
-        if executor._ipc_lookups:
-            await asyncio.gather(*executor._ipc_lookups)
-        executor.spool.close()
+        if executor.gateway._publications:
+            await asyncio.gather(*(row.task for row in executor.gateway._publications.values()))
+        if executor.gateway._ipc_lookups:
+            await asyncio.gather(*executor.gateway._ipc_lookups)
+        executor.outbox.close()
 
 
-def write_request(child: _Child, identity: str, *, budget: float = 0.04) -> IpcRequest:
+def write_request(child: RunningChild, identity: str, *, budget: float = 0.04) -> IpcRequest:
     return IpcRequest(
         identity,
         IpcOperation.write,
@@ -109,7 +109,7 @@ def write_request(child: _Child, identity: str, *, budget: float = 0.04) -> IpcR
     )
 
 
-def retry_request(child: _Child, identity: str) -> IpcRequest:
+def retry_request(child: RunningChild, identity: str) -> IpcRequest:
     return IpcRequest(
         str(uuid4()),
         IpcOperation.retry,
@@ -170,27 +170,27 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                 identity = outcome["submission_id"]
                 assert outcome["request_id"] == identity
                 assert outcome["publication"] == "unknown"
-                tracker = executor._publications[identity]
+                tracker = executor.gateway._publications[identity]
                 assert not tracker.task.done()
-                assert executor.registry._source_work[child.reference] == 1
-                assert executor.spool.pending_count() == 0
+                assert executor.runner._source_work[child.reference] == 1
+                assert executor.outbox.pending_count() == 0
                 (executor.paths.artifacts / "t_example" / "file").write_text("changed bytes")
-                concurrent = await executor.handle_ipc(retry_request(child, identity))
+                concurrent = await executor.gateway.handle(retry_request(child, identity))
                 assert concurrent.unconfirmed is not None
                 assert concurrent.unconfirmed.publication == "preparing"
-                assert executor._publications[identity] is tracker
+                assert executor.gateway._publications[identity] is tracker
                 release.set()
                 publication = await tracker.task
-                assert executor.registry._source_work == {}
+                assert executor.runner._source_work == {}
                 assert captures == 1
-                snapshots = executor.spool.snapshots(identity)
+                snapshots = executor.outbox.snapshots(identity)
                 assert snapshots[0].local_path.read_text() == "original bytes"
                 retried = await asyncio.to_thread(
                     CliRunner().invoke, executor_group, ["retry", identity, "--json"]
                 )
                 assert retried.exit_code == 3, retried.output
                 assert json.loads(retried.stdout)["publication"] == "queued"
-                assert executor.spool.pending() == (publication.envelope,)
+                assert executor.outbox.pending() == (publication.envelope,)
                 assert captures == 1
             finally:
                 release.set()
@@ -204,7 +204,7 @@ def test_shared_deadline_returns_preparing_but_tracker_survives_physical_settlem
     async def run() -> None:
         entered, release = threading.Event(), threading.Event()
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            mint = executor.spool.add
+            mint = executor.outbox.add
 
             def held_mint(*args: object, **kwargs: object) -> object:
                 envelope = mint(*args, **kwargs)  # type: ignore[arg-type]
@@ -212,28 +212,28 @@ def test_shared_deadline_returns_preparing_but_tracker_survives_physical_settlem
                 assert release.wait(5)
                 return envelope
 
-            monkeypatch.setattr(executor.spool, "add", held_mint)
+            monkeypatch.setattr(executor.outbox, "add", held_mint)
             request = write_request(child, "original", budget=0.1)
             try:
                 started = time.monotonic()
-                response = await executor.handle_ipc(request)
+                response = await executor.gateway.handle(request)
                 assert time.monotonic() - started < 0.6
                 assert entered.is_set()
                 assert response.unconfirmed is not None
                 assert response.unconfirmed.publication == "preparing"
-                tracker = executor._publications["original"]
-                assert executor.spool.pending_count() == 1
-                assert executor.registry._source_work[child.reference] == 1
+                tracker = executor.gateway._publications["original"]
+                assert executor.outbox.pending_count() == 1
+                assert executor.runner._source_work[child.reference] == 1
                 conflict = replace(request, payload={"operation": "ticket.edit", "arguments": {}})
-                refusal = await executor.handle_ipc(conflict)
+                refusal = await executor.gateway.handle(conflict)
                 assert refusal.error is not None and refusal.error["code"] == "validation"
-                duplicate = await executor.handle_ipc(
+                duplicate = await executor.gateway.handle(
                     replace(request, response_deadline=time.monotonic() + 0.01)
                 )
                 assert duplicate.unconfirmed is not None
-                assert executor._publications["original"] is tracker
-                envelope = executor.spool.pending()[0]
-                executor.spool.acknowledge(
+                assert executor.gateway._publications["original"] is tracker
+                envelope = executor.outbox.pending()[0]
+                executor.outbox.acknowledge(
                     AcceptanceReceipt(
                         envelope.sender_id,
                         envelope.submission_id,
@@ -243,14 +243,14 @@ def test_shared_deadline_returns_preparing_but_tracker_survives_physical_settlem
                         1,
                     )
                 )
-                observed = await executor.handle_ipc(retry_request(child, "original"))
+                observed = await executor.gateway.handle(retry_request(child, "original"))
                 assert observed.result == {"saved": True}
-                assert executor._publications["original"] is tracker
-                assert executor.registry._source_work[child.reference] == 1
+                assert executor.gateway._publications["original"] is tracker
+                assert executor.runner._source_work[child.reference] == 1
                 release.set()
                 await tracker.task
-                assert executor.registry._source_work == {}
-                assert "original" not in executor._publications
+                assert executor.runner._source_work == {}
+                assert "original" not in executor.gateway._publications
             finally:
                 release.set()
 
@@ -262,10 +262,10 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
 ) -> None:
     async def run() -> None:
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            response = await executor.handle_ipc(write_request(child, "original"))
+            response = await executor.gateway.handle(write_request(child, "original"))
             assert response.queued is not None
-            envelope = executor.spool.pending()[0]
-            executor.spool.acknowledge(
+            envelope = executor.outbox.pending()[0]
+            executor.outbox.acknowledge(
                 AcceptanceReceipt(
                     envelope.sender_id,
                     "original",
@@ -275,36 +275,36 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
                     1,
                 )
             )
-            assert not (executor.spool.root / "entries" / "original").exists()
-            acknowledged = await executor.handle_ipc(retry_request(child, "original"))
+            assert not (executor.outbox.root / "entries" / "original").exists()
+            acknowledged = await executor.gateway.handle(retry_request(child, "original"))
             assert acknowledged.error == {"code": "validation"}
             changed = replace(
                 write_request(child, "original"),
                 payload={"operation": "ticket.edit", "arguments": {}},
             )
-            conflict = await executor.handle_ipc(changed)
+            conflict = await executor.gateway.handle(changed)
             assert conflict.error is not None and conflict.error["code"] == "validation"
-            assert not executor.spool.pending()
-            sender = executor.spool.sender_id
+            assert not executor.outbox.pending()
+            sender = executor.outbox.sender_id
         # A fresh registry has no old native child authority. Journal identity still survives.
-        restarted = MacExecutor(
+        restarted = MacService(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             executor_id="synthetic",
             panels_server_url="https://unused",
         )
         try:
-            assert restarted.spool.sender_id == sender
-            row = restarted.spool.lookup("original")
+            assert restarted.outbox.sender_id == sender
+            row = restarted.outbox.lookup("original")
             assert row is None  # Old run capabilities are gone, so confirmed lookup rows are swept.
-            stale = await restarted.handle_ipc(retry_request(child, "original"))
+            stale = await restarted.gateway.handle(retry_request(child, "original"))
             assert stale.error is not None and stale.error["code"] == "agent_forbidden"
-            restarted.registry.children["child"] = child
-            missing = await restarted.handle_ipc(retry_request(child, "absent"))
+            restarted.runner._children["child"] = child
+            missing = await restarted.gateway.handle(retry_request(child, "absent"))
             assert missing.unconfirmed is not None and missing.unconfirmed.publication == "unknown"
-            assert not restarted.spool.pending()
+            assert not restarted.outbox.pending()
         finally:
-            restarted.spool.close()
+            restarted.outbox.close()
 
     asyncio.run(run())
 
@@ -319,7 +319,7 @@ def test_actual_local_refusal_is_canonical_without_traceback(
             if refusal == "capability":
                 monkeypatch.setenv("PLAN_EXECUTOR_CAPABILITY", "wrong")
             else:
-                executor.registry.admission_stopped = True
+                executor.runner.admission_stopped = True
             result = await asyncio.to_thread(
                 CliRunner().invoke,
                 main,
@@ -335,7 +335,7 @@ def test_actual_local_refusal_is_canonical_without_traceback(
                 assert error["code"] == "agent_forbidden"
             else:
                 assert "cannot perform" in result.stderr
-            assert not executor.spool.pending()
+            assert not executor.outbox.pending()
 
     asyncio.run(run())
 
@@ -424,11 +424,11 @@ def test_invalid_payload_is_a_canonical_refusal_before_admission(
 ) -> None:
     async def run() -> None:
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            response = await executor.handle_ipc(
+            response = await executor.gateway.handle(
                 replace(write_request(child, "bad"), payload=payload)
             )
             assert response.error is not None and response.error["code"] == "validation"
-            assert not executor._publications and not executor.spool.pending()
+            assert not executor.gateway._publications and not executor.outbox.pending()
 
     asyncio.run(run())
 
@@ -461,7 +461,7 @@ def test_production_six_second_preparation_consumes_shared_thirty_second_budget(
             assert 29 <= elapsed < 34, elapsed
             assert captures == 1
             assert response.queued is not None and response.error is None
-            assert executor.spool.pending()[0].submission_id == response.request_id
+            assert executor.outbox.pending()[0].submission_id == response.request_id
 
     asyncio.run(run())
 
@@ -471,23 +471,23 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
 ) -> None:
     async def run() -> None:
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            mint = executor.spool.add
+            mint = executor.outbox.add
 
             def committed_then_failed(*args: object, **kwargs: object) -> object:
                 mint(*args, **kwargs)  # type: ignore[arg-type]
                 raise OSError("snapshot cleanup failed after commit")
 
-            monkeypatch.setattr(executor.spool, "add", committed_then_failed)
-            response = await executor.handle_ipc(write_request(child, "original"))
+            monkeypatch.setattr(executor.outbox, "add", committed_then_failed)
+            response = await executor.gateway.handle(write_request(child, "original"))
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
-            original = executor.spool.pending()[0]
-            retried = await executor.handle_ipc(
+            original = executor.outbox.pending()[0]
+            retried = await executor.gateway.handle(
                 replace(retry_request(child, "original"), response_deadline=time.monotonic() + 5)
             )
             assert retried.unconfirmed is not None and retried.unconfirmed.publication == "queued"
             assert retried.unconfirmed.submission_id == original.submission_id == "original"
-            assert executor.spool.pending() == (original,)
+            assert executor.outbox.pending() == (original,)
 
     asyncio.run(run())
 
@@ -498,7 +498,7 @@ def test_duplicate_reservation_precedes_blocked_journal_lookup(
     async def run() -> None:
         entered, release = threading.Event(), threading.Event()
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            lookup = executor.spool.lookup
+            lookup = executor.outbox.lookup
             calls = 0
 
             def blocked_lookup(identity: str) -> object:
@@ -508,17 +508,17 @@ def test_duplicate_reservation_precedes_blocked_journal_lookup(
                 assert release.wait(5)
                 return lookup(identity)
 
-            monkeypatch.setattr(executor.spool, "lookup", blocked_lookup)
+            monkeypatch.setattr(executor.outbox, "lookup", blocked_lookup)
             request = write_request(child, "same", budget=0.08)
-            first = asyncio.create_task(executor.handle_ipc(request))
-            second = asyncio.create_task(executor.handle_ipc(request))
+            first = asyncio.create_task(executor.gateway.handle(request))
+            second = asyncio.create_task(executor.gateway.handle(request))
             try:
                 responses = await asyncio.gather(first, second)
                 assert entered.is_set() and calls >= 1
-                assert executor.registry._source_work[child.reference] == 1
+                assert executor.runner._source_work[child.reference] == 1
                 assert all(row.unconfirmed is not None for row in responses)
-                tracker = executor._publications["same"]
-                conflict = await executor.handle_ipc(
+                tracker = executor.gateway._publications["same"]
+                conflict = await executor.gateway.handle(
                     replace(
                         request,
                         payload={
@@ -528,10 +528,10 @@ def test_duplicate_reservation_precedes_blocked_journal_lookup(
                     )
                 )
                 assert conflict.error is not None and conflict.error["code"] == "validation"
-                assert executor._publications["same"] is tracker
+                assert executor.gateway._publications["same"] is tracker
                 release.set()
                 await tracker.task
-                assert len(executor.spool.pending()) == 1
+                assert len(executor.outbox.pending()) == 1
             finally:
                 release.set()
 
@@ -550,15 +550,15 @@ def test_failed_add_reports_unknown_and_never_proves_stop(
                     raise FileNotFoundError("captured blob vanished")
                 raise OSError(errno.ENOSPC, "outbox disk full")
 
-            monkeypatch.setattr(executor.spool, "add", fail_add)
-            response = await executor.handle_ipc(write_request(child, "lost-output"))
+            monkeypatch.setattr(executor.outbox, "add", fail_add)
+            response = await executor.gateway.handle(write_request(child, "lost-output"))
             assert response.unconfirmed is not None
             assert response.unconfirmed.publication == "unknown"
-            assert not executor.spool.pending()
+            assert not executor.outbox.pending()
             # Even if the native child is already absent, lost authored output
             # prevents the final stop proof from claiming complete delivery.
-            executor.registry.children.clear()
-            stopped = await executor.registry._stop_exact_child(
+            executor.runner._children.clear()
+            stopped = await executor.runner._stop_exact_child(
                 ChildCommand("stop", child.reference, ChildOperation.stop, None, StopRun())
             )
             assert stopped.disposition is CommandDisposition.uncertain

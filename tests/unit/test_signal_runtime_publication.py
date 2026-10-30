@@ -64,7 +64,11 @@ class _SignalHarness(controlled._Harness):
 
 
 _EnabledRuntime = tuple[
-    _SignalHarness, SignalPublicationCoordinator, list[SignalBatch], SignalAttachment
+    _SignalHarness,
+    SignalPublicationCoordinator,
+    list[SignalBatch],
+    SignalAttachment,
+    asyncio.Runner,
 ]
 
 
@@ -167,11 +171,13 @@ def _enabled_runtime(
         participate=lambda connection, batch: batches.append(batch),
         unavailable=lambda reason: None,
     )
-    try:
-        yield runtime, coordinator, batches, attachment
-    finally:
-        asyncio.run(runtime.system.shutdown())
-        assert ownership.closed
+    # Exercise and shutdown share the same live loop and its owned tasks.
+    with asyncio.Runner() as loop:
+        try:
+            yield runtime, coordinator, batches, attachment, loop
+        finally:
+            loop.run(runtime.system.shutdown())
+            assert ownership.closed
 
 
 def _latest_attention(batches: list[SignalBatch]) -> ConversationAttention:
@@ -186,7 +192,13 @@ def _latest_attention(batches: list[SignalBatch]) -> ConversationAttention:
 def test_actual_turn_pending_answer_and_end_share_source_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
 
         async def exercise() -> None:
             await controlled._start(runtime)
@@ -232,13 +244,19 @@ def test_actual_turn_pending_answer_and_end_share_source_boundary(
             assert not await runtime.system.is_running("c")
             attachment.validate(attachment.capture_permit())
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_status_reads_retain_signal_and_runtime_ownership_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
 
         async def exercise() -> None:
             await controlled._start(runtime)
@@ -263,13 +281,19 @@ def test_status_reads_retain_signal_and_runtime_ownership_admission(
                     with pytest.raises(RuntimeError, match="the conversation runtime is shut down"):
                         await read(conversation_id)
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_rejected_request_restores_actual_slot_fields_before_gate_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
 
         async def exercise() -> None:
             await controlled._start(runtime)
@@ -315,13 +339,19 @@ def test_rejected_request_restores_actual_slot_fields_before_gate_release(
             assert running.pending_permission_ask_ids == {"1:permission:provider-ask"}
             assert running.permission_provider_ids == {"1:permission:provider-ask": "provider-ask"}
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
 
         async def exercise() -> None:
             await controlled._start(runtime)
@@ -358,13 +388,19 @@ def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
             assert not running.pending_permission_ask_ids and not running.permission_provider_ids
             assert not _latest_attention(batches).awaiting_answer
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_uncertain_committed_prompt_recovers_result_without_provider_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
         original = coordinator.record_result
         failed = False
 
@@ -401,7 +437,7 @@ def test_uncertain_committed_prompt_recovers_result_without_provider_retry(
             assert sum(event.kind.value == "prompt" for event in events) == 1
             assert runtime.system._conversations["c"].running_turn is not None
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_startup_reconciles_persisted_pending_but_preserves_unread(
@@ -447,13 +483,14 @@ def test_startup_reconciles_persisted_pending_but_preserves_unread(
         coordinator,
         batches,
         attachment,
+        loop,
     ):
         (value,) = runtime.signal_snapshot.values
         assert value.conversation_id == "historical"
         assert value.attention.signal == {"working": False, "message_for_owner": True}
         assert not value.attention.awaiting_answer
         assert not runtime.spawned_conversation_ids
-        facts = asyncio.run(runtime.store.lifecycle_facts("historical"))
+        facts = loop.run(runtime.store.lifecycle_facts("historical"))
         assert facts[0].status is LifecycleStatus.unavailable
         with pytest.raises(ConversationRuntimeAlreadyOwned):
             acquire_runtime_ownership(runtime.store._db_path)
@@ -469,9 +506,9 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
 
     from planner.conversation.contracts import PromptDeliveryMode
     from planner.conversation.events import PromptEventPayload
+    from planner.conversation.launch_intent import bind_model_intent
     from planner.conversation.lifecycle import LifecycleTransition
     from planner.conversation.model_resolution.contracts import CatalogObservation, SelectionKind
-    from planner.conversation.launch_intent import bind_model_intent
     from planner.core.contracts import OWNER_PRINCIPAL
     from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
     from planner.tickets import data as tickets
@@ -510,6 +547,7 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
         coordinator,
         batches,
         attachment,
+        loop,
     ):
 
         async def exercise() -> None:
@@ -586,4 +624,4 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
             assert snapshot() == before
             assert not await runtime.store.read_events_after("c", 0)
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
+        loop.run(asyncio.wait_for(exercise(), 8))

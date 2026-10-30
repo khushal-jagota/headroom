@@ -47,12 +47,14 @@ from planner.conversation.model_resolution.contracts import (
     SelectionKind,
 )
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import AskKind, ChildReference, ExecutorIdentity
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.mac import MacExecutor, as_object
 from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_runner import MacRunner
+from planner.executor.mac_service import MacService
 from planner.executor.protocol import (
     AcceptanceReceipt,
+    AnswerApplication,
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
     ChildCommand,
@@ -74,10 +76,10 @@ from planner.executor.protocol import (
     WireMessage,
     WireMessageKind,
     WritePrompt,
+    as_object,
     decode_command_arguments,
     encode_value,
 )
-from planner.executor.runtime import NativeChildRegistry
 from planner.tickets.contracts import TicketLocale
 
 
@@ -122,7 +124,7 @@ def test_command_json_door_checks_shape_and_preserves_nullable_effort() -> None:
 
 
 def _fixture_admission(
-    registry: NativeChildRegistry,
+    registry: MacRunner,
     reference: ChildReference,
     resolved: ResolvedConversationStart,
     *,
@@ -235,7 +237,7 @@ class ScriptedChild:
 @pytest.fixture
 def native_registry(
     tmp_path: Path,
-) -> Iterator[tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand]]:
+) -> Iterator[tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand]]:
     spool = MacOutbox(tmp_path / "spool")
     native = ScriptedChild()
     reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
@@ -249,7 +251,7 @@ def native_registry(
 
         return cast(BackendChildFactory, create)
 
-    registry = NativeChildRegistry(
+    registry = MacRunner(
         paths=ExecutorPaths(tmp_path / "executor"),
         incarnation=reference.executor_incarnation,
         spool=spool,
@@ -284,6 +286,21 @@ def native_registry(
         spool.close()
 
 
+def answer_command(answer: DurableAnswer) -> ChildCommand:
+    operation = (
+        ChildOperation.answer_user_input
+        if answer.ask.kind is AskKind.user_input
+        else ChildOperation.answer_permission_ask
+    )
+    return ChildCommand(
+        answer.answer_id,
+        answer.ask.child,
+        operation,
+        answer.ask.turn,
+        decode_command_arguments(operation, {"answer": encode_value(answer)}),
+    )
+
+
 def acknowledge_pending(spool: MacOutbox) -> None:
     for row in spool.pending():
         spool.acknowledge(
@@ -300,7 +317,7 @@ def acknowledge_pending(spool: MacOutbox) -> None:
 
 @pytest.mark.parametrize("boundary", ["incarnation", "start", "prompt", "prompt_lock"])
 def test_pre_dispatch_refusal_never_calls_native(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     boundary: str,
 ) -> None:
     async def run() -> None:
@@ -309,9 +326,7 @@ def test_pre_dispatch_refusal_never_calls_native(
         if boundary == "incarnation":
             command = replace(start, child=replace(start.child, executor_incarnation=str(uuid4())))
         if boundary.startswith("prompt"):
-            assert (
-                await registry.execute_command(start)
-            ).disposition == CommandDisposition.succeeded
+            assert (await registry.run(start)).disposition == CommandDisposition.succeeded
             command = ChildCommand(
                 "prompt",
                 start.child,
@@ -328,10 +343,10 @@ def test_pre_dispatch_refusal_never_calls_native(
                 ),
             )
         if boundary == "prompt_lock":
-            child = registry.children[start.child.child_id]
+            child = registry._children[start.child.child_id]
             await child.lock.acquire()
             try:
-                task = asyncio.create_task(registry.execute_command(command))
+                task = asyncio.create_task(registry.run(command))
                 # Let execute_command create its task, then let that task wait on the lock.
                 await asyncio.sleep(0)
                 await asyncio.sleep(0)
@@ -345,7 +360,7 @@ def test_pre_dispatch_refusal_never_calls_native(
                 registry.admission_stopped = True
             else:
                 await registry.quiesce()
-            outcome = await registry.execute_command(command)
+            outcome = await registry.run(command)
         assert outcome.disposition == CommandDisposition.refused
         assert native.prompts == 0
         assert native.starts == (1 if boundary.startswith("prompt") else 0)
@@ -353,8 +368,8 @@ def test_pre_dispatch_refusal_never_calls_native(
             assert native.sink is None  # Native construction never occurred.
         else:
             # Closed admission did not install a new active turn.
-            assert all(child.active_turn is None for child in registry.children.values())
-        assert registry.outcomes[command.command_id] == outcome
+            assert all(child.active_turn is None for child in registry._children.values())
+        assert registry._commands[command.command_id].outcome == outcome
         assert spool.pending() == ()
         blocked = await registry.quiesce()
         assert blocked.uncertain_operation_count == 0
@@ -385,7 +400,7 @@ class _LocalSessionLoadRefused(SessionLoadFailed):
     ],
 )
 def test_native_typed_refusal_is_distinct_from_possible_emission(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
     failure: Exception,
     operation: ChildOperation,
@@ -395,9 +410,7 @@ def test_native_typed_refusal_is_distinct_from_possible_emission(
         registry, spool, native, start = native_registry
         command = start
         if operation is ChildOperation.write_prompt:
-            assert (
-                await registry.execute_command(start)
-            ).disposition is CommandDisposition.succeeded
+            assert (await registry.run(start)).disposition is CommandDisposition.succeeded
             command = ChildCommand(
                 "typed-prompt",
                 start.child,
@@ -421,20 +434,20 @@ def test_native_typed_refusal_is_distinct_from_possible_emission(
             raise failure
 
         monkeypatch.setattr(native, operation.value, fail)
-        outcome = await registry.execute_command(command)
+        outcome = await registry.run(command)
         assert outcome.disposition is expected
         if isinstance(failure, _LocalSessionLoadRefused):
             assert outcome.result["error_type"] == "SessionLoadFailed"
         assert spool.pending() == ()
         assert registry.ask((command.command_id,))[0].outcome == outcome
-        assert await registry.execute_command(command) == outcome
+        assert await registry.run(command) == outcome
         assert calls == 1
 
     asyncio.run(run())
 
 
 def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and_drain(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -451,7 +464,7 @@ def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and
             raise ValueError("executor is quiescing")
 
         monkeypatch.setattr(native, "start", failing_start)
-        outcome = await registry.execute_command(start)
+        outcome = await registry.run(start)
         assert outcome.disposition == CommandDisposition.uncertain
         assert outcome.result == {
             "error_type": "ValueError",
@@ -468,19 +481,19 @@ def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and
         assert blocked.unsent_entry_count == 0
         assert blocked.uncertain_operation_count == 1
         assert not blocked.ready
-        assert await registry.execute_command(start) == outcome
+        assert await registry.run(start) == outcome
         assert native.starts == 1
 
     asyncio.run(run())
 
 
 async def uncertain_automatic_compaction(
-    registry: NativeChildRegistry,
+    registry: MacRunner,
     native: ScriptedChild,
     start: ChildCommand,
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[ChildCommand, CommandOutcome]:
-    assert (await registry.execute_command(start)).disposition == CommandDisposition.succeeded
+    assert (await registry.run(start)).disposition == CommandDisposition.succeeded
 
     async def compacting_prompt(
         turn: TurnToken, content: MessageContent, **kwargs: object
@@ -506,13 +519,13 @@ async def uncertain_automatic_compaction(
             },
         ),
     )
-    outcome = await registry.execute_command(command)
+    outcome = await registry.run(command)
     assert outcome.disposition == CommandDisposition.uncertain
     return command, outcome
 
 
 def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -525,8 +538,8 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
             None,
             decode_command_arguments(ChildOperation.stop, {}),
         )
-        assert (await registry.execute_command(stop)).disposition == CommandDisposition.succeeded
-        assert start.child.child_id not in registry.children
+        assert (await registry.run(stop)).disposition == CommandDisposition.succeeded
+        assert start.child.child_id not in registry._children
 
         blocked = await registry.quiesce()
         assert blocked.uncertain_operation_count == 0
@@ -534,12 +547,10 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
         assert not blocked.ready
         acknowledge_pending(spool)
         assert (await registry.quiesce()).ready
-        assert registry.outcomes[command.command_id] == first
-        assert await registry.execute_command(command) == first
+        assert registry._commands[command.command_id].outcome == first
+        assert await registry.run(command) == first
         with pytest.raises(ValueError, match="different content"):
-            await registry.execute_command(
-                replace(command, turn=TurnToken(command.child.conversation_id, 999))
-            )
+            await registry.run(replace(command, turn=TurnToken(command.child.conversation_id, 999)))
         assert (native.starts, native.prompts) == (1, 1)
         assert spool.pending_count() == 0
 
@@ -561,23 +572,23 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
     ],
 )
 def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_child(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
     missing_evidence: str,
 ) -> None:
     async def run() -> None:
         registry, spool, native, start = native_registry
         command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
-        child = registry.children[start.child.child_id]
+        child = registry._children[start.child.child_id]
         if missing_evidence == "absent_child":
-            registry.children.pop(start.child.child_id)
+            registry._children.pop(start.child.child_id)
         elif missing_evidence == "failed_stop":
 
             async def failed_stop() -> None:
                 raise RuntimeError("termination not confirmed")
 
             monkeypatch.setattr(native, "stop", failed_stop)
-            failed = await registry.execute_command(
+            failed = await registry.run(
                 ChildCommand(
                     "stop",
                     start.child,
@@ -596,10 +607,10 @@ def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_chi
                 None,
                 decode_command_arguments(ChildOperation.stop, {}),
             )
-            stopped = await registry.execute_command(stop)
+            stopped = await registry.run(stop)
             assert stopped.disposition == CommandDisposition.succeeded
             if missing_evidence == "live_child":
-                registry.children[start.child.child_id] = child
+                registry._children[start.child.child_id] = child
             elif missing_evidence.startswith("other_"):
                 changed = {
                     "other_incarnation": replace(start.child, executor_incarnation=str(uuid4())),
@@ -607,34 +618,34 @@ def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_chi
                     "other_conversation": replace(start.child, conversation_id="c_other"),
                 }[missing_evidence]
                 # Retained successful termination of a different full reference is insufficient.
-                registry._commands["stop"] = replace(stop, child=changed)
-                registry.outcomes["stop"] = replace(stopped, child=changed)
+                registry._commands["stop"].command = replace(stop, child=changed)
+                registry._commands["stop"].outcome = replace(stopped, child=changed)
             elif missing_evidence == "outcome_mismatch":
-                registry.outcomes["stop"] = replace(
+                registry._commands["stop"].outcome = replace(
                     stopped, child=replace(start.child, conversation_id="c_other")
                 )
             elif missing_evidence == "not_stop":
-                registry._commands["stop"] = replace(start, command_id=stop.command_id)
+                registry._commands["stop"].command = replace(start, command_id=stop.command_id)
 
         acknowledge_pending(spool)
         blocked = await registry.quiesce()
         assert blocked.uncertain_operation_count == (2 if missing_evidence == "failed_stop" else 1)
         assert blocked.unsent_entry_count == 0
         assert not blocked.ready
-        assert registry.outcomes[command.command_id] == first
+        assert registry._commands[command.command_id].outcome == first
         assert (native.starts, native.prompts) == (1, 1)
 
     asyncio.run(run())
 
 
 def test_historical_uncertainty_does_not_clear_another_child_active_turn(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
         registry, spool, native, start = native_registry
         command, _ = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
-        await registry.execute_command(
+        await registry.run(
             ChildCommand(
                 "stop",
                 start.child,
@@ -647,27 +658,27 @@ def test_historical_uncertainty_does_not_clear_another_child_active_turn(
         other = replace(
             start, command_id="other_start", child=replace(start.child, child_id=str(uuid4()))
         )
-        assert (await registry.execute_command(other)).disposition == CommandDisposition.succeeded
-        registry.children[other.child.child_id].active_turn = TurnToken("c_one", 2)
+        assert (await registry.run(other)).disposition == CommandDisposition.succeeded
+        registry._children[other.child.child_id].active_turn = TurnToken("c_one", 2)
         acknowledge_pending(spool)
         blocked = await registry.quiesce()
         assert blocked.uncertain_operation_count == 0
         assert blocked.active_turn_count == 1
         assert not blocked.ready
-        assert other.child.child_id in registry.children
+        assert other.child.child_id in registry._children
 
     asyncio.run(run())
 
 
 def test_restart_keeps_stop_receipts_and_discards_command_memory_and_child_authority(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
         registry, spool, native, start = native_registry
         command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
-        capability = registry.children[start.child.child_id].capability
-        await registry.execute_command(
+        capability = registry._children[start.child.child_id].capability
+        await registry.run(
             ChildCommand(
                 "stop",
                 start.child,
@@ -684,30 +695,28 @@ def test_restart_keeps_stop_receipts_and_discards_command_memory_and_child_autho
         paths = ExecutorPaths(spool.root.parent)
         sender_id = spool.sender_id
         spool.close()
-        executor = MacExecutor(
+        executor = MacService(
             paths=paths,
             revision="a" * 40,
             executor_id="owner-mac",
             panels_server_url="https://unused",
         )
         try:
-            assert executor.spool.sender_id == sender_id
-            assert executor.spool.pending_count() == 0
-            assert executor.spool._db.execute("SELECT COUNT(*) FROM items").fetchone() == (0,)
-            assert executor.spool.pending_count() == 0
+            assert executor.outbox.sender_id == sender_id
+            assert executor.outbox.pending_count() == 0
+            assert executor.outbox._db.execute("SELECT COUNT(*) FROM items").fetchone() == (0,)
+            assert executor.outbox.pending_count() == 0
             assert executor.identity.executor_incarnation != start.child.executor_incarnation
-            assert executor.registry.children == {}
-            assert executor.registry.outcomes == {}
+            assert executor.runner._children == {}
+            assert executor.runner._commands == {}
             with pytest.raises(PermissionError, match="unknown executor child capability"):
-                executor.registry.authenticate(start.child.child_id, capability)
-            refused = await executor.registry.execute_command(
-                replace(command, command_id="stale_compaction")
-            )
+                executor.runner.authenticate(start.child.child_id, capability)
+            refused = await executor.runner.run(replace(command, command_id="stale_compaction"))
             assert refused.disposition == CommandDisposition.refused
             assert refused.result == {"reason": "incarnation_gone"}
             assert (native.starts, native.prompts) == (1, 1)
         finally:
-            executor.spool.close()
+            executor.outbox.close()
 
     asyncio.run(run())
 
@@ -727,7 +736,7 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
 
             return cast(BackendChildFactory, create)
 
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             paths=ExecutorPaths(tmp_path),
             incarnation=reference.executor_incarnation,
             spool=spool,
@@ -762,18 +771,16 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
             start,
             arguments=replace(start.arguments, admission_expectation=expectation),
         )
-        caller = asyncio.create_task(registry.execute_command(start))
+        caller = asyncio.create_task(registry.run(start))
         await asyncio.sleep(0)
         caller.cancel()
         with pytest.raises(asyncio.CancelledError):
             await caller
-        outcome = await registry.execute_command(start)
+        outcome = await registry.run(start)
         assert outcome.disposition == CommandDisposition.succeeded
         assert native.starts == 1
         with pytest.raises(ValueError, match="different content"):
-            await registry.execute_command(
-                replace(start, turn=TurnToken(start.child.conversation_id, 999))
-            )
+            await registry.run(replace(start, turn=TurnToken(start.child.conversation_id, 999)))
         assert native.sink is not None
         turn = TurnToken("c_one", 1)
         prompt = ChildCommand(
@@ -798,7 +805,7 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
                 prompt.arguments, admission_expectation=replace(expectation, turn=turn)
             ),
         )
-        await registry.execute_command(prompt)
+        await registry.run(prompt)
         uncertain = ChildCommand(
             "uncertain",
             reference,
@@ -813,9 +820,7 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
                 },
             ),
         )
-        assert (
-            await registry.execute_command(uncertain)
-        ).disposition == CommandDisposition.uncertain
+        assert (await registry.run(uncertain)).disposition == CommandDisposition.uncertain
         assert (await registry.quiesce()).active_turn_count == 1
         artifact = tmp_path / "artifacts" / "tickets" / "t_example" / "result.bin"
         artifact.parent.mkdir(parents=True, exist_ok=True)
@@ -829,23 +834,18 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
         await native.sink.permission_ask_raised(
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
-        ask = registry.inventory()[0].pending_asks[0]
+        ask = registry.children()[0].pending_asks[0]
         assert native.answers == []  # absence of an answer remains a wait
         assert (await registry.quiesce()).pending_callback_count == 1
-        missing = replace(ask, child=replace(reference, child_id=str(uuid4())))
-        assert await registry.apply_answer(DurableAnswer("gone", missing, "allow", 1)) is None
-        assert native.answers == []
         answer = DurableAnswer("answer", ask, "allow", 1)
-        first = await registry.apply_answer(answer)
-        assert first is not None
-        assert await registry.apply_answer(answer) == first
+        first = await registry.run(answer_command(answer))
+        assert first.disposition is CommandDisposition.succeeded
+        assert await registry.run(answer_command(answer)) == first
         assert native.answers == [("ask", "allow")]
-        assert registry.inventory()[0].pending_asks == ()
+        assert registry.children()[0].pending_asks == ()
         kinds = [entry.kind for entry in spool.pending()]
         assert EnvelopeKind.answer_application in kinds
-        assert (
-            await registry.execute_command(uncertain)
-        ).disposition == CommandDisposition.uncertain
+        assert (await registry.run(uncertain)).disposition == CommandDisposition.uncertain
         quiescence = await registry.quiesce()
         assert quiescence.uncertain_operation_count == 1
         assert quiescence.unsent_entry_count > 0
@@ -857,13 +857,13 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
 
 def test_stale_quiesce_rejects_restart_and_exit_is_identity_bound(tmp_path: Path) -> None:
     async def run() -> None:
-        executor = MacExecutor(
+        executor = MacService(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             executor_id="owner-mac",
             panels_server_url="https://unused",
         )
-        forbidden = await executor.handle_ipc(
+        forbidden = await executor.gateway.handle(
             IpcRequest(
                 "bad-child",
                 IpcOperation.write,
@@ -873,24 +873,24 @@ def test_stale_quiesce_rejects_restart_and_exit_is_identity_bound(tmp_path: Path
             )
         )
         assert forbidden.error is not None
-        assert executor.spool.pending() == ()
+        assert executor.outbox.pending() == ()
         observed = executor.identity
         executor.identity = replace(observed, executor_incarnation=str(uuid4()))
         stale = QuiesceRequest(observed, os.getpid(), True)
-        rejected = await executor.handle_ipc(
+        rejected = await executor.gateway.handle(
             IpcRequest("old", IpcOperation.quiesce, None, None, as_object(stale))
         )
         assert rejected.error is not None
-        assert not executor.registry.admission_stopped
+        assert not executor.runner.admission_stopped
         fresh = QuiesceRequest(executor.identity, os.getpid(), True)
-        accepted = await executor.handle_ipc(
+        accepted = await executor.gateway.handle(
             IpcRequest("fresh", IpcOperation.quiesce, None, None, as_object(fresh))
         )
         assert accepted.error is None
         assert accepted.result is not None
         assert accepted.result["exit_committed"] is True
-        assert executor._stop.is_set()
-        executor.spool.close()
+        assert executor.gateway._stop.is_set()
+        executor.outbox.close()
 
     asyncio.run(run())
 
@@ -910,27 +910,27 @@ def test_generation_change_during_quiesce_cannot_commit_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def run() -> None:
-        executor = MacExecutor(
+        executor = MacService(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             executor_id="owner-mac",
             panels_server_url="https://unused",
         )
-        original = executor.registry.quiesce
+        original = executor.runner.quiesce
 
         async def changed_generation() -> Quiescence:
             result = await original()
             executor.identity = replace(executor.identity, connection_generation=1)
             return result
 
-        monkeypatch.setattr(executor.registry, "quiesce", changed_generation)
+        monkeypatch.setattr(executor.runner, "quiesce", changed_generation)
         expected = QuiesceRequest(executor.identity, os.getpid(), True)
-        response = await executor.handle_ipc(
+        response = await executor.gateway.handle(
             IpcRequest("race", IpcOperation.quiesce, None, None, as_object(expected))
         )
         assert response.error is not None
-        assert not executor._stop.is_set()
-        executor.spool.close()
+        assert not executor.gateway._stop.is_set()
+        executor.outbox.close()
 
     asyncio.run(run())
 
@@ -974,7 +974,7 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
 
             return cast(BackendChildFactory, create)
 
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
@@ -991,7 +991,7 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
             ConversationAccess.full,
         )
         task = asyncio.create_task(
-            registry.execute_command(
+            registry.run(
                 ChildCommand(
                     "start",
                     reference,
@@ -1044,11 +1044,9 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("wrapper", [False, True])
 def test_applied_answer_recovers_when_outcome_fsync_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    wrapper: bool,
 ) -> None:
     async def run() -> None:
 
@@ -1065,7 +1063,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
 
             return cast(BackendChildFactory, create)
 
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
@@ -1081,7 +1079,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             tmp_path,
             ConversationAccess.full,
         )
-        await registry.execute_command(
+        await registry.run(
             ChildCommand(
                 "start",
                 reference,
@@ -1101,7 +1099,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         await native.sink.permission_ask_raised(
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
-        ask = registry.inventory()[0].pending_asks[0]
+        ask = registry.children()[0].pending_asks[0]
         answer = DurableAnswer("answer", ask, "allow", 1)
         original = spool.add
         failed = False
@@ -1129,24 +1127,21 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             ),
         )
         with pytest.raises(OSError, match="after callback"):
-            if wrapper:
-                await registry.execute_command(outer)
-            else:
-                await registry.apply_answer(answer)
+            await registry.run(outer)
         monkeypatch.setattr(spool, "add", original)
         await registry.flush_command_output((answer.answer_id,))
         assert native.answers == [("ask", "allow")]
-        assert registry.inventory()[0].pending_asks == ()
+        assert registry.children()[0].pending_asks == ()
         assert not (await registry.quiesce()).ready
-        if wrapper:
-            outcome = await registry.execute_command(outer)
-            assert outcome.disposition == CommandDisposition.succeeded
-            assert "answer_application" in outcome.result
-            assert await registry.execute_command(outer) == outcome
-        recovered = await registry.apply_answer(answer)
-        assert recovered is not None
+        outcome = await registry.run(outer)
+        assert outcome.disposition == CommandDisposition.succeeded
+        assert "answer_application" in outcome.result
+        assert await registry.run(outer) == outcome
+        recovered = TypeAdapter(AnswerApplication).validate_python(
+            outcome.result["answer_application"]
+        )
         assert native.answers == [("ask", "allow")]
-        assert registry.outcomes["answer"].result["answer_application"] == encode_value(recovered)
+        assert outcome.result["answer_application"] == encode_value(recovered)
         assert any(row.kind == EnvelopeKind.answer_application for row in spool.pending())
         spool.close()
 
@@ -1158,15 +1153,15 @@ def test_replay_protocol_error_surfaces_and_preserves_pending_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
-        executor = MacExecutor(
+        executor = MacService(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             executor_id="owner-mac",
             panels_server_url="https://unused",
         )
-        executor._handshake_accepted = True
+        executor.gateway._handshake_accepted = True
         for conversation in ("c_a", "c_a"):
-            executor.spool.add(
+            executor.outbox.add(
                 OutboxEntry(conversation_id=conversation, kind=EnvelopeKind.cli_write, payload={})
             )
         visited: list[str] = []
@@ -1176,13 +1171,15 @@ def test_replay_protocol_error_surfaces_and_preserves_pending_conversation(
             visited.append(row.conversation_id)
             raise ValueError("invalid protocol response")
 
-        monkeypatch.setattr(executor, "request", transport)
-        pending = executor.spool.pending()
+        from types import SimpleNamespace
+
+        transport_peer = SimpleNamespace(request=transport)
+        pending = executor.outbox.pending()
         with pytest.raises(ValueError, match="invalid protocol response"):
-            await executor.spool.send_pending(executor)
+            await executor.outbox.send_pending(transport_peer)
         assert visited == ["c_a"]
-        assert executor.spool.pending() == pending
-        executor.spool.close()
+        assert executor.outbox.pending() == pending
+        executor.outbox.close()
 
     asyncio.run(run())
 
@@ -1193,7 +1190,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
     async def run() -> None:
         from planner.executor.protocol import AcceptanceReceipt, ReceiptDisposition
 
-        executor = MacExecutor(
+        executor = MacService(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             executor_id="owner-mac",
@@ -1206,7 +1203,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
         ) -> BackendChildFactory:
             return cast(BackendChildFactory, lambda **kwargs: native)
 
-        executor.registry.factory = factory
+        executor.runner.factory = factory
         reference = ChildReference(executor.identity.executor_incarnation, str(uuid4()), "c_one")
         resolved = ResolvedConversationStart(
             "c_one",
@@ -1217,8 +1214,8 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
             tmp_path,
             ConversationAccess.full,
         )
-        expectation = _fixture_admission(executor.registry, reference, resolved)
-        await executor.registry.execute_command(
+        expectation = _fixture_admission(executor.runner, reference, resolved)
+        await executor.runner.run(
             ChildCommand(
                 "start",
                 reference,
@@ -1238,7 +1235,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
             root = executor.paths.artifacts / owner
             root.mkdir(parents=True, exist_ok=True)
             (root / "file").write_text(owner)
-        child = executor.registry.children[reference.child_id]
+        child = executor.runner._children[reference.child_id]
         request = IpcRequest(
             "write",
             IpcOperation.write,
@@ -1246,13 +1243,13 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
             child.capability,
             {"operation": "ticket.note", "arguments": {"ticket_id": "t_other"}},
         )
-        task = asyncio.create_task(executor.handle_ipc(request))
-        while not any(row.submission_id == "write" for row in executor.spool.pending()):
+        task = asyncio.create_task(executor.gateway.handle(request))
+        while not any(row.submission_id == "write" for row in executor.outbox.pending()):
             await asyncio.sleep(0)
-        row = next(row for row in executor.spool.pending() if row.submission_id == "write")
+        row = next(row for row in executor.outbox.pending() if row.submission_id == "write")
         assert {manifest.owner_id for manifest in row.file_dependencies} == {"t_own"}
         failure: JsonObject = {"code": "agent_forbidden", "message": "stale claim", "detail": {}}
-        executor.spool.acknowledge(
+        executor.outbox.acknowledge(
             AcceptanceReceipt(
                 row.sender_id,
                 row.submission_id,
@@ -1266,16 +1263,16 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
         assert response.result is None
         assert response.queued is None
         assert response.error == failure
-        executor.registry.admission_stopped = True
-        count = executor.spool.pending_count()
-        refused = await executor.handle_ipc(replace(request, request_id="after-closure"))
+        executor.runner.admission_stopped = True
+        count = executor.outbox.pending_count()
+        refused = await executor.gateway.handle(replace(request, request_id="after-closure"))
         assert refused.error == {
             "code": "agent_forbidden",
             "message": "executor admission stopped",
             "detail": {},
         }
-        assert executor.spool.pending_count() == count
-        executor.spool.close()
+        assert executor.outbox.pending_count() == count
+        executor.outbox.close()
 
     asyncio.run(run())
 
@@ -1290,12 +1287,12 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
     root = tmp_path / "daemon"
     script = (
         "import asyncio; from pathlib import Path; "
-        "from planner.executor.mac import MacExecutor; "
+        "from planner.executor.mac_service import MacService; "
         "from planner.executor.configuration import ExecutorPaths; "
-        f"service=MacExecutor(paths=ExecutorPaths(Path({str(root)!r})),revision={'a' * 40!r},"
+        f"service=MacService(paths=ExecutorPaths(Path({str(root)!r})),revision={'a' * 40!r},"
         "executor_id='owner-mac',panels_server_url='https://127.0.0.1:1'); "
         "asyncio.run(service.run()); "
-        "assert service.exit_committed"
+        "assert service.gateway.exit_committed"
     )
     process = subprocess.Popen(
         [sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -1413,7 +1410,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             return cast(BackendChildFactory, lambda **kwargs: native)
 
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             incarnation=reference.executor_incarnation,
             spool=spool,
             factory=factory,
@@ -1449,7 +1446,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
 
         async def send(command: ChildCommand) -> CommandOutcome:
             forwarded.append(command)
-            return await registry.execute_command(command)
+            return await registry.run(command)
 
         # Exercise VPS encoding and Mac hydration with distinct home directories.
         monkeypatch.setattr(Path, "home", staticmethod(lambda: vps_home))
@@ -1484,9 +1481,9 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                 forwarded[0].arguments.resolved_start
             )
             assert forwarded_start.workspace_folder == configured_workspace
-        assert (
-            registry.outcomes[forwarded[0].command_id].disposition == CommandDisposition.succeeded
-        )
+        finished = registry._commands[forwarded[0].command_id]
+        assert finished.outcome is not None
+        assert finished.outcome.disposition == CommandDisposition.succeeded
         assert received == constructed
         assert (paths.artifacts / "t_own" / "proof.txt").read_text() == "native artifact"
         assert received[0].workspace_folder == workspace
@@ -1496,7 +1493,8 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         assert identity["PLAN_EXECUTOR_ROOT"] == str(paths.root)
         assert identity["PLAN_EXECUTOR_CHILD_ID"] == reference.child_id
         assert (
-            identity["PLAN_EXECUTOR_CAPABILITY"] == registry.children[reference.child_id].capability
+            identity["PLAN_EXECUTOR_CAPABILITY"]
+            == registry._children[reference.child_id].capability
         )
         assert identity["PLAN_EXECUTOR_CAPABILITY"] != "forged-capability"
         assert not {"HOME", "CODEX_HOME", "HERMES_HOME", "CLAUDE_CONFIG_DIR"} & identity.keys()
@@ -1524,7 +1522,7 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
             return cast(BackendChildFactory, lambda **kwargs: ScriptedChild())
 
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
@@ -1541,7 +1539,7 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
             Path("/home/vps/projects/absent"),
             ConversationAccess.full,
         )
-        result = await registry.execute_command(
+        result = await registry.run(
             ChildCommand(
                 "start",
                 reference,
@@ -1560,7 +1558,7 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
         assert result.disposition == CommandDisposition.refused
         assert result.result["error_type"] == "BackendSpawnFailed"
         assert created == []
-        assert registry.children == {}
+        assert registry._children == {}
         spool.close()
 
     asyncio.run(run())
@@ -1602,7 +1600,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
 
             return cast(BackendChildFactory, create)
 
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
@@ -1618,7 +1616,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
             tmp_path,
             ConversationAccess.full,
         )
-        await registry.execute_command(
+        await registry.run(
             ChildCommand(
                 "start",
                 reference,
@@ -1634,7 +1632,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
             )
         )
         turn = TurnToken("c_one", 1)
-        await registry.execute_command(
+        await registry.run(
             ChildCommand(
                 "prompt",
                 reference,
@@ -1668,7 +1666,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
         await native.sink.permission_ask_raised(
             turn, BackendPermissionAsk("same", "Allow?", None, ())
         )
-        inventory = registry.inventory()[0]
+        inventory = registry.children()[0]
         assert inventory.active_turn == turn
         assert inventory.pending_user_input_ids == ("same",)
         ask = AskReference(reference, turn, "same", AskKind.user_input)
@@ -1677,10 +1675,17 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
         assert maps == []  # Unanswered requests remain waits, including reconnect inventory.
         assert (await registry.quiesce()).pending_callback_count == 2
         missing = replace(ask, child=replace(reference, child_id=str(uuid4())))
-        assert await registry.apply_answer(replace(answer, ask=missing)) is None
-        for invalid in (answers[:1], tuple(reversed(answers))):
-            with pytest.raises(ValueError, match="incomplete"):
-                await registry.apply_answer(replace(answer, user_input_answers=invalid))
+        assert (
+            await registry.run(answer_command(replace(answer, answer_id="missing", ask=missing)))
+        ).disposition is CommandDisposition.uncertain
+        for index, invalid in enumerate((answers[:1], tuple(reversed(answers)))):
+            outcome = await registry.run(
+                answer_command(
+                    replace(answer, answer_id=f"invalid-{index}", user_input_answers=invalid)
+                )
+            )
+            assert outcome.disposition is CommandDisposition.uncertain
+            assert outcome.result["error_message"] == "recorded user input map is incomplete"
         assert maps == []
         original = spool.add
         failed = False
@@ -1711,7 +1716,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
                 ChildOperation.answer_user_input, {"answer": encode_value(answer)}
             ),
         )
-        caller = asyncio.create_task(registry.execute_command(outer))
+        caller = asyncio.create_task(registry.run(outer))
         await entered.wait()
         caller.cancel()  # The socket/caller disappears; native operation remains owned.
         with pytest.raises(asyncio.CancelledError):
@@ -1719,23 +1724,28 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
         release.set()
         if failure is not None:
             with pytest.raises(OSError, match="after native"):
-                await registry.execute_command(outer)
+                await registry.run(outer)
             monkeypatch.setattr(spool, "add", original)
-        outcome = await registry.execute_command(outer)
+        outcome = await registry.run(outer)
         assert outcome.disposition == CommandDisposition.succeeded
-        assert await registry.execute_command(outer) == outcome
+        assert await registry.run(outer) == outcome
         assert maps == [("same", answers)]
-        inventory = registry.inventory()[0]
+        inventory = registry.children()[0]
         assert inventory.pending_user_input_ids == ()
         assert inventory.pending_asks[0].kind == AskKind.permission
-        application = await registry.apply_answer(answer)
-        assert application is not None
+        application = TypeAdapter(AnswerApplication).validate_python(
+            (await registry.run(outer)).result["answer_application"]
+        )
         assert application.ask.kind == AskKind.user_input
-        evidence = registry.outcomes[answer.answer_id].result["answer_application"]
+        evidence = outcome.result["answer_application"]
         assert TypeAdapter(AnswerApplication).validate_python(evidence) == application
-        with pytest.raises(ValueError, match="different recorded"):
-            await registry.apply_answer(
-                replace(answer, user_input_answers=(UserInputAnswer("choice", ("No",)), answers[1]))
+        with pytest.raises(ValueError, match="different content"):
+            await registry.run(
+                answer_command(
+                    replace(
+                        answer, user_input_answers=(UserInputAnswer("choice", ("No",)), answers[1])
+                    )
+                )
             )
         assert maps == [("same", answers)]
         spool.close()
@@ -1764,22 +1774,22 @@ def test_old_peer_is_refused_before_work_or_replay_and_preserves_spool(
             return await original(kind, payload)
 
         monkeypatch.setattr(peer, "reply", old_reply)
-        row = executor.spool.add(
+        row = executor.outbox.add(
             OutboxEntry(
                 conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={"original": True}
             )
         )
         with pytest.raises(ProtocolRefused):
             await executor._connected()
-        assert executor.spool.pending() == (row,)
-        assert not executor._command_tasks and peer.closed
-        executor.spool.close()
+        assert executor.outbox.pending() == (row,)
+        assert not executor.runner._commands and peer.closed
+        executor.outbox.close()
 
     asyncio.run(run())
 
 
-def make_executor(root: Path) -> MacExecutor:
-    return MacExecutor(
+def make_executor(root: Path) -> MacService:
+    return MacService(
         paths=ExecutorPaths(root),
         revision="a" * 40,
         executor_id="owner-mac",
@@ -1790,7 +1800,7 @@ def make_executor(root: Path) -> MacExecutor:
 class ControlPeer:
     """Control-only peer. Connected tests cover actual HTTP and WebSocket I/O."""
 
-    def __init__(self, executor: MacExecutor) -> None:
+    def __init__(self, executor: MacService) -> None:
         self.executor = executor
         self.reader = asyncio.StreamReader()
         self.closed = False
@@ -1829,7 +1839,7 @@ class ControlPeer:
         return WireMessage(response, "reply", result)
 
 
-def install_control_peer(executor: MacExecutor, monkeypatch: pytest.MonkeyPatch) -> ControlPeer:
+def install_control_peer(executor: MacService, monkeypatch: pytest.MonkeyPatch) -> ControlPeer:
     from contextlib import asynccontextmanager
 
     from planner.executor import link as module
@@ -1865,9 +1875,9 @@ def test_websocket_failure_closes_client_and_records_loss(
         peer.failure = ConnectionError("WebSocket refused")
         with pytest.raises(ConnectionError, match="WebSocket refused"):
             await executor._connected()
-        assert executor._link is None and executor.lost_at_ms is not None
-        assert executor.state is ConnectionState.disconnected
-        executor.spool.close()
+        assert executor.gateway._link is None and executor.gateway.lost_at_ms is not None
+        assert executor.gateway.state is ConnectionState.disconnected
+        executor.outbox.close()
 
     asyncio.run(run())
 
@@ -1881,16 +1891,16 @@ def test_controlled_stop_wakes_pending_handshake_without_peer_response(
         peer.respond = False
         task = asyncio.create_task(executor._connected())
         try:
-            while executor._link is None:
+            while executor.gateway._link is None:
                 await asyncio.sleep(0)
-            executor._stop.set()
+            executor.gateway._stop.set()
             await asyncio.wait_for(task, 1)
-            assert executor._link is None and peer.closed
-            assert not executor.spool.pending()
+            assert executor.gateway._link is None and peer.closed
+            assert not executor.outbox.pending()
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            executor.spool.close()
+            executor.outbox.close()
 
     asyncio.run(run())
 
@@ -1904,7 +1914,7 @@ def test_ready_ack_clears_loss_before_outbox_admission(
     async def run() -> None:
         executor = make_executor(tmp_path)
         peer = install_control_peer(executor, monkeypatch)
-        executor.lost_at_ms = 123
+        executor.gateway.lost_at_ms = 123
         reply = peer.reply
         observed: list[tuple[ConnectionState, int | None]] = []
 
@@ -1915,11 +1925,11 @@ def test_ready_ack_clears_loss_before_outbox_admission(
             return response
 
         async def replay(link: object) -> None:
-            observed.append((executor.state, executor.lost_at_ms))
-            executor._stop.set()
+            observed.append((executor.gateway.state, executor.gateway.lost_at_ms))
+            executor.gateway._stop.set()
 
         monkeypatch.setattr(peer, "reply", respond)
-        monkeypatch.setattr(executor.spool, "send_pending", replay)
+        monkeypatch.setattr(executor.outbox, "send_pending", replay)
         try:
             if valid:
                 await executor._connected()
@@ -1927,9 +1937,9 @@ def test_ready_ack_clears_loss_before_outbox_admission(
             else:
                 with pytest.raises(ValueError, match="invalid reconciliation"):
                     await executor._connected()
-                assert not observed and executor.lost_at_ms == 123
+                assert not observed and executor.gateway.lost_at_ms == 123
         finally:
-            executor.spool.close()
+            executor.outbox.close()
 
     asyncio.run(run())
 
@@ -1937,7 +1947,7 @@ def test_ready_ack_clears_loss_before_outbox_admission(
 def test_current_loss_survives_failed_reconnect_and_clears_only_when_reconciled_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from planner.executor import mac as module
+    from planner.executor import mac_service as module
 
     async def run() -> None:
         executor = make_executor(tmp_path)
@@ -1945,34 +1955,34 @@ def test_current_loss_survives_failed_reconnect_and_clears_only_when_reconciled_
         monkeypatch.setattr(module, "RECONNECT_INTERVAL_SECONDS", 0.001)
 
         async def ready() -> None:
-            while executor.state is not ConnectionState.ready:
+            while executor.gateway.state is not ConnectionState.ready:
                 await asyncio.sleep(0)
 
         task = asyncio.create_task(executor._connected())
         await asyncio.wait_for(ready(), 2)
-        assert executor.lost_at_ms is None
+        assert executor.gateway.lost_at_ms is None
         peer.reader.feed_eof()
         with pytest.raises(ConnectionError):
             await task
-        loss = executor.lost_at_ms
+        loss = executor.gateway.lost_at_ms
         assert loss is not None
         peer.failure = OSError("peer unavailable")
         with pytest.raises(OSError):
             await executor._connected()
-        assert executor.lost_at_ms == loss
-        assert executor.state is ConnectionState.disconnected
+        assert executor.gateway.lost_at_ms == loss
+        assert executor.gateway.state is ConnectionState.disconnected
         peer.failure = None
         task = asyncio.create_task(executor._connected())
         try:
             await asyncio.wait_for(ready(), 2)
-            assert executor.lost_at_ms is None
+            assert executor.gateway.lost_at_ms is None
             assert executor.identity.connection_generation == 3
-            executor._stop.set()
+            executor.gateway._stop.set()
             await asyncio.wait_for(task, 1)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            executor.spool.close()
+            executor.outbox.close()
 
     asyncio.run(run())
 
@@ -1986,30 +1996,30 @@ def test_cleanup_failure_still_revokes_generation_drains_tasks_and_closes_client
         exited = asyncio.Event()
         task = asyncio.create_task(executor._connected())
         try:
-            while executor.state is not ConnectionState.ready:
+            while executor.gateway.state is not ConnectionState.ready:
                 await asyncio.sleep(0)
-            assert executor._link is not None
-            client = executor._link.file_client()
+            assert executor.gateway._link is not None
+            client = executor.gateway._link.file_client()
             assert client is not None
 
             async def broken_close() -> None:
-                assert executor._link is None and not executor._handshake_accepted
+                assert executor.gateway._link is None and not executor.gateway._handshake_accepted
                 exited.set()
                 await peer.aclose()
                 raise TimeoutError("transport cleanup failed")
 
             monkeypatch.setattr(client, "close", broken_close)
-            executor._stop.set()
+            executor.gateway._stop.set()
             with pytest.raises(TimeoutError, match="cleanup failed"):
                 await asyncio.wait_for(task, 2)
             assert peer.closed and exited.is_set()
-            assert executor._link is None
-            assert executor.health().connection_state is ConnectionState.disconnected
-            assert not executor._transfers
+            assert executor.gateway._link is None
+            assert executor.gateway.health().connection_state is ConnectionState.disconnected
+            assert not executor.runner._transfers
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            executor.spool.close()
+            executor.outbox.close()
 
     asyncio.run(run())
 
@@ -2030,17 +2040,17 @@ def test_cancelled_source_publication_remains_counted_until_durable_completion(
         # Authentication is covered by the existing IPC owner test. Exercise the
         # real IPC publication boundary and real filesystem journal here.
         child = SimpleNamespace(reference=reference, ticket_id=None, active_turn=None)
-        monkeypatch.setattr(executor.registry, "authenticate", lambda *_: child)
-        original = executor.spool.add
+        monkeypatch.setattr(executor.runner, "authenticate", lambda *_: child)
+        original = executor.outbox.add
 
         def mint(*args: object, **kwargs: object) -> QueuedEnvelope:
             entered.set()
             assert release.wait(5)
             return original(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(executor.spool, "add", mint)
+        monkeypatch.setattr(executor.outbox, "add", mint)
         task = asyncio.create_task(
-            executor.handle_ipc(
+            executor.gateway.handle(
                 IpcRequest(
                     "admitted-write",
                     IpcOperation.write,
@@ -2055,26 +2065,26 @@ def test_cancelled_source_publication_remains_counted_until_durable_completion(
                 await asyncio.sleep(0)
             task.cancel()
             await asyncio.sleep(0)
-            blocked = await executor.registry.quiesce()
+            blocked = await executor.runner.quiesce()
             assert blocked.uncertain_operation_count == 1
             assert not blocked.ready
             # The observer can cancel. Its separate owner must retain the physical thread.
-            publication = executor._publications["admitted-write"]
+            publication = executor.gateway._publications["admitted-write"]
             assert not publication.task.done()
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
             await publication.task
-            settled = await executor.registry.quiesce()
+            settled = await executor.runner.quiesce()
             assert settled.uncertain_operation_count == 0
             assert settled.unsent_entry_count == 1
             assert not settled.ready
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
-            if executor._publications:
-                await asyncio.gather(*(row.task for row in executor._publications.values()))
-            executor.spool.close()
+            if executor.gateway._publications:
+                await asyncio.gather(*(row.task for row in executor.gateway._publications.values()))
+            executor.outbox.close()
 
     asyncio.run(run())
 
@@ -2099,7 +2109,7 @@ def test_native_absolute_workspace_refuses_missing_directory_or_file_before_chil
             return cast(BackendChildFactory, lambda **kwargs: ScriptedChild())
 
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
@@ -2121,7 +2131,7 @@ def test_native_absolute_workspace_refuses_missing_directory_or_file_before_chil
 
         async def send(command: ChildCommand) -> CommandOutcome:
             forwarded.append(command)
-            return await registry.execute_command(command)
+            return await registry.run(command)
 
         with pytest.raises(BackendSpawnFailed, match="Mac workspace unavailable"):
             await RemoteBackendChild(reference, send, lambda _: canonical_snapshot()).start(
@@ -2129,9 +2139,11 @@ def test_native_absolute_workspace_refuses_missing_directory_or_file_before_chil
             )
         assert isinstance(forwarded[0].arguments, StartRun)
         assert forwarded[0].arguments.workspace_home_relative is None
-        assert registry.outcomes[forwarded[0].command_id].disposition is CommandDisposition.refused
+        finished = registry._commands[forwarded[0].command_id]
+        assert finished.outcome is not None
+        assert finished.outcome.disposition is CommandDisposition.refused
         assert created == []
-        assert registry.children == {}
+        assert registry._children == {}
         spool.close()
 
     asyncio.run(run())
@@ -2139,7 +2151,7 @@ def test_native_absolute_workspace_refuses_missing_directory_or_file_before_chil
 
 @pytest.mark.parametrize("snapshot_value", [None, {}, {"sources": [], "required_skill_names": []}])
 def test_missing_or_invalid_snapshot_refuses_before_provider_creation(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     snapshot_value: object,
 ) -> None:
     async def run() -> None:
@@ -2153,16 +2165,16 @@ def test_missing_or_invalid_snapshot_refuses_before_provider_creation(
             with pytest.raises(ValueError):
                 decode_command_arguments(start.operation, arguments)
             assert native.starts == 0
-            assert registry.children == {}
+            assert registry._children == {}
             return
-        outcome = await registry.execute_command(
+        outcome = await registry.run(
             replace(start, arguments=decode_command_arguments(start.operation, arguments))
         )
         assert outcome.disposition is CommandDisposition.refused
         assert outcome.result["error_type"] == "BackendSpawnFailed"
         assert "Canonical skill bootstrap failed" in str(outcome.result["error_message"])
         assert native.starts == 0
-        assert registry.children == {}
+        assert registry._children == {}
         assert registry.paths is not None
         assert not (Path(os.environ["CODEX_HOME"]) / "skills").exists()
 
@@ -2170,7 +2182,7 @@ def test_missing_or_invalid_snapshot_refuses_before_provider_creation(
 
 
 def test_native_start_replay_does_not_repeat_skill_bootstrap(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from planner.executor.skills import install_native_skill_snapshot
@@ -2184,24 +2196,26 @@ def test_native_start_replay_does_not_repeat_skill_bootstrap(
         installs.append(snapshot)
         return install(snapshot, paths=paths, native_home=native_home)
 
-    monkeypatch.setattr("planner.executor.runtime.install_native_skill_snapshot", counted_install)
+    monkeypatch.setattr(
+        "planner.executor.mac_runner.install_native_skill_snapshot", counted_install
+    )
 
     async def run() -> None:
         registry, _spool, native, start = native_registry
-        first = await registry.execute_command(start)
+        first = await registry.run(start)
         assert first.disposition is CommandDisposition.succeeded
-        replay = await registry.execute_command(start)
+        replay = await registry.run(start)
         assert replay == first
         assert native.starts == 1
         assert installs == [canonical_snapshot()]
-        assert len(registry.inventory()) == 1
+        assert len(registry.children()) == 1
         assert installs == [canonical_snapshot()]
 
     asyncio.run(run())
 
 
 def test_claude_bootstrap_uses_ordinary_account_home_when_unconfigured(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2215,7 +2229,7 @@ def test_claude_bootstrap_uses_ordinary_account_home_when_unconfigured(
             start.arguments.resolved_start
         )
         resolved = replace(resolved, backend_key=ConversationBackendKey.claude)
-        outcome = await registry.execute_command(
+        outcome = await registry.run(
             replace(
                 start,
                 arguments=replace(start.arguments, resolved_start=resolved),
@@ -2257,10 +2271,10 @@ def test_mac_factory_selects_existing_provider_with_inherited_launch_environment
             raise AssertionError("wrong provider factory")
 
         monkeypatch.setattr(
-            "planner.executor.mac." + name, selected if key is backend else unexpected
+            "planner.executor.mac_runner." + name, selected if key is backend else unexpected
         )
     monkeypatch.setattr(
-        "planner.executor.mac.production_backend_launches", lambda **kwargs: launches
+        "planner.executor.mac_runner.production_backend_launches", lambda **kwargs: launches
     )
     resolved = ResolvedConversationStart(
         "c_factory",
@@ -2273,7 +2287,7 @@ def test_mac_factory_selects_existing_provider_with_inherited_launch_environment
     )
     reference = ChildReference("child", executor.identity.executor_incarnation, "c_factory")
     try:
-        executor._factory("https://unused")(resolved, "native-capability", reference)
+        executor.runner._factory("https://unused")(resolved, "native-capability", reference)
         assert len(observed) == 1
         expected = getattr(launches, backend.value)
         actual = observed[0]
@@ -2288,11 +2302,11 @@ def test_mac_factory_selects_existing_provider_with_inherited_launch_environment
             ),
         )
     finally:
-        executor.spool.close()
+        executor.outbox.close()
 
 
 def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_outcomes(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -2308,7 +2322,7 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
                 {"content": encode_value(text_message_content("test")), "sender_label": "Owner"},
             ),
         )
-        first = await registry.execute_command(old)
+        first = await registry.run(old)
         assert first.disposition is CommandDisposition.uncertain
         entered, release = asyncio.Event(), asyncio.Event()
         original_execute = registry._execute
@@ -2320,9 +2334,7 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
             return await original_execute(command)
 
         monkeypatch.setattr(registry, "_execute", delayed_execute)
-        delayed = asyncio.create_task(
-            registry.execute_command(replace(start, command_id="delayed-start"))
-        )
+        delayed = asyncio.create_task(registry.run(replace(start, command_id="delayed-start")))
         await entered.wait()
         stop = ChildCommand(
             "cleanup",
@@ -2331,7 +2343,7 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
             None,
             decode_command_arguments(ChildOperation.stop, {}),
         )
-        blocked = await registry.execute_command(stop)
+        blocked = await registry.run(stop)
         assert blocked.disposition is CommandDisposition.uncertain
         assert start.child.child_id not in registry._retired_children
         release.set()
@@ -2339,44 +2351,40 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
         conflict = replace(
             stop, command_id="conflict", child=replace(start.child, conversation_id="other")
         )
-        assert (await registry.execute_command(conflict)).disposition is CommandDisposition.refused
+        assert (await registry.run(conflict)).disposition is CommandDisposition.refused
         wrong = replace(
             stop, command_id="wrong", child=replace(start.child, executor_incarnation="old")
         )
-        assert (await registry.execute_command(wrong)).disposition is CommandDisposition.refused
+        assert (await registry.run(wrong)).disposition is CommandDisposition.refused
         acknowledge_pending(spool)
 
         retry = replace(stop, command_id="retry")
         # Conflicting rejected commands do not become evidence of another assignment.
-        assert (await registry.execute_command(retry)).disposition is CommandDisposition.succeeded
-        assert await registry.execute_command(old) == first
-        assert await registry.execute_command(stop) == blocked
-        assert (await registry.execute_command(start)).disposition is CommandDisposition.refused
+        assert (await registry.run(retry)).disposition is CommandDisposition.succeeded
+        assert await registry.run(old) == first
+        assert await registry.run(stop) == blocked
+        assert (await registry.run(start)).disposition is CommandDisposition.refused
         for field, value in (("conversation_id", "other"), ("executor_incarnation", "old")):
             invalid = replace(
                 old, command_id="invalid-" + field, child=replace(start.child, **{field: value})
             )
-            assert (
-                await registry.execute_command(invalid)
-            ).disposition is CommandDisposition.refused
+            assert (await registry.run(invalid)).disposition is CommandDisposition.refused
         acknowledge_pending(spool)
         idempotent = replace(stop, command_id="idempotent")
-        assert (
-            await registry.execute_command(idempotent)
-        ).disposition is CommandDisposition.succeeded
+        assert (await registry.run(idempotent)).disposition is CommandDisposition.succeeded
         assert native.starts == 0
 
     asyncio.run(run())
 
 
 def test_stop_fences_native_lock_waiter_keeps_final_event_and_refuses_second_owner(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
         registry, spool, native, start = native_registry
-        await registry.execute_command(start)
-        child = registry.children[start.child.child_id]
+        await registry.run(start)
+        child = registry._children[start.child.child_id]
         await child.lock.acquire()
         waiter_entered = asyncio.Event()
         original_execute = registry._execute
@@ -2388,7 +2396,7 @@ def test_stop_fences_native_lock_waiter_keeps_final_event_and_refuses_second_own
 
         monkeypatch.setattr(registry, "_execute", execute)
         waiter = asyncio.create_task(
-            registry.execute_command(
+            registry.run(
                 ChildCommand(
                     "waiter",
                     start.child,
@@ -2421,14 +2429,14 @@ def test_stop_fences_native_lock_waiter_keeps_final_event_and_refuses_second_own
             None,
             decode_command_arguments(ChildOperation.stop, {}),
         )
-        task = asyncio.create_task(registry.execute_command(stop))
+        task = asyncio.create_task(registry.run(stop))
         # The command waiter must cross the lock after stop owns admission.
         while start.child.child_id not in registry._retiring_children:
             await asyncio.sleep(0)
         child.lock.release()
         await asyncio.wait_for(stopping.wait(), 2)
         assert (await waiter).disposition is CommandDisposition.refused
-        second = await registry.execute_command(replace(stop, command_id="second"))
+        second = await registry.run(replace(stop, command_id="second"))
         assert second.disposition is CommandDisposition.refused
         with pytest.raises(PermissionError):
             registry.authenticate(start.child.child_id, child.capability)
@@ -2439,24 +2447,24 @@ def test_stop_fences_native_lock_waiter_keeps_final_event_and_refuses_second_own
         rows = spool.pending()
         assert rows[-1].payload["command_id"] == "stop"
         assert rows[-2].kind is EnvelopeKind.backend_event
-        assert start.child.child_id not in registry.children
+        assert start.child.child_id not in registry._children
 
     asyncio.run(run())
 
 
 def test_stop_waits_for_admitted_answer_publication(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
         registry, spool, native, start = native_registry
-        await registry.execute_command(start)
+        await registry.run(start)
         assert native.sink is not None
         turn = TurnToken(start.child.conversation_id, 1)
         await native.sink.permission_ask_raised(
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
-        ask = registry.children[start.child.child_id].asks["ask"]
+        ask = registry._children[start.child.child_id].asks["ask"]
         entered, release, stop_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
         original = registry._publish_application
 
@@ -2467,7 +2475,7 @@ def test_stop_waits_for_admitted_answer_publication(
 
         monkeypatch.setattr(registry, "_publish_application", publish)
         publication = asyncio.create_task(
-            registry.apply_answer(DurableAnswer("answer", ask, "allow", 1))
+            registry.run(answer_command(DurableAnswer("answer", ask, "allow", 1)))
         )
         await entered.wait()
 
@@ -2476,7 +2484,7 @@ def test_stop_waits_for_admitted_answer_publication(
 
         monkeypatch.setattr(native, "stop", stop_native)
         stop = asyncio.create_task(
-            registry.execute_command(
+            registry.run(
                 ChildCommand(
                     "stop",
                     start.child,
@@ -2501,7 +2509,7 @@ def test_stop_waits_for_admitted_answer_publication(
 
 
 def test_command_states_keep_one_provider_attempt_through_caller_loss(
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Gap: a reconnect must distinguish preparation from a possibly emitted command."""
@@ -2524,7 +2532,7 @@ def test_command_states_keep_one_provider_attempt_through_caller_loss(
 
         monkeypatch.setattr(native, "start", invoke)
         assert registry.ask((command.command_id,))[0].phase == "unknown"
-        caller = asyncio.create_task(registry.execute_command(command))
+        caller = asyncio.create_task(registry.run(command))
         await asyncio.sleep(0)
         assert registry.ask((command.command_id,))[0].phase == "preparing"
         await asyncio.wait_for(entered.wait(), 2)
@@ -2532,17 +2540,15 @@ def test_command_states_keep_one_provider_attempt_through_caller_loss(
         caller.cancel()
         with pytest.raises(asyncio.CancelledError):
             await caller
-        duplicate = asyncio.create_task(registry.execute_command(command))
+        duplicate = asyncio.create_task(registry.run(command))
         release.set()
         outcome = await asyncio.wait_for(duplicate, 2)
         assert outcome.disposition is CommandDisposition.uncertain
         assert registry.ask((command.command_id,))[0].phase == "finished"
         assert registry.ask((command.command_id,))[0].outcome == outcome
-        assert await registry.execute_command(command) == outcome
+        assert await registry.run(command) == outcome
         with pytest.raises(ValueError, match="different content"):
-            await registry.execute_command(
-                replace(command, turn=TurnToken(command.child.conversation_id, 999))
-            )
+            await registry.run(replace(command, turn=TurnToken(command.child.conversation_id, 999)))
         assert native.starts == 1 and spool.pending() == ()
 
     asyncio.run(run())

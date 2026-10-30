@@ -37,12 +37,16 @@ from planner.executor.files import (
     regular_descriptor,
     safe_component,
 )
+from planner.executor.link import Link
+from planner.executor.link_files import put_file
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
+    EnvelopeRefusal,
     FileManifest,
     FileScope,
     FileSnapshot,
+    FileTransfer,
     JsonObject,
     OutboxEntry,
     OutboxLink,
@@ -51,6 +55,7 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     WireMessage,
     WireMessageKind,
+    as_object,
     encode_message,
     encode_value,
     envelope_payload_digest,
@@ -85,6 +90,7 @@ CREATE TABLE ticket_files (
 
 class MacOutbox:
     def __init__(self, root: Path) -> None:
+        self.transfers = 0
         self.root = root
         self._lock = threading.RLock()
         self._capture_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
@@ -554,7 +560,9 @@ class MacOutbox:
                     raise
                 await asyncio.sleep(OUTBOX_RETRY_SECONDS)
 
-    async def send_pending(self, link: OutboxLink) -> None:
+    async def send_pending(self, link: OutboxLink | Link) -> None:
+        if isinstance(link, Link):
+            link = _OutboxDelivery(self, link)
         self._loop = asyncio.get_running_loop()
         async with self._sending:
             tasks: dict[asyncio.Task[None], str] = {}
@@ -599,3 +607,62 @@ class MacOutbox:
                 self._database.close()
             self._process_lock.close()
         self._notify()
+
+
+class _OutboxDelivery:
+    def __init__(self, outbox: MacOutbox, link: Link) -> None:
+        self.outbox = outbox
+        self.link = link
+
+    async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+        return await self.link.request(kind, payload)
+
+    async def put_file(
+        self, envelope: QueuedEnvelope, snapshot: FileSnapshot
+    ) -> AcceptanceReceipt | None:
+        link = self.link
+        child = envelope.payload.get("child")
+        if child is None:
+            ask = cast(JsonObject, envelope.payload.get("ask", {}))
+            child = ask.get("child")
+        if child is None:
+            raise ValueError("file upload lacks assigned child")
+        self.outbox.transfers += 1
+        try:
+            async with link.transfer_capacity():
+                request_id = uuid4().hex
+                try:
+                    response = await link.request(
+                        WireMessageKind.put_file,
+                        {
+                            "manifest": as_object(snapshot.manifest),
+                            "child": child,
+                        },
+                        request_id=request_id,
+                    )
+                    slot = TypeAdapter(FileTransfer).validate_python(response.payload)
+                    if (
+                        response.kind is not WireMessageKind.file_transfer
+                        or slot.direction != "upload"
+                        or slot.manifest != snapshot.manifest
+                    ):
+                        raise ValueError("invalid upload transfer")
+                    await put_file(link, slot, snapshot.local_path)
+                except ValueError as error:
+                    if link.is_closing():
+                        raise ConnectionError("file generation changed") from error
+                    # This item cannot use the descriptor. Answer its request and
+                    # obtain a durable refusal without disturbing other conversations.
+                    refused = await link.request(
+                        WireMessageKind.error,
+                        as_object(EnvelopeRefusal(envelope, str(error))),
+                        request_id=request_id,
+                    )
+                    if refused.kind is not WireMessageKind.receipt:
+                        raise ValueError("expected upload refusal receipt") from error
+                    return TypeAdapter(AcceptanceReceipt).validate_python(refused.payload)
+                if link.is_closing():
+                    raise ConnectionError("file generation changed")
+                return None
+        finally:
+            self.outbox.transfers -= 1

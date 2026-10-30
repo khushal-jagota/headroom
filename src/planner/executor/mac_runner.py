@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import os
 import secrets
@@ -11,9 +12,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
+
+import aiohttp
+from pydantic import TypeAdapter
 
 from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.admission.service import check_expectation
+from planner.conversation.backends.claude_agent_sdk import ClaudeAgentSdkBackendChildFactory
+from planner.conversation.backends.codex_app_server import CodexAppServerBackendChildFactory
 from planner.conversation.backends.codex_app_server.login import codex_home
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
@@ -33,6 +40,7 @@ from planner.conversation.backends.contracts import (
     SessionLoadFailed,
     TurnToken,
 )
+from planner.conversation.backends.hermes_acp import HermesAcpBackendChildFactory
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ConversationBackendKey,
@@ -41,12 +49,27 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import ConversationTurnEnding, PlanEntry, ToolCallStatus
 from planner.conversation.logic.user_input import ordered_user_input_answers
-from planner.conversation.message_content import MessageContent
+from planner.conversation.message_content import MessageContent, MessageFile
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.production_backends import production_backend_launches
 from planner.environments.hermes_home import resolve_planner_home
-from planner.execution_identity import AskKind, AskReference, ChildReference
-from planner.executor.configuration import NATIVE_SKILLS_DIR_ENV, ExecutorPaths
-from planner.executor.files import safe_component
+from planner.execution_identity import (
+    AskKind,
+    AskReference,
+    ChildReference,
+)
+from planner.executor.configuration import (
+    NATIVE_SKILLS_DIR_ENV,
+    ExecutorPaths,
+)
+from planner.executor.files import (
+    contained_path,
+    copy_verified,
+    directory_descriptor,
+    safe_component,
+)
+from planner.executor.link import Link
+from planner.executor.link_files import get_file, settled_io
 from planner.executor.protocol import (
     LIVE_BACKEND_EVENT_METHODS,
     AnswerApplication,
@@ -63,15 +86,20 @@ from planner.executor.protocol import (
     CommandState,
     DurableAnswer,
     EnvelopeKind,
+    FileDownloadRequest,
+    FileScope,
     FileSnapshot,
+    FileTransfer,
     JsonObject,
     MacOutboxWriter,
     OutboxEntry,
     Quiescence,
     StartRun,
     Steer,
+    WireMessageKind,
     WithdrawCommands,
     WritePrompt,
+    as_object,
     encode_backend_event,
     encode_value,
 )
@@ -89,7 +117,7 @@ class _CommandAdmissionRefused(Exception):
 
 
 @dataclass
-class _Child:
+class RunningChild:
     reference: ChildReference
     capability: str
     native: BackendChild
@@ -109,8 +137,8 @@ class _Child:
 
 @dataclass(frozen=True, slots=True)
 class _NativeEmissionGuard:
-    registry: NativeChildRegistry
-    child: _Child
+    registry: MacRunner
+    child: RunningChild
     command: ChildCommand
     expectation: AdmissionExpectation
     model: str | None
@@ -123,7 +151,7 @@ class _NativeEmissionGuard:
         launch = child.launch_input
         localized = child.localized_start
         if (
-            self.registry.children.get(child.reference.child_id) is not child
+            self.registry._children.get(child.reference.child_id) is not child
             or child.reference != self.command.child
             or self.registry.admission_stopped
             or child.reference.child_id in self.registry._retiring_children
@@ -152,8 +180,8 @@ class _NativeEmissionGuard:
             raise AdmissionRefused("model verification provider parameters changed")
 
 
-class JournalEventSink:
-    def __init__(self, registry: NativeChildRegistry, reference: ChildReference) -> None:
+class NativeEventSink:
+    def __init__(self, registry: MacRunner, reference: ChildReference) -> None:
         self.registry = registry
         self.reference = reference
 
@@ -328,13 +356,26 @@ class JournalEventSink:
         )
 
 
-class NativeChildRegistry:
+@dataclass
+class _CommandRecord:
+    command: ChildCommand
+    task: asyncio.Task[CommandOutcome] | None = None
+    preparation: asyncio.Task[None] | None = None
+    outcome: CommandOutcome | None = None
+    invoking: bool = False
+
+
+class MacRunner:
     def __init__(
         self,
         *,
         incarnation: str,
         spool: MacOutboxWriter,
-        factory: Callable[[ResolvedConversationStart, str, ChildReference], BackendChildFactory],
+        factory: Callable[[ResolvedConversationStart, str, ChildReference], BackendChildFactory]
+        | None = None,
+        panels_server_url: str = "",
+        connection: Callable[[], Link | None] = lambda: None,
+        ready: Callable[[], bool] = lambda: False,
         message_files: ConversationMessageFiles,
         paths: ExecutorPaths | None = None,
         workspace_home: Path | None = None,
@@ -343,20 +384,20 @@ class NativeChildRegistry:
         self.paths = paths
         self.incarnation = incarnation
         self.spool = spool
-        self.send_live_event: Callable[[BackendEvent], Awaitable[None]] | None = None
-        self.outbound_ready = asyncio.Event()
-        self.factory = factory
+        self.send_live_event: Callable[[BackendEvent], Awaitable[None]] | None = (
+            self._send_live_event
+        )
+        self.connection = connection
+        self.ready = ready
+        self._transfers = 0
+        self.factory = factory or self._factory(panels_server_url)
         self.message_files = message_files
-        self.children: dict[str, _Child] = {}
-        self.outcomes: dict[str, CommandOutcome] = {}
-        self.prepare_inputs: Callable[[ChildCommand], Awaitable[None]] | None = None
+        self._children: dict[str, RunningChild] = {}
+        self.prepare_inputs: Callable[[ChildCommand], Awaitable[None]] | None = self._prepare_inputs
         self._withdrawn_commands: set[str] = set()
-        self._preparations: dict[str, asyncio.Task[None]] = {}
-        self._commands: dict[str, ChildCommand] = {}
-        self._tasks: dict[str, asyncio.Task[CommandOutcome]] = {}
+        self._commands: dict[str, _CommandRecord] = {}
         self._applications: dict[str, AnswerApplication] = {}
         self._answers: dict[str, DurableAnswer] = {}
-        self._invoking_commands: set[str] = set()
         self._stop_proofs_published: set[str] = set()
         self._applications_published: set[str] = set()
         self.admission_stopped = False
@@ -367,8 +408,8 @@ class NativeChildRegistry:
         self._source_tasks: dict[ChildReference, set[asyncio.Task[object]]] = {}
         self._failed_source_work: set[ChildReference] = set()
 
-    def authenticate(self, child_id: str | None, capability: str | None) -> _Child:
-        child = self.children.get(child_id or "")
+    def authenticate(self, child_id: str | None, capability: str | None) -> RunningChild:
+        child = self._children.get(child_id or "")
         if (
             child is None
             or child_id in self._retired_children
@@ -441,46 +482,162 @@ class NativeChildRegistry:
             del self._source_work[key]
             self._source_idle.pop(key).set()
 
-    async def execute_command(self, command: ChildCommand) -> CommandOutcome:
-        previous = self._commands.get(command.command_id)
-        if previous is not None and previous != command:
+    def _factory(
+        self, server_url: str
+    ) -> Callable[[ResolvedConversationStart, str, ChildReference], BackendChildFactory]:
+        def factory(
+            resolved: ResolvedConversationStart, capability: str, reference: ChildReference
+        ) -> BackendChildFactory:
+            launches = production_backend_launches(panels_server_url=server_url)
+            identity = dict(
+                resolved.role_materials.identity_environment_variables
+                if resolved.role_materials is not None
+                else ()
+            )
+            ticket_id = identity.get("PLAN_TICKET_ID", resolved.conversation_id)
+            assert self.paths is not None
+            artifact_root = self.paths.artifacts / safe_component(ticket_id)
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            # These override transport facts only. HOME/provider state remain inherited.
+            overrides = (
+                ("PLAN_EXECUTOR_ROOT", str(self.paths.root)),
+                ("PLAN_EXECUTOR_CHILD_ID", reference.child_id),
+                ("PLAN_EXECUTOR_CAPABILITY", capability),
+                ("PLAN_TICKET_FILES_DIR", str(artifact_root)),
+            )
+            if resolved.backend_key == ConversationBackendKey.codex:
+                return CodexAppServerBackendChildFactory(
+                    replace(
+                        launches.codex,
+                        environment_overrides=launches.codex.environment_overrides + overrides,
+                    )
+                )
+            if resolved.backend_key == ConversationBackendKey.hermes:
+                return HermesAcpBackendChildFactory(
+                    replace(
+                        launches.hermes,
+                        environment_overrides=launches.hermes.environment_overrides + overrides,
+                    )
+                )
+            return ClaudeAgentSdkBackendChildFactory(
+                replace(
+                    launches.claude,
+                    environment_overrides=launches.claude.environment_overrides + overrides,
+                ),
+            )
+
+        return factory
+
+    async def _send_live_event(self, event: BackendEvent) -> None:
+        link = self.connection()
+        if link is not None and self.ready():
+            with contextlib.suppress(ConnectionError, OSError):
+                await link.tell(WireMessageKind.live_backend_event, as_object(event))
+
+    async def _prepare_inputs(self, command: ChildCommand) -> None:
+        args = command.arguments
+        if not isinstance(args, (WritePrompt, Steer)):
+            return
+        seen: set[str] = set()
+        for content in (args.content, args.sender_content or ()):
+            for piece in content:
+                if isinstance(piece, MessageFile) and piece.stored_file_id not in seen:
+                    seen.add(piece.stored_file_id)
+                    await self.get_file(command, piece.stored_file_id)
+
+    async def get_file(self, command: ChildCommand, stored_file_id: str) -> None:
+        link = self.connection()
+        if link is None:
+            raise ConnectionError("executor link unavailable")
+        self._transfers += 1
+        assert self.paths is not None
+        temporary = self.paths.run / (".input-" + uuid4().hex)
+        try:
+            async with link.transfer_capacity():
+                response = await link.request(
+                    WireMessageKind.get_file,
+                    as_object(FileDownloadRequest(command.command_id, stored_file_id)),
+                )
+                slot = TypeAdapter(FileTransfer).validate_python(response.payload)
+                manifest = slot.manifest
+                if (
+                    response.kind is not WireMessageKind.file_transfer
+                    or slot.direction != "download"
+                    or manifest.scope is not FileScope.conversation
+                    or manifest.owner_id != command.child.conversation_id
+                    or Path(manifest.relative_path).name != stored_file_id
+                ):
+                    raise ValueError("invalid input transfer")
+                root = self.paths.root / "artifacts" / "files" / "conversations"
+                target = contained_path(
+                    root, f"{safe_component(manifest.owner_id)}/{manifest.relative_path}"
+                )
+                self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
+                await get_file(link, slot, temporary)
+                if link is not self.connection():
+                    raise ConnectionError("input generation changed")
+
+                def install() -> None:
+                    with directory_descriptor(target.parent, create=True) as parent:
+                        staged = target.parent / (".tmp-" + uuid4().hex)
+                        try:
+                            copy_verified(temporary, staged, manifest)
+                            os.replace(
+                                staged.name, target.name, src_dir_fd=parent, dst_dir_fd=parent
+                            )
+                            os.fsync(parent)
+                        finally:
+                            staged.unlink(missing_ok=True)
+
+                await settled_io(install)
+        except (ConnectionError, aiohttp.ClientError) as error:
+            raise AdmissionRefused("input connection changed before provider invocation") from error
+        finally:
+            temporary.unlink(missing_ok=True)
+            self._transfers -= 1
+
+    async def run(self, command: ChildCommand) -> CommandOutcome:
+        record = self._commands.get(command.command_id)
+        if record is not None and record.command != command:
             raise ValueError("command id reused with different content")
-        if command.command_id in self.outcomes:
-            outcome = self.outcomes[command.command_id]
-            await self._publish_required_output(command, outcome)
-            return outcome
-        task = self._tasks.get(command.command_id)
-        if task is None:
-            self._commands[command.command_id] = command
-            task = asyncio.create_task(self._execute(command))
-            self._tasks[command.command_id] = task
+        if record is None:
+            record = _CommandRecord(command)
+            self._commands[command.command_id] = record
+        if record.outcome is not None:
+            await self._publish_required_output(command, record.outcome)
+            return record.outcome
+        if record.task is None:
+            record.task = asyncio.create_task(self._execute(command))
         # Socket cancellation must not cancel a native operation whose fate is unknown.
-        return await asyncio.shield(task)
+        return await asyncio.shield(record.task)
 
     async def flush_command_output(self, command_ids: tuple[str, ...]) -> None:
         """Retry required output after a failed disk write, never the native operation."""
         for command_id in command_ids:
-            outcome = self.outcomes.get(command_id)
-            if outcome is not None:
-                await self._publish_required_output(self._commands[command_id], outcome)
+            record = self._commands.get(command_id)
+            if record is not None and record.outcome is not None:
+                await self._publish_required_output(record.command, record.outcome)
 
     def ask(self, command_ids: tuple[str, ...]) -> tuple[CommandState, ...]:
-        return tuple(
-            CommandState(
-                command_id,
-                "finished"
-                if command_id in self.outcomes
-                else "invoking"
-                if command_id in self._invoking_commands
-                else "preparing"
-                if command_id in self._commands
-                else "unknown",
-                self.outcomes.get(command_id),
+        states: list[CommandState] = []
+        for command_id in command_ids:
+            record = self._commands.get(command_id)
+            states.append(
+                CommandState(
+                    command_id,
+                    "unknown"
+                    if record is None
+                    else "finished"
+                    if record.outcome is not None
+                    else "invoking"
+                    if record.invoking
+                    else "preparing",
+                    record.outcome if record is not None else None,
+                )
             )
-            for command_id in command_ids
-        )
+        return tuple(states)
 
-    def inventory(self) -> tuple[ChildInventory, ...]:
+    def children(self) -> tuple[ChildInventory, ...]:
         return tuple(
             ChildInventory(
                 child.reference,
@@ -488,7 +645,7 @@ class NativeChildRegistry:
                 tuple(child.asks.values()),
                 tuple(sorted(child.user_inputs)),
             )
-            for child in self.children.values()
+            for child in self._children.values()
         )
 
     def _localize_start(
@@ -528,6 +685,7 @@ class NativeChildRegistry:
         identity["PLAN_EXECUTOR_CAPABILITY"] = capability
         if self.paths is not None:
             ticket_id = identity.get("PLAN_TICKET_ID", resolved.conversation_id)
+            assert self.paths is not None
             artifact_root = self.paths.artifacts / safe_component(ticket_id)
             artifact_root.mkdir(parents=True, exist_ok=True)
             identity["PLAN_EXECUTOR_ROOT"] = str(self.paths.root)
@@ -540,18 +698,18 @@ class NativeChildRegistry:
         )
 
     def _reference_conflicts(self, reference: ChildReference, command_id: str) -> bool:
-        child = self.children.get(reference.child_id)
+        child = self._children.get(reference.child_id)
         if child is not None and child.reference != reference:
             return True
         return any(
-            other.child != reference
-            for other in self._commands.values()
-            if other.child.child_id == reference.child_id
-            and other.command_id != command_id
-            and other.child.executor_incarnation == self.incarnation
+            record.command.child != reference
+            for record in self._commands.values()
+            if record.command.child.child_id == reference.child_id
+            and record.command.command_id != command_id
+            and record.command.child.executor_incarnation == self.incarnation
             and (
-                (retained_outcome := self.outcomes.get(other.command_id)) is None
-                or retained_outcome.result.get("reason")
+                record.outcome is None
+                or record.outcome.result.get("reason")
                 not in ("incarnation_gone", "child_reference_conflict")
             )
         )
@@ -562,7 +720,7 @@ class NativeChildRegistry:
         def outcome(disposition: CommandDisposition, reason: str) -> CommandOutcome:
             return CommandOutcome(command.command_id, reference, disposition, {"reason": reason})
 
-        child = self.children.get(reference.child_id)
+        child = self._children.get(reference.child_id)
         if reference.executor_incarnation != self.incarnation:
             return outcome(CommandDisposition.refused, "incarnation_gone")
         if self._reference_conflicts(reference, command.command_id):
@@ -570,11 +728,12 @@ class NativeChildRegistry:
         current = asyncio.current_task()
         stop_owner = next(
             (
-                task
-                for key, task in self._tasks.items()
-                if not task.done()
-                and self._commands[key].child == reference
-                and self._commands[key].operation == ChildOperation.stop
+                record.task
+                for record in self._commands.values()
+                if record.task is not None
+                and not record.task.done()
+                and record.command.child == reference
+                and record.command.operation == ChildOperation.stop
             ),
             current,
         )
@@ -585,21 +744,28 @@ class NativeChildRegistry:
         # Admission closes before the first await. Failed attempts retain this fence,
         # but a later explicit stop can retry once its previous owner finished.
         self._retiring_children.add(reference.child_id)
-        preparing = set(self._preparations)
+        preparing = {key for key, row in self._commands.items() if row.preparation is not None}
         for key, other in self._commands.items():
-            if other.child == reference and other.operation is not ChildOperation.stop:
+            if (
+                other.command.child == reference
+                and other.command.operation is not ChildOperation.stop
+            ):
                 self.withdraw(key)
         commands = [
-            task
-            for key, task in self._tasks.items()
-            if task is not current
-            and self._commands[key].child == reference
-            and self._commands[key].operation != ChildOperation.stop
-            and not task.done()
+            record.task
+            for record in self._commands.values()
+            if record.task is not None
+            and record.task is not current
+            and record.command.child == reference
+            and record.command.operation != ChildOperation.stop
+            and not record.task.done()
         ]
         if child is None:
             settling = [
-                self._tasks[key] for key in preparing if self._commands[key].child == reference
+                record.task
+                for key in preparing
+                if (record := self._commands[key]).command.child == reference
+                and record.task is not None
             ]
             if settling:
                 await asyncio.gather(*(asyncio.shield(task) for task in settling))
@@ -641,8 +807,8 @@ class NativeChildRegistry:
                 )
         self._retired_children.add(reference.child_id)
         self._retiring_children.discard(reference.child_id)
-        if child is not None and self.children.get(reference.child_id) is child:
-            self.children.pop(reference.child_id)
+        if child is not None and self._children.get(reference.child_id) is child:
+            self._children.pop(reference.child_id)
         return CommandOutcome(command.command_id, reference, CommandDisposition.succeeded, {})
 
     async def _finish_source_work(self, reference: ChildReference) -> None:
@@ -656,7 +822,7 @@ class NativeChildRegistry:
 
     def _emission_guard(
         self,
-        child: _Child,
+        child: RunningChild,
         command: ChildCommand,
         expectation: AdmissionExpectation | None,
         *,
@@ -677,7 +843,7 @@ class NativeChildRegistry:
         return _NativeEmissionGuard(self, child, command, expectation, model, reasoning_effort)
 
     async def _start_run(self, command: ChildCommand, args: StartRun) -> JsonObject:
-        if command.child.child_id in self.children:
+        if command.child.child_id in self._children:
             raise BackendSpawnFailed("child identity already has a native start")
         if self.admission_stopped:
             raise _CommandAdmissionRefused("executor is quiescing")
@@ -691,7 +857,7 @@ class NativeChildRegistry:
         )
         ticket_id = identity.get("PLAN_TICKET_ID")
         if ticket_id is not None and any(
-            existing.ticket_id == ticket_id for existing in self.children.values()
+            existing.ticket_id == ticket_id for existing in self._children.values()
         ):
             raise BackendSpawnFailed("Ticket already has a retained source child")
         expectation = args.admission_expectation
@@ -742,10 +908,10 @@ class NativeChildRegistry:
             raise BackendSpawnFailed(f"Canonical skill bootstrap failed: {error}") from error
         native = self.factory(resolved, capability, command.child)(
             resolved_start=resolved,
-            event_sink=JournalEventSink(self, command.child),
+            event_sink=NativeEventSink(self, command.child),
             message_files=self.message_files,
         )
-        child = _Child(
+        child = RunningChild(
             command.child,
             capability,
             native,
@@ -756,7 +922,7 @@ class NativeChildRegistry:
             reasoning_effort=resolved.reasoning_effort,
             backend_key=resolved.backend_key,
         )
-        self.children[command.child.child_id] = child
+        self._children[command.child.child_id] = child
         async with child.lock:
             self._check_child_admission(child)
             guard = self._emission_guard(
@@ -775,7 +941,7 @@ class NativeChildRegistry:
             )
         return {}
 
-    def _check_child_admission(self, child: _Child) -> None:
+    def _check_child_admission(self, child: RunningChild) -> None:
         if (
             child.reference.child_id in self._retired_children
             or child.reference.child_id in self._retiring_children
@@ -783,7 +949,7 @@ class NativeChildRegistry:
             raise _CommandAdmissionRefused("source child identity is retiring")
 
     async def _write_prompt(
-        self, child: _Child, command: ChildCommand, args: WritePrompt
+        self, child: RunningChild, command: ChildCommand, args: WritePrompt
     ) -> JsonObject:
         if self.admission_stopped:
             raise _CommandAdmissionRefused("executor is quiescing")
@@ -825,7 +991,7 @@ class NativeChildRegistry:
             "composed_content_delivered": result.composed_content_delivered,
         }
 
-    async def _steer(self, child: _Child, command: ChildCommand, args: Steer) -> JsonObject:
+    async def _steer(self, child: RunningChild, command: ChildCommand, args: Steer) -> JsonObject:
         if self.admission_stopped:
             raise _CommandAdmissionRefused("executor is quiescing")
         assert command.turn is not None
@@ -861,13 +1027,13 @@ class NativeChildRegistry:
             else None,
         }
 
-    async def _cancel_turn(self, child: _Child, command: ChildCommand) -> JsonObject:
+    async def _cancel_turn(self, child: RunningChild, command: ChildCommand) -> JsonObject:
         self._mark_invoking(command)
         await child.native.cancel_running_turn()
         return {}
 
     def _check_answer(
-        self, child: _Child, command: ChildCommand, answer: DurableAnswer | None
+        self, child: RunningChild, command: ChildCommand, answer: DurableAnswer | None
     ) -> None:
         if answer is None:
             return
@@ -898,7 +1064,7 @@ class NativeChildRegistry:
         return {"answer_application": encode_value(application)}
 
     async def _answer_permission(
-        self, child: _Child, command: ChildCommand, args: AnswerPermission
+        self, child: RunningChild, command: ChildCommand, args: AnswerPermission
     ) -> JsonObject:
         self._check_answer(child, command, args.answer)
         self._mark_invoking(command)
@@ -906,7 +1072,7 @@ class NativeChildRegistry:
         return self._answer_application(command, child.asks.pop(args.ask_id, None))
 
     async def _answer_user_input(
-        self, child: _Child, command: ChildCommand, args: AnswerUserInput
+        self, child: RunningChild, command: ChildCommand, args: AnswerUserInput
     ) -> JsonObject:
         self._check_answer(child, command, args.answer)
         self._mark_invoking(command)
@@ -919,7 +1085,7 @@ class NativeChildRegistry:
             raise ValueError("withdraw belongs to another executor")
         for command_id in request.command_ids:
             previous = self._commands.get(command_id)
-            if previous is not None and previous.child != request.child:
+            if previous is not None and previous.command.child != request.child:
                 raise ValueError("withdraw command belongs to another child")
         return tuple(key for key in request.command_ids if self.withdraw(key))
 
@@ -927,10 +1093,11 @@ class NativeChildRegistry:
         """True proves this command has not called, and now cannot call, its provider."""
         if command_id in self._withdrawn_commands:
             return True
-        if command_id in self._invoking_commands or command_id in self.outcomes:
+        record = self._commands.get(command_id)
+        if record is not None and (record.invoking or record.outcome is not None):
             return False
         self._withdrawn_commands.add(command_id)
-        task = self._preparations.get(command_id)
+        task = record.preparation if record is not None else None
         if task is not None:
             task.cancel()
         return True
@@ -938,7 +1105,7 @@ class NativeChildRegistry:
     def _mark_invoking(self, command: ChildCommand) -> None:
         if command.command_id in self._withdrawn_commands:
             raise _CommandAdmissionRefused("command withdrawn before provider invocation")
-        self._invoking_commands.add(command.command_id)
+        self._commands[command.command_id].invoking = True
 
     async def _execute(self, command: ChildCommand) -> CommandOutcome:
         if command.operation is not ChildOperation.stop and self.prepare_inputs is not None:
@@ -948,7 +1115,7 @@ class NativeChildRegistry:
                 await self.prepare_inputs(command)
 
             task = asyncio.create_task(prepare())
-            self._preparations[command.command_id] = task
+            self._commands[command.command_id].preparation = task
             if command.command_id in self._withdrawn_commands:
                 task.cancel()
             try:
@@ -978,10 +1145,10 @@ class NativeChildRegistry:
                         ),
                     },
                 )
-                self.outcomes[command.command_id] = outcome
+                self._commands[command.command_id].outcome = outcome
                 return outcome
             finally:
-                self._preparations.pop(command.command_id, None)
+                self._commands[command.command_id].preparation = None
         if command.command_id in self._withdrawn_commands:
             outcome = CommandOutcome(
                 command.command_id,
@@ -989,7 +1156,7 @@ class NativeChildRegistry:
                 CommandDisposition.refused,
                 {"reason": "withdrawn_before_invocation"},
             )
-            self.outcomes[command.command_id] = outcome
+            self._commands[command.command_id].outcome = outcome
             return outcome
         return await self._execute_ready(command)
 
@@ -1029,7 +1196,7 @@ class NativeChildRegistry:
                 if isinstance(args, StartRun):
                     result = await self._start_run(command, args)
                 else:
-                    child = self.children.get(command.child.child_id)
+                    child = self._children.get(command.child.child_id)
                     if child is None or child.reference != command.child:
                         return await self._remember_outcome(
                             command,
@@ -1134,7 +1301,7 @@ class NativeChildRegistry:
     async def _remember_outcome(
         self, command: ChildCommand, outcome: CommandOutcome
     ) -> CommandOutcome:
-        self.outcomes[command.command_id] = outcome
+        self._commands[command.command_id].outcome = outcome
         await self._publish_required_output(command, outcome)
         return outcome
 
@@ -1192,7 +1359,7 @@ class NativeChildRegistry:
         turn: TurnToken | None,
         arguments: dict[str, object],
     ) -> None:
-        child = self.children.get(reference.child_id)
+        child = self._children.get(reference.child_id)
         if child is None or child.reference != reference:
             raise ValueError("event from unknown child")
         if method == BackendEventMethod.permission_ask_raised:
@@ -1241,51 +1408,6 @@ class NativeChildRegistry:
             return
         await self._emit(reference.conversation_id, EnvelopeKind.backend_event, event, snapshots)
 
-    async def apply_answer(self, answer: DurableAnswer) -> AnswerApplication | None:
-        return await self.source_work(answer.ask.child, lambda: self._apply_answer(answer))
-
-    async def _apply_answer(self, answer: DurableAnswer) -> AnswerApplication | None:
-        command = ChildCommand(
-            answer.answer_id,
-            answer.ask.child,
-            ChildOperation.answer_user_input
-            if answer.ask.kind is AskKind.user_input
-            else ChildOperation.answer_permission_ask,
-            answer.ask.turn,
-            AnswerUserInput(
-                request_id=answer.ask.ask_id, answers=answer.user_input_answers or (), answer=answer
-            )
-            if answer.ask.kind is AskKind.user_input
-            else AnswerPermission(
-                ask_id=answer.ask.ask_id, option_id=answer.option_id or "", answer=answer
-            ),
-        )
-        previous = self._answers.get(answer.answer_id)
-        if previous is not None and previous != answer:
-            raise ValueError("answer id reused with different recorded answer")
-        child = self.children.get(answer.ask.child.child_id)
-        if answer.answer_id not in self._commands:
-            if child is None or child.reference != answer.ask.child:
-                return None
-            if answer.ask.kind is AskKind.permission:
-                if child.asks.get(answer.ask.ask_id) != answer.ask:
-                    return None
-            else:
-                pending = child.user_inputs.get(answer.ask.ask_id)
-                if pending is None or pending[0] != answer.ask:
-                    return None
-                normalized = ordered_user_input_answers(
-                    pending[1].questions, answer.user_input_answers or ()
-                )
-                if normalized is None or normalized != answer.user_input_answers:
-                    raise ValueError("recorded user input map is incomplete")
-        outcome = await self.execute_command(command)
-        return (
-            self._applications.get(answer.answer_id)
-            if (outcome.disposition is CommandDisposition.succeeded)
-            else None
-        )
-
     async def _publish_application(self, application: AnswerApplication) -> None:
         if application.answer_id in self._applications_published:
             return
@@ -1299,34 +1421,35 @@ class NativeChildRegistry:
         self._applications_published.add(application.answer_id)
 
     def _quiescence_counts(self) -> tuple[int, int, int, int]:
-        active = sum(child.active_turn is not None for child in self.children.values())
+        active = sum(child.active_turn is not None for child in self._children.values())
         callbacks = sum(
-            len(child.asks) + len(child.user_inputs) for child in self.children.values()
+            len(child.asks) + len(child.user_inputs) for child in self._children.values()
         )
         stopped_references = {
-            command.child
-            for command_id, command in self._commands.items()
-            if command.operation == ChildOperation.stop
-            and (outcome := self.outcomes.get(command_id)) is not None
+            record.command.child
+            for record in self._commands.values()
+            if record.command.operation == ChildOperation.stop
+            and (outcome := record.outcome) is not None
             and outcome.disposition == CommandDisposition.succeeded
-            and outcome.child == command.child
+            and outcome.child == record.command.child
         }
-        live_references = {child.reference for child in self.children.values()}
-        # Acknowledged uncertainty stays historical only after its exact child stopped.
-        # This permits maintenance exit without resolving unknown native effects.
-        # Native calls with no confirmed result also prevent replacement. This includes
-        # start before its child has a turn, and outcome publication still in progress.
-        unresolved = sum(not task.done() for task in self._tasks.values()) + sum(
+        live_references = {child.reference for child in self._children.values()}
+        # Historical uncertainty does not block maintenance after its exact child stopped.
+        # Native calls and required publications remain counted until they settle.
+        unresolved = sum(
+            record.task is not None and not record.task.done() for record in self._commands.values()
+        ) + sum(
             outcome.disposition == CommandDisposition.uncertain
             and not (outcome.child in stopped_references and outcome.child not in live_references)
-            for command_id, outcome in self.outcomes.items()
+            for record in self._commands.values()
+            if (outcome := record.outcome) is not None
         )
         unresolved += sum(
-            command.operation is ChildOperation.stop
+            record.command.operation is ChildOperation.stop
             and outcome.disposition is CommandDisposition.succeeded
             and command_id not in self._stop_proofs_published
-            for command_id, command in self._commands.items()
-            if (outcome := self.outcomes.get(command_id)) is not None
+            for command_id, record in self._commands.items()
+            if (outcome := record.outcome) is not None
         )
         unresolved += sum(
             answer_id not in self._applications_published for answer_id in self._applications
@@ -1340,14 +1463,14 @@ class NativeChildRegistry:
         counts = self._quiescence_counts()
         stopped = False
         if not any(counts[:3]):
-            for child in tuple(self.children.values()):
+            for child in tuple(self._children.values()):
                 async with child.lock:
                     if any(self._quiescence_counts()[:3]):
                         break
                     await child.native.stop()
-                    self.children.pop(child.reference.child_id, None)
+                    self._children.pop(child.reference.child_id, None)
             # stop can emit events or expose a pending operation. Check the journal and
             # all live blockers again after the awaited boundary before granting exit.
             counts = self._quiescence_counts()
-            stopped = not self.children and not any(counts)
+            stopped = not self._children and not any(counts)
         return Quiescence(True, *counts, stopped)

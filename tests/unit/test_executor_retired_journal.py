@@ -18,17 +18,17 @@ from planner.core.clock import Clock
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.mac import as_object
 from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
     EnvelopeKind,
     OutboxEntry,
     ReceiptDisposition,
+    as_object,
     decode_command_arguments,
 )
-from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
 from planner.tickets import data
 from planner.tickets.contracts import Ticket
@@ -74,7 +74,7 @@ def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> Exec
 @pytest.mark.parametrize("bad_case", range(4))
 def test_retired_delayed_start_refuses_without_live_child_authority(
     tmp_db: Connection,
-    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     bad_case: int,
 ) -> None:
     async def run() -> None:
@@ -100,16 +100,16 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
             None,
             decode_command_arguments(ChildOperation.stop, {}),
         )
-        assert (await registry.execute_command(stop)).disposition is CommandDisposition.succeeded
+        assert (await registry.run(stop)).disposition is CommandDisposition.succeeded
         (stopped,) = spool.pending()
         spool.acknowledge(await remote.accept_envelope(stopped, identity))
         remote.store.close_child(start.child, 4)
-        outcome = await registry.execute_command(start)
+        outcome = await registry.run(start)
         assert outcome.disposition is CommandDisposition.refused
         assert native.starts == 0
         assert spool.pending() == ()
         assert registry.ask((start.command_id,))[0].outcome == outcome
-        assert await registry.execute_command(start) == outcome
+        assert await registry.run(start) == outcome
         # Its direct refusal grants no authority to publish fresh child output.
         bad_payloads = [
             (

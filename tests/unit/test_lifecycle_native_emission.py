@@ -125,8 +125,8 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
     from planner.core.db import connect, create_schema
     from planner.execution_identity import ChildReference, ProtocolRefused, parse_identity
     from planner.executor.configuration import ExecutorPaths
-    from planner.executor.mac import MacExecutor
     from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.mac_service import MacService
     from planner.executor.protocol import (
         AcceptanceReceipt,
         ChildCommand,
@@ -236,24 +236,24 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
         sender = spool.sender_id
         before = spool.pending()
         spool.close()
-        executor = MacExecutor(
+        executor = MacService(
             paths=paths,
             revision="a" * 40,
             executor_id="fixture-only",
             panels_server_url="https://unused.invalid",
         )
         try:
-            assert executor.spool.sender_id == sender
-            assert executor.spool.pending() == before
-            assert executor.spool.pending() == envelopes
+            assert executor.outbox.sender_id == sender
+            assert executor.outbox.pending() == before
+            assert executor.outbox.pending() == envelopes
             assert executor.identity.executor_incarnation != child.executor_incarnation
 
             def never_create(*args: object, **kwargs: object) -> Any:
                 pytest.fail("persisted command replay reached provider factory")
 
-            executor.registry.factory = never_create
-            assert executor.registry.children == {} and executor.registry.outcomes == {}
-            old_incarnation = await executor.registry.execute_command(old)
+            executor.runner.factory = never_create
+            assert executor.runner._children == {} and executor.runner._commands == {}
+            old_incarnation = await executor.runner.run(old)
             assert old_incarnation.disposition is CommandDisposition.refused
             assert old_incarnation.result == {"reason": "incarnation_gone"}
             legacy_current = replace(
@@ -261,12 +261,12 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
                 command_id="legacy-proven-nondispatch",
                 child=replace(child, executor_incarnation=executor.identity.executor_incarnation),
             )
-            legacy_refusal = await executor.registry.execute_command(legacy_current)
+            legacy_refusal = await executor.runner.run(legacy_current)
             assert legacy_refusal.disposition is CommandDisposition.refused
             assert legacy_refusal.result["reason"] == "legacy_unscoped"
 
             submitted: list[dict[str, Any]] = []
-            executor._handshake_accepted = True
+            executor.gateway._handshake_accepted = True
 
             async def request(
                 kind: WireMessageKind, payload: dict[str, Any], *, request_id: str | None = None
@@ -283,11 +283,13 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
                 )
                 return WireMessage(WireMessageKind.receipt, "fixture", payload_object(receipt))
 
-            executor.request = request  # type: ignore[method-assign]
-            sender_task = asyncio.create_task(executor.spool.send_pending(executor))
+            from types import SimpleNamespace
+
+            transport = SimpleNamespace(request=request)
+            sender_task = asyncio.create_task(executor.outbox.send_pending(transport))
             try:
                 async with asyncio.timeout(2):
-                    while executor.spool.pending_count():
+                    while executor.outbox.pending_count():
                         await asyncio.sleep(0.001)
             finally:
                 sender_task.cancel()
@@ -296,8 +298,7 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
             replayed_original = [entry for entry in submitted if entry["submission_id"] in original]
             assert len(replayed_original) == 2
             assert all(entry == original[entry["submission_id"]] for entry in replayed_original)
-            assert executor.spool.pending_count() == 0 and not executor.registry.children
-            assert PROTOCOL_VERSION == 16 and SPOOL_FORMAT_VERSION == 5
+            assert executor.outbox.pending_count() == 0 and not executor.runner._children
             with pytest.raises(ProtocolRefused):
                 parse_identity(
                     encode_value(
@@ -311,7 +312,7 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
                 == PROTOCOL_VERSION
             )
         finally:
-            executor.spool.close()
+            executor.outbox.close()
 
     asyncio.run(prove())
 
@@ -414,15 +415,15 @@ def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.execution_identity import ChildReference
     from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.mac_runner import MacRunner
     from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition
-    from planner.executor.runtime import NativeChildRegistry
 
     async def run() -> None:
         def never_create(*args: object, **kwargs: object) -> Any:
             pytest.fail("legacy command reached provider factory")
 
         reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             incarnation="11111111-1111-4111-8111-111111111111",
             spool=MacOutbox(tmp_path / "spool"),
             factory=never_create,
@@ -450,12 +451,12 @@ def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
                 },
             ),
         )
-        first = await registry.execute_command(command)
+        first = await registry.run(command)
         assert first.disposition is CommandDisposition.refused
         assert first.result["reason"] == "legacy_unscoped"
         assert first.result["corrective_action"] == "classify_selection"
-        assert await registry.execute_command(command) == first
-        assert registry.children == {}
+        assert await registry.run(command) == first
+        assert registry._children == {}
 
     asyncio.run(run())
 
@@ -466,8 +467,8 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.execution_identity import ChildReference
     from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.mac_runner import MacRunner, RunningChild
     from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition
-    from planner.executor.runtime import NativeChildRegistry, _Child
 
     async def run() -> None:
         prepared = False
@@ -486,13 +487,13 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
         reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
         turn = TurnToken("conversation", 1)
         exact = replace(exact, child=reference, turn=turn)
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             incarnation="11111111-1111-4111-8111-111111111111",
             spool=MacOutbox(tmp_path / "spool"),
             factory=cast(Any, None),
             message_files=ConversationMessageFiles(tmp_path / "db"),
         )
-        child = _Child(
+        child = RunningChild(
             reference,
             "capability",
             cast(Any, Native()),
@@ -505,7 +506,7 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
             model="exact",
             backend_key=ConversationBackendKey.codex,
         )
-        registry.children[reference.child_id] = child
+        registry._children[reference.child_id] = child
         content = encode_value(text_message_content("exact message"))
         command = ChildCommand(
             "prompt",
@@ -523,7 +524,7 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
                 },
             ),
         )
-        outcome = await registry.execute_command(command)
+        outcome = await registry.run(command)
         assert outcome.disposition is CommandDisposition.refused
         assert outcome.result["reason"] == "context_changed"
         assert child.active_turn is None
@@ -538,8 +539,8 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.execution_identity import ChildReference
     from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.mac_runner import MacRunner, RunningChild
     from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition
-    from planner.executor.runtime import NativeChildRegistry, _Child
 
     async def run() -> None:
         base = expectation(tmp_path)
@@ -569,13 +570,13 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
                 writes.append(kwargs.get("model_change"))
                 return BackendPromptAccepted(True)
 
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             incarnation=reference.executor_incarnation,
             spool=MacOutbox(tmp_path / "spool"),
             factory=cast(Any, None),
             message_files=ConversationMessageFiles(tmp_path / "db"),
         )
-        child = _Child(
+        child = RunningChild(
             reference,
             "capability",
             cast(Any, Native()),
@@ -588,7 +589,7 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
             model="alias",
             backend_key=ConversationBackendKey.claude,
         )
-        registry.children[reference.child_id] = child
+        registry._children[reference.child_id] = child
         content = encode_value(text_message_content("exact request"))
         command = ChildCommand(
             "prompt",
@@ -607,10 +608,10 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
                 },
             ),
         )
-        outcome = await registry.execute_command(command)
+        outcome = await registry.run(command)
         assert outcome.disposition is CommandDisposition.succeeded, outcome.result
         assert writes == ["alias"]
-        assert await registry.execute_command(command) == outcome
+        assert await registry.run(command) == outcome
         assert writes == ["alias"]
         cast(MacOutbox, registry.spool).close()
 
@@ -644,9 +645,9 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     from planner.execution_identity import ChildReference
     from planner.executor.configuration import ExecutorPaths
     from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.mac_runner import MacRunner
     from planner.executor.protocol import ChildCommand, CommandDisposition
     from planner.executor.remote import RemoteBackendChild
-    from planner.executor.runtime import NativeChildRegistry
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "provider-home"))
 
@@ -679,7 +680,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
 
         native = Native()
         spool = MacOutbox(tmp_path / "spool")
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "native"),
             incarnation=reference.executor_incarnation,
             spool=spool,
@@ -690,7 +691,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
 
         async def send(command: ChildCommand) -> Any:
             commands.append(command)
-            return await registry.execute_command(command)
+            return await registry.run(command)
 
         remote = RemoteBackendChild(reference, send, lambda _: canonical_snapshot())
         exact = replace(expectation(tmp_path), context=None, evidence=None, resolved_model_id=None)
@@ -733,16 +734,17 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
                 accepted = await write()
                 assert accepted.provider_submission == fact
             command = commands[-1]
-            recorded = registry.outcomes[command.command_id]
+            recorded = registry._commands[command.command_id].outcome
+            assert recorded is not None
             expected = {
                 "accepted": CommandDisposition.succeeded,
                 "rejected": CommandDisposition.refused,
                 "unknown": CommandDisposition.uncertain,
             }[fate]
             assert recorded.disposition is expected
-            assert await registry.execute_command(command) == recorded
+            assert await registry.run(command) == recorded
             assert writes == [turn]
-            assert registry.children[reference.child_id].active_turn == (
+            assert registry._children[reference.child_id].active_turn == (
                 None if fate == "rejected" else turn
             )
         finally:

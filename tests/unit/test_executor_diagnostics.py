@@ -64,24 +64,26 @@ def test_retry_boundary_keeps_wait_and_propagates_cancellation(
     from typing import cast
     from unittest.mock import AsyncMock, MagicMock
 
-    from planner.executor import mac
+    from planner.executor import mac_service as mac
     from planner.executor.configuration import RECONNECT_INTERVAL_SECONDS, ExecutorPaths
 
     paths = ExecutorPaths(tmp_path)
-    executor = mac.MacExecutor.__new__(mac.MacExecutor)
-    executor.paths = paths
-    executor._stop = asyncio.Event()
-    executor.spool = MagicMock()
-    executor.registry = MagicMock()
-    executor._publications = {}
-    executor._ipc_lookups = set()
+    executor = mac.MacService(
+        paths=paths,
+        revision="a" * 40,
+        executor_id="fixture",
+        panels_server_url="https://unused",
+    )
+    executor.outbox.close()
+    executor.outbox = MagicMock()
+    executor.gateway.spool = executor.outbox
     errors: list[BaseException] = [ValueError("secret") for _ in range(10)]
     errors.append(asyncio.CancelledError())
     lines: list[str] = []
     waits: list[float] = []
     monkeypatch.setattr(mac, "connection_diagnostics", ConnectionDiagnostics(lines.append))
 
-    async def connected() -> None:
+    async def connected(command_tasks: object) -> None:
         raise errors.pop(0)
 
     async def wait(awaitable: Awaitable[object], timeout: float) -> object:
@@ -106,7 +108,7 @@ def test_retry_boundary_keeps_wait_and_propagates_cancellation(
     assert waits == [RECONNECT_INTERVAL_SECONDS] * 10
     assert lines == ["executor connection failure: connection_or_protocol"]
     assert not paths.ipc_socket.exists()
-    executor.spool.close.assert_called_once_with()
+    executor.outbox.close.assert_called_once_with()
 
 
 def test_context_is_finite_and_never_exposes_custom_names_or_messages() -> None:
@@ -181,12 +183,13 @@ def test_connection_reports_precise_session_phase_before_cleanup(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
-    from planner.executor import link, mac
+    from planner.executor import link
+    from planner.executor import mac_service as mac
     from planner.executor.configuration import ExecutorPaths
-    from planner.executor.protocol import ConnectionState, WireMessage, WireMessageKind
+    from planner.executor.protocol import ConnectionState, WireMessage, WireMessageKind, as_object
 
     async def run() -> None:
-        executor = mac.MacExecutor(
+        executor = mac.MacService(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             executor_id="owner-mac",
@@ -220,7 +223,7 @@ def test_connection_reports_precise_session_phase_before_cleanup(
             if kind is WireMessageKind.hello:
                 fail("hello")
                 return WireMessage(
-                    WireMessageKind.hello_accepted, "reply", mac.as_object(executor.identity)
+                    WireMessageKind.hello_accepted, "reply", as_object(executor.identity)
                 )
             if kind is WireMessageKind.transport_open:
                 fail("transport_open")
@@ -243,7 +246,7 @@ def test_connection_reports_precise_session_phase_before_cleanup(
 
         monkeypatch.setattr(link.Link, "_receive", read_forever)
         monkeypatch.setattr(link.Link, "request", request)
-        monkeypatch.setattr(executor.spool, "send_pending", replay)
+        monkeypatch.setattr(executor.outbox, "send_pending", replay)
         try:
             with pytest.raises(ValueError) as caught:
                 await executor._connected()
@@ -252,12 +255,12 @@ def test_connection_reports_precise_session_phase_before_cleanup(
                 "executor connection failure: connection_or_protocol"
                 f" phase={failed_phase} origin=session exception=ValueError"
             ]
-            assert executor.state is ConnectionState.disconnected
-            assert not executor._handshake_accepted
-            assert executor._link is None
+            assert executor.gateway.state is ConnectionState.disconnected
+            assert not executor.gateway._handshake_accepted
+            assert executor.gateway._link is None
             assert bool(closed) is (failed_phase != "app_connect")
         finally:
-            executor.spool.close()
+            executor.outbox.close()
 
     asyncio.run(run())
 
@@ -268,11 +271,12 @@ def test_reader_failure_is_reported_before_session_cleanup(
     import asyncio
     from unittest.mock import AsyncMock
 
-    from planner.executor import link, mac
+    from planner.executor import link
+    from planner.executor import mac_service as mac
     from planner.executor.configuration import ExecutorPaths
 
     async def run() -> None:
-        executor = mac.MacExecutor(
+        executor = mac.MacService(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             executor_id="owner-mac",
@@ -311,6 +315,6 @@ def test_reader_failure_is_reported_before_session_cleanup(
                 " origin=reader exception=IncompleteReadError"
             ]
         finally:
-            executor.spool.close()
+            executor.outbox.close()
 
     asyncio.run(run())

@@ -74,12 +74,12 @@ def test_text_read_uses_live_executor_ipc(monkeypatch: pytest.MonkeyPatch, tmp_p
 def test_explicit_launcher_passes_https_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import AsyncMock, Mock
 
-    from planner.executor import mac
+    from planner.executor import mac_service as mac
     from planner.executor.cli import executor_group
 
     executor = Mock(run=AsyncMock())
     constructor = Mock(return_value=executor)
-    monkeypatch.setattr(mac, "MacExecutor", constructor)
+    monkeypatch.setattr(mac, "MacService", constructor)
     result = CliRunner().invoke(
         executor_group,
         [
@@ -110,11 +110,11 @@ def test_explicit_launcher_passes_https_inputs(monkeypatch: pytest.MonkeyPatch) 
 def test_launcher_refuses_non_origin_urls(origin: str, monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import Mock
 
-    from planner.executor import mac
+    from planner.executor import mac_service as mac
     from planner.executor.cli import executor_group
 
     constructor = Mock()
-    monkeypatch.setattr(mac, "MacExecutor", constructor)
+    monkeypatch.setattr(mac, "MacService", constructor)
     result = CliRunner().invoke(
         executor_group,
         [

@@ -59,6 +59,7 @@ from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSI
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import NATIVE_WORKER_CONTEXT, ExecutorPaths
 from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
@@ -70,7 +71,6 @@ from planner.executor.protocol import (
     encode_value,
 )
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
-from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
 from planner.projects.data import create_project
 from planner.tickets import data as tickets
@@ -186,7 +186,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
 
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_native")
         spool = MacOutbox(tmp_path / "spool")
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
@@ -195,7 +195,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         )
 
         async def send(command: ChildCommand) -> CommandOutcome:
-            outcome = await registry.execute_command(command)
+            outcome = await registry.run(command)
             commands.append((command, outcome))
             return outcome
 
@@ -312,7 +312,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                         "commands": [{"name": "inspect", "description": "Inspect"}],
                     }
                 )
-                native = registry.children[reference.child_id].native
+                native = registry._children[reference.child_id].native
                 assert isinstance(native, HermesAcpBackendChild)
                 async with asyncio.timeout(2):
                     while not native._is_catalog_command(text_message_content("/inspect")):

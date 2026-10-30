@@ -27,14 +27,29 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 15, the journal format is version 3, and the SQLite
-outbox schema is version 3. Each accepts only its current version. Unsupported
+The wire protocol is version 16. The SQLite outbox format is version 5. Each accepts only its current version. Unsupported
 versions refuse before work or mutation; no conversion runs.
 
 Migration `mac_vps_execution` installs the final schema directly after staging's
 `video_upload_ledger`. Any database that ran this branch's earlier migrations must
 be rebuilt. Existing staging Tickets, conversations, native usage, catalog evidence,
 and video reservations retain their data.
+
+## Mac modules
+
+`mac_runner.py` owns native agents, input preparation, the last model check before
+sending a prompt, and stop proof. One in-memory record owns each command and its
+outcome. Repeated commands read that record without repeating the provider call.
+
+`mac_agent_gateway.py` answers the agent's local `panels` command. It authenticates
+the child, relays reads, and saves opaque writes in the outbox. It owns health and
+maintenance IPC, including waiting for admitted work before exit.
+
+`mac_outbox.py` keeps authored work until confirmation and uploads its saved file
+bytes. `catalog_relay.py` owns read-only model observations and their cancellation.
+`mac_service.py` constructs these modules and keeps the shared Link dialled. Its
+only changing value is the connection identity. Mac modules do not import VPS
+modules.
 
 ## Native skills and artifact paths
 
@@ -70,7 +85,7 @@ Oversized or invalid snapshots refuse startup without truncation or another tran
 Both peers require this bootstrap.
 
 Code paths: `src/planner/executor/skills.py`, `src/planner/executor/remote.py`,
-`src/planner/executor/runtime.py`, `src/planner/executor/vps.py`.
+`src/planner/executor/mac_runner.py`, `src/planner/executor/vps.py`.
 
 ## The outbox keeps authored work until confirmation
 
@@ -339,7 +354,7 @@ exchange gives bounds for cross-host timing. Exact action timing requires
 correlated backend evidence. It stays unknown when that evidence is absent;
 callback acceptance is not proof that a tool ran.
 
-Code paths: `src/planner/executor/runtime.py`, `store.py`, `logic/reconciliation.py`,
+Code paths: `src/planner/executor/mac_runner.py`, `store.py`, `logic/reconciliation.py`,
 `src/planner/conversation/system.py`, `api.py`, `storage.py`.
 
 ## Replacement keeps code apart from data
@@ -398,7 +413,7 @@ action against a replacement process. Missing or changed process evidence refuse
 An incompatible rollback preserves the journal and refuses mutation.
 
 Code paths: `src/planner/executor/entrypoint.py`, `cli.py`, `mac_outbox.py`,
-`configuration.py`, `mac.py`.
+`configuration.py`, `mac_service.py`.
 
 ## Installation compatibility
 

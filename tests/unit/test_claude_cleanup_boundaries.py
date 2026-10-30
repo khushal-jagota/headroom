@@ -48,6 +48,7 @@ from planner.core.contracts import OWNER_PRINCIPAL
 from planner.execution_identity import ChildReference
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
@@ -57,7 +58,6 @@ from planner.executor.protocol import (
     decode_command_arguments,
     encode_value,
 )
-from planner.executor.runtime import NativeChildRegistry
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets
 from planner.tickets.contracts import TicketLocale
@@ -65,7 +65,7 @@ from planner.tickets.contracts import TicketLocale
 
 def claude_registry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[NativeChildRegistry, list[_ScriptedClaudeSdkClient]]:
+) -> tuple[MacRunner, list[_ScriptedClaudeSdkClient]]:
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
     clients: list[_ScriptedClaudeSdkClient] = []
 
@@ -84,7 +84,7 @@ def claude_registry(
             client_factory=client,
         )
 
-    return NativeChildRegistry(
+    return MacRunner(
         incarnation=IDENTITY.executor_incarnation,
         spool=MacOutbox(tmp_path / "spool"),
         factory=factory,
@@ -142,7 +142,7 @@ def test_claude_stop_result_controls_canonical_retirement(
 
         async def send(command: ChildCommand) -> CommandOutcome:
             commands.append(command)
-            outcome = await registry.execute_command(command)
+            outcome = await registry.run(command)
             for envelope in cast(MacOutbox, registry.spool).pending():
                 receipt = await remote.accept_envelope(envelope, IDENTITY)
                 assert receipt.disposition is ReceiptDisposition.accepted
@@ -185,7 +185,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             state = system._conversations["c_cleanup"]
             reference = state.executor_child_reference
             assert reference is not None
-            child = registry.children[reference.child_id]
+            child = registry._children[reference.child_id]
             native = cast(ClaudeAgentSdkBackendChild, child.native)
             client = clients[0]
             original_disconnect = client.disconnect
@@ -195,7 +195,8 @@ def test_claude_stop_result_controls_canonical_retirement(
             assert state.initial_shutdown_task is not None
             assert await state.initial_shutdown_task is (not fails)
             stop = next(command for command in commands if command.operation is ChildOperation.stop)
-            first = registry.outcomes[stop.command_id]
+            first = registry._commands[stop.command_id].outcome
+            assert first is not None
             assert first.disposition is (
                 CommandDisposition.uncertain if fails else CommandDisposition.succeeded
             )
@@ -203,7 +204,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             assert metadata is not None
             assert json.loads(metadata[2])["source_retired"] is (not fails)
             if fails:
-                assert registry.children[reference.child_id] is child
+                assert registry._children[reference.child_id] is child
                 assert child.native is native and native._client is client
                 assert state.child_is_quarantined and state.executor_child_reference == reference
                 assert remote.store.child_assignment(reference) == ("ticket", ticket.id)
@@ -219,11 +220,11 @@ def test_claude_stop_result_controls_canonical_retirement(
                 monkeypatch.setattr(client, "disconnect", original_disconnect)
                 fresh = replace(stop, command_id="explicit-cleanup-proof")
                 assert (await send(fresh)).disposition is CommandDisposition.succeeded
-                assert await registry.execute_command(stop) == first
+                assert await registry.run(stop) == first
                 assert registry.ask((stop.command_id,))[0].outcome == first
             else:
                 assert client.disconnected and native._client is None
-                assert reference.child_id not in registry.children
+                assert reference.child_id not in registry._children
                 assert remote.store.child_assignment(reference) is None
                 assert not state.child_is_quarantined and state.executor_child_reference is None
         finally:
@@ -269,8 +270,8 @@ def test_claude_disconnect_failure_cannot_confirm_quiescence(
                 },
             ),
         )
-        assert (await registry.execute_command(start)).disposition is CommandDisposition.succeeded
-        child = registry.children[reference.child_id]
+        assert (await registry.run(start)).disposition is CommandDisposition.succeeded
+        child = registry._children[reference.child_id]
         native = cast(ClaudeAgentSdkBackendChild, child.native)
         client = clients[0]
         original_disconnect = client.disconnect
@@ -280,7 +281,7 @@ def test_claude_disconnect_failure_cannot_confirm_quiescence(
             with pytest.raises(RuntimeError, match="before native termination"):
                 await registry.quiesce()
             assert registry.admission_stopped
-            assert registry.children[reference.child_id] is child
+            assert registry._children[reference.child_id] is child
             assert child.native is native and native._client is client
             assert not client.disconnected
         finally:

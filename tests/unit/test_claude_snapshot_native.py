@@ -35,6 +35,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.execution_identity import ChildReference
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
@@ -42,7 +43,6 @@ from planner.executor.protocol import (
     decode_command_arguments,
     encode_value,
 )
-from planner.executor.runtime import NativeChildRegistry
 
 
 @pytest.mark.parametrize("failure", ["ended", "cancel"])
@@ -68,7 +68,7 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
 
         reference = ChildReference(str(uuid4()), str(uuid4()), "native-claude")
         spool = MacOutbox(tmp_path / "spool")
-        registry = NativeChildRegistry(
+        registry = MacRunner(
             paths=ExecutorPaths(tmp_path),
             incarnation=reference.executor_incarnation,
             spool=spool,
@@ -101,9 +101,7 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
                     },
                 ),
             )
-            assert (
-                await registry.execute_command(start)
-            ).disposition is CommandDisposition.succeeded
+            assert (await registry.run(start)).disposition is CommandDisposition.succeeded
             turn = TurnToken(reference.conversation_id, 1)
             prompt = ChildCommand(
                 "prompt",
@@ -121,7 +119,7 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
                     },
                 ),
             )
-            outcome = await registry.execute_command(prompt)
+            outcome = await registry.run(prompt)
             assert outcome.disposition is CommandDisposition.succeeded
             assert outcome.result["provider_submission"] == {
                 "provider": "claude",
@@ -129,7 +127,7 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
                 "observation_kind": "user_message_admitted",
                 "correlation_id": next(f["uuid"] for f in actual[0].frames if f["type"] == "user"),
             }
-            assert await registry.execute_command(prompt) == outcome
+            assert await registry.run(prompt) == outcome
             assert len(actual) == 1
             assert len([f for f in actual[0].frames if f["type"] == "user"]) == 1
             bad_turn = ChildCommand(
@@ -148,13 +146,13 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
                     },
                 ),
             )
-            assert (
-                await registry.execute_command(bad_turn)
-            ).disposition is CommandDisposition.refused
+            assert (await registry.run(bad_turn)).disposition is CommandDisposition.refused
             assert len([f for f in actual[0].frames if f["type"] == "user"]) == 1
             # Mutate the captured turn immediately before the actual frame guard binds.
             # This boundary proves native admission alone cannot replace that final guard.
-            backend = cast(ClaudeAgentSdkBackendChild, registry.children[reference.child_id].native)
+            backend = cast(
+                ClaudeAgentSdkBackendChild, registry._children[reference.child_id].native
+            )
             original_bind = actual[0].bind_user_check
 
             def change_before_wire(identity: str, check: EmissionCheck) -> None:
@@ -180,16 +178,16 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
                     },
                 ),
             )
-            refused = await registry.execute_command(steer)
+            refused = await registry.run(steer)
             assert refused.disposition is CommandDisposition.succeeded
             assert refused.result["kind"] == "steer_refused"
             assert "synthetic-private-input" not in repr(refused)
             assert "changed-private-input" not in repr(refused)
             assert len([f for f in actual[0].frames if f["type"] == "user"]) == 1
-            assert await registry.execute_command(steer) == refused
+            assert await registry.run(steer) == refused
         finally:
             if actual:
-                child = registry.children.get(reference.child_id)
+                child = registry._children.get(reference.child_id)
                 if child is not None:
                     await child.native.stop()
             spool.close()

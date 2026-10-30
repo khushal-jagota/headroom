@@ -379,11 +379,11 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
 
     from planner.core.clock import RealClock
     from planner.executor.link_files import GenerationTransfers
-    from planner.executor.mac import as_object
     from planner.executor.protocol import (
         ConnectionState,
         ExecutorHealth,
         WireMessage,
+        as_object,
         encode_message,
     )
     from planner.executor.vps import ExecutorEndpoint
@@ -523,8 +523,7 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
     from unittest.mock import AsyncMock
 
     from planner.core.clock import RealClock
-    from planner.executor.mac import as_object
-    from planner.executor.protocol import ChildCommand, WireMessage, encode_value
+    from planner.executor.protocol import ChildCommand, WireMessage, as_object, encode_value
     from planner.executor.vps import ExecutorEndpoint
 
     async def run() -> None:
@@ -835,8 +834,7 @@ def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
         endpoint.identity, endpoint.link = IDENTITY, message_link(writer, IDENTITY)
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()
-        from planner.executor.mac import as_object
-        from planner.executor.protocol import ReconnectResult
+        from planner.executor.protocol import ReconnectResult, as_object
 
         endpoint.link.request = AsyncMock(  # type: ignore[method-assign]
             return_value=WireMessage(
@@ -931,8 +929,7 @@ def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
     from unittest.mock import AsyncMock
 
     from planner.core.clock import RealClock
-    from planner.executor.mac import as_object
-    from planner.executor.protocol import CommandState, ReconnectResult
+    from planner.executor.protocol import CommandState, ReconnectResult, as_object
     from planner.executor.vps import ExecutorEndpoint
 
     async def run() -> None:

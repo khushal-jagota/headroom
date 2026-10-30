@@ -29,7 +29,7 @@ def test_native_admission_and_generation_file_slots(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.link is not None
-        assert harness.mac._link is not None
+        assert harness.mac.gateway._link is not None
         try:
             identity = harness.endpoint.identity
             assert identity is not None
@@ -46,7 +46,7 @@ def test_native_admission_and_generation_file_slots(
                         pytest.fail("untrusted TLS certificate was accepted")
             finally:
                 await production_client.close()
-            assert harness.mac._link is not None
+            assert harness.mac.gateway._link is not None
             service = harness.endpoint._transports[identity]
 
             # This case isolates HTTP body validation; connected item acceptance
@@ -108,7 +108,7 @@ def test_native_admission_and_generation_file_slots(
                 download = await service.create_download_async(FileSnapshot(manifest, source))
                 download_url = harness.proxy.origin + "/api/executor/files/" + download.transfer_id
                 destination = tmp_path / "download"
-                await get_file(harness.mac._link, download, destination)
+                await get_file(harness.mac.gateway._link, download, destination)
                 assert destination.read_bytes() == data
                 async with client.session.get(download_url, headers=client.headers()) as response:
                     assert response.status == 409
@@ -129,7 +129,9 @@ def test_native_admission_and_generation_file_slots(
                 with monkeypatch.context() as response_patch:
                     response_patch.setattr(app_transport, "StreamingResponse", encoded_response)
                     with pytest.raises(ConnectionError, match="executor download refused"):
-                        await get_file(harness.mac._link, encoded_download, encoded_destination)
+                        await get_file(
+                            harness.mac.gateway._link, encoded_download, encoded_destination
+                        )
                 assert encoded_destination.read_bytes() == b""
                 async with client.session.get(
                     harness.proxy.origin + "/api/executor/files/" + "f" * 32,
@@ -150,14 +152,14 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.link is not None
-        assert harness.mac._link is not None
+        assert harness.mac.gateway._link is not None
         try:
             identity = harness.endpoint.identity
             assert identity is not None
             client = ExecutorAppClient(
                 harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
             )
-            assert harness.mac._link is not None
+            assert harness.mac.gateway._link is not None
             service = harness.endpoint._transports[identity]
             data = b"x" * 1000000
             manifest = FileManifest(
@@ -224,7 +226,7 @@ def test_malformed_control_cannot_fence_current_peer(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.link is not None
-        assert harness.mac._link is not None
+        assert harness.mac.gateway._link is not None
         try:
             identity = harness.endpoint.identity
             assert identity is not None
@@ -256,26 +258,26 @@ def test_duplicate_hello_preserves_active_file_reservations(
 ) -> None:
     from pydantic import TypeAdapter
 
-    from planner.executor.mac import as_object
     from planner.executor.protocol import (
         FileTransfer,
         FileUploadRequest,
         WireMessage,
         WireMessageKind,
+        as_object,
         encode_value,
     )
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.link is not None
-        assert harness.mac._link is not None
+        assert harness.mac.gateway._link is not None
         try:
             identity = harness.endpoint.identity
             assert identity is not None
             writer = harness.endpoint.link
-            assert harness.mac._link is not None
+            assert harness.mac.gateway._link is not None
             service = harness.endpoint._transports[identity]
-            child = next(iter(harness.mac.registry.children.values()))
+            child = next(iter(harness.mac.runner._children.values()))
             assert child.ticket_id is not None
             manifest = FileManifest(
                 FileScope.ticket,
@@ -294,7 +296,7 @@ def test_duplicate_hello_preserves_active_file_reservations(
             )
             assert kind is WireMessageKind.file_transfer
             slot = TypeAdapter(FileTransfer).validate_python(descriptor)
-            payload = encode_value(harness.mac.health())
+            payload = encode_value(harness.mac.gateway.health())
             assert isinstance(payload, dict)
             async with harness.proxy.session_factory() as session:
                 async with session.ws_connect(
@@ -322,7 +324,7 @@ def test_duplicate_hello_preserves_active_file_reservations(
             try:
                 source = tmp_path / "empty-source"
                 source.write_bytes(b"")
-                await put_file(harness.mac._link, slot, source)
+                await put_file(harness.mac.gateway._link, slot, source)
                 assert slot.transfer_id not in service.transfers
                 assert not harness.endpoint.store.file_target(manifest).exists()
                 harness.endpoint.store.install_files((manifest,))
@@ -349,15 +351,14 @@ def test_native_provider_report_reaches_core_once_without_blocking_steer(
     )
     from planner.conversation.message_content import text_message_content
     from planner.core.db import connect
-    from planner.executor.mac import as_object
-    from planner.executor.protocol import WireMessageKind
+    from planner.executor.protocol import WireMessageKind, as_object
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch, backend_key=ConversationBackendKey.claude)
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             turn = harness.native.turn
-            async with paused_outbox(harness.mac.spool):
+            async with paused_outbox(harness.mac.outbox):
                 await harness.native.sink.provider_selection_reported(
                     turn,
                     provider=ConversationBackendKey.claude,
@@ -365,7 +366,7 @@ def test_native_provider_report_reaches_core_once_without_blocking_steer(
                     model="a-different-concrete-model",
                     child_lifetime="captured-native-lifetime",
                 )
-                envelope = harness.mac.spool.pending()[-1]
+                envelope = harness.mac.outbox.pending()[-1]
             await eventually(
                 lambda: harness.events("provider_selection_reported") == 1,
                 "native model report did not reach the durable core",
@@ -386,7 +387,9 @@ def test_native_provider_report_reaches_core_once_without_blocking_steer(
                 assert payload["blocks_submission"] is False
             finally:
                 connection.close()
-            replay = await harness.mac.request(WireMessageKind.envelope, as_object(envelope))
+            replay = await harness.mac.gateway.request(
+                WireMessageKind.envelope, as_object(envelope)
+            )
             assert replay.kind is WireMessageKind.receipt
             assert harness.events("provider_selection_reported") == 1
             before = harness.native.prompt_count
@@ -427,7 +430,7 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.link is not None
-        assert harness.mac._link is not None
+        assert harness.mac.gateway._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             first_turn = harness.native.turn
@@ -509,15 +512,16 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
                 connection.close()
             uncertain = [
                 outcome
-                for outcome in harness.mac.registry.outcomes.values()
-                if outcome.disposition.value == "uncertain"
+                for record in harness.mac.runner._commands.values()
+                if (outcome := record.outcome) is not None
+                and outcome.disposition.value == "uncertain"
             ]
             assert len(uncertain) == 1
             outcome = uncertain[0]
-            assert harness.mac.registry.ask((outcome.command_id,))[0].outcome == outcome
+            assert harness.mac.runner.ask((outcome.command_id,))[0].outcome == outcome
             assert (
-                await harness.mac.registry.execute_command(
-                    harness.mac.registry._commands[outcome.command_id]
+                await harness.mac.runner.run(
+                    harness.mac.runner._commands[outcome.command_id].command
                 )
                 == outcome
             )
