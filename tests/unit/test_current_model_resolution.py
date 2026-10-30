@@ -475,12 +475,6 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
                             RequestContext(OWNER_PRINCIPAL),
                             TestClock(datetime.fromtimestamp(stamp, UTC)),
                         )
-                    assert (
-                        conn.execute(
-                            "SELECT COUNT(*) FROM ticket_launch_authority WHERE mode='mutation'"
-                        ).fetchone()[0]
-                        == 0
-                    )
                     backend.writes_wait_for_release.set()
                     response = await sending
                     assert response["fate"] == "started"

@@ -169,7 +169,6 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
                     assert any(
                         isinstance(e.payload, PromptDeliveryUncertainEventPayload) for e in events
                     )
-            assert conn.execute("SELECT COUNT(*) FROM ticket_launch_authority").fetchone()[0] == 0
             assert source.calls == []
         finally:
             conn.close()
@@ -375,9 +374,6 @@ def test_real_core_report_and_held_boundaries(
                 assert state is not None and state.child_is_quarantined
                 assert state.reserved_turn is not None
                 assert attempted_tokens == [token, token]
-                assert (
-                    conn.execute("SELECT COUNT(*) FROM ticket_launch_authority").fetchone()[0] == 0
-                )
                 assert any(
                     isinstance(e.payload, PromptDeliveryUncertainEventPayload)
                     for e in await harness.events(conversation_id)

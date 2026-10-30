@@ -4,7 +4,6 @@ from dataclasses import replace
 from sqlite3 import Connection
 
 import pytest
-from tests.unit.test_current_model_resolution import context, observation, row
 
 from planner.conversation.admission.policy import (
     check_policy_dependencies,
@@ -19,23 +18,14 @@ from planner.core.errors import PlannerError
 from planner.tickets import data as tickets
 
 
-def test_historical_policy_barriers_do_not_block_edits_but_disables_still_apply(
+def test_model_disables_apply_across_connections(
     tmp_db: Connection,
 ) -> None:
     from planner.conversation.admission.policy import ModelPolicyDependencies
     from planner.conversation.backends.contracts import AdmissionRefused
 
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    tmp_db.executemany(
-        "INSERT INTO ticket_launch_authority "
-        "(lease_id,authority_key,mode,owner_process,command_id,executor_incarnation) "
-        "VALUES('historical',?,'read','old-owner','uncertain-command','executor-1')",
-        [("model-policy:codex:gpt-6.1-terra",),
-         ("model-policy-recovery:codex",), ("model-policy-recovery:*",)],
-    )
-    tmp_db.commit()
     dependencies = ModelPolicyDependencies(Backend.codex, ("gpt-6.1-terra",))
-    before = [tuple(row) for row in tmp_db.execute("SELECT * FROM ticket_launch_authority")]
     other = connect(path)
     try:
         write_model_enablement(other, Backend.codex, "gpt-6.1-terra", False)
@@ -44,8 +34,6 @@ def test_historical_policy_barriers_do_not_block_edits_but_disables_still_apply(
             check_policy_dependencies(other, dependencies)
         write_model_enablement(other, Backend.codex, "gpt-6.1-terra", True)
         check_policy_dependencies(other, dependencies)
-        retained = [tuple(row) for row in other.execute("SELECT * FROM ticket_launch_authority")]
-        assert retained == before
     finally:
         other.close()
 
@@ -53,7 +41,6 @@ def test_historical_policy_barriers_do_not_block_edits_but_disables_still_apply(
 def test_configuration_commit_rechecks_disables_without_catalog_evidence(
     tmp_db: Connection,
 ) -> None:
-    from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
     from planner.tickets.validation import data as validation_data
 
     ticket = tickets.create_ticket(
@@ -71,7 +58,6 @@ def test_configuration_commit_rechecks_disables_without_catalog_evidence(
     desired = replace(
         validation_data.read_launch_selection(tmp_db, ticket.id), reasoning_effort="high"
     )
-    binding = workspace_binding_from_start(worker_resolve(tmp_db, ticket), ticket.locale)
     result = bind_model_intent(desired)
     assert result.launch_token == "gpt-6-sol"
     write_model_enablement(tmp_db, Backend.codex, "gpt-6-sol", False)

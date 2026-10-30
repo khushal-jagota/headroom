@@ -27,67 +27,66 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 16. The SQLite outbox format is version 5. Each accepts only its current version. Unsupported
-versions refuse before work or mutation; no conversion runs.
+The wire protocol is version 16. The SQLite outbox format is version 5.
+The handshake checks both versions; the Mac also checks its local SQLite format on open.
+Unsupported versions refuse before work or mutation; no conversion runs.
+The application revision is a nonempty diagnostic label, not a compatibility version.
 
 Migration `mac_vps_execution` installs the final schema directly after staging's
 `video_upload_ledger`. Any database that ran this branch's earlier migrations must
 be rebuilt. Existing staging Tickets, conversations, native usage, catalog evidence,
 and video reservations retain their data.
 
-## Mac modules
+## Modules and their rules
 
-`mac_runner.py` owns native agents, input preparation, the last model check before
-sending a prompt, and stop proof. One in-memory record owns each command and its
-outcome. Repeated commands read that record without repeating the provider call.
+Each module owns one decision. Conversation knows the backend contract and has
+no executor imports. Mac and VPS implementations never import each other; their
+messages meet through the shared protocol and Link. Only the server composition
+may know both sides. A unit test keeps these import boundaries in place.
 
-`mac_agent_gateway.py` answers the agent's local `panels` command. It authenticates
-the child, relays reads, and saves opaque writes in the outbox. It owns health and
-maintenance IPC, including waiting for admitted work before exit.
+| Module | Responsibility and one rule |
+| --- | --- |
+| Conversation | Own the transcript, turns, questions and reply credit. Backend delivery facts enter through its contract. |
+| Link | Carry messages and verified file bytes for one connection generation. Never decide what a command or queued write means. |
+| Mac runner | Prepare inputs and skills, run providers and prove stops. One in-memory command record prevents a second provider call for the same command. |
+| Mac outbox | Keep authored work and captured file bytes until confirmed. Never interpret a Panels write. |
+| Agent gateway | Authenticate the local agent's CLI, relay reads and queue writes. Unconfirmed writes keep their original submission identity. |
+| Mac service | Compose the Mac modules and keep the Link dialled. Run and queue decisions belong to its children. |
+| VPS runs | Retain run identity, command fate, reconnect and stop proof. Never infer termination from a missing inventory entry. |
+| VPS inbox | Apply each queued item once, in conversation order, with its receipt. A permanent refusal advances the queue. |
+| VPS transport | Admit connections and route messages and file slots. Run control and inbox saving do not own sockets. |
+| Catalog relay | Carry read-only model observations and cancellation. Never launch a Worker. |
 
-`mac_outbox.py` keeps authored work until confirmation and uploads its saved file
-bytes. `catalog_relay.py` owns read-only model observations and their cancellation.
-`mac_service.py` constructs these modules and keeps the shared Link dialled. Its
-only changing value is the connection identity. Mac modules do not import VPS
-modules.
+The remote child implements the same backend contract as local children. It holds
+saved answer commands in memory and checks admission before emission. Detaching
+releases the VPS handle and leaves its Mac agent running; stopping requires the
+final ordered stop receipt. Local children stop when detached.
 
-## VPS module responsibilities
+The inbox joins the conversation's write transaction to record replay position and
+receipt. A stale event is accepted with `applied: false` and changes no conversation
+rows or live output. Agent writes use canonical writers. Before sending an
+agent-authored message, the inbox records `dispatching`; a repeat without a known
+outcome returns uncertainty and sends nothing. There is no separate message ledger.
 
-`vps_runs.py` owns retained Mac runs, command results, reconnection, and stop proof.
-Its `MacRuns` object is the Mac backend factory; only Ticket Workers can use it.
-`vps_remote_child.py` implements the conversation's backend child interface, holds
-saved answers in memory, and keeps the admission checks at command emission.
+Code paths: `src/planner/conversation/`, `src/planner/executor/link.py`, `link_files.py`,
+`protocol.py`, `mac_runner.py`, `mac_outbox.py`, `mac_agent_gateway.py`, `mac_service.py`,
+`vps_runs.py`, `vps_remote_child.py`, `vps_inbox.py`, `vps_agent_writes.py`,
+`vps_transport.py`, `app_transport.py`, `catalog_relay.py`, `src/planner/core/server.py`.
 
-`vps_inbox.py` owns receipt order, duplicate replies, file reception, and applying
-recorded events through the conversation's shared `take_backend_event` entry point.
-The conversation owns the write transaction. The inbox joins it through `in_commit`
-to check replay and order and write the receipt. A stale event receives an accepted
-receipt with `applied: false`; it changes no conversation rows or live output.
-`vps_agent_writes.py` handles agent writes through the canonical
-writers. Before sending an agent-authored message, it saves `dispatching` in the
-inbox position. A repeat returns uncertainty without sending again. A recorded
-conversation outcome and its receipt commit together. Queued messages keep their
-first receipt; their later delivery and reply credit belong to the conversation.
-There is no separate native-message ledger.
+## How a Mac run starts
 
-`vps_transport.py` composes these modules and owns connection admission, app read
-relays and generation-scoped file slots. `app_transport.py` exposes the app routes.
-`catalog_relay.py` owns the read-only catalog relay. Run control and inbox saving
-do not own sockets. These VPS modules import no Mac implementation modules.
-Answer application still has its own conversation callback, using the same commit hook.
+The VPS readiness loop claims a ready Ticket and starts or reuses its conversation.
+The selected destination supplies the Mac backend factory; Chief and Manager
+conversations keep local children. The VPS saves the exact Mac child assignment
+and run before emitting its start command, and requires a reconciled, ready link.
+The Mac runner localizes the workspace, downloads and verifies the command's inputs,
+installs the current canonical skills, and starts the selected provider.
+Immediately before a prompt or steer reaches the provider, it checks the retained
+child and launch inputs again. The direct command result reports admission;
+recorded agent output takes the ordered outbox path independently.
 
-The conversation talks to children through the backend contract. Withdrawing a
-delivery reports whether the provider can be proved never to have received it.
-Detaching releases the VPS handle when its process ends and leaves the Mac agent
-running. Stopping still means terminating the exact agent, with the final ordered
-stop receipt as proof. Local children stop when detached. A child declares whether
-its stop must wait outside the conversation lock so final output can be recorded.
-
-Run control saves each Mac run before sending its first command. It owns the
-child identity, delivery uncertainty and stop proof. Conversation owns turn
-numbers, endings, questions and reply credit. Its backend factory exposes retained
-custody for recovery without restoring a running turn. Saved answers and the
-executor-backed question views still await their separate refactor.
+Code paths: `src/planner/runtime/worker_step_readiness_loop.py`,
+`src/planner/executor/vps_runs.py`, `vps_remote_child.py`, `mac_runner.py`.
 
 ## Native skills and artifact paths
 
@@ -218,7 +217,7 @@ A Mac-authored message records `dispatching` before calling its recipient. If a
 repeat finds that state without an outcome, it records `uncertain` and sends nothing.
 
 Code paths: `src/planner/executor/mac_outbox.py`, `store.py`, `refusals.py`,
-`mutations.py`, `ipc_client.py`, `src/planner/cli/http.py`.
+`vps_agent_writes.py`, `mutations.py`, `ipc_client.py`, `src/planner/cli/http.py`.
 
 SQLite work for remote acceptance runs on worker threads. Each operation opens,
 commits or rolls back, and closes its own connection on that thread. A busy
@@ -260,8 +259,8 @@ The queue advances and the shared connection stays open for other conversations.
 
 Confirmation releases blobs no waiting item references. Temporary and unreferenced
 blobs are swept when the outbox opens. The size-and-time index does not retain
-file bytes after confirmation. Earlier draft outbox formats require an explicit
-operator rebuild; they are never converted silently.
+file bytes after confirmation. Incompatible outbox formats require explicit
+operator disposition; they are never converted silently.
 
 Generation loss closes admission before cleanup waits. Filesystem work can outlive logical failure or cancellation.
 The transfer retains its files, descriptors, and capacity until that work settles. Cleanup never deletes a resource that admitted work still uses.
@@ -403,7 +402,7 @@ path does not start a Mac Panels server or create a Panels database. A protocol
 or journal-format mismatch refuses work before replay.
 
 Opening an outbox checks its SQLite format version before changing it.
-An older draft format must be rebuilt before this version can run. This check
+An incompatible outbox needs explicit operator disposition before this version can run. This check
 does not grant authority to replace a process. An update or rollback still needs
 fresh identity-bound quiescence. Active work, callbacks, uncertain operations,
 unfinished native calls, or unaccepted entries prevent readiness. Quiescence
@@ -561,8 +560,6 @@ timing. Those remain explicit requirements before a live success claim.
 
 Installation and updates use the [Mac operator runbook](mac-executor-installation.md).
 See [runtime environments](environments.md) and [VPS deployment](deployment.md) for their separate operating boundaries.
-
-_Updated for the candidate transport. Live application remains separate._
 
 ## Machine display reads
 
