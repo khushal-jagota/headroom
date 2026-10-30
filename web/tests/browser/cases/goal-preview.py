@@ -945,7 +945,9 @@ def agent_unit_spacing(browser, url):
                 inspections["gauge"] = desktop_inspection(
                     page, gauge, figure, output=output, name="desktop-gauge"
                 )
-            for identity in ("budget-events", "allocation-events", "grouped-events", "stacked-events"):
+            for identity in (
+                "budget-events", "allocation-events", "grouped-events", "stacked-events"
+            ):
                 probe = page.locator(f'[data-chart-id="{identity}"]')
                 if phone:
                     probe.get_by_role("button", name=re.compile(identity)).tap()
@@ -953,7 +955,9 @@ def agent_unit_spacing(browser, url):
                 if canvas:
                     target = probe.locator("canvas")
                     target.scroll_into_view_if_needed()
-                    configuration = target.evaluate("node => globalThis.__goalCanvasInspection(node)")
+                    configuration = target.evaluate(
+                        "node => globalThis.__goalCanvasInspection(node)"
+                    )
                     assert configuration["stacked"] == (identity == "stacked-events")
                     assert "click" not in configuration["events"], configuration
                     assert {"mousemove", "mouseout", "touchstart", "touchmove"} <= set(
@@ -1256,7 +1260,7 @@ def manual_unit_spacing(browser, url):
                 inspections["goal-manual-line"] = desktop_inspection(
                     page, chart, plot, keyboard=False, fraction=5 / 6,
                     output=output, name="desktop-manual-line",
-                    after_click=lambda: expect(value).to_be_focused(),
+                    after_click=lambda value=value: expect(value).to_be_focused(),
                 )
                 expect(value).to_be_focused()
                 expect(value).to_have_attribute("data-reading", "22.5")
@@ -1468,7 +1472,9 @@ def authored_goal_presentation(browser, url):
             page.goto(url + "#/workspace/goal/goal_wrenfixture", wait_until="domcontentloaded")
             goal = page.locator('[data-goal-page="goal_wrenfixture"]')
             checklist = goal.get_by_role("region", name="Completion checklist")
-            expect(checklist.locator("[data-presentation]")).to_have_attribute("data-presentation", "normal")
+            expect(checklist.locator("[data-presentation]")).to_have_attribute(
+                "data-presentation", "normal"
+            )
             expect(checklist.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "1")
             # Saved done rows start in the completed group, without a write or a
             # settlement delay. Existing native controls cover check/uncheck saves.
@@ -1564,7 +1570,9 @@ def authored_goal_presentation(browser, url):
                 # Existing tests exercise its writes and dismissal lifecycle.
                 page.evaluate("location.hash='#/workspace'")
                 panel = open_preview(page, "goal_wrenfixture")
-                expect(panel.locator("[data-block=checklist]")).to_have_attribute("data-presentation", "small")
+                expect(panel.locator("[data-block=checklist]")).to_have_attribute(
+                    "data-presentation", "small"
+                )
                 rail_geometry = centered_checklist_row(panel.locator('[data-step="intake"]'))
                 if output:
                     panel.screenshot(path=str(output / "desktop-rail.png"))
@@ -2304,7 +2312,9 @@ def native_goal_edits(browser, url):
             if phone and output:
                 checklist.screenshot(path=str(output / "phone-small-expanded.png"))
             expect(checklist.get_by_role("textbox")).to_have_count(0)
-            expect(checklist.get_by_role("heading", name="Nested readiness", exact=True)).to_be_visible()
+            expect(checklist.get_by_role(
+                "heading", name="Nested readiness", exact=True
+            )).to_be_visible()
             row = checklist.locator('[data-step="native-step"]')
             detail_button = row.get_by_role("button", name="Native item", exact=True)
             if detail_button.get_attribute("aria-expanded") != "true":
@@ -2318,13 +2328,17 @@ def native_goal_edits(browser, url):
             expect(checklist.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "1")
             assert block("native-checklist")["items"][0]["state"] == "done"
             assert len(fixture.writes) == count + 1
-            expect(checklist.get_by_role("heading", name="Nested ready", exact=True)).to_be_visible()
+            expect(checklist.get_by_role(
+                "heading", name="Nested ready", exact=True
+            )).to_be_visible()
             expect(checklist.get_by_role("textbox")).to_have_count(0)
             assert block("native-checklist")["title"] == "Nested readiness"
             assert block("native-checklist")["doneTitle"] == "Nested ready"
             if output:
                 expect(checklist.get_by_text("Saving checklist…", exact=True)).to_have_count(0)
-                expect(checklist.get_by_role("button", name="1 completed", exact=True)).to_be_visible()
+                expect(checklist.get_by_role(
+                    "button", name="1 completed", exact=True
+                )).to_be_visible()
                 checklist.screenshot(path=str(output / f"{mode}-complete.png"))
 
             # Artifact cards stay outside the editing action. This is one quick
@@ -2373,7 +2387,8 @@ def native_goal_edits(browser, url):
                     alignment:getComputedStyle(context).alignItems,
                     controls:[...context.querySelectorAll('input,select')].map(control=>{
                         const c=control.getBoundingClientRect();
-                        const size=control.parentElement.querySelector('.control-size').getBoundingClientRect();
+                        const sizer=control.parentElement.querySelector('.control-size');
+                        const size=sizer.getBoundingClientRect();
                         return {name:control.getAttribute('aria-label'),width:c.width,
                             measuredWidth:size.width,top:c.top,bottom:c.bottom,
                             appearance:getComputedStyle(control).appearance};
@@ -2402,7 +2417,9 @@ def native_goal_edits(browser, url):
                 expect(goal.get_by_label("State", exact=True)).to_be_visible()
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 if output:
-                    goal.locator(".goal-heading").screenshot(path=str(output / "phone-320-metadata.png"))
+                    goal.locator(".goal-heading").screenshot(
+                        path=str(output / "phone-320-metadata.png")
+                    )
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.evaluate("location.hash='#/workspace'")
             rail = page.locator(".goals-rail")
