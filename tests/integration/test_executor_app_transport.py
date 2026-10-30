@@ -235,7 +235,7 @@ def test_malformed_control_cannot_fence_current_peer(
     asyncio.run(run())
 
 
-def test_duplicate_hello_preserves_active_file_and_preview_reservations(
+def test_duplicate_hello_preserves_active_file_reservations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.executor.codec import encode_value
@@ -243,16 +243,6 @@ def test_duplicate_hello_preserves_active_file_and_preview_reservations(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-
-        async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-            try:
-                writer.write(await reader.read(16))
-                await writer.drain()
-            finally:
-                writer.close()
-                await writer.wait_closed()
-
-        listener = await asyncio.start_server(echo, "127.0.0.1", 0)
         try:
             identity = harness.endpoint.identity
             assert identity is not None
@@ -267,56 +257,39 @@ def test_duplicate_hello_preserves_active_file_and_preview_reservations(
                 0,
             )
             slot = service.create_upload(manifest)
-            port = int(listener.sockets[0].getsockname()[1])
-            async with harness.endpoint.preview_forward(port, "t_scripted") as local:
-                forwards = harness.endpoint._preview_forwards
-                assert forwards is not None
-                lease = next(iter(forwards.leases.values()))
-                payload = encode_value(harness.mac.health())
-                assert isinstance(payload, dict)
-                async with harness.proxy.session_factory() as session:
-                    async with session.ws_connect(
-                        "wss" + harness.proxy.origin[5:] + "/api/executor/connect",
-                        headers={"X-Panels-Executor-ID": "test-executor"},
-                    ) as socket:
-                        await socket.send_bytes(
-                            encode_frame(
-                                WireMessage(
-                                    WireMessageKind.hello,
-                                    "duplicate",
-                                    payload,
-                                )
+            payload = encode_value(harness.mac.health())
+            assert isinstance(payload, dict)
+            async with harness.proxy.session_factory() as session:
+                async with session.ws_connect(
+                    "wss" + harness.proxy.origin[5:] + "/api/executor/connect",
+                    headers={"X-Panels-Executor-ID": "test-executor"},
+                ) as socket:
+                    await socket.send_bytes(
+                        encode_frame(
+                            WireMessage(
+                                WireMessageKind.hello,
+                                "duplicate",
+                                payload,
                             )
                         )
-                        reply = await asyncio.wait_for(socket.receive(), 2)
-                        assert reply.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
-                assert harness.endpoint.ready and harness.endpoint.identity == identity
-                assert harness.endpoint.writer is writer
-                assert harness.endpoint._transports[identity] is service and service.valid()
-                assert slot.transfer_id in service.transfers
-                assert harness.endpoint._preview_forwards is forwards and not forwards.closed
-                assert lease.server.is_serving() and local > 0
-                native_client = ExecutorAppClient(
-                    harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
-                )
-                try:
-                    source = tmp_path / "empty-source"
-                    source.write_bytes(b"")
-                    await native_client.upload(slot, source)
-                    assert service.upload_path(slot.transfer_id).read_bytes() == b""
-                finally:
-                    await native_client.close()
-                reader, stream_writer = await asyncio.open_connection("127.0.0.1", local)
-                try:
-                    stream_writer.write(b"still usable")
-                    await stream_writer.drain()
-                    assert await asyncio.wait_for(reader.readexactly(12), 2) == b"still usable"
-                finally:
-                    stream_writer.close()
-                    await stream_writer.wait_closed()
+                    )
+                    reply = await asyncio.wait_for(socket.receive(), 2)
+                    assert reply.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
+            assert harness.endpoint.ready and harness.endpoint.identity == identity
+            assert harness.endpoint.writer is writer
+            assert harness.endpoint._transports[identity] is service and service.valid()
+            assert slot.transfer_id in service.transfers
+            native_client = ExecutorAppClient(
+                harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
+            )
+            try:
+                source = tmp_path / "empty-source"
+                source.write_bytes(b"")
+                await native_client.upload(slot, source)
+                assert service.upload_path(slot.transfer_id).read_bytes() == b""
+            finally:
+                await native_client.close()
         finally:
-            listener.close()
-            await listener.wait_closed()
             await harness.close()
 
     asyncio.run(run())

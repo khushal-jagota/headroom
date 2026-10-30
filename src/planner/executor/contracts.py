@@ -57,7 +57,6 @@ class ConnectionPhase(StrEnum):
     app_connect = "app_connect"
     hello = "hello"
     transport_open = "transport_open"
-    preview_setup = "preview_setup"
     reconcile1 = "reconcile1"
     replay1 = "replay1"
     reconcile2 = "reconcile2"
@@ -522,10 +521,6 @@ class WireMessageKind(StrEnum):
     hello_accepted = "hello_accepted"
     transport_open = "transport_open"
     transport_opened = "transport_opened"
-    preview_open = "preview_open"
-    preview_bind = "preview_bind"
-    preview_bound = "preview_bound"
-    preview_release = "preview_release"
     file_slot = "file_slot"
     input_progress = "input_progress"
     input_cancel = "input_cancel"
@@ -686,10 +681,6 @@ class QuiescenceReceipt:
     exit_committed: bool
 
 
-class ByteReader(Protocol):
-    async def read(self, n: int = -1) -> bytes: ...
-
-
 class FrameReader(Protocol):
     async def readexactly(self, n: int) -> bytes: ...
 
@@ -700,8 +691,8 @@ class ByteWriter(Protocol):
     def close(self) -> None: ...
 
 
-class PreviewPeer(Protocol):
-    """One bounded executor preview WebSocket, without HTTP credentials."""
+class WebSocketPeer(Protocol):
+    """One bounded executor control WebSocket, without HTTP credentials."""
 
     @property
     def closed(self) -> bool: ...

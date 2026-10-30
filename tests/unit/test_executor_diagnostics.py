@@ -171,7 +171,6 @@ def test_exception_tags_are_allowlisted(error: Exception, tag: str) -> None:
         "app_connect",
         "hello",
         "transport_open",
-        "preview_setup",
         "reconcile1",
         "replay1",
         "reconcile2",
@@ -227,10 +226,6 @@ def test_connection_reports_precise_session_phase_before_cleanup(
 
         client = SimpleNamespace(websocket=websocket, close=AsyncMock())
 
-        def preview(*args: object) -> object:
-            fail("preview_setup")
-            return SimpleNamespace(close=AsyncMock())
-
         async def request(kind: WireMessageKind, payload: object) -> WireMessage:
             if kind is WireMessageKind.hello:
                 fail("hello")
@@ -267,7 +262,6 @@ def test_connection_reports_precise_session_phase_before_cleanup(
             await asyncio.Event().wait()
 
         monkeypatch.setattr(executor, "_read_loop", read_forever)
-        monkeypatch.setattr(mac, "MacPreviewForwards", preview)
         monkeypatch.setattr(executor, "_request", request)
         monkeypatch.setattr(executor, "_reconcile", reconcile)
         monkeypatch.setattr(executor, "_replay", replay)

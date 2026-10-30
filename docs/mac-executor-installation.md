@@ -356,7 +356,8 @@ The first transition retains the old app and runtimes as recovery inputs, not as
 An incompatible prior package must not open the current journal.
 Never delete pending work or automatically convert the journal for rollback.
 
-Files use verified HTTP transfers and previews use separate native WebSockets through the app service.
+Files use verified HTTP transfers through the app service. Application previews
+are unavailable for Mac runs.
 The installed Mac needs no open browser or SSH authentication step.
 This procedure changes no account or network policy.
 
@@ -388,7 +389,9 @@ The route must supply Serve's actual allowed-user identity and replace caller-su
 Keep application tests with synthetic identity separate from this real Serve evidence.
 If the existing network policy prevents access to 9443, report the unavailable route without a policy change.
 
-Check native commands, files in both directions, previews, original callbacks, and recovery after an isolated app restart.
+Check native commands, files in both directions, original callbacks, and recovery
+after an isolated app restart. Check that a Mac preview link reports previews
+unavailable without contacting a VPS application on the same port.
 Do not point this validation at production. Retain evidence and follow the Manager's peer disposition before cleanup.
 Remove only the route added for this validation:
 

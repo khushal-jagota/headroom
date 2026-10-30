@@ -459,7 +459,7 @@ def test_input_transfer_preserves_conversation_order_without_blocking_other_comm
     asyncio.run(run())
 
 
-def test_session_preview_cleanup_failure_still_releases_transport_root(
+def test_session_file_cleanup_failure_still_releases_transport_root(
     store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import asyncio
@@ -480,7 +480,6 @@ def test_session_preview_cleanup_failure_still_releases_transport_root(
     from planner.executor.transfers import GenerationTransfers
     from planner.executor.vps import ExecutorEndpoint
     from planner.executor.wire import encode_frame
-    from planner.previews.forward import PreviewForwards
 
     async def run() -> None:
         endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
@@ -501,15 +500,12 @@ def test_session_preview_cleanup_failure_still_releases_transport_root(
             )
         )
         reader.feed_eof()
-        previews = Mock()
-        previews.close = AsyncMock(side_effect=ValueError("unsafe preview socket"))
         service = Mock()
         service.close = AsyncMock(side_effect=OSError("service cleanup failed"))
         root = tempfile.TemporaryDirectory(dir=tmp_path)
         root_path = Path(root.name)
 
         async def setup_generation() -> None:
-            endpoint._preview_forwards = cast(PreviewForwards, previews)
             endpoint._transports[identity] = cast(GenerationTransfers, service)
             endpoint._transport_roots[identity] = root
             endpoint._upload_transfers[(identity, "publication")] = "token"
@@ -520,7 +516,6 @@ def test_session_preview_cleanup_failure_still_releases_transport_root(
         try:
             with pytest.raises(OSError, match="service cleanup failed"):
                 await endpoint._session(reader, writer)
-            previews.close.assert_awaited_once()
             service.close.assert_awaited_once()
             assert not root_path.exists()
             assert not endpoint._transports and not endpoint._transport_roots

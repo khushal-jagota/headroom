@@ -108,7 +108,6 @@ from planner.executor.wire import (
     read_frame,
     read_typed_frame,
 )
-from planner.previews.forward import MacPreviewForwards
 from planner.tickets.contracts import TicketLocale
 
 
@@ -155,7 +154,6 @@ class MacExecutor:
             PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, str(uuid4()), 0
         )
         self._handshake_accepted = False
-        self._preview_streams: MacPreviewForwards | None = None
         self.state = ConnectionState.disconnected
         self.lost_at_ms: int | None = None
         self._writer: FrameWriter | None = None
@@ -278,15 +276,6 @@ class MacExecutor:
             message = await read_frame(reader)
             if message.kind in (WireMessageKind.catalog_request, WireMessageKind.catalog_cancel):
                 self._catalog_frame(message)
-                continue
-            if message.kind in (
-                WireMessageKind.preview_bind,
-                WireMessageKind.preview_release,
-                WireMessageKind.preview_open,
-            ):
-                task = asyncio.create_task(self._preview(message))
-                self._command_tasks.add(task)
-                task.add_done_callback(self._command_tasks.discard)
                 continue
             if message.kind is WireMessageKind.input_cancel:
                 cancellation = TypeAdapter(InputTransferCancel).validate_python(message.payload)
@@ -535,29 +524,6 @@ class MacExecutor:
         with contextlib.suppress(ConnectionError, BrokenPipeError):
             await self._send(
                 WireMessage(WireMessageKind.command_outcome, message.request_id, as_object(outcome))
-            )
-
-    async def _preview(self, message: WireMessage) -> None:
-        try:
-            if (
-                not self._handshake_accepted
-                or self.state != ConnectionState.ready
-                or self._preview_streams is None
-            ):
-                raise ConnectionError("preview generation is unavailable")
-            lease_id = str(message.payload["lease_id"])
-            if message.kind is WireMessageKind.preview_bind:
-                await self._preview_streams.bind(lease_id, cast(int, message.payload["port"]))
-            elif message.kind is WireMessageKind.preview_open:
-                self._preview_streams.open(
-                    lease_id, str(message.payload["stream_id"]), cast(int, message.payload["port"])
-                )
-            else:
-                await self._preview_streams.release(lease_id)
-            await self._send(WireMessage(WireMessageKind.preview_bound, message.request_id, {}))
-        except (ValueError, OSError, ConnectionError, TimeoutError) as error:
-            await self._send(
-                WireMessage(WireMessageKind.error, message.request_id, {"message": str(error)})
             )
 
     async def _input(
@@ -838,20 +804,6 @@ class MacExecutor:
                     )
                     if opened.kind is not WireMessageKind.transport_opened:
                         raise ValueError("file generation refused")
-                    from planner.previews.configuration import PREVIEW_CHUNK_BYTES
-
-                    phase = ConnectionPhase.preview_setup
-                    self._preview_streams = MacPreviewForwards(
-                        lambda stream_id: client.websocket(
-                            "/api/executor/previews/" + stream_id, PREVIEW_CHUNK_BYTES
-                        ),
-                        lambda: (
-                            self.identity == identity
-                            and self._handshake_accepted
-                            and self.state == ConnectionState.ready
-                            and not self.registry.admission_stopped
-                        ),
-                    )
                     phase = ConnectionPhase.reconcile1
                     await self._reconcile()
                     phase = ConnectionPhase.replay1
@@ -889,7 +841,6 @@ class MacExecutor:
             # Revoke this generation before cleanup awaits. Native commands stay
             # under registry ownership and retain outcomes for reconciliation.
             self._handshake_accepted = False
-            previews, self._preview_streams = self._preview_streams, None
             self.state = ConnectionState.disconnected
             if self.lost_at_ms is None:
                 self.lost_at_ms = now_ms()
@@ -909,11 +860,7 @@ class MacExecutor:
             for cleanup_task in tasks:
                 cleanup_task.cancel()
             try:
-                try:
-                    if previews is not None:
-                        await previews.close()
-                finally:
-                    await client.close()
+                await client.close()
             finally:
                 await asyncio.gather(*tasks, return_exceptions=True)
                 if writer is not None:
@@ -934,8 +881,6 @@ class MacExecutor:
                         raise ValueError("quiesce identity changed; obtain fresh health")
                     self._transport_admission_stopped = True
                     await self._settle_catalogs()
-                    if self._preview_streams is not None:
-                        await self._preview_streams.close()
                     quiescence = await self.registry.quiesce()
                     pending_transfers = max(self._transfers, len(self._transfer_tasks))
                     if pending_transfers:

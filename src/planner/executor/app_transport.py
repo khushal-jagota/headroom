@@ -28,7 +28,7 @@ from planner.executor.configuration import (
     TRANSFER_CHUNK_BYTES,
     WS_HEARTBEAT_SECONDS,
 )
-from planner.executor.contracts import ExecutorIdentity, FileTransfer, PreviewPeer
+from planner.executor.contracts import ExecutorIdentity, FileTransfer, WebSocketPeer
 from planner.executor.files import regular_descriptor
 from planner.executor.transfers import settled_io
 from planner.executor.wire import ProtocolRefused
@@ -140,7 +140,7 @@ class ClientWebSocketPeer:
 class ControlWebSocket:
     """One complete length-prefixed frame per binary message, with no input queue."""
 
-    def __init__(self, peer: PreviewPeer) -> None:
+    def __init__(self, peer: WebSocketPeer) -> None:
         self.peer = peer
         self._incoming = b""
         self._outgoing: bytes | None = None
@@ -395,25 +395,5 @@ def build_executor_router() -> APIRouter:
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
         return StreamingResponse(chunks, media_type="application/octet-stream")
-
-    @router.websocket("/api/executor/previews/{stream_id}")
-    async def preview(socket: WebSocket, stream_id: str) -> None:
-        try:
-            endpoint = endpoint_for(socket)
-            generation_for(socket, endpoint)
-            forwards = endpoint._preview_forwards
-            if forwards is None or not endpoint.ready:
-                raise HTTPException(409, "preview generation unavailable")
-        except HTTPException:
-            await socket.close(code=1008)
-            return
-        await socket.accept()
-        peer = ServerWebSocketPeer(socket)
-        try:
-            await forwards.attach(stream_id, peer)
-        except (ValueError, ConnectionError, OSError):
-            pass
-        finally:
-            await peer.aclose()
 
     return router

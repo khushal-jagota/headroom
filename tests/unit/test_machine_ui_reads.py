@@ -324,7 +324,7 @@ def test_invalid_draft_never_writes(tmp_db: Connection, fields: dict[str, Any]) 
     assert tuple(tmp_db.iterdump()) == before
 
 
-def test_preview_receipt_advances_contact_without_per_ask_liveness(
+def test_control_receipt_advances_contact_without_per_ask_liveness(
     tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.backends.contracts import TurnToken
@@ -371,16 +371,18 @@ def test_preview_receipt_advances_contact_without_per_ask_liveness(
             100,
         )
         monkeypatch.setattr(endpoint.store, "evidence_for_conversation", lambda _: (evidence,))
-        # Reconciled transport permits a preview, but this ask still lacks liveness.
+        # A control receipt shows contact, but this ask still lacks liveness.
         endpoint.ready = True
         tick[0] = 200
         request_id = str(uuid4())
         response: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
         endpoint._responses[request_id] = response
-        reader.feed_data(encode_frame(WireMessage(WireMessageKind.preview_bound, request_id, {})))
+        reader.feed_data(
+            encode_frame(WireMessage(WireMessageKind.transport_opened, request_id, {}))
+        )
         await asyncio.wait_for(received.wait(), 1)
         assert response.done()
-        assert response.result().kind is WireMessageKind.preview_bound
+        assert response.result().kind is WireMessageKind.transport_opened
         assert endpoint.ask_status("conversation", "1:permission:ask")["answer_available"] is False
         assert endpoint.health()["last_contact_at_ms"] == 200
         reader.feed_eof()
