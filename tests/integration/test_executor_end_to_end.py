@@ -329,9 +329,6 @@ class ExecutorHarness:
 
 
 def make_core(endpoint: ExecutorEndpoint) -> SqliteProcessConversationSystem:
-    from planner.conversation.backend_state import BackendStateStore
-    from planner.conversation.snapshot import BackendSnapshotService
-
     system = SqliteProcessConversationSystem(
         store=ConversationStore(endpoint.db_path),
         backend_child_factories={key: endpoint.factory for key in ConversationBackendKey},
@@ -831,8 +828,10 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                 second.turn, ending=ConversationTurnEnding.completed,
                 error_summary=None, standard_error_tail=None,
             )
-            await eventually(lambda: harness.system._conversations[conversation_id].phase.value == "idle",
-                             "First workflow turn did not settle")
+            await eventually(
+                lambda: harness.system._conversations[conversation_id].phase.value == "idle",
+                "First workflow turn did not settle",
+            )
             async with conversation_link_lock(f"ticket:{ticket.id}"):
                 changed = await send_to_ticket_conversation(
                     harness.system, conn, ticket.id, text_message_content("Second exact choice"),
@@ -1650,9 +1649,11 @@ def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
 def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from planner.conversation.message_content import MessageFile, MessageText
+    from pydantic import TypeAdapter
+
     from planner.conversation.admission.contracts import AdmissionExpectation
-    from planner.executor.contracts import ChildCommand
+    from planner.conversation.message_content import MessageFile, MessageText
+    from planner.executor.contracts import ChildCommand, CommandOutcome
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -2738,8 +2739,7 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_ack_loss(
     from uuid import uuid4
 
     from planner.conversation.admission.service import expectation_from_validation
-    from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding
-    from planner.conversation.model_resolution.contracts import ValidationState
+    from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, ValidationState
     from planner.executor.codec import encode_value
     from planner.executor.contracts import ChildCommand, ChildOperation
 

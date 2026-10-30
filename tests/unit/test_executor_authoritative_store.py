@@ -1268,10 +1268,10 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
             await system.start_conversation(
                 ConversationStartRequest(conversation, "scripted", workspace_folder=tmp_path)
             )
-            assert isinstance(
-                await system.send(conversation, text_message_content("first"), sender_label="Test"),
-                PromptDeliveryStarted,
+            first_delivery = await system.send(
+                conversation, text_message_content("first"), sender_label="Test"
             )
+            assert isinstance(first_delivery, PromptDeliveryStarted), repr(first_delivery)
             state = system._conversations[conversation]
             first = state.executor_child_reference
             assert first is not None
