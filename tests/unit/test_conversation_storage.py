@@ -22,7 +22,6 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     AgentMessageEventPayload,
-    ConversationEventPayload,
     ModelChangedEventPayload,
     PromptEventPayload,
 )
@@ -362,7 +361,7 @@ def test_grouped_messages_keep_their_own_commit_participants(store: Conversation
             def record(
                 conn: sqlite3.Connection,
                 conversation_id: str,
-                payload: ConversationEventPayload,
+                payload: object,
                 admission: NativeMessageAdmission | None,
             ) -> None:
                 assert conversation_id == "c" and isinstance(payload, PromptEventPayload)

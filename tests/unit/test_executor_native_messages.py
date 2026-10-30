@@ -413,7 +413,7 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
                     "body": {
                         "target": {"kind": "ticket", "id": target.id},
                         "message": "Begin this idle turn",
-                        "mode": "steer",
+                        # Omitted mode must retain the ordinary steer default.
                     }
                 },
                 ChildReference("incarnation", "sender_child", "c_source"),

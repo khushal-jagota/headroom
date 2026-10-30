@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, Protocol, TypedDict
 
 if TYPE_CHECKING:
-    from planner.conversation.events import ConversationEventPayload
     from planner.conversation.model_resolution.contracts import SelectionKind
 
 from planner.conversation.message_content import MessageContent
@@ -643,10 +642,7 @@ class NativeMessageOperation:
     submission_id: str
     composed_confirmed: bool = False
     in_commit: (
-        Callable[
-            [sqlite3.Connection, str, ConversationEventPayload, NativeMessageAdmission | None], None
-        ]
-        | None
+        Callable[[sqlite3.Connection, str, object, NativeMessageAdmission | None], None] | None
     ) = None
 
 

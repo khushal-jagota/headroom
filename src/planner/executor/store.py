@@ -1,4 +1,4 @@
-"""One authoritative VPS store; no outbound answer queue or Mac state replica."""
+"""VPS run, connection and answer persistence, with shared transaction mechanics."""
 
 from __future__ import annotations
 

@@ -18,7 +18,6 @@ from planner.conversation.contracts import (
     NativeMessageOperation,
 )
 from planner.conversation.events import (
-    ConversationEventPayload,
     MessageToOwnerEventPayload,
     PromptDeliveryRefusedEventPayload,
     PromptDeliveryUncertainEventPayload,
@@ -208,7 +207,11 @@ async def deliver_native_message(
             message = api._message_text(body.get("message"))
             if write.operation == "ticket.request_help" and set(body) - {"message", "recipient"}:
                 raise PlannerError(ErrorCode.validation, "unknown help request field", {})
-            mode = api._message_delivery_mode(body.get("mode", "queue"))
+            mode = (
+                api._message_delivery_mode(body["mode"])
+                if "mode" in body
+                else api._message_delivery_mode()
+            )
             recipient = resolve_recipient(conn, write, principal)
             service.require_reach(conn, principal, recipient)
             store.install_files(envelope.file_dependencies)
@@ -261,6 +264,10 @@ async def deliver_native_message(
             if result.get("fate") == "uncertain"
             else ReceiptDisposition.accepted
         )
+        if disposition is ReceiptDisposition.refused:
+            from planner.executor.refusals import record_refused_write
+
+            record_refused_write(conn, store.db_path, envelope, result)
         receipt = AcceptanceReceipt(
             envelope.sender_id,
             envelope.submission_id,
@@ -286,7 +293,7 @@ async def deliver_native_message(
     def recorded(
         conn: sqlite3.Connection,
         conversation_id: str,
-        payload: ConversationEventPayload,
+        payload: object,
         admission: NativeMessageAdmission | None,
     ) -> None:
         composed = False

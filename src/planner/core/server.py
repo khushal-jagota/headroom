@@ -238,7 +238,6 @@ def create_app(
         )
         if os.environ.get("PLAN_EXECUTOR_MODE") == "remote":
             from planner.executor.routing import LocaleBackendChildFactory
-            from planner.executor.vps_runs import MacRuns
             from planner.executor.vps_transport import VpsExecutor
 
             executor_endpoint = VpsExecutor(config.db_path, clock)
