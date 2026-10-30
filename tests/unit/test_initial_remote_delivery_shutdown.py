@@ -242,60 +242,6 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
     asyncio.run(run())
 
 
-def test_legacy_intent_and_assignment_shutdown_never_replays_missing_command(
-    tmp_db: Connection, tmp_path: Path
-) -> None:
-    """Gap: retained old state has assignment and intent but no executor runtime metadata."""
-    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    commands: list[ChildCommand] = []
-    reference = ChildReference("retained-incarnation", "retained-child", "c_legacy")
-
-    async def send(command: ChildCommand) -> CommandOutcome:
-        commands.append(command)
-        return CommandOutcome(command.command_id, command.child, CommandDisposition.succeeded, {})
-
-    factory = RemoteBackendChildFactory(
-        lambda start, sink: reference, send, lambda start: canonical_snapshot()
-    )
-
-    def core() -> SqliteProcessConversationSystem:
-        return SqliteProcessConversationSystem(
-            store=ConversationStore(db_path),
-            backend_child_factories={key: factory for key in ConversationBackendKey},
-            message_files=ConversationMessageFiles(db_path),
-        )
-
-    async def run() -> None:
-        from planner.executor.store import ExecutorStore
-
-        first = core()
-        await first.start_conversation(
-            ConversationStartRequest("c_legacy", "scripted", workspace_folder=tmp_path)
-        )
-        await first._store.reserve_turn("c_legacy")
-        ExecutorStore(db_path).register_child(reference, "ticket", "legacy-ticket", 1)
-        await first.shutdown()
-        restored = core()
-        try:
-            await restored.kill("c_legacy")
-            state = restored._conversations["c_legacy"]
-            assert state.initial_shutdown_task is not None
-            await state.initial_shutdown_task
-            assert [command.operation for command in commands] == [ChildOperation.stop]
-            assert commands[0].child == reference
-            assert not state.child_is_quarantined and state.reserved_turn is None
-            assert await restored._store.read_events_after("c_legacy", 0) == ()
-            facts = await restored._store.lifecycle_facts("c_legacy")
-            assert {fact.status for fact in facts} == {
-                LifecycleStatus.unavailable,
-                LifecycleStatus.unknown,
-            }
-        finally:
-            await restored.shutdown()
-
-    asyncio.run(run())
-
-
 @pytest.mark.parametrize("fail_disposition", [False, True])
 def test_preparation_kill_settles_sender_and_old_continuation_cannot_run_after_successor(
     tmp_db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_disposition: bool

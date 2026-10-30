@@ -45,12 +45,14 @@ _Code paths:_ `src/planner/runtime/conversation_start.py`, `src/planner/conversa
 
 Native events use the same lifecycle facts and publication transaction as local events.
 New public request IDs include the turn number. Provider IDs remain bound to the original native child and callback.
-Existing native requests retain their original public IDs through an upgrade and later restarts.
+Existing native requests and saved choices retain their original public IDs for historical evidence.
 Panels retains their exact reference mapping without changes to notebook rows or saved choices.
 Permission callbacks and user-input callbacks keep separate identities, even when their provider IDs match.
 The owner can save an exact pending answer during a Mac connection outage.
 VPS acceptance does not prove native callback delivery. Native application is a separate durable fact.
-A VPS restart retains native turn knowledge until executor reconciliation supplies evidence.
+A VPS restart interrupts Mac turns just like VPS turns and closes their callbacks.
+Panels retains the exact old child identity and stops that child when the Mac reconnects.
+A new send starts a fresh run only after that stop is proved. Unresolved prompt delivery stays unknown and is never resent.
 Deployment recovery does not start a replacement turn over unresolved native work.
 
 Explicit conversation shutdown also claims an initial delivery before its settled-phase barrier.
@@ -1073,9 +1075,9 @@ child, turn, and callback remain open and pending. The request carries the origi
 `executor_ask` reference from the snapshot. A remote `{landed: true}` confirms
 VPS acceptance; the UI says "Answer saved on VPS; delivery to Mac is pending."
 Only matching application evidence says "Answer applied on Mac." Fresh evidence
-of the original callback gates delivery after reconnect. A restart preserves the
-pending form or saved answer before inventory returns. Cancellation persists
-closure before waiting for the Mac; an ended or replaced turn cannot receive the
+of the original callback gates delivery after a short link outage in the same VPS process.
+A VPS restart closes that callback; a saved answer remains recorded but is not sent.
+Cancellation persists closure before waiting for the Mac; an ended or replaced turn cannot receive the
 saved answer. Such an answer stays saved and unresolved. A prior transmission
 can still receive its application acknowledgment after closure. See
 [the Mac executor](executor.md) for this boundary and its timing limitations.
@@ -1100,8 +1102,11 @@ ACP has no agent-question request, so its existing permission flow is unchanged.
 One child process per conversation, started when a send or maintenance run needs it. The
 agent's own session handle is stored on the conversation row, so a later send
 can bring the same memory back. After a server restart local children are gone.
-Remote children can survive and require exact inventory and record reconciliation
-before they reattach. Link recovery alone proves no child or callback survival.
+Remote children can survive the server restart. Panels marks their runs interrupted,
+closes callbacks, and uses reconnect inventory to stop each exact old child. The next
+send starts a fresh run after stop confirmation. Until then the old identity blocks
+fresh work. A short link outage within the same server process keeps the current
+run and its saved answers; reconnect does not repeat uncertain prompt delivery.
 An agent idle for half an hour is stopped silently (its memory is
 already saved); the next send brings it back without anyone noticing. A resume
 that did not actually restore the agent's memory is refused out loud — never

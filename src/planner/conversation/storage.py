@@ -305,16 +305,30 @@ class ConversationStore:
 
         interrupt_native_messages_in_transaction(conn)
         interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
+        # Native processes survive this runtime; their callbacks do not. Keep the
+        # exact child until inventory permits a proved stop, never a reattachment.
+        for row in conn.execute(
+            "SELECT conversation_id,runtime_json FROM executor_core_turns"
+        ).fetchall():
+            runtime = json.loads(row["runtime_json"])
+            if runtime.get("source_retired"):
+                continue
+            runtime.update(ended=True, callbacks_revoked=True, source_retired=False)
+            conn.execute(
+                "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                (json.dumps(runtime), row["conversation_id"]),
+            )
+            conn.execute(
+                "UPDATE executor_asks SET reachability='callback_gone' "
+                "WHERE conversation_id=? AND reachability IN ('reachable','uncertain')",
+                (row["conversation_id"],),
+            )
         ids = conn.execute(
             "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
             "WHERE status IN ('intent','running','pending','answering')"
         ).fetchall()
         for row in ids:
             conversation_id = str(row[0])
-            from planner.conversation.lifecycle_storage import native_execution_is_unresolved
-
-            if native_execution_is_unresolved(conn, conversation_id):
-                continue
             facts = tuple(
                 replace(
                     fact,
@@ -532,6 +546,7 @@ class ConversationStore:
         executor_turn: tuple[str, str, str] | None = None,
         retired_child: ChildReference | None = None,
         launch_command: ChildCommand | None = None,
+        assigned_child: tuple[ChildReference, Principal] | None = None,
     ) -> bool:
         return await self._write(
             self._transition_lifecycle_sync,
@@ -540,6 +555,7 @@ class ConversationStore:
             executor_turn,
             retired_child,
             launch_command,
+            assigned_child,
         )
 
     def _transition_lifecycle_sync(
@@ -549,6 +565,7 @@ class ConversationStore:
         executor_turn: tuple[str, str, str] | None = None,
         retired_child: ChildReference | None = None,
         launch_command: ChildCommand | None = None,
+        assigned_child: tuple[ChildReference, Principal] | None = None,
     ) -> bool:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
@@ -584,6 +601,13 @@ class ConversationStore:
                     for raw in json.loads(retained[1]).get("initial_commands", ())
                 )
             apply_facts(conn, conversation_id, facts)
+            if assigned_child is not None:
+                child, principal = assigned_child
+                if executor_turn is None or json.loads(executor_turn[0]) != asdict(child):
+                    raise ValueError("Child assignment requires its exact retained turn")
+                ExecutorStore.register_child_in_transaction(
+                    conn, child, principal.kind.value, principal.id, self._integer_now() * 1000
+                )
             if executor_turn is not None:
                 self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
             if retired_child is not None:

@@ -475,9 +475,9 @@ class SqliteProcessConversationSystem:
     """The conversation system Panels runs on.
 
     It is handed the store its record lives in and one child factory per backend key. It
-    spawns nothing until a conversation has something to send. Local capabilities
-    do not survive a restart. Durable native turn knowledge survives the VPS process,
-    while exact native child and callback attachment still requires executor inventory.
+    spawns nothing until a conversation has something to send. Capabilities do not
+    survive a restart. Retained native identities fence fresh work until their old
+    children have been stopped; inventory never restores a live turn.
     """
 
     def __init__(
@@ -1259,72 +1259,21 @@ class SqliteProcessConversationSystem:
             if reservation is None and state.running_turn is not None:
                 return False
             if reservation is None:
-                # Older VPS state retained intent and assignment, but no runtime row.
-                facts = await self._store.lifecycle_facts(state.record.conversation_id)
-                intents = [
-                    fact
-                    for fact in facts
-                    if fact.kind is LifecycleKind.turn and fact.status is LifecycleStatus.intent
-                ]
-                if (
-                    state.child_is_quarantined
-                    and state.executor_child_reference is not None
-                    and state.last_ended_turn_token is not None
-                ):
-                    if (
-                        state.initial_shutdown_task is not None
-                        and not state.initial_shutdown_task.done()
-                    ):
-                        return True
-                    child = state.child
-                    factory = self._backend_child_factories[state.record.backend_key]
-                    reference = state.executor_child_reference
-                    if (
-                        child is None
-                        and ExecutorStore(self._store._db_path).child_assignment(reference)
-                        is not None
-                    ):
-                        if isinstance(factory, LocaleBackendChildFactory):
-                            child = factory.recover_remote_child(reference)
-                        elif isinstance(factory, RemoteBackendChildFactory):
-                            child = factory.recover(reference)
-                        if child is not None:
-                            state.child = child
-                    await self._discard_held_prompts(state)
-                    if isinstance(child, RemoteBackendChild):
-                        self._schedule_remote_retirement(state, child)
-                    return True
-                if not intents:
-                    if reservation is None:
-                        if (
-                            state.initial_shutdown_task is not None
-                            and not state.initial_shutdown_task.done()
-                            and state.child_is_quarantined
-                        ):
-                            await self._discard_held_prompts(state)
-                            return True
-                        return False
-                if reservation is not None:
-                    assignments: tuple[ChildReference, ...]
-                    assignments = (state.executor_child_reference,)
-                else:
-                    assignments = ExecutorStore(self._store._db_path).open_conversation_children(
-                        state.record.conversation_id
-                    )
-                if not assignments:
+                if not state.child_is_quarantined or state.executor_child_reference is None:
                     return False
-                state.child_is_quarantined = True
-                if len(assignments) != 1 or (reservation is None and len(intents) != 1):
-                    # Conflicting old identities authorize no stop and no new execution.
-                    await self._discard_held_prompts(state)
-                    return True
-                state.executor_child_reference = assignments[0]
-                if reservation is None:
-                    reservation = _ReservedTurn(
-                        TurnToken(state.record.conversation_id, intents[0].turn_number),
-                        asyncio.Event(),
-                    )
-                state.reserved_turn = reservation
+                reference = state.executor_child_reference
+                child = state.child
+                if child is None:
+                    factory = self._backend_child_factories[state.record.backend_key]
+                    if isinstance(factory, LocaleBackendChildFactory):
+                        child = factory.recover_remote_child(reference)
+                    elif isinstance(factory, RemoteBackendChildFactory):
+                        child = factory.recover(reference)
+                    state.child = child
+                await self._discard_held_prompts(state)
+                if isinstance(child, RemoteBackendChild):
+                    self._schedule_remote_retirement(state, child)
+                return True
             if reservation.shutdown_owned and reservation.shutdown_fate is not None:
                 await self._discard_held_prompts(state)
                 return True
@@ -1503,6 +1452,11 @@ class SqliteProcessConversationSystem:
                         (),
                         executor_turn=metadata,
                         launch_command=command,
+                        assigned_child=(
+                            (child.reference, child.assignment_principal)
+                            if child.assignment_principal is not None
+                            else None
+                        ),
                     ),
                 )
 
@@ -1680,7 +1634,11 @@ class SqliteProcessConversationSystem:
                     state.last_ended_turn_token = pending.token
                     state.reserved_turn = None
                     pending.resolved.set()
-            return True
+        if state.held_prompts and not self._shutting_down:
+            drain = asyncio.create_task(self._drain_held_prompts(state))
+            state.settlement_tasks.add(drain)
+            drain.add_done_callback(state.settlement_tasks.discard)
+        return True
 
     async def is_running(self, conversation_id: str) -> bool:
         """Whether a turn is running right now.
@@ -6061,149 +6019,33 @@ class SqliteProcessConversationSystem:
                 "automatic_compaction", False
             )
             return
-        if runtime.get("ended", False):
-            state.last_ended_turn_token = token
-            state.child_is_quarantined = (
-                state.child_is_quarantined
-                or bool(runtime.get("delivery_uncertain"))
-                or runtime.get("source_retired") is False
-            )
-            return
-        if runtime.get("delivery_uncertain"):
-            state.child_is_quarantined = True
-            if any(held.delivery_uncertain for held in state.held_prompts):
-                # The durable held envelope already represents this unresolved dispatch.
-                # It has no live delivery owner that can resolve a new reservation.
-                return
-            state.reserved_turn = _ReservedTurn(
-                token=token,
-                resolved=asyncio.Event(),
-                automatic_compaction=runtime.get("automatic_compaction", False),
-                automatic_notice=runtime.get("automatic_notice", False),
-            )
-            self._set_phase(state, _ConversationPhase.starting)
-            return
-        if runtime.get("ended", False):
-            state.last_ended_turn_token = token
-            state.last_ended_turn_was_automatic_compaction = runtime.get(
-                "automatic_compaction", False
-            )
-            return
-        running = _RunningTurn(
-            token=token,
-            launch_validation=(
-                TypeAdapter(CanonicalModelValidation).validate_python(runtime["launch_validation"])
-                if runtime.get("launch_validation") is not None
-                else None
-            ),
-            automatic_compaction=runtime.get("automatic_compaction", False),
-            compaction_confirmed=runtime.get("compaction_confirmed", False),
-            automatic_notice=runtime.get("automatic_notice", False),
-            callbacks_revoked=runtime.get("callbacks_revoked", False),
-            pending_permission_ask_ids=set(runtime["pending_permission_ask_ids"]),
-            permission_provider_ids=runtime["permission_provider_ids"],
-            user_input_provider_ids=runtime["user_input_provider_ids"],
-            pending_user_input_questions=TypeAdapter(
-                dict[str, tuple[UserInputQuestion, ...]]
-            ).validate_python(runtime["pending_user_input_questions"]),
-            prompt_senders=dict.fromkeys(
-                TypeAdapter(tuple[Principal, ...]).validate_python(
-                    runtime.get("prompt_senders", [])
-                )
-            ),
-            explicit_reply_recipients=set(
-                TypeAdapter(tuple[Principal, ...]).validate_python(
-                    runtime.get("explicit_reply_recipients", [])
-                )
-            ),
-        )
-        state.running_turn = running
-        self._set_phase(state, _ConversationPhase.running)
-        # Child restoration comes only from inventory; historical events can still
-        # commit with this turn metadata when its native child no longer exists.
+        # Startup has ended the turn and closed its callbacks in one transaction.
+        # Retain only stop evidence, never a reservation or running callback state.
+        state.last_ended_turn_token = token
+        state.last_ended_turn_was_automatic_compaction = runtime.get("automatic_compaction", False)
+        state.child_is_quarantined = True
 
-    async def adopt_remote_child(self, inventory: Any, child: BackendChild) -> bool:
-        """Reattach only the exact Mac child and callbacks confirmed by inventory."""
-        state = await self._conversation_state(inventory.child.conversation_id)
+    async def stop_interrupted_remote_child(
+        self, reference: ChildReference, child: BackendChild
+    ) -> None:
+        """Inventory can retire a pre-restart child, never resume its turn."""
+        state = await self._conversation_state(reference.conversation_id)
         if state is None:
             raise ValueError("remote inventory names an unknown conversation")
-        from planner.executor.store import ExecutorStore
-
         async with state.lock:
-            if ExecutorStore(self._store._db_path).child_assignment(inventory.child) is None:
-                return False
-            if state.reserved_turn is not None:
-                # Its original adapter owns command history and finalization. Inventory
-                # is evidence, never authority to replace the pending delivery owner.
-                return False
-            if state.child_is_quarantined and state.last_ended_turn_token is not None:
-                return False
             if (
-                state.executor_child_reference is not None
-                and state.executor_child_reference != inventory.child
+                state.executor_child_reference != reference
+                or not state.child_is_quarantined
+                or state.last_ended_turn_token is None
             ):
-                return False
-            token = inventory.active_turn
-            if token is not None and (
-                (
-                    state.last_ended_turn_token is not None
-                    and token.turn_number <= state.last_ended_turn_token.turn_number
-                )
-                or (state.running_turn is not None and state.running_turn.token != token)
-            ):
-                return False
-            from planner.executor.contracts import AskKind
-
+                raise ValueError("remote inventory lacks an exact interrupted child")
+            pending = state.initial_shutdown_task
+            if pending is not None and not pending.done():
+                if getattr(state.initial_shutdown_child, "reference", None) != reference:
+                    raise ValueError("Pending retirement belongs to another child")
+                return
             state.child = child
-            state.executor_child_reference = inventory.child
-            if token is not None:
-                running = state.running_turn
-                predicted = _RunningTurn(token=token) if running is None else replace(running)
-                permission_ids = {}
-                for ask in inventory.pending_asks:
-                    if ask.kind is AskKind.permission:
-                        public = self._store.executor_public_request_id(ask)
-                        if public is None:
-                            continue
-                        permission_ids[public] = ask.ask_id
-                predicted.pending_permission_ask_ids = set(permission_ids)
-                predicted.permission_provider_ids = permission_ids
-                input_ids = {}
-                from planner.executor.contracts import AskReference
-
-                for provider in inventory.pending_user_input_ids:
-                    ask = AskReference(inventory.child, token, provider, AskKind.user_input)
-                    public = self._store.executor_public_request_id(ask)
-                    if public is None:
-                        continue
-                    input_ids[public] = provider
-                predicted.user_input_provider_ids = input_ids
-                predicted.pending_user_input_questions = {
-                    key: value
-                    for key, value in predicted.pending_user_input_questions.items()
-                    if key in input_ids
-                }
-                await self._persist(
-                    state,
-                    partial(
-                        self._store.transition_lifecycle,
-                        state.record.conversation_id,
-                        (),
-                        executor_turn=self._executor_turn_metadata(state, predicted),
-                    ),
-                    runtime_mutation=self._runtime_mutation(
-                        state, PlainFieldMutation(state, "running_turn", predicted)
-                    ),
-                )
-                if self._signal is None:
-                    state.running_turn = predicted
-                state.next_turn_number = max(state.next_turn_number, token.turn_number + 1)
-                state.has_delivered_prompt = True
-                self._set_phase(state, _ConversationPhase.running)
-            # Absent inventory liveness is not proof of native termination. Retain
-            # saved callbacks and expose uncertain delivery through executor evidence.
-
-            return True
+            self._schedule_remote_retirement(state, child)
 
     async def receive_remote_answer_application(
         self,

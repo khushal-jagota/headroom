@@ -18,6 +18,7 @@ from planner.conversation.contracts import (
 from planner.conversation.launch_intent import reasoning_effort_is_set
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.core.contracts import Principal
 from planner.executor.codec import decode_prompt_result, decode_provider_submission, encode_value
 from planner.executor.contracts import (
     CanonicalSkillSnapshot,
@@ -47,6 +48,7 @@ class RemoteBackendChildFactory:
     skill_snapshot_supplier: SkillSnapshotSupplier
     cancel_initial_delivery: CancelInitialDelivery | None = None
     retire_reference: Callable[[ChildReference], None] | None = None
+    principal_for_start: Callable[[ResolvedConversationStart], Principal] | None = None
 
     def recover(self, reference: ChildReference) -> RemoteBackendChild:
         return RemoteBackendChild(
@@ -66,12 +68,18 @@ class RemoteBackendChildFactory:
         message_files: ConversationMessageFiles,
     ) -> RemoteBackendChild:
         del message_files
+        principal = (
+            self.principal_for_start(resolved_start)
+            if self.principal_for_start is not None
+            else None
+        )
         return RemoteBackendChild(
             self.assign_child(resolved_start, event_sink),
             self.send_command,
             self.skill_snapshot_supplier,
             self.cancel_initial_delivery,
             retire_reference=self.retire_reference,
+            assignment_principal=principal,
         )
 
 
@@ -87,8 +95,10 @@ class RemoteBackendChild:
         *,
         initial_history_complete: bool = True,
         retire_reference: Callable[[ChildReference], None] | None = None,
+        assignment_principal: Principal | None = None,
     ) -> None:
         self.reference = reference
+        self.assignment_principal = assignment_principal
         self._retire_reference = retire_reference
         self._send_command = send_command
         self._skill_snapshot_supplier = skill_snapshot_supplier

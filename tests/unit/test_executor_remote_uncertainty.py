@@ -85,7 +85,8 @@ def test_unknown_prompt_is_durable_and_quarantined_across_vps_restart(
         )
         assert isinstance(replay, PromptDeliveryUncertain)
         assert restored._conversations["c_unknown"].child_is_quarantined
-        assert restored._conversations["c_unknown"].reserved_turn is not None
+        assert restored._conversations["c_unknown"].reserved_turn is None
+        assert not await restored.is_running("c_unknown")
         assert [command.operation for command in commands] == [
             ChildOperation.start,
             ChildOperation.write_prompt,
@@ -406,12 +407,13 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         await restored.shutdown()
         healthy = core()
         state = healthy._conversations["c_retry"]
-        assert not state.child_is_quarantined
-        assert state.running_turn is not None
+        assert state.child_is_quarantined
+        assert state.running_turn is None
         assert state.executor_child_reference == references[1]
         assert all(c.child == references[1] for c in state.executor_initial_commands)
         cancel_states.append(state)
         await healthy.kill("c_retry")
+        await healthy.wait_until_quiescent()
         assert not state.child_is_quarantined and state.child is None
 
         async def suppress(*args: Any, **kwargs: Any) -> Any:

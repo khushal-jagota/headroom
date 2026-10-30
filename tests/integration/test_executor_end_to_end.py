@@ -1398,7 +1398,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     asyncio.run(run())
 
 
-def test_vps_core_recreation_adopts_live_inventory_before_replaying_new_ask(
+def test_vps_core_recreation_stops_old_child_before_fresh_send(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1408,11 +1408,17 @@ def test_vps_core_recreation_adopts_live_inventory_before_replaying_new_ask(
             await asyncio.wait_for(harness.endpoint.close(), 2)
             await harness.native.raise_ask()
             await harness.restart_vps_core()
-            await harness.wait_ask_reachable()
-            assert await harness.system.is_running("c_scripted")
-            assert await harness.system.has_pending_permission_ask("c_scripted")
+            await eventually(lambda: harness.native.stop_count == 1, "old child was not stopped")
+            state = harness.system._conversations["c_scripted"]
+            await eventually(lambda: not state.child_is_quarantined, "stop proof did not settle")
+            assert not await harness.system.is_running("c_scripted")
+            assert not await harness.system.has_pending_permission_ask("c_scripted")
             assert harness.native.start_count == harness.native.prompt_count == 1
-            assert harness.events("permission_asked") == 1
+            delivery = await harness.system.send(
+                "c_scripted", text_message_content("Fresh"), sender_label="Test"
+            )
+            assert isinstance(delivery, PromptDeliveryStarted)
+            assert harness.native.start_count == harness.native.prompt_count == 2
         finally:
             await harness.close()
 
@@ -1471,13 +1477,14 @@ def test_remote_replayed_usage_compaction_and_ending_preserve_core_rules(
             await sink.context_compacted(turn)
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
-            await harness.restart_vps_core()
+            await harness.endpoint.close()
             await sink.turn_ended(
                 turn,
                 ending=ConversationTurnEnding.completed,
                 error_summary=None,
                 standard_error_tail=None,
             )
+            await eventually(lambda: harness.endpoint.ready, "link did not reconnect")
             await eventually(lambda: harness.events("turn_ended") == 1, "ending did not commit")
             await eventually(
                 lambda: not harness.mac.spool.pending(), "ending receipt did not drain"
@@ -1967,265 +1974,6 @@ def test_concurrent_identical_inputs_keep_distinct_publications(
             assert [path.read_bytes() for path in paths] == [contents, contents]
         finally:
             await harness.close()
-
-    asyncio.run(run())
-
-
-def test_real_server_lifespan_restart_reaccepts_same_mac_process(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import json
-
-    from tests.support.executor_catalog import ScriptedCatalogObserver
-
-    from planner.core.config import load_config
-    from planner.core.server import create_app
-    from planner.executor import mac as mac_module
-    from planner.executor.contracts import ChildOperation
-    from planner.projects.data import create_project
-    from planner.tickets import data as tickets_data
-    from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
-
-    async def run() -> None:
-        monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.02)
-        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "native-codex-home"))
-        monkeypatch.setenv("PLAN_EXECUTOR_MODE", "remote")
-        db_path = str(tmp_path / "server/planning.db")
-        Path(db_path).parent.mkdir()
-        connection = connect(db_path)
-        create_schema(connection)
-        project = create_project(
-            connection, name="Native lifecycle fixture", folder_path=tmp_path, now=1
-        )
-        ticket = tickets_data.create_ticket(
-            connection,
-            title="Retained active stop",
-            worker_type="coding",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=TITLE_MAX_CHARS,
-            locale=TicketLocale.macos,
-            project_id=project.id,
-            employee_backend="codex",
-            employee_launch_model="gpt-6-sol",
-            employee_launch_reasoning_effort="medium",
-            selection_kind="concrete",
-        )
-        connection.close()
-        config = load_config(
-            path=None,
-            env={
-                "PLAN_TEST_MODE": "1",
-                "PLAN_DB_PATH": db_path,
-                "PLAN_LOGS_DIR": str(tmp_path / "logs"),
-                "PLAN_APP_SHA": "a" * 40,
-                "PLAN_EXECUTOR_ID": "test-executor",
-                "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
-                "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@example.com",
-                "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://localhost",
-            },
-        )
-        # A stable listener forwards to fresh apps with their actual lifespans.
-        target = [create_app(config, RealClock(), lambda: connect(db_path))]
-
-        async def dispatch(scope: Any, receive: Any, send: Any) -> None:
-            await target[0](scope, receive, send)
-
-        async with serve_executor_app(cast(Any, dispatch), tmp_path / "tls") as proxy:
-            mac = MacExecutor(
-                paths=ExecutorPaths(tmp_path / "mac"),
-                revision="a" * 40,
-                executor_id="test-executor",
-                panels_server_url=proxy.origin,
-                session_factory=proxy.session_factory,
-            )
-            observer = ScriptedCatalogObserver(lambda: mac.identity)
-            observer.model = "gpt-6-sol"
-            observer.efforts = ("medium",)
-            mac._catalog_observer = observer
-            native = ScriptedNativeChild()
-            stop_entered, release_stop = asyncio.Event(), asyncio.Event()
-            cancel_entered, inventory_adopted = asyncio.Event(), asyncio.Event()
-            native_stop = native.stop
-
-            async def blocked_stop() -> None:
-                await native_stop()
-                stop_entered.set()
-                await release_stop.wait()
-
-            async def cancel_native() -> None:
-                cancel_entered.set()
-                await inventory_adopted.wait()
-
-            monkeypatch.setattr(native, "stop", blocked_stop)
-            monkeypatch.setattr(native, "cancel_running_turn", cancel_native, raising=False)
-
-            def factory(
-                resolved: ResolvedConversationStart, capability: str, child: ChildReference
-            ) -> BackendChildFactory:
-                del resolved, capability, child
-
-                def create(**arguments: object) -> BackendChild:
-                    native.sink = cast(BackendEventSink, arguments["event_sink"])
-                    return cast(BackendChild, native)
-
-                return cast(BackendChildFactory, create)
-
-            mac.registry = NativeChildRegistry(
-                paths=mac.paths,
-                incarnation=mac.identity.executor_incarnation,
-                spool=mac.spool,
-                factory=factory,
-                message_files=ConversationMessageFiles(tmp_path / "mac/unused"),
-            )
-            task = asyncio.create_task(mac.run())
-            killing: asyncio.Task[None] | None = None
-            try:
-                first_app = target[0]
-                async with first_app.router.lifespan_context(first_app):
-                    await eventually(
-                        lambda: first_app.state.executor_endpoint.ready,
-                        "first server did not reconcile",
-                    )
-                    identity = mac.identity
-                    first_endpoint = first_app.state.executor_endpoint
-                    first_system = first_app.state.conversation_system
-                    first_system.configure_destination_validation(observer, endpoint=first_endpoint)
-                    adopt = first_system.adopt_remote_child
-                    adopted_proxies: list[BackendChild] = []
-
-                    async def adopt_during_cancel(inventory: Any, child: BackendChild) -> bool:
-                        if inventory.active_turn is not None:
-                            await cancel_entered.wait()
-                        result = cast(bool, await adopt(inventory, child))
-                        if result and inventory.active_turn is not None:
-                            adopted_proxies.append(child)
-                            inventory_adopted.set()
-                        return result
-
-                    monkeypatch.setattr(first_system, "adopt_remote_child", adopt_during_cancel)
-                    await first_system.start_conversation(
-                        ConversationStartRequest(
-                            conversation_id="c_scripted",
-                            model="gpt-6-sol",
-                            reasoning_effort="medium",
-                            workspace_folder=tmp_path,
-                            workspace_path_policy=WorkspacePathPolicy.native_absolute,
-                            role_materials=ConversationRoleMaterials(
-                                "A scripted test worker.",
-                                (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket.id)),
-                            ),
-                        )
-                    )
-                    with contextlib.closing(connect(db_path)) as connection:
-                        tickets_data.write_ticket_conversation_start(
-                            connection,
-                            ticket.id,
-                            conversation_id="c_scripted",
-                            backend="codex",
-                            model="gpt-6-sol",
-                            reasoning_effort="medium",
-                            now=2,
-                        )
-                    initial_delivery = await asyncio.wait_for(
-                        first_system.send(
-                            "c_scripted",
-                            text_message_content("Start"),
-                            sender_label="Test",
-                            sender=CHIEF_PRINCIPAL,
-                            recipient=Principal(PrincipalKind.ticket, ticket.id),
-                        ),
-                        5,
-                    )
-                    assert isinstance(initial_delivery, PromptDeliveryStarted), repr(
-                        initial_delivery
-                    )
-                    await eventually(
-                        lambda: not mac.spool.pending(), "initial receipts did not drain"
-                    )
-                    reference = next(iter(mac.registry.children.values())).reference
-                    first_state = first_system._conversations["c_scripted"]
-                    # Kill ends the turn under the lock before retirement records stop.
-                    # Direct scheduling on an active turn bypasses that caller precondition.
-                    child_before_cancel = first_state.child
-                    killing = asyncio.create_task(first_system.kill("c_scripted"))
-                    await asyncio.wait_for(stop_entered.wait(), 5)
-                    assert inventory_adopted.is_set()
-                    assert adopted_proxies and first_state.child is adopted_proxies[-1]
-                    assert first_state.child is not child_before_cancel
-                    assert first_state.running_turn is None
-                    assert first_state.last_ended_turn_token == native.turn
-                    assert not killing.done()
-                    waiter = first_state.initial_shutdown_task
-                    assert waiter is not None and not waiter.done()
-                    assert first_state.child_is_quarantined
-                    stop_command, stop_future = next(
-                        pair
-                        for pair in first_endpoint.pending_commands.values()
-                        if pair[0].operation is ChildOperation.stop
-                    )
-                    assert stop_command.child == reference and not stop_future.done()
-                    retained = await first_system._store.read_executor_turn("c_scripted")
-                    assert retained is not None
-                    retained_runtime = json.loads(retained[2])
-                    assert retained_runtime["source_retired"] is False
-                    assert retained_runtime["ended"] is True
-                    assert any(
-                        command["command_id"] == stop_command.command_id
-                        for command in retained_runtime["initial_commands"]
-                    )
-                assert waiter.cancelled()
-                await asyncio.gather(killing, return_exceptions=True)
-                assert reference.child_id in mac.registry.children
-                assert native.stop_count == 1
-                second_app = create_app(config, RealClock(), lambda: connect(db_path))
-                target[0] = second_app
-                async with second_app.router.lifespan_context(second_app):
-                    await eventually(
-                        lambda: second_app.state.executor_endpoint.ready,
-                        "restarted server rejected surviving Mac incarnation",
-                    )
-                    assert mac.identity.executor_incarnation == identity.executor_incarnation
-                    assert mac.identity.connection_generation > identity.connection_generation
-                    second_endpoint = second_app.state.executor_endpoint
-                    second_system = second_app.state.conversation_system
-                    restored = await second_system._conversation_state("c_scripted")
-                    assert restored is not None and restored.child_is_quarantined
-                    assert restored.initial_shutdown_task is None
-                    assert restored.executor_child_reference == reference
-                    assert any(
-                        command == stop_command for command in restored.executor_initial_commands
-                    )
-                    assert await second_system._store.read_executor_turn("c_scripted") == retained
-                    assert not second_endpoint.pending_commands
-                    assert second_endpoint.store.child_assignment(reference) is not None
-                    assert reference.child_id in mac.registry.children
-                    assert not mac.registry._tasks[stop_command.command_id].done()
-                    await second_system._sweep_idle_children()
-                    assert restored.initial_shutdown_task is None
-                    assert native.stop_count == 1
-                    assert native.start_count == native.prompt_count == 1
-                    # Release the original Mac-owned operation only for fixture cleanup.
-                    release_stop.set()
-                    await eventually(
-                        lambda: reference.child_id not in mac.registry.children,
-                        "original native stop did not complete",
-                    )
-                    await eventually(lambda: not mac.spool.pending(), "stop receipt did not drain")
-                    mac._stop.set()
-                    if second_app.state.executor_endpoint.writer is not None:
-                        second_app.state.executor_endpoint.writer.close()
-                    await asyncio.wait_for(task, 3)
-            finally:
-                inventory_adopted.set()
-                release_stop.set()
-                if killing is not None:
-                    if not killing.done():
-                        killing.cancel()
-                    await asyncio.gather(killing, return_exceptions=True)
-                if not task.done():
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(run())
 
@@ -2958,7 +2706,7 @@ async def post_owner_answer(harness: ExecutorHarness, ask: AskReference) -> dict
 
 
 @pytest.mark.parametrize("kind", [AskKind.permission, AskKind.user_input])
-def test_first_owner_answer_after_loss_survives_vps_restart_and_applies_original_callback(
+def test_saved_answer_after_vps_restart_remains_unapplied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: AskKind
 ) -> None:
     async def run() -> None:
@@ -2987,18 +2735,15 @@ def test_first_owner_answer_after_loss_survives_vps_restart_and_applies_original
             assert harness.endpoint.store.recorded_answer(ask) == answer
             assert harness.endpoint.pending_commands == {}
             resume.set()
-            event = "permission_answered" if kind is AskKind.permission else "user_input_answered"
-            await eventually(lambda: harness.events(event) == 1, "saved answer did not apply")
-            await eventually(lambda: not harness.mac.spool.pending(), "application did not drain")
-            if kind is AskKind.permission:
-                assert harness.native.answers == [("ask_permission", "allow")]
-            else:
-                assert harness.native.user_answers == [("request_input", ORDERED_INPUT_ANSWERS)]
+            await eventually(lambda: harness.native.stop_count == 1, "old child was not stopped")
+            state = harness.system._conversations["c_scripted"]
+            await eventually(lambda: not state.child_is_quarantined, "stop proof did not settle")
+            assert harness.native.answers == [] and harness.native.user_answers == []
             evidence = harness.endpoint.store.ask_evidence(ask)
-            assert evidence is not None and evidence.applied_at_mac_ms is not None
+            assert evidence is not None and evidence.applied_at_mac_ms is None
             assert harness.endpoint.store.recorded_answer(ask) == answer
+            assert not harness.endpoint.store.answer_target_is_open(ask)
             assert await post_owner_answer(harness, ask) == {"landed": True}
-            assert harness.events(event) == 1
         finally:
             if resume is not None:
                 resume.set()
@@ -3117,19 +2862,16 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
                 )
                 is None
             )
+            state = harness.system._conversations["c_scripted"]
+            await eventually(
+                lambda: not state.child_is_quarantined, "restart stop did not settle"
+            )
+            assert harness.native.stop_count == 1
             assert harness.endpoint.pending_commands == {}
             evidence = harness.endpoint.store.ask_evidence(ask)
-            assert evidence is not None and evidence.reachability is AskReachability.callback_gone
+            assert evidence is not None and evidence.reachability is AskReachability.child_gone
             assert evidence.applied_at_mac_ms is None
-            # With no surviving local cancellation task, a native ending can still finish it.
-            assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
-                harness.native.turn,
-                ending=ConversationTurnEnding.interrupted,
-                error_summary=None,
-                standard_error_tail=None,
-            )
-            await eventually(lambda: harness.events("turn_ended") == 1, "native ending was lost")
+            assert not await harness.system.is_running("c_scripted")
         finally:
             native_cancel.set()
             if interrupt is not None and not interrupt.done():

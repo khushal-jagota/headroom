@@ -725,8 +725,10 @@ def test_closed_original_child_reconciles_outcomes_without_restoring_authority(
         endpoint.identity = IDENTITY
         writer = Mock()
         endpoint.writer = writer
-        adopt = AsyncMock()
-        endpoint.runtime = SimpleNamespace(system=SimpleNamespace(adopt_remote_child=adopt))
+        stop_interrupted = AsyncMock()
+        endpoint.runtime = SimpleNamespace(
+            system=SimpleNamespace(stop_interrupted_remote_child=stop_interrupted)
+        )
         send = AsyncMock()
         monkeypatch.setattr(endpoint, "_send", send)
         monkeypatch.setattr(endpoint, "_send_reconciliation", send)
@@ -750,7 +752,7 @@ def test_closed_original_child_reconciles_outcomes_without_restoring_authority(
                 IDENTITY,
                 writer,
             )
-        adopt.assert_not_awaited()
+        stop_interrupted.assert_not_awaited()
         assert len(observed) == 1 and observed[0].children == ()
         assert observed[0].retained_command_outcomes == (outcome,)
         replies = [call.args[0] for call in send.await_args_list]
@@ -806,8 +808,10 @@ def test_reconciliation_closed_child_exception_requires_exact_original_identity(
         endpoint.identity = IDENTITY
         writer = Mock()
         endpoint.writer = writer
-        adopt = AsyncMock()
-        endpoint.runtime = SimpleNamespace(system=SimpleNamespace(adopt_remote_child=adopt))
+        stop_interrupted = AsyncMock()
+        endpoint.runtime = SimpleNamespace(
+            system=SimpleNamespace(stop_interrupted_remote_child=stop_interrupted)
+        )
         send = AsyncMock()
         monkeypatch.setattr(endpoint, "_send", send)
         monkeypatch.setattr(endpoint, "_send_reconciliation", send)
@@ -824,7 +828,7 @@ def test_reconciliation_closed_child_exception_requires_exact_original_identity(
             IDENTITY,
             writer,
         )
-        adopt.assert_not_awaited()
+        stop_interrupted.assert_not_awaited()
         assert send.await_count == 1
         assert send.await_args is not None
         assert send.await_args.args[0].kind is WireMessageKind.error
@@ -1141,247 +1145,6 @@ def test_retirement_metadata_is_monotonic_and_stale_child_cannot_replace_fresh(
         connection.close()
 
 
-def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
-    tmp_db: sqlite3.Connection,
-    tmp_path: Path,
-    native_registry: object,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import asyncio
-    from types import SimpleNamespace
-    from typing import Any, Literal, cast
-    from unittest.mock import AsyncMock, Mock
-    from uuid import uuid4
-
-    from tests.unit.test_executor_native_runtime import canonical_snapshot
-
-    from planner.conversation.contracts import (
-        ConversationBackendKey,
-        ConversationStartRequest,
-        PromptDeliveryStarted,
-        WorkspacePathPolicy,
-    )
-    from planner.conversation.events import ConversationTurnEnding
-    from planner.conversation.message_content import text_message_content
-    from planner.conversation.message_files import ConversationMessageFiles
-    from planner.conversation.storage import ConversationStore
-    from planner.conversation.system import SqliteProcessConversationSystem
-    from planner.core.clock import RealClock
-    from planner.core.contracts import OWNER_PRINCIPAL
-    from planner.executor.contracts import (
-        ChildOperation,
-        CommandOutcome,
-        WireMessage,
-        WireMessageKind,
-    )
-    from planner.executor.mac import as_object
-    from planner.executor.remote import RemoteBackendChildFactory
-    from planner.executor.vps import ExecutorEndpoint
-    from planner.projects.data import create_project
-    from planner.tickets import data as ticket_data
-    from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
-
-    async def run() -> None:
-        registry, spool, native, _ = cast(Any, native_registry)
-        path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-        endpoint = ExecutorEndpoint(path, RealClock())
-        identity = replace(IDENTITY, executor_incarnation=registry.incarnation)
-        endpoint.identity = identity
-        endpoint.ready = True
-        endpoint.writer = Mock()
-        endpoint.writer.send = AsyncMock()
-        endpoint.store.begin_connection(identity, 1)
-        monkeypatch.setattr(endpoint, "_send", AsyncMock())
-        commands: list[ChildCommand] = []
-
-        def assign(start: Any, sink: Any) -> ChildReference:
-            reference = ChildReference(registry.incarnation, str(uuid4()), start.conversation_id)
-            endpoint.store.register_child(reference, "ticket", "synthetic", 1)
-            endpoint.sinks[reference.child_id] = sink
-            endpoint.children[reference.child_id] = endpoint.recover_child(
-                reference, initial_history_complete=True
-            )
-            return reference
-
-        async def replay() -> None:
-            for queued in spool.pending():
-                spool.acknowledge(await endpoint.accept_envelope(queued, identity))
-
-        async def dispatch(command: ChildCommand) -> CommandOutcome:
-            commands.append(command)
-            outcome = await registry.execute_command(command)
-            assert outcome.disposition is not CommandDisposition.refused, repr(outcome)
-            await replay()
-            return cast(CommandOutcome, outcome)
-
-        monkeypatch.setattr(endpoint, "send_command", dispatch)
-        monkeypatch.setattr(endpoint, "_read_skill_snapshot", lambda start: canonical_snapshot())
-        factory = RemoteBackendChildFactory(
-            assign,
-            dispatch,
-            lambda start: canonical_snapshot(),
-            retire_reference=endpoint.retire_child,
-        )
-        system = SqliteProcessConversationSystem(
-            store=ConversationStore(path),
-            backend_child_factories={key: factory for key in ConversationBackendKey},
-            message_files=ConversationMessageFiles(path),
-        )
-        system._catalog_endpoint = endpoint
-        endpoint.runtime = SimpleNamespace(system=system)
-        conversation = "retirement-handler"
-
-        async def reconcile(item: ChildInventory) -> None:
-            await endpoint._handle_message(
-                WireMessage(
-                    WireMessageKind.reconcile_inventory,
-                    "inventory",
-                    as_object(ReconciliationInventory(identity, (item,), (), ())),
-                ),
-                identity,
-                cast(Any, endpoint.writer),
-            )
-
-        async def complete() -> None:
-            state = system._conversations[conversation]
-            assert state.running_turn is not None and native.sink is not None
-            await native.sink.turn_ended(
-                state.running_turn.token,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
-            )
-            await replay()
-            await system.wait_until_quiescent()
-
-        class ObservedLock(asyncio.Lock):
-            def __init__(self) -> None:
-                super().__init__()
-                self.waiters = 0
-                self.retirement_waiting = asyncio.Event()
-                self.adoption_waiting = asyncio.Event()
-
-            async def acquire(self) -> Literal[True]:
-                if self.locked():
-                    self.waiters += 1
-                    (self.retirement_waiting if self.waiters == 1 else self.adoption_waiting).set()
-                return await super().acquire()
-
-        try:
-            await system.start_conversation(
-                ConversationStartRequest(
-                    conversation, "scripted", workspace_folder=tmp_path,
-                    workspace_path_policy=WorkspacePathPolicy.native_absolute,
-                )
-            )
-            # Canonical native destination precedes first admission and survives
-            # child retirement; a non-Ticket conversation initially selects VPS.
-            project = create_project(tmp_db, name="Retirement fixture", folder_path=tmp_path, now=1)
-            ticket = ticket_data.create_ticket(
-                tmp_db,
-                title="Retirement race",
-                worker_type="coding",
-                principal=OWNER_PRINCIPAL,
-                now=1,
-                title_max_chars=TITLE_MAX_CHARS,
-                locale=TicketLocale.macos,
-                project_id=project.id,
-                employee_backend="codex",
-                employee_launch_model="scripted",
-                selection_kind="concrete",
-            )
-            ticket_data.write_ticket_conversation_start(
-                tmp_db, ticket.id, conversation_id=conversation,
-                backend="codex", model="scripted", reasoning_effort=None, now=2,
-            )
-            first_delivery = await system.send(
-                conversation, text_message_content("first"), sender_label="Test"
-            )
-            assert isinstance(first_delivery, PromptDeliveryStarted), repr(first_delivery)
-            state = system._conversations[conversation]
-            first = state.executor_child_reference
-            assert first is not None
-            active = next(
-                item
-                for item in registry.inventory(identity, include_pending=False).children
-                if item.child == first
-            )
-            await reconcile(active)
-            assert state.child is endpoint.children[first.child_id]
-            await native.sink.vendor_session_cursor_rebound("same-cursor")
-            await replay()
-            await complete()
-            idle = replace(active, active_turn=None)
-            await reconcile(idle)
-            assert state.child is endpoint.children[first.child_id]
-            # Ordered shutdown proves the fresh-child comparison before the race.
-            await system.kill(conversation)
-            assert endpoint.store.child_assignment(first) is None
-            assert isinstance(
-                await system.send(
-                    conversation, text_message_content("ordered resume"), sender_label="Test"
-                ),
-                PromptDeliveryStarted,
-            )
-            second = state.executor_child_reference
-            assert second is not None and second != first
-            assert state.initial_shutdown_task is None
-            assert [c for c in commands if c.operation is ChildOperation.start][-1].arguments[
-                "vendor_session_cursor"
-            ] == "same-cursor"
-            await complete()
-            captured = next(
-                item
-                for item in registry.inventory(identity, include_pending=False).children
-                if item.child == second
-            )
-            entered, release = asyncio.Event(), asyncio.Event()
-            original_stop = native.stop
-
-            async def stopped_at_native() -> None:
-                entered.set()
-                await release.wait()
-                await original_stop()
-
-            monkeypatch.setattr(native, "stop", stopped_at_native)
-            state.lock = lock = ObservedLock()
-            killing = asyncio.create_task(system.kill(conversation))
-            await entered.wait()
-            await lock.acquire()
-            release.set()
-            await lock.retirement_waiting.wait()
-            # Retirement now owns the first lock waiter. The endpoint still sees
-            # an open assignment before adoption queues behind that same lock.
-            assert endpoint.store.child_assignment(second) is not None
-            adopting = asyncio.create_task(reconcile(captured))
-            await lock.adoption_waiting.wait()
-            assert not adopting.done()
-            lock.release()
-            await killing
-            await adopting
-            monkeypatch.setattr(native, "stop", original_stop)
-            assert state.child is None and state.executor_child_reference is None
-            assert endpoint.store.child_assignment(second) is None
-            assert second.child_id not in registry.children
-            assert second.child_id not in endpoint.children
-            assert second.child_id not in endpoint.sinks
-            assert second.child_id not in endpoint._inventory
-            assert isinstance(
-                await system.send(
-                    conversation, text_message_content("raced resume"), sender_label="Test"
-                ),
-                PromptDeliveryStarted,
-            )
-            assert state.executor_child_reference not in (first, second)
-            assert [c for c in commands if c.operation is ChildOperation.start][-1].arguments[
-                "vendor_session_cursor"
-            ] == "same-cursor"
-        finally:
-            await system.shutdown()
-
-    asyncio.run(asyncio.wait_for(run(), 20))
-
-
 def test_postcommit_error_preserves_durable_effect_and_receipt(
     store: ExecutorStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1598,7 +1361,9 @@ def historical_inventory_case(
     endpoint.identity = identity
     writer = peer()
     endpoint.writer = writer
-    endpoint.runtime = SimpleNamespace(system=SimpleNamespace(adopt_remote_child=AsyncMock()))
+    endpoint.runtime = SimpleNamespace(
+        system=SimpleNamespace(stop_interrupted_remote_child=AsyncMock())
+    )
     return endpoint, writer, identity, command, outcome
 
 
@@ -1682,7 +1447,7 @@ def test_historical_inventory_confirms_evidence_without_settling_callers(
         assert not endpoint._inventory and not endpoint._retained_inventory
         assert not future.done()
         resolve.assert_not_called()
-        endpoint.runtime.system.adopt_remote_child.assert_not_awaited()
+        endpoint.runtime.system.stop_interrupted_remote_child.assert_not_awaited()
         assert not endpoint.children and not endpoint.sinks
         assert historical_authority_rows(store) == baseline
 
@@ -1746,7 +1511,7 @@ def test_historical_inventory_requires_exact_command_result_and_accepted_receipt
         ) in reason
         assert not endpoint._retained_inventory and not endpoint._inventory
         assert not future.done() and not endpoint.children
-        endpoint.runtime.system.adopt_remote_child.assert_not_awaited()
+        endpoint.runtime.system.stop_interrupted_remote_child.assert_not_awaited()
         assert historical_authority_rows(store) == baseline
 
     asyncio.run(run())
@@ -1793,7 +1558,7 @@ def test_inventory_chunks_preserve_first_outcome_before_rejecting_conflicts(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("phase", ["adopt", "lock", "drain", "response"])
+@pytest.mark.parametrize("phase", ["stop", "lock", "drain", "response"])
 @pytest.mark.parametrize("replacement", ["writer", "durable"])
 def test_historical_inventory_stops_stale_handlers_without_touching_replacement_aggregate(
     store: ExecutorStore,
@@ -1813,12 +1578,12 @@ def test_historical_inventory_stops_stale_handlers_without_touching_replacement_
             entered.set()
             await release.wait()
 
-        if phase == "adopt":
+        if phase == "stop":
             current = replace(
                 CHILD, executor_incarnation=identity.executor_incarnation, child_id="live"
             )
             store.register_child(current, "ticket", "test-ticket", 1300)
-            endpoint.runtime.system.adopt_remote_child.side_effect = pause
+            endpoint.runtime.system.stop_interrupted_remote_child.side_effect = pause
             task = asyncio.create_task(
                 submit_inventory(
                     endpoint,
