@@ -25,7 +25,7 @@ def validate_executor_launch(launch: ExecutorLaunchOptions) -> None:
         raise MacExecutorConfigurationError("invalid executor HTTPS origin") from error
     if (
         re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", launch.executor_id) is None
-        or re.fullmatch(r"[0-9a-f]{40}", launch.application_revision) is None
+        or not launch.application_revision.strip()
         or origin.scheme != "https"
         or not origin.hostname
         or origin.username is not None

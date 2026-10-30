@@ -245,7 +245,6 @@ def test_explicit_departed_intent_has_its_own_cas_writer_and_never_uses_effectiv
         source_type="sender_override",
         now=6,
     )
-    assert tmp_db.execute("SELECT count(*) FROM ticket_launch_authority").fetchone()[0] == 0
 
 
 def test_validation_refresh_keeps_attribution_but_deduplicates_semantic_failure(
@@ -292,46 +291,6 @@ def test_validation_refresh_keeps_attribution_but_deduplicates_semantic_failure(
     )
     assert not validation.read_launch_validation(tmp_db, ticket_id).current  # type: ignore[union-attr]
     assert wakes.claim_next_batch(tmp_db, process_token="test", now=32) is None
-
-
-def test_historical_uncertain_lease_does_not_block_edits_across_reopen(
-    tmp_db: Connection, fake_clock: FakeClock
-) -> None:
-    # Owner-directed removal: the former test required these edits to fail.
-    manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    database = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    tmp_db.executemany(
-        "INSERT INTO ticket_launch_authority "
-        "(lease_id,authority_key,mode,owner_process,command_id,executor_incarnation) "
-        "VALUES('historical',?,'read','old-owner','uncertain-command','executor-1')",
-        [(f"ticket:{ticket_id}",), ("project:project_vylo",)],
-    )
-    tmp_db.commit()
-    before = [tuple(row) for row in tmp_db.execute("SELECT * FROM ticket_launch_authority")]
-    other = connect(database)
-    try:
-        projects.update_project(other, "project_vylo", folder_path="/changed", now=3)
-        managers.update_manager(
-            other, manager_id, edits={"project_id": "project_other"}, clock=fake_clock
-        )
-        ticket = tickets.read_ticket(other, ticket_id)
-        tickets.write_employee_configuration(
-            other,
-            ticket_id,
-            expected_employee_configuration=tickets.employee_launch_configuration(ticket),
-            employee_backend=ticket.employee_backend,
-            employee_launch_model="gpt-6.1-terra",
-            employee_launch_reasoning_effort="custom-native-effort",
-            advertised_models=frozenset(),
-            reasoning_supported=False,
-            advertised_reasoning_efforts=frozenset(),
-            now=5,
-        )
-        assert tickets.read_ticket(other, ticket_id).employee_launch_model == "gpt-6.1-terra"
-        retained = [tuple(row) for row in other.execute("SELECT * FROM ticket_launch_authority")]
-        assert retained == before
-    finally:
-        other.close()
 
 
 def test_final_notice_admission_discards_a_failure_corrected_after_batching(
@@ -432,7 +391,6 @@ def test_reopen_edit_and_retirement_preserve_captured_command_and_uncertain_outc
             reopened.execute("SELECT closed_at_ms FROM executor_child_assignments").fetchone()[0]
             == 100
         )
-        assert reopened.execute("SELECT count(*) FROM ticket_launch_authority").fetchone()[0] == 0
         with pytest.raises(PlannerError, match="conflicts with first result"):
             ExecutorStore.record_command_outcome_in_transaction(
                 reopened,

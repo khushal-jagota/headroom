@@ -168,17 +168,6 @@ def _create_launch_validation() -> None:
         WHEN OLD.project_id IS NOT NEW.project_id
         BEGIN UPDATE ticket_launch_validation SET launch_revision=launch_revision+1
           WHERE ticket_id IN (SELECT id FROM tickets WHERE manager_id=NEW.id); END""")
-    conn.exec_driver_sql("""CREATE TABLE ticket_launch_authority (
-        lease_id TEXT NOT NULL, authority_key TEXT NOT NULL,
-        mode TEXT NOT NULL CHECK(mode IN ('read','mutation')),
-        owner_process TEXT NOT NULL, command_id TEXT, executor_incarnation TEXT,
-        policy_context_json TEXT,
-        release_requested INTEGER NOT NULL DEFAULT 0 CHECK(release_requested IN (0,1)),
-        PRIMARY KEY(lease_id,authority_key)
-    )""")
-    conn.exec_driver_sql(
-        "CREATE INDEX ticket_launch_authority_key ON ticket_launch_authority(authority_key)"
-    )
     # Rebuild the one CHECK without changing the existing wake rows or references.
     # Preserve inbound membership explicitly even if this migration is composed
     # by a caller with FK enforcement enabled. Never cascade delivery history.

@@ -583,7 +583,6 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
                             "conversations",
                             "tickets",
                             "ticket_launch_validation",
-                            "ticket_launch_authority",
                             "executor_command_outcomes",
                             "mac_runs",
                             "conversation_reply_credits",
@@ -616,7 +615,6 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
                     ).fetchone()[0]
                     is not None
                 )
-                assert not list(connection.execute("SELECT * FROM ticket_launch_authority"))
                 raise RuntimeError("fault after exact intent before commit")
 
             runtime.store._transaction_participant = fail_after_intent

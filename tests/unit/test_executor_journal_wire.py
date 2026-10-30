@@ -130,7 +130,7 @@ def test_strict_identity_refuses_coercion_unknown_fields_and_short_sha() -> None
     valid: dict[str, object] = {
         "protocol_version": PROTOCOL_VERSION,
         "spool_format_version": SPOOL_FORMAT_VERSION,
-        "application_revision": "a" * 40,
+        "application_revision": "dev",
         "executor_incarnation": str(uuid4()),
         "connection_generation": 1,
     }
@@ -139,7 +139,7 @@ def test_strict_identity_refuses_coercion_unknown_fields_and_short_sha() -> None
         {**valid, "protocol_version": True},
         {**valid, "protocol_version": 13},
         {**valid, "connection_generation": "1"},
-        {**valid, "application_revision": "dev"},
+        {**valid, "application_revision": " "},
         {**valid, "extra": "ignored"},
     ):
         with pytest.raises(ProtocolRefused):

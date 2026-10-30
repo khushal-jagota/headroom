@@ -310,7 +310,9 @@ plutil -lint "$EVIDENCE/candidate.plist"
 ```
 
 Check the rendered arguments and environment before installation.
-The program is `$VENV/bin/panels executor run` with the full explicit SHA.
+The program is `$VENV/bin/panels executor run`. This runbook uses the reviewed SHA
+as its diagnostic revision label; the executor accepts other nonempty labels too.
+Protocol and outbox versions decide compatibility, not that label.
 The environment includes the owner's HOME, persistent root, and PATH with `venv/bin` first.
 `PLAN_CLAUDE_EXECUTABLE` names the absolute
 `source/agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe` executable.
@@ -366,50 +368,19 @@ are unavailable for Mac runs.
 The installed Mac needs no open browser or SSH authentication step.
 This procedure changes no account or network policy.
 
-## Isolated native validation route
+## Verify the replaced service
 
-The HTTPS transport handoff proposes `https://panels-vps.tail687c57.ts.net:9443` for the retained isolated endpoint on loopback port 8793.
-This is a proposed later application route, not an installed capability or permission to change a live route.
-The Manager coordinates it with the verification Worker under existing owner authorization.
-Production application remains separately approved.
-
-Before the later route application, retain Serve status and check both ports:
-
-```sh
-tailscale serve status --json
-ss -ltn '( sport = :9443 or sport = :8793 )'
-```
-
-Require no conflicting listener or Serve handler. If a conflict exists, return it to the Manager.
-Start only the reviewed isolated package on loopback 8793 with the retained verification database and compatible peers.
-Configure its canonical HTTPS origin and logical executor ID. Preserve the existing journal, spool, assessment, and installed-state evidence.
-The proposed route command is:
-
-```sh
-tailscale serve --bg --https=9443 http://127.0.0.1:8793
-```
-
-Compare the result with the captured baseline. Preserve existing routes 443→8767, 8443→3001, and 10000→8788.
-The route must supply Serve's actual allowed-user identity and replace caller-supplied identity headers.
-Keep application tests with synthetic identity separate from this real Serve evidence.
-If the existing network policy prevents access to 9443, report the unavailable route without a policy change.
-
-Check native commands, files in both directions, original callbacks, and recovery
-after an isolated app restart. Check that a Mac preview link reports previews
-unavailable without contacting a VPS application on the same port.
-Do not point this validation at production. Retain evidence and follow the Manager's peer disposition before cleanup.
-Remove only the route added for this validation:
-
-```sh
-tailscale serve --https=9443 off
-tailscale serve status --json
-```
-
-Compare the final status with the original baseline. Never use `serve reset` or change production 443.
-Preserve verification data. Stop only exact test processes owned by the application Worker.
+Use an isolated Ticket and compatible VPS package before approving ordinary work.
+Check native commands, canonical skills, files in both directions, and the original
+permission and question callbacks. Check a short link loss and a VPS restart against
+[the restart rules](executor.md#a-lost-connection-supplies-no-answer).
+A Mac service restart must also establish that launchd ends its provider processes;
+scripted tests cannot prove that host behavior. Mac application previews remain
+unavailable. Retain evidence separately from production and preserve pending bytes.
+This runbook does not authorize changing application routes or account policy.
 
 Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/cli.py`,
 `src/planner/executor/mac_outbox.py`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
 
-_Last verified: 2026-10-26. Commands checked against source; no live Mac operation occurred._
+_Last verified: 2026-10-30. Commands checked against source; no live Mac operation occurred._

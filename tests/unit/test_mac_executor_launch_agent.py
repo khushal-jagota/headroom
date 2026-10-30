@@ -44,7 +44,7 @@ def test_agent_uses_account_home_gui_and_stable_data_with_spaces(tmp_path: Path)
 
 
 def test_https_launch_passes_identity_and_preserves_provider_access(tmp_path: Path) -> None:
-    launch = ExecutorLaunchOptions("owner-mac", "a" * 40, "https://panels.example:9443")
+    launch = ExecutorLaunchOptions("owner-mac", "reviewed-build", "https://panels.example:9443")
     config = ServiceConfiguration(mac_executor_paths(tmp_path), 501, launch=launch)
     plist = plistlib.loads(render_launch_agent(config))
     args = plist["ProgramArguments"]
@@ -56,6 +56,7 @@ def test_https_launch_passes_identity_and_preserves_provider_access(tmp_path: Pa
     )
     for invalid in (
         replace(launch, executor_id=""),
+        replace(launch, application_revision=" "),
         replace(launch, executor_id="bad/route"),
         replace(launch, panels_server_url="http://panels.example"),
         replace(launch, panels_server_url="https://owner@panels.example"),

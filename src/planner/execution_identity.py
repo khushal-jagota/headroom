@@ -1,6 +1,5 @@
 """Stable executor, child and callback identities shared across module boundaries."""
 
-import re
 from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
@@ -47,8 +46,11 @@ class ProtocolRefused(ValueError):
 
 
 def validate_identity(identity: ExecutorIdentity) -> None:
-    if not re.fullmatch(r"[0-9a-f]{40}", identity.application_revision):
-        raise ProtocolRefused("application revision must be full source SHA")
+    if (
+        not isinstance(identity.application_revision, str)
+        or not identity.application_revision.strip()
+    ):
+        raise ProtocolRefused("application revision must be a nonempty diagnostic label")
     try:
         UUID(identity.executor_incarnation)
     except ValueError as error:
