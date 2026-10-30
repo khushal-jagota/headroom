@@ -1,4 +1,4 @@
-"""Source coverage facts affect comparisons, never retained numeric values."""
+"""Source coverage facts describe retained numbers independently from target comparisons."""
 
 from collections.abc import Iterable
 from datetime import UTC, datetime, time
