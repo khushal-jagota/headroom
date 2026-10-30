@@ -35,7 +35,7 @@ Both real-provider harnesses select the canonical Hermes home directly so auth a
 its home-derived lock stay together. Steering copies Claude settings while symlinking
 canonical .credentials.json; permissions links only Claude credentials. Codex uses its
 real home. The former whole-home and credential copies are removed;
-docs/conversation-system.md describes the current checks and their remaining limits.
+docs/conversations.md describes the current checks and their remaining limits.
 This tripwire has no new exemption.
 
 Other blind spots
