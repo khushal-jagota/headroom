@@ -43,6 +43,7 @@ from planner.environments.hermes_home import resolve_planner_home
 from planner.executor.codec import encode_backend_event, encode_value, invoke_child
 from planner.executor.configuration import NATIVE_SKILLS_DIR_ENV, ExecutorPaths
 from planner.executor.contracts import (
+    LIVE_BACKEND_EVENT_METHODS,
     AllocatingDurableSpool,
     AnswerApplication,
     AskKind,
@@ -113,6 +114,17 @@ class JournalEventSink:
             arguments = dict(bound.arguments)
             arguments.pop("self", None)
             turn = cast(TurnToken | None, arguments.pop("turn_token", None))
+            if method in LIVE_BACKEND_EVENT_METHODS:
+                if self.registry.send_live_event is not None:
+                    await self.registry.send_live_event(
+                        BackendEvent(
+                            self.reference,
+                            method,
+                            turn,
+                            encode_backend_event(method, turn, arguments),
+                        )
+                    )
+                return
             await self.registry.report_event(self.reference, method, turn, arguments)
 
         return report
@@ -133,6 +145,7 @@ class NativeChildRegistry:
         self.paths = paths
         self.incarnation = incarnation
         self.spool = spool
+        self.send_live_event: Callable[[BackendEvent], Awaitable[None]] | None = None
         self.outbound_ready = asyncio.Event()
         self.factory = factory
         self.message_files = message_files
