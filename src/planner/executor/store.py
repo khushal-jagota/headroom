@@ -27,7 +27,6 @@ from planner.executor.contracts import (
     AskKind,
     AskReachability,
     AskReference,
-    BackendEvent,
     ChildCommand,
     ChildOperation,
     ChildReference,
@@ -191,13 +190,18 @@ class ExecutorStore:
     ) -> None:
         # A refused domain command is an ordinary answer. Only a required native
         # publication can invalidate evidence that cleanup waits for.
-        if envelope.kind is EnvelopeKind.backend_event:
-            child = TypeAdapter(BackendEvent).validate_python(envelope.payload).child
-        elif envelope.kind is EnvelopeKind.command_outcome:
-            child = TypeAdapter(CommandOutcome).validate_python(envelope.payload).child
+        if envelope.kind in (EnvelopeKind.backend_event, EnvelopeKind.command_outcome):
+            child_payload = envelope.payload.get("child")
         elif envelope.kind is EnvelopeKind.answer_application:
-            child = TypeAdapter(AnswerApplication).validate_python(envelope.payload).ask.child
+            ask = envelope.payload.get("ask")
+            child_payload = ask.get("child") if isinstance(ask, dict) else None
         else:
+            return
+        # A malformed publication still needs a refusal receipt. Its child alone
+        # is enough to fence cleanup, even when the rest cannot be decoded.
+        try:
+            child = TypeAdapter(ChildReference).validate_python(child_payload)
+        except ValueError:
             return
         if (
             child.executor_incarnation != identity.executor_incarnation

@@ -1316,6 +1316,62 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
     asyncio.run(run())
 
 
+def test_permanent_refusals_receive_durable_receipts_and_release_conversation_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        from dataclasses import replace
+
+        from planner.executor.contracts import CliWrite
+        from planner.executor.mac import as_object
+
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            child = next(iter(harness.mac.registry.children.values())).reference
+            async with harness.mac._replay_lock:
+                malformed = harness.mac.spool.mint_envelope(
+                    conversation_id=child.conversation_id,
+                    kind=EnvelopeKind.command_outcome,
+                    payload={"child": as_object(child), "disposition": "unsupported"},
+                )
+                unassigned = harness.mac.spool.mint_envelope(
+                    conversation_id=child.conversation_id,
+                    kind=EnvelopeKind.cli_write,
+                    payload=as_object(
+                        CliWrite("ticket.update", {}, replace(child, child_id="unassigned"), None)
+                    ),
+                )
+                await harness.native.raise_ask()
+                following = harness.mac.spool.pending()[-1]
+                assert following.sequence == unassigned.sequence + 1
+
+            await eventually(
+                lambda: not harness.mac.spool.pending(),
+                "Permanent refusal stranded the next item in the conversation",
+            )
+            for envelope, code in ((malformed, "validation"), (unassigned, "agent_forbidden")):
+                receipt = harness.endpoint.store.lookup_receipt(
+                    envelope.sender_id, envelope.submission_id
+                )
+                assert receipt is not None and receipt.disposition is ReceiptDisposition.refused
+                error = receipt.result["error"]
+                assert isinstance(error, dict) and error["code"] == code
+                # Duplicate malformed outcomes must return the first refusal without decoding again.
+                duplicate = await harness.endpoint.accept_envelope(envelope, harness.mac.identity)
+                assert duplicate == receipt
+            accepted = harness.endpoint.store.lookup_receipt(
+                following.sender_id, following.submission_id
+            )
+            assert accepted is not None and accepted.disposition is ReceiptDisposition.accepted
+            assert harness.events("permission_asked") == 1
+            assert harness.endpoint.store.cleanup_evidence_uncertain(child)
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("receipt_failure", ["disconnect", "unexpected", "silent"])
 def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     tmp_path: Path,
