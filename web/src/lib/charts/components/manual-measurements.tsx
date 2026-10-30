@@ -1,8 +1,8 @@
 import React, { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { RequestSession, type RequestReceipt } from '../../goals/requestSessions';
+import { RequestSession, type ManualWriteCommand, type RequestReceipt } from '../../goals/requestSessions';
 import { motion, useReducedMotion } from 'motion/react';
-import type { ChartBlock, ManualMeasureState, ManualWriteBody, MeasureValue } from '../../goals/contracts';
-import { isManualWriteConflict, manualAcceptedValue, manualConflictState, manualErrorMessage, manualMeasurementHttp, manualStateCanReplace, parseManualDraft, type ManualMeasurementAdapter } from '../../goals/manualMeasurements';
+import type { ChartBlock, ManualMeasureState, MeasureValue } from '../../goals/contracts';
+import { isManualWriteConflict, manualAcceptedValue, manualConflictState, manualErrorMessage, manualMeasurementHttp, manualStateCanReplace, parseManualDraft, submitManualWrite, type ManualMeasurementAdapter } from '../../goals/manualMeasurements';
 import { AnimatedCounter } from './animated-counter';
 import { LineChart } from './line-chart-integrated';
 import { motionTokens } from '../lib/motion-tokens';
@@ -25,7 +25,7 @@ type InlineControl = { prepare(): Promise<boolean>; focus(): void };
 type InlineProps = {
   value: number | undefined; state: ManualMeasureState | null; label: string; unit?: string; decimals?: number;
   onSave(value: number, basis: ManualMeasureState): Promise<ManualMeasureState>; onCancel(): Promise<ManualMeasureState | null>; pending: boolean; blocked: boolean; cumulative: boolean;
-  focusToken?: number; center?: boolean; control: React.Ref<InlineControl>; recovery?: RequestReceipt<ManualWriteBody>; onEdit(): void;
+  focusToken?: number; center?: boolean; control: React.Ref<InlineControl>; recovery?: RequestReceipt<ManualWriteCommand>; onEdit(): void;
 };
 
 /** Native input stays over the exact approved rolling counter. Drafts never become accepted values. */
@@ -99,9 +99,9 @@ function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onC
   </div>;
 }
 
-export function ManualMeasurement({ block, values, adapter: suppliedAdapter, narrow = false, compact = false, integrated = false, preferenceKey, session: suppliedSession }: { block: ChartBlock; values: MeasureValue[]; adapter?: ManualMeasurementAdapter; narrow?: boolean; compact?: boolean; integrated?: boolean; preferenceKey: string; session?: RequestSession<ManualWriteBody> }) {
+export function ManualMeasurement({ block, values, adapter: suppliedAdapter, narrow = false, compact = false, integrated = false, preferenceKey, session: suppliedSession }: { block: ChartBlock; values: MeasureValue[]; adapter?: ManualMeasurementAdapter; narrow?: boolean; compact?: boolean; integrated?: boolean; preferenceKey: string; session?: RequestSession<ManualWriteCommand> }) {
   const adapter = useMemo(() => suppliedAdapter ?? manualMeasurementHttp(block.measure_id!), [suppliedAdapter, block.measure_id]);
-  const session = useMemo(() => suppliedSession ?? new RequestSession<ManualWriteBody>(), [suppliedSession, block.measure_id]);
+  const session = useMemo(() => suppliedSession ?? new RequestSession<ManualWriteCommand>(), [suppliedSession, block.measure_id]);
   const [recovery, setRecovery] = useState(session.current);
   const foldable = block.placement === 'supporting' && narrow;
   const [preferences, setPreferences] = useState(() => { const saved = readChartPreference(preferenceKey); return block.ranges?.length && !block.ranges.some(range => range.id === saved.range) ? { ...saved, range: block.ranges[0].id } : saved; });
@@ -115,7 +115,7 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   const history = useMemo(() => [...values.filter(value => value.measure_id !== block.measure_id || !acceptedHistory.has(value.date)), ...acceptedHistory.values()].sort((a, b) => a.date.localeCompare(b.date)), [values, acceptedHistory, block.measure_id]);
   const [readRefreshVersion, setReadRefreshVersion] = useState(0), refreshSkipped = useRef(false);
   const [pending, setPending] = useState(session.current?.status === 'pending'), [error, setError] = useState(session.current?.status === 'failed' ? manualErrorMessage(session.current.error) : ''), [focusToken, setFocusToken] = useState(0);
-  const retryRequest = useRef<ManualWriteBody | null>(session.current?.command ?? null), pendingPromise = useRef<Promise<void> | null>(null), readEpoch = useRef(0), selectionPending = useRef(false);
+  const retryRequest = useRef<ManualWriteCommand | null>(session.current?.command ?? null), pendingPromise = useRef<Promise<void> | null>(null), readEpoch = useRef(0), selectionPending = useRef(false);
   const actionTail = useRef<Promise<void>>(Promise.resolve());
   const runAction = (action: () => Promise<void>) => { const next = actionTail.current.then(action); actionTail.current = next.catch(() => {}); return next; };
   const control = useRef<InlineControl>(null), reduce = useReducedMotion();
@@ -167,19 +167,19 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
     return session.subscribe(sync);
   }, [session]);
 
-  async function send(body: ManualWriteBody): Promise<void> {
+  async function send(body: ManualWriteCommand): Promise<void> {
     if (pendingPromise.current) return pendingPromise.current;
     setPending(true); setError(''); retryRequest.current = body; readEpoch.current++;
     const attempt = (async () => {
       try {
-        const result = await session.run(body, () => adapter.write(body));
+        const result = await submitManualWrite(session, body, adapter);
         // The acknowledgement can describe an old replay. Only coherent current state drives the chart.
         readEpoch.current++;
-        accept(result.state, body.date);
+        accept(result.state, result.receipt.date);
         retryRequest.current = null;
       } catch (cause) {
         readEpoch.current++;
-        const current = manualConflictState(cause); if (current) accept(current, body.date);
+        const current = manualConflictState(cause); if (current) accept(current, session.current?.command.date ?? body.date);
         setError(manualErrorMessage(cause)); throw cause;
       } finally { setPending(false); pendingPromise.current = null; }
     })();
@@ -190,14 +190,11 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
     const retry = retryRequest.current;
     if (session.current?.status === 'failed' && isManualWriteConflict(session.current.error)) throw session.current.error;
     if (retry?.operation === 'replace' && retry.value === value) { await send(retry); return stateRef.current!; }
-    // Cumulative writes use the action's measure-local date, even across midnight.
-    setPending(true); readEpoch.current++;
-    try {
-    const current = cumulative ? await adapter.read() : basis;
-    await send({ request_id: crypto.randomUUID(), date: cumulative ? current.current_date : basis.date, expected_definition_revision: basis.definition_revision,
-      basis: cumulative ? 'latest' : 'date', operation: 'replace', value, expected_write_revision: basis.write_revision });
+    // The session owns the draft before the action-local date read can suspend.
+    await send({ request_id: crypto.randomUUID(), date: basis.date, expected_definition_revision: basis.definition_revision,
+      basis: cumulative ? 'latest' : 'date', operation: 'replace', value, expected_write_revision: basis.write_revision,
+      ...(cumulative ? { preflight: true } : {}) });
     return stateRef.current!;
-    } finally { setPending(false); }
   }
   function select(date: string, focus = false) { return runAction(async () => {
     if (!await control.current?.prepare() || retryRequest.current) return;
@@ -214,9 +211,12 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   function increment(delta: number) { return runAction(async () => {
     if (!await control.current?.prepare() || retryRequest.current) return;
     const basis = stateRef.current; if (!basis) return;
-    setPending(true); readEpoch.current++;
     try {
-      const current = cumulative ? await adapter.read() : basis;
+      await send({ request_id: crypto.randomUUID(), date: basis.date, expected_definition_revision: basis.definition_revision,
+        basis: cumulative ? 'latest' : 'date', operation: 'increment', delta, ...(cumulative ? { preflight: true } : {}) });
+    } catch (cause) { setError(manualErrorMessage(cause)); }
+  }); }
+  const current = cumulative ? await adapter.read() : basis;
       await send({ request_id: crypto.randomUUID(), date: cumulative ? current.current_date : basis.date,
         expected_definition_revision: basis.definition_revision, basis: cumulative ? 'latest' : 'date', operation: 'increment', delta });
     } catch (cause) { setError(manualErrorMessage(cause)); }
