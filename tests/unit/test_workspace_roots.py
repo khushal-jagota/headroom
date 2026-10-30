@@ -97,7 +97,10 @@ def test_all_agent_resolvers_keep_explicit_and_project_precedence(
     project = create_project(tmp_db, name="Workspace", folder_path=project_folder, now=1)
     manager = create_manager(tmp_db, title="Manager", project_id=project.id, clock=fake_clock)
     goal = create_goal(
-        tmp_db, {"project_id": project.id, "title": "Goal"}, principal=OWNER_PRINCIPAL, now=1
+        tmp_db,
+        {"project_id": project.id, "title": "Goal", "kind": "binary",
+         "primary_checklist_block_id": None},
+        principal=OWNER_PRINCIPAL, now=1
     )
     ticket = create_ticket(
         tmp_db,

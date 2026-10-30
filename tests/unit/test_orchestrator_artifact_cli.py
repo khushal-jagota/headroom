@@ -227,7 +227,9 @@ def test_reserved_url_characters_keep_artifact_targets_distinct(
 
 def _create_goal(client: TestClient) -> str:
     response = client.post(
-        "/api/goals", json={"title": "Durable context", "project_id": "project_other"}
+        "/api/goals",
+        json={"title": "Durable context", "project_id": "project_other", "kind": "binary",
+               "primary_checklist_block_id": None}
     )
     assert response.status_code == 200, response.text
     return str(response.json()["id"])
@@ -336,6 +338,7 @@ def test_goal_record_commands_emit_saved_pages_in_human_and_json_modes(
             main, ["goal", "create", *options],
             input=json.dumps({
                 "title": "Inspect context", "project_id": "project_other", "page": document,
+                "kind": "binary", "primary_checklist_block_id": None,
             }),
         )
         assert created.exit_code == 0, created.output

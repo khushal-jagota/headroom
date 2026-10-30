@@ -57,7 +57,7 @@ def show_goal(goal_id: str, as_json: bool) -> None:
 @goal.command("create")
 @json_option
 def create_goal(as_json: bool) -> None:
-    """Read JSON from stdin. See goal schema create --json for fields and defaults."""
+    """Read JSON from stdin with an explicit display. See goal schema create --json."""
     _emit_goal_response(
         http.send("POST", "/api/goals", json_body=stdin_object(as_json), as_json=as_json), as_json
     )
@@ -67,7 +67,7 @@ def create_goal(as_json: bool) -> None:
 @click.argument("goal_id")
 @json_option
 def edit_goal(goal_id: str, as_json: bool) -> None:
-    """Read changes and expected_revision from stdin. See goal schema edit --json."""
+    """Read revision-checked changes from stdin. Discover display switches with goal schema edit."""
     _emit_goal_response(
         http.send(
             "PATCH",

@@ -278,27 +278,46 @@ class PageDocument(TypedDict):
     blocks: list[Block]
 
 
-# Creation supplies defaults for every other field. The writer checks these
-# required strings in this order; schemas reuse the same operation metadata.
-GOAL_CREATE_REQUIRED = ("title", "project_id")
+# Persisted text checks also apply to partial edits. Creation additionally
+# requires the author's kind and that kind's explicit main-display selection.
+GOAL_REQUIRED_TEXT = ("title", "project_id")
+GOAL_CREATE_REQUIRED = (*GOAL_REQUIRED_TEXT, "kind")
 
 
-class GoalWriteFields(TypedDict, total=False):
+class GoalCommonFields(TypedDict, total=False):
     project_id: str
     title: str
     why: str
-    kind: GoalKind
     active: bool
     completed: bool
-    primary_checklist_block_id: str | None
     deadline: str | None
-    primary_chart: ChartBlock | None
     page: PageDocument
 
 
-class GoalCreateBody(GoalWriteFields, total=False):
+class GoalWriteFields(GoalCommonFields, total=False):
+    kind: GoalKind
+    primary_checklist_block_id: str | None
+    primary_chart: ChartBlock | None
+
+
+class GoalCreateFields(GoalCommonFields, total=False):
     # The existing create writer accepts and ignores this compatibility field.
     expected_revision: object
+
+
+class BinaryGoalCreateBody(GoalCreateFields):
+    kind: Literal["binary"]
+    primary_checklist_block_id: str | None
+    primary_chart: NotRequired[ChartBlock | None]
+
+
+class QuantitativeGoalCreateBody(GoalCreateFields):
+    kind: Literal["quantitative"]
+    primary_chart: ChartBlock
+    primary_checklist_block_id: NotRequired[str | None]
+
+
+type GoalCreateBody = BinaryGoalCreateBody | QuantitativeGoalCreateBody
 
 
 class GoalEditBody(GoalWriteFields):

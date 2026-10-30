@@ -50,6 +50,7 @@ def test_navigation_follows_selected_saved_checklist_on_commits(tmp_db: Connecti
             {
                 "project_id": "project_other",
                 "title": "Delivery",
+                "kind": "binary",
                 "page": document,
                 "primary_checklist_block_id": "selected",
             },
@@ -99,7 +100,8 @@ def test_navigation_rebuild_before_selector_column_keeps_binary_input(tmp_db: Co
     with current_navigation_database(database) as conn:
         goal = actions.create_goal(
             conn,
-            {"project_id": "project_other", "title": "Legacy binary", "completed": True},
+            {"project_id": "project_other", "title": "Legacy binary", "kind": "binary",
+             "primary_checklist_block_id": None, "completed": True},
             principal=OWNER_PRINCIPAL,
             now=1,
         )

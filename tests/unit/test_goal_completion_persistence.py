@@ -35,6 +35,7 @@ def create(conn: Connection, **extra: Any) -> Goal:
         {
             "project_id": "project_vylo",
             "title": "Ship the guide",
+            "kind": "binary",
             "page": page(checklist),
             "primary_checklist_block_id": checklist["id"],
             **extra,
@@ -94,7 +95,10 @@ def test_reselection_uses_resulting_page_and_ordinary_checklists_stay_independen
     document["blocks"].append(ordinary)
     goal = edit(tmp_db, goal, page=document)
     assert effective_completion(goal.binary_checked, goal.page, "delivery")
-    goal = edit(tmp_db, goal, primary_checklist_block_id="review", completed=False)
+    document["blocks"] = [ordinary]
+    goal = edit(
+        tmp_db, goal, page=document, primary_checklist_block_id="review", completed=False
+    )
     assert not effective_completion(goal.binary_checked, goal.page, "review")
     assert not goal.binary_checked  # A matching completed value never writes the binary input.
     ordinary["items"][0]["state"] = "done"
@@ -118,8 +122,10 @@ def test_selection_end_snapshots_previous_effective_completion(
     changes: dict[str, Any] = {"page": document}
     if transition == "remove":
         document["blocks"] = []
+        changes["primary_checklist_block_id"] = None
     elif transition == "quantitative":
         changes["kind"] = "quantitative"
+        changes["primary_chart"] = {"type": "chart", "kind": "number"}
     else:
         changes["primary_checklist_block_id"] = None
         if transition == "explicit_binary":
@@ -128,6 +134,77 @@ def test_selection_end_snapshots_previous_effective_completion(
     assert goal.primary_checklist_block_id is None
     assert goal.binary_checked is (transition != "explicit_binary")
     assert goal.page == document
+
+
+@pytest.mark.parametrize("transition", ["remove", "quantitative"])
+def test_implicit_display_changes_fail_without_altering_saved_goal(
+    tmp_db: Connection, transition: str
+) -> None:
+    goal = create(tmp_db)
+    document = deepcopy(goal.page)
+    changes: dict[str, Any] = {"title": "Rejected title"}
+    if transition == "remove":
+        document["blocks"] = []
+        changes["page"] = document
+        required_field = "primary_checklist_block_id"
+    else:
+        changes["kind"] = "quantitative"
+        required_field = "primary_chart"
+    with pytest.raises(PlannerError, match=required_field) as error:
+        edit(tmp_db, goal, **changes)
+    assert "panels goal schema edit --json" in str(error.value)
+    assert data.read_goal(tmp_db, goal.id) == goal
+
+
+def test_quantitative_display_clear_and_binary_switch_require_explicit_selection(
+    tmp_db: Connection,
+) -> None:
+    goal = create(
+        tmp_db,
+        kind="quantitative",
+        primary_checklist_block_id=None,
+        primary_chart={"type": "chart", "kind": "number"},
+    )
+    for changes, field in (
+        ({"primary_chart": None}, "primary_chart"),
+        ({"kind": "binary"}, "primary_checklist_block_id"),
+    ):
+        with pytest.raises(PlannerError, match=field):
+            edit(tmp_db, goal, **changes)
+        assert data.read_goal(tmp_db, goal.id) == goal
+    binary = edit(
+        tmp_db, goal, kind="binary", primary_checklist_block_id=None, primary_chart=None
+    )
+    assert binary.kind == "binary"
+    assert binary.primary_checklist_block_id is None and binary.primary_chart is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "selector"),
+    [("binary", "missing"), ("quantitative", None), ("quantitative", "delivery")],
+)
+def test_unrelated_edits_preserve_unresolved_legacy_display_configuration(
+    tmp_db: Connection, kind: str, selector: str | None
+) -> None:
+    goal = create(tmp_db)
+    # Historical writes allowed incomplete charts and unresolved/inconsistent bindings.
+    tmp_db.execute(
+        "UPDATE goals SET kind=?, primary_checklist_block_id=?, primary_chart=NULL WHERE id=?",
+        (kind, selector, goal.id),
+    )
+    tmp_db.commit()
+    legacy = data.read_goal(tmp_db, goal.id)
+    before = views.goal_json(tmp_db, legacy, datetime.fromtimestamp(NOW, UTC))
+    document = deepcopy(legacy.page)
+    document["summary"] = "Useful retained context"
+    saved = edit(tmp_db, legacy, title="Retained goal", page=document)
+    assert saved.kind == legacy.kind
+    assert saved.primary_checklist_block_id == selector
+    assert saved.primary_chart is None
+    assert saved.binary_checked == legacy.binary_checked
+    assert saved.page == document
+    after = views.goal_json(tmp_db, saved, datetime.fromtimestamp(NOW, UTC))
+    assert after["completed"] == before["completed"]
 
 
 @pytest.mark.parametrize(

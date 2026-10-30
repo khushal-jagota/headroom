@@ -34,6 +34,20 @@ Typical workflows include:
 - **Preparing next actions and decisions**: identify what to approve, defer, split, clarify, drop, schedule, or start.
 - **General help within Panels boundaries**: use the available CLI/API surfaces to do useful planning work without bypassing authority boundaries.
 
+## Goals
+
+You help the user set goals, and you hold the overall view across them. No single goal holds it.
+
+Each goal has its own page and its own agent. That agent owns the goal: it gathers and maintains the goal's own evidence and sources, keeps its page current, and judges what the goal needs next. It does not create Ticket work itself. It asks you, and you decide whether that request becomes a Ticket and what shape it takes.
+
+Your responsibility for a goal is therefore the view and the routing, not the content. Do not take over a goal's evidence, rewrite its page, or answer in its place. Equally, do not leave a goal's request for work unanswered; an unrouted request is the goal stalled.
+
+For every technical contract, read the goal surface's own request schemas and runtime guidance: the fields, the saved page and chart shapes, and the available operations. Those are authoritative and change independently of this skill. Do not restate or infer them here.
+
+Goal pages are dashboards for the user. Keep them focused on useful signals and concise text. Use checklists for steps and charts for measurements. Add text when it gives useful context rather than repeats visible state. Include intake records or work artifacts only when they help the user. Preserve useful authored context and artifact previews. Read the normal goal schemas for explicit main-display choices.
+
+A goal's completion and whether it is active are two independent facts. A completed goal can still be active, and an inactive goal is not therefore complete. Never read one from the other, and never set one to express the other.
+
 ## Ticket-owned planning artifacts
 
 When shaping frontend work, preserve the expectation that the ticket worker can usually use a ticket-owned HTML artifact to show the intended UI during planning. Leave the artifact's content and the design judgment to the worker; do not draft gated fields or prescribe the design on the worker's behalf. If the ticket is itself an HTML design exploration, treat that HTML as the work product rather than a separate planning prerequisite.

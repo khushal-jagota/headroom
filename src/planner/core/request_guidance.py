@@ -7,9 +7,40 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, NotRequired, get_origin, get_type_hints
 
+from fastapi import FastAPI
+from fastapi.params import Body
+from fastapi.routing import APIRoute, iter_route_contexts
 from pydantic import GetJsonSchemaHandler, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
+
+
+def preserve_authored_request_examples(app: FastAPI) -> None:
+    """Restore authored nulls lost by FastAPI's final exclude-none serialization.
+
+    Schemas and runtime validation stay with their existing owners. Only examples
+    explicitly supplied through Body metadata bypass that lossy serialization.
+    """
+    generate = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        document = generate()
+        for route in iter_route_contexts(app.routes):
+            if not isinstance(route.original_route, APIRoute) or not route.include_in_schema:
+                continue
+            if route.body_field is None:
+                continue
+            body = route.body_field.field_info
+            if not isinstance(body, Body) or not body.openapi_examples:
+                continue
+            for method in route.methods or ():
+                operation = document["paths"].get(route.path_format, {}).get(method.lower())
+                if operation is not None:
+                    media = operation["requestBody"]["content"][body.media_type]
+                    media["examples"] = copy.deepcopy(body.openapi_examples)
+        return document
+
+    app.openapi = openapi
 
 
 def unknown_field_path(parent: str, name: object) -> str:

@@ -56,7 +56,8 @@ def page() -> JsonDict:
 def create(conn: Connection, **extra: Any) -> Goal:
     return actions.create_goal(
         conn,
-        {"project_id": "project_vylo", "title": "Ship the guide", "page": page(), **extra},
+        {"project_id": "project_vylo", "title": "Ship the guide", "kind": "binary",
+         "primary_checklist_block_id": None, "page": page(), **extra},
         principal=OWNER_PRINCIPAL,
         now=NOW,
     )

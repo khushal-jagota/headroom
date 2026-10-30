@@ -2,6 +2,8 @@
 
 Goals live under Chief. Each goal has its own agent and conversation. Chief keeps the overall goal surface and sets goals.
 
+The goal page is a dashboard for the user. Steps use checklists and measurements use charts. Text adds useful context without repetition of visible state. Intake records and work artifacts appear only when they help the user. This guidance requires no fixed template or automatic content removal. Useful authored context and artifact previews retain their behavior.
+
 A goal stores its Project, title, why it matters, deadline, active state, primary chart, and flexible page document. It also stores its binary checked input and completion display. The page uses the shared page-kit format. Text, checklists, tables, layouts, and supporting charts can appear in that document. Blocks and checklist items keep stable IDs when their order or words change.
 
 Checklists belong to the page. Their checked state does not create a measurement. Numeric charts can reference existing measures or bind a retained dataset. Targets, reference paths, units, and number formats describe the chart. They do not create observations. The goal reader preserves signed values, fractions, missing dates, source health, and observation provenance.
@@ -23,6 +25,8 @@ panels goal schema create --json
 panels goal schema edit --json
 panels goal schema primary-chart --json
 ```
+
+Creation requires an explicit goal kind and main-display choice. A binary goal includes `primary_checklist_block_id`: null selects binary completion, and a saved checklist ID selects that checklist. A quantitative goal includes a non-null `primary_chart` with its chart kind. Goal kind alone does not choose the display. Binary goals require no numeric chart.
 
 Each command returns `schema`, `examples`, and `notes` without stdin or a server request. Replace example identifiers with saved record IDs. CLI help and goal agent startup guidance point to these commands. OpenAPI describes the same create and edit requests from the shared contract reference. [Project measures](measures.md) describes the source and measure discovery route.
 
@@ -85,7 +89,9 @@ Agents select a checklist by its stable block ID through the existing revision-c
 
 Selection resolves against the resulting saved page, so one edit can supply the page and its selector. An explicit missing or non-checklist ID fails atomically. Rename or reorder a block without a new ID to preserve its selection.
 
-Clear the selector or remove its selected block to return to the binary display. Panels copies the previous effective completion into the binary input for this transition. A change to quantitative kind also clears the selection. An explicit `completed` value in the same edit takes precedence over that copied value.
+An edit that removes the bound checklist must explicitly select a replacement or null for binary completion. Panels rejects an implicit display change. A kind change includes its destination selection in the same edit. A quantitative goal cannot clear its main chart without an explicit valid display switch.
+
+Panels copies the previous effective checklist completion into the binary input for an explicit switch away from that checklist. An explicit `completed` value in the same edit takes precedence over that copied value. Existing saved goals retain their displays and data. Unrelated metadata, page-text, and checklist-state edits preserve their saved selection. Legacy goals need no mandatory conversion.
 
 The `completed` response field remains the effective completion for existing clients. In writes, `completed` remains the binary checked-input alias when the resulting display is binary. Existing goals retain their saved binary input. While a checklist stays selected, a matching `completed` value is a compatible no-op. A contradictory value fails because completion follows the saved checklist items. Panels compares against the resulting page, so a final check and `completed: true` can share one edit.
 

@@ -14,7 +14,7 @@ from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.datasets.data import read_dataset
 from planner.goals import data
-from planner.goals.contracts import GOAL_CREATE_REQUIRED, ChartBlock, Goal, GoalWriteFields
+from planner.goals.contracts import GOAL_REQUIRED_TEXT, ChartBlock, Goal, GoalWriteFields
 from planner.goals.logic.categories import validate_category_references
 from planner.goals.logic.completion import prepare_completion
 from planner.goals.logic.documents import (
@@ -34,7 +34,9 @@ from planner.worker_settings.service import read_chief_settings
 _EDITABLE = set(get_type_hints(GoalWriteFields, include_extras=True))
 
 
-def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> Goal:
+def _accepted(
+    conn: sqlite3.Connection, current: Goal, body: dict[str, Any], *, creating: bool = False
+) -> Goal:
     if set(body) - _EDITABLE - {"expected_revision"}:
         raise ValueError("unknown goal field")
     changes = {key: value for key, value in body.items() if key in _EDITABLE and key != "completed"}
@@ -53,20 +55,31 @@ def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> 
             raise ValueError("primary chart must have primary placement")
         changes["primary_chart"] = chart
     result = replace(current, **changes)
-    for key in GOAL_CREATE_REQUIRED:
+    for key in GOAL_REQUIRED_TEXT:
         value = getattr(result, key)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{key} must be nonempty")
     if not isinstance(result.why, str):
         raise ValueError("why must be text")
+    if creating and "kind" not in body:
+        raise ValueError(
+            "kind is required: choose binary or quantitative and its main display; "
+            "inspect panels goal schema create --json"
+        )
     if result.kind not in ("binary", "quantitative"):
-        raise ValueError("unknown goal kind")
+        operation = "create" if creating else "edit"
+        raise ValueError(
+            "unknown goal kind: choose binary or quantitative; "
+            f"inspect panels goal schema {operation} --json"
+        )
     if type(result.active) is not bool:
         raise ValueError("active and completed must be booleans")
     result = prepare_completion(
         current,
         result,
+        creating=creating,
         selection_explicit="primary_checklist_block_id" in body,
+        chart_explicit="primary_chart" in body,
         completed=body.get("completed"),
     )
     if result.deadline is not None:
@@ -148,7 +161,7 @@ def create_goal(
             employee_launch_reasoning_effort=defaults.employee_launch_reasoning_effort,
         )
         try:
-            accepted = _accepted(conn, current, body)
+            accepted = _accepted(conn, current, body, creating=True)
         except (ValueError, TypeError) as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
         values = _values(accepted)

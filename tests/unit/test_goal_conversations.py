@@ -67,7 +67,10 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
     project = create_project(tmp_db, name="Goal conversations", now=1)
     goals = [
         create_goal(
-            tmp_db, {"project_id": project.id, "title": title}, principal=OWNER_PRINCIPAL, now=1
+            tmp_db,
+            {"project_id": project.id, "title": title, "kind": "binary",
+             "primary_checklist_block_id": None},
+            principal=OWNER_PRINCIPAL, now=1
         )
         for title in ("Ship", "Read")
     ]
@@ -125,6 +128,12 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
                     "You are the agent for goal " + goal.id
                     in harness.backend(ids[-1]).writes[-1].text
                 )
+                for dashboard_guidance in (
+                    "Goal pages are dashboards for the user.",
+                    "Use checklists for steps and charts for measurements.",
+                    "Preserve useful authored context and artifact previews.",
+                ):
+                    assert dashboard_guidance in harness.backend(ids[-1]).writes[-1].text
                 for discovery in (
                     "panels goal schema edit",
                     "panels goal schema primary-chart",
@@ -253,7 +262,10 @@ def test_chief_and_goals_use_current_workspace_only_for_fresh_or_reset_conversat
     project = create_project(tmp_db, name="Isolated agents", now=1)
     goals = [
         create_goal(
-            tmp_db, {"project_id": project.id, "title": title}, principal=OWNER_PRINCIPAL, now=1
+            tmp_db,
+            {"project_id": project.id, "title": title, "kind": "binary",
+             "primary_checklist_block_id": None},
+            principal=OWNER_PRINCIPAL, now=1
         )
         for title in ("Existing", "Fresh")
     ]

@@ -283,44 +283,81 @@ export interface PageDocument {
   blocks: Array<Block>;
 }
 
+export interface GoalCommonFields {
+  project_id?: string;
+  title?: string;
+  why?: string;
+  active?: boolean;
+  completed?: boolean;
+  deadline?: string | null;
+  page?: PageDocument;
+}
+
 export interface GoalWriteFields {
   project_id?: string;
   title?: string;
   why?: string;
-  kind?: "binary" | "quantitative";
   active?: boolean;
   completed?: boolean;
-  primary_checklist_block_id?: string | null;
   deadline?: string | null;
-  primary_chart?: ChartBlock | null;
   page?: PageDocument;
+  kind?: "binary" | "quantitative";
+  primary_checklist_block_id?: string | null;
+  primary_chart?: ChartBlock | null;
 }
 
-export interface GoalCreateBody {
+export interface GoalCreateFields {
   project_id?: string;
   title?: string;
   why?: string;
-  kind?: "binary" | "quantitative";
   active?: boolean;
   completed?: boolean;
-  primary_checklist_block_id?: string | null;
   deadline?: string | null;
-  primary_chart?: ChartBlock | null;
   page?: PageDocument;
   expected_revision?: unknown;
 }
+
+export interface BinaryGoalCreateBody {
+  project_id?: string;
+  title?: string;
+  why?: string;
+  active?: boolean;
+  completed?: boolean;
+  deadline?: string | null;
+  page?: PageDocument;
+  expected_revision?: unknown;
+  kind: "binary";
+  primary_checklist_block_id: string | null;
+  primary_chart?: ChartBlock | null;
+}
+
+export interface QuantitativeGoalCreateBody {
+  project_id?: string;
+  title?: string;
+  why?: string;
+  active?: boolean;
+  completed?: boolean;
+  deadline?: string | null;
+  page?: PageDocument;
+  expected_revision?: unknown;
+  kind: "quantitative";
+  primary_chart: ChartBlock;
+  primary_checklist_block_id?: string | null;
+}
+
+export type GoalCreateBody = BinaryGoalCreateBody | QuantitativeGoalCreateBody;
 
 export interface GoalEditBody {
   project_id?: string;
   title?: string;
   why?: string;
-  kind?: "binary" | "quantitative";
   active?: boolean;
   completed?: boolean;
-  primary_checklist_block_id?: string | null;
   deadline?: string | null;
-  primary_chart?: ChartBlock | null;
   page?: PageDocument;
+  kind?: "binary" | "quantitative";
+  primary_checklist_block_id?: string | null;
+  primary_chart?: ChartBlock | null;
   expected_revision: number;
 }
 

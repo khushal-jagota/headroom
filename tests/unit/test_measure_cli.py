@@ -209,6 +209,11 @@ def test_contract_guidance_is_discoverable_without_transport_or_stdin(
         assert set(guidance) == {"schema", "examples", "notes"}
         assert guidance["schema"] and guidance["notes"]
         assert isinstance(guidance["examples"][example], dict)
+        if arguments == ["goal", "schema", "create"]:
+            assert {"chief_goal", "binary_goal", "checklist_goal"} <= set(guidance["examples"])
+            assert guidance["examples"]["binary_goal"]["primary_checklist_block_id"] is None
+            assert guidance["examples"]["checklist_goal"]["primary_checklist_block_id"]
+            assert guidance["examples"]["chief_goal"]["primary_chart"]["kind"]
     default = runner.invoke(main, ["measure-source", "schema", "--json"])
     explicit = runner.invoke(main, ["measure-source", "schema", "create", "--json"])
     assert json.loads(default.output) == json.loads(explicit.output)

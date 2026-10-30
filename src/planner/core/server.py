@@ -34,6 +34,7 @@ from planner.core.clock import Clock
 from planner.core.config import HOST, Config
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
+from planner.core.request_guidance import preserve_authored_request_examples
 from planner.core.response_compression import (
     CompressExceptEventStreams,
     answers_with_an_event_stream,
@@ -512,4 +513,5 @@ def create_app(
         minimum_size=1024,
         compresslevel=4,
     )
+    preserve_authored_request_examples(app)
     return app
