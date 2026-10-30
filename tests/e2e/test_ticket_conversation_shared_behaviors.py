@@ -99,7 +99,7 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
     assert submitted.value.post_data_json == {
         "request_id": "1:user_input:input-1", "answers": expected_answers,
     }
-    assert answered.value.json() == {"landed": True}
+    assert answered.value.json() == {"fate": "applied"}
     receipts = httpx.get(
         server.base + f"/api/test/signals/{conversation_id}/answers", timeout=10,
     )

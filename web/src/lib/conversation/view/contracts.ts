@@ -113,6 +113,7 @@ export interface PermissionRowBody {
   state: "live" | "answered" | "dead";
   dead_reason: AskDeadReason | null;
   answered_option_label: string | null;
+  answer_fate: "saved" | "applied" | "unconfirmed";
 }
 
 export interface UserInputOption {
@@ -142,6 +143,7 @@ export interface UserInputRowBody {
   dead_reason: AskDeadReason | null;
   answers: Array<UserInputAnswer> | null;
   failure_detail: string | null;
+  answer_fate: "saved" | "applied" | "unconfirmed";
 }
 
 export interface ModelRowBody {

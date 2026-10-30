@@ -136,6 +136,8 @@
 
   function askStateLine(row: Extract<TranscriptRow, { kind: "permission_ask" }>): string {
     if (activityUncertain && row.state === "live") return "pending · availability on Mac unknown";
+    if (row.answerFate === "saved") return "Answer saved on VPS; delivery to Mac is pending";
+    if (row.answerFate === "unconfirmed") return "Answer was saved; application on Mac is unconfirmed";
     if (row.state === "answered") return `answered · ${row.answeredOptionLabel ?? ""}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);
     return "waiting for you";
@@ -143,6 +145,8 @@
 
   function userInputStateLine(row: Extract<TranscriptRow, { kind: "user_input" }>): string {
     if (activityUncertain && row.state === "live") return "pending · availability on Mac unknown";
+    if (row.answerFate === "saved") return "Answer saved on VPS; delivery to Mac is pending";
+    if (row.answerFate === "unconfirmed") return "Answer was saved; application on Mac is unconfirmed";
     if (row.state === "answered") return "answered";
     if (row.state === "failed") return `failed · ${row.failureDetail ?? "the answer could not be delivered"}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);

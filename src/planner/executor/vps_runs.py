@@ -18,30 +18,23 @@ from planner.conversation.backends.contracts import (
     RetainedBackendRun,
 )
 from planner.conversation.contracts import ResolvedConversationStart
-from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core import db
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.execution_identity import (
-    AskKind,
-    AskReference,
     ChildReference,
     ExecutorIdentity,
 )
 from planner.executor.link import Link
 from planner.executor.link_files import settled_io
 from planner.executor.protocol import (
-    AnswerPermission,
-    AnswerUserInput,
-    AskEvidence,
     CanonicalSkillSnapshot,
     ChildCommand,
     ChildInventory,
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
-    DurableAnswer,
     JsonObject,
     MacRunConversations,
     ReconnectAsk,
@@ -103,6 +96,7 @@ class MacRuns:
             self._read_skill_snapshot,
             self.cancel_initial_delivery,
             retire_reference=self.retire_child,
+            send_answer=self.queue_answer,
         )
         self.children[reference.child_id] = child
         return child
@@ -123,10 +117,6 @@ class MacRuns:
             (at_ms,),
         )
         conn.execute("UPDATE mac_runs SET stop_state='stopping' WHERE stop_state='open'")
-        conn.execute(
-            "UPDATE executor_asks SET reachability='callback_gone' "
-            "WHERE reachability IN ('reachable','uncertain')"
-        )
 
     @staticmethod
     def status(conn: sqlite3.Connection) -> tuple[tuple[str, str], ...]:
@@ -202,8 +192,9 @@ class MacRuns:
             if command_id in unknown or command_id not in registered_before_ask
         )
         self.ready = True
-        for answer in await settled_io(self.store.unapplied_answers):
-            await self._dispatch_answer(answer)
+        for child in tuple(self.children.values()):
+            for command in tuple(child.saved_answers.values()):
+                self.queue_answer(command)
         for command, future in reconnect_commands:
             if (
                 not future.done()
@@ -261,6 +252,7 @@ class MacRuns:
             self.cancel_initial_delivery,
             initial_history_complete=initial_history_complete,
             retire_reference=self.retire_child,
+            send_answer=self.queue_answer,
         )
 
     def retire_child(self, child: ChildReference) -> None:
@@ -387,40 +379,38 @@ class MacRuns:
                 request_id=command.command_id,
                 admit=admit,
             )
-        answer = self._command_answer(command)
-        identity = self.identity
-        answer_link = self.link
+        child = self.children.get(command.child.child_id)
+        answer_writer = expected_writer
         emitted = False
+
+        def admit_answer() -> bool:
+            if (
+                not self.ready
+                or self.link is not answer_writer
+                or self.identity != expected_identity
+            ):
+                raise ConnectionError("answer connection changed")
+            return (
+                child is not None
+                and child is self.children.get(command.child.child_id)
+                and child.reference == command.child
+                and child.can_emit_answer(command)
+            )
 
         async def emit() -> None:
             nonlocal emitted
-            if identity is None or not await settled_io(
-                self.store.answer_is_deliverable, answer, identity
-            ):
+            if not admit_answer():
                 return
-            if answer_link is None:
-                return
-            emitted = await answer_link.tell(
+            assert answer_writer is not None
+            emitted = await answer_writer.tell(
                 WireMessageKind.command,
                 _object(command),
                 request_id=command.command_id,
-                admit=lambda: (
-                    self.ready
-                    and self.identity == identity
-                    and self.link is answer_link
-                    and command.operation
-                    == (
-                        ChildOperation.answer_user_input
-                        if answer.ask.kind is AskKind.user_input
-                        else ChildOperation.answer_permission_ask
-                    )
-                    and command.child == answer.ask.child
-                    and command.turn == answer.ask.turn
-                    and command.command_id == answer.answer_id
-                ),
+                admit=admit_answer,
             )
 
-        await self.conversations.emit_executor_answer(command.child.conversation_id, emit)
+        if command.turn is not None:
+            await self.conversations.emit_answer(command.turn, emit)
         return emitted
 
     async def _release_closed_answer(
@@ -430,42 +420,13 @@ class MacRuns:
             ChildOperation.answer_permission_ask,
             ChildOperation.answer_user_input,
         ):
-            answer = self._command_answer(command)
-            if not await settled_io(self.store.answer_target_is_open, answer.ask):
-                # No native result exists for an untransmitted closed callback.
-                # Cancel bookkeeping only; the durable choice remains unapplied.
-                future.cancel()
+            child = self.children.get(command.child.child_id)
+            if child is not None:
+                child.saved_answers.pop(command.command_id, None)
+            future.cancel()
 
-    @staticmethod
-    def _command_answer(command: ChildCommand) -> DurableAnswer:
-        args = command.arguments
-        if not isinstance(args, (AnswerPermission, AnswerUserInput)) or args.answer is None:
-            raise ValueError("saved answer command requires its recorded answer")
-        return args.answer
-
-    async def _dispatch_answer(self, answer: DurableAnswer) -> None:
-        if (
-            not self.ready
-            or self.identity is None
-            or not await settled_io(self.store.answer_is_deliverable, answer, self.identity)
-        ):
-            return
-        command = ChildCommand(
-            answer.answer_id,
-            answer.ask.child,
-            ChildOperation.answer_user_input
-            if answer.ask.kind is AskKind.user_input
-            else ChildOperation.answer_permission_ask,
-            answer.ask.turn,
-            AnswerUserInput(
-                request_id=answer.ask.ask_id, answers=answer.user_input_answers or (), answer=answer
-            )
-            if answer.ask.kind is AskKind.user_input
-            else AnswerPermission(
-                ask_id=answer.ask.ask_id, option_id=answer.option_id or "", answer=answer
-            ),
-        )
-        if command.command_id in self.pending_commands:
+    def queue_answer(self, command: ChildCommand) -> None:
+        if not self.ready or command.command_id in self.pending_commands:
             return
         task = asyncio.create_task(self.send_command(command))
         self._tasks.add(task)
@@ -611,6 +572,10 @@ class MacRuns:
         ):
             return
         if outcome.disposition is not CommandDisposition.uncertain:
+            child = self.children.get(outcome.child.child_id)
+            if child is not None and child.reference == outcome.child:
+                child.saved_answers.pop(outcome.command_id, None)
+        if outcome.disposition is not CommandDisposition.uncertain:
             self._newly_recorded_commands.pop(outcome.command_id, None)
             self._policy_held_commands.discard(outcome.command_id)
         pending = self.pending_commands.get(outcome.command_id)
@@ -618,106 +583,10 @@ class MacRuns:
             pending[1].set_result(outcome)
 
     def owns_conversation(self, conversation_id: str) -> bool:
-        context = self.store.turn_context(conversation_id)
-        return (context is not None and not context.source_retired) or any(
-            child.reference.conversation_id == conversation_id for child in self.children.values()
+        return any(
+            run.reference.conversation_id == conversation_id and not run.retirement_confirmed
+            for run in self.store.retained_runs()
         )
-
-    def conversation_asks(self, conversation_id: str) -> list[JsonObject]:
-        result: list[JsonObject] = []
-        for evidence in self.store.evidence_for_conversation(conversation_id):
-            answer = self.store.recorded_answer(evidence.ask)
-            result.append(
-                {
-                    "evidence": _object(evidence),
-                    "answer": None if answer is None else _object(answer),
-                }
-            )
-        return result
-
-    def conversation_context(self, conversation_id: str) -> JsonObject | None:
-        context = self.store.turn_context(conversation_id)
-        if context is None or context.source_retired:
-            return None
-        return {"child": _object(context.child), "turn": _object(context.turn)}
-
-    def _current_ask_evidence(
-        self, conversation_id: str, ask_id: str, kind: AskKind = AskKind.permission
-    ) -> AskEvidence | None:
-        context = self.store.turn_context(conversation_id)
-        if context is None:
-            return None
-        for evidence in reversed(self.store.evidence_for_conversation(conversation_id)):
-            if (
-                self.store.public_request_id(evidence.ask) == ask_id
-                and evidence.ask.child == context.child
-                and evidence.ask.turn == context.turn
-                and evidence.ask.kind is kind
-            ):
-                return evidence
-        return None
-
-    def ask_status(
-        self, conversation_id: str, ask_id: str, kind: AskKind = AskKind.permission
-    ) -> JsonObject:
-        evidence = self._current_ask_evidence(conversation_id, ask_id, kind)
-        if evidence is None:
-            return {"answer_available": False, "executor_evidence": None}
-        return {
-            "executor_evidence": _object(evidence),
-            "answer_available": evidence.answer_id is None
-            and self.store.answer_target_is_open(evidence.ask),
-        }
-
-    async def answer_permission(
-        self,
-        conversation_id: str,
-        ask_id: str,
-        option_id: str,
-        executor_ask: AskReference | None = None,
-    ) -> bool:
-        if (
-            executor_ask is None
-            or executor_ask.child.conversation_id != conversation_id
-            or self.store.public_request_id(executor_ask) != ask_id
-            or executor_ask.kind is not AskKind.permission
-        ):
-            return False
-        previous = await settled_io(self.store.recorded_answer, executor_ask)
-        try:
-            answer = await settled_io(
-                self.store.choose_answer, executor_ask, option_id, 0, now_ms()
-            )
-        except PlannerError:
-            return False
-        if previous is None:
-            await self._dispatch_answer(answer)
-        return True
-
-    async def answer_user_input(
-        self,
-        conversation_id: str,
-        request_id: str,
-        answers: tuple[UserInputAnswer, ...],
-        executor_ask: AskReference | None = None,
-    ) -> bool:
-        if (
-            executor_ask is None
-            or executor_ask.child.conversation_id != conversation_id
-            or self.store.public_request_id(executor_ask) != request_id
-            or executor_ask.kind is not AskKind.user_input
-        ):
-            return False
-        previous = await settled_io(self.store.recorded_answer, executor_ask)
-        try:
-            answer = await settled_io(
-                self.store.choose_user_input_answer, executor_ask, answers, 0, now_ms()
-            )
-        except PlannerError:
-            return False
-        if previous is None:
-            await self._dispatch_answer(answer)
-        return True
 
     async def _reconnect(self, identity: ExecutorIdentity, writer: Link) -> set[str]:
         pending = {
@@ -782,7 +651,10 @@ class MacRuns:
             await self.conversations.stop_interrupted_remote_child(run.reference, proxy)
         if not await self._reconciliation_current(identity, writer):
             raise ConnectionError("reconnect generation changed")
-        await settled_io(self.store.observe_children, identity, tuple(children), now_ms())
+        for proxy in tuple(self.children.values()):
+            proxy.observe_callbacks(
+                next((item for item in children if item.child == proxy.reference), None)
+            )
         return unknown
 
 

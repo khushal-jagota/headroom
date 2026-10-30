@@ -30,6 +30,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -226,9 +227,12 @@ class ScriptedChild:
     async def steer(self, turn: TurnToken, content: MessageContent, **kwargs: object) -> None:
         raise RuntimeError("wire response lost after write")
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         self.answers.append((ask_id, option_id))
         await asyncio.sleep(0)
+        return AnswerFate.applied
 
     @property
     def stop_outside_lock(self) -> bool:
@@ -1591,11 +1595,12 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
 
         class QuestionChild(ScriptedChild):
             async def answer_user_input(
-                self, request_id: str, answers: tuple[UserInputAnswer, ...]
-            ) -> None:
+                self, request_id: str, answers: tuple[UserInputAnswer, ...], **kwargs: object
+            ) -> AnswerFate:
                 maps.append((request_id, answers))
                 entered.set()
                 await release.wait()
+                return AnswerFate.applied
 
         native = QuestionChild()
         spool = MacOutbox(tmp_path / "spool")

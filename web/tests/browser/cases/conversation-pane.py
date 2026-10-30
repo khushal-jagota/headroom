@@ -4137,15 +4137,15 @@ def _machine_evidence(browser, url):
     expect(page.locator('[data-conversation-alive-word]')).to_contain_text('Current activity on Mac is unknown')
     allow=page.locator('[data-conversation-ask-action="yes"]')
     expect(allow).to_be_enabled()
-    page.evaluate('()=>window.__machine.change({wrongChild:true})')
-    expect(allow).to_be_disabled()
-    page.evaluate('()=>window.__machine.change({wrongChild:false})')
+    page.evaluate('()=>window.__machine.change({requestGone:true})')
+    expect(allow).to_have_count(0)
+    page.evaluate('()=>window.__machine.change({requestGone:false})')
     expect(allow).to_be_enabled()
     allow.click()
     expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
     post=page.evaluate('()=>window.__machine.posts[0]')
     assert post['ask_id']=='public-turn:permission:native-ask'
-    assert post['executor_ask']['ask_id']=='native-ask'
+    assert set(post)=={'ask_id','option_id'}
     page.evaluate('()=>window.__machine.change({applied:true})')
     expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer applied on Mac.')
     page.evaluate('()=>window.__machine.change({questions:true})')
@@ -4157,7 +4157,7 @@ def _machine_evidence(browser, url):
     expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
     post=page.evaluate('()=>window.__machine.posts[1]')
     assert post['request_id']=='public-turn:user_input:native-questions'
-    assert post['executor_ask']['ask_id']=='native-questions'
+    assert set(post)=={'request_id','answers'}
     assert len(post['answers'])==2
     assert not errors,errors
     page.close()

@@ -42,6 +42,7 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationBackendKey,
@@ -348,17 +349,21 @@ class _FakeBackendChild:
             for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):
                 await asyncio.sleep(0)
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         if self._backend.permission_answer_write_fails:
             raise PermissionAnswerWriteFailed(ask_id)
         self._backend.permission_answers[ask_id] = option_id
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self, request_id: str, answers: tuple[UserInputAnswer, ...], **kwargs: object
+    ) -> AnswerFate:
         if self._backend.user_input_answer_write_fails:
             raise UserInputAnswerWriteFailed(request_id)
         self._backend.user_input_answers[request_id] = answers
+        return AnswerFate.applied
 
     @property
     def stop_outside_lock(self) -> bool:
@@ -1120,7 +1125,9 @@ def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
         request = await harness.request_user_input("c")
 
         incomplete = (UserInputAnswer(question_id="scope", answers=("Backend",)),)
-        assert await harness.system.answer_user_input("c", request.request_id, incomplete) is False
+        assert (
+            await harness.system.answer_user_input("c", request.request_id, incomplete)
+        ) is AnswerFate.refused
         assert await harness.system.has_pending_user_input("c") is True
 
         await harness.system.interrupt("c")
@@ -1134,7 +1141,7 @@ def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
                     UserInputAnswer(question_id="timing", answers=("Now",)),
                 ),
             )
-            is False
+            is AnswerFate.refused
         )
 
     _run(exercise)

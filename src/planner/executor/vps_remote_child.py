@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -20,6 +21,7 @@ from planner.conversation.backends.contracts import (
     RemoteCommandUncertain,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
@@ -28,7 +30,13 @@ from planner.conversation.contracts import (
 from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageContent
 from planner.core.db import connect
-from planner.execution_identity import ChildReference, ExecutorIdentity, ProtocolRefused
+from planner.execution_identity import (
+    AskKind,
+    AskReference,
+    ChildReference,
+    ExecutorIdentity,
+    ProtocolRefused,
+)
 from planner.executor.protocol import (
     AnswerPermission,
     AnswerUserInput,
@@ -36,9 +44,11 @@ from planner.executor.protocol import (
     CanonicalSkillSnapshot,
     ChildCommand,
     ChildCommandArguments,
+    ChildInventory,
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
+    DurableAnswer,
     JsonObject,
     StartRun,
     Steer,
@@ -71,8 +81,12 @@ class MacRemoteChild:
         *,
         initial_history_complete: bool = True,
         retire_reference: Callable[[ChildReference], None] | None = None,
+        send_answer: Callable[[ChildCommand], None] | None = None,
     ) -> None:
         self.reference = reference
+        self._send_answer = send_answer
+        self.saved_answers: dict[str, ChildCommand] = {}
+        self._callbacks: set[AskReference] | None = None
         self._retire_reference = retire_reference
         self._send_command = send_command
         self._skill_snapshot_supplier = skill_snapshot_supplier
@@ -87,6 +101,8 @@ class MacRemoteChild:
         return True
 
     async def detach(self) -> None:
+        self.saved_answers.clear()
+        self._callbacks = set()
         if self._retire_reference is not None:
             self._retire_reference(self.reference)
 
@@ -298,13 +314,97 @@ class MacRemoteChild:
     async def cancel_running_turn(self) -> None:
         await self._call(CancelTurn())
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
-        await self._call(AnswerPermission(ask_id=ask_id, option_id=option_id))
+    def observe_callback(self, ask: AskReference) -> None:
+        if self._callbacks is not None:
+            self._callbacks.add(ask)
+
+    def observe_callbacks(self, inventory: ChildInventory | None) -> None:
+        self._callbacks = (
+            set()
+            if inventory is None
+            else {
+                *inventory.pending_asks,
+                *(
+                    AskReference(
+                        self.reference, inventory.active_turn, request_id, AskKind.user_input
+                    )
+                    for request_id in inventory.pending_user_input_ids
+                    if inventory.active_turn is not None
+                ),
+            }
+        )
+        self._callbacks = {
+            ask
+            for ask in self._callbacks
+            if inventory is not None and ask.turn == inventory.active_turn
+        }
+
+    def can_emit_answer(self, command: ChildCommand) -> bool:
+        args = command.arguments
+        return (
+            self.saved_answers.get(command.command_id) == command
+            and isinstance(args, (AnswerPermission, AnswerUserInput))
+            and args.answer is not None
+            and (self._callbacks is None or args.answer.ask in self._callbacks)
+        )
+
+    def _save_answer(self, answer: DurableAnswer) -> AnswerFate:
+        if self._send_answer is None:
+            return AnswerFate.refused
+        args = (
+            AnswerPermission(
+                ask_id=answer.ask.ask_id, option_id=answer.option_id or "", answer=answer
+            )
+            if answer.ask.kind is AskKind.permission
+            else AnswerUserInput(
+                request_id=answer.ask.ask_id, answers=answer.user_input_answers or (), answer=answer
+            )
+        )
+        command = ChildCommand(
+            answer.answer_id, self.reference, ChildOperation(args.kind), answer.ask.turn, args
+        )
+        self.saved_answers[answer.answer_id] = command
+        self._send_answer(command)
+        return AnswerFate.saved
+
+    async def answer_permission_ask(
+        self,
+        ask_id: str,
+        option_id: str,
+        *,
+        answer_id: str | None = None,
+        turn_token: backend.TurnToken | None = None,
+    ) -> AnswerFate:
+        if answer_id is None or turn_token is None:
+            return AnswerFate.refused
+        return self._save_answer(
+            DurableAnswer(
+                answer_id,
+                AskReference(self.reference, turn_token, ask_id, AskKind.permission),
+                option_id,
+                time.time_ns() // 1_000_000,
+            )
+        )
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
-        await self._call(AnswerUserInput(request_id=request_id, answers=answers))
+        self,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        *,
+        answer_id: str | None = None,
+        turn_token: backend.TurnToken | None = None,
+    ) -> AnswerFate:
+        if answer_id is None or turn_token is None:
+            return AnswerFate.refused
+        return self._save_answer(
+            DurableAnswer(
+                answer_id,
+                AskReference(self.reference, turn_token, request_id, AskKind.user_input),
+                None,
+                time.time_ns() // 1_000_000,
+                answers,
+            )
+        )
 
     async def stop(self) -> None:
         await self._call(StopRun())

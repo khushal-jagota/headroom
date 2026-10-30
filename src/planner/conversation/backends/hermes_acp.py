@@ -116,6 +116,7 @@ from planner.conversation.backends.contracts import (
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
@@ -639,7 +640,14 @@ class HermesAcpBackendChild:
                 CANCELLED_TURN_ENDING_TIMEOUT_SECONDS,
             )
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self,
+        ask_id: str,
+        option_id: str,
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give hermes the option a person chose, and wait for it to be on the wire.
 
         The answer is the response to a request hermes is holding open, so it is on the
@@ -679,10 +687,16 @@ class HermesAcpBackendChild:
             raise PermissionAnswerWriteFailed(ask_id) from never_sent
         self._permission_answer_waiters.pop(parked.request_id, None)
         turn.parked_asks.pop(ask_id, None)
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Hermes ACP exposes permission requests, not an agent-question request."""
         del answers
         raise UserInputAnswerWriteFailed(request_id)

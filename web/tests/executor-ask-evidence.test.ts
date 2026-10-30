@@ -4,111 +4,34 @@ import PermissionAskActions from "../src/components/conversation/PermissionAskAc
 import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
 import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
 import TurnAnchor from "../src/components/conversation/TurnAnchor.svelte";
-import { executorAnswerAvailable, currentExecutorAskRecord, currentExecutorAnswers, executorAnswerSentence, executorUnavailableSentence } from "../src/lib/conversation/executorEvidence";
-import type { ConversationView, ExecutorAskEvidence, ExecutorAskRecord } from "../src/lib/conversation/wire";
+import { executorAnswerAvailable, executorAnswerSentence } from "../src/lib/conversation/executorEvidence";
+import type { ConversationView } from "../src/lib/conversation/wire";
 
-const child = { executor_incarnation: "mac-incarnation", child_id: "child", conversation_id: "conversation" };
-const turn = { conversation_id: "conversation", turn_number: 3 };
-const evidence = (kind: "permission" | "user_input", ask_id: string): ExecutorAskEvidence => ({
-  ask: { child, turn, kind, ask_id }, connection_generation: 4, reachability: "reachable",
-  observed_at_ms: 99, answer_id: null, applied_at_mac_ms: null
-});
 function snapshot(): ConversationView {
-  return {
-    conversation_id: "conversation", backend_key: "codex", supports_steer: false, model: null,
-    reasoning_effort: null, workspace_folder: "/workspace", access: "full",
- latest_sequence: 10, owner_read_through_sequence: 0,
-    is_running: true, held_prompts: [], executor_context: { child, turn },
-    pending_permission_ask: { ask_id: "permission", title: "Allow?", detail: null, options: [], answer_available: true, executor_evidence: evidence("permission", "permission") },
-    pending_user_input: { request_id: "questions", questions: [], answer_available: false, executor_evidence: evidence("user_input", "questions") }
-  };
+  return {conversation_id:"c", backend_key:"codex", supports_steer:false, model:null,
+    reasoning_effort:null,workspace_folder:"/workspace",access:"full",latest_sequence:10,
+    owner_read_through_sequence:0,is_running:true,held_prompts:[],
+    pending_permission_ask:{ask_id:"current-permission",title:"Allow?",detail:null,options:[]},
+    pending_user_input:{request_id:"current-input",questions:[]}};
 }
 
-describe("exact executor ask evidence", () => {
-  it("enables only the individually attested request, including multi-question input", () => {
-    const view = snapshot();
-    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(true);
-    expect(executorAnswerAvailable(view, "user_input", "questions", "macos")).toBe(false);
-    view.pending_user_input!.answer_available = true;
-    expect(executorAnswerAvailable(view, "user_input", "questions", "macos")).toBe(true);
-    view.pending_user_input!.executor_evidence!.ask.kind = "permission";
-    expect(executorAnswerAvailable(view, "user_input", "questions", "macos")).toBe(false);
-  });
-
-  it("accepts disconnected and restarted snapshots but rejects stale or missing identity", () => {
-    const view = snapshot();
-    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(true);
-    expect(executorAnswerAvailable(view, "permission", "permission", "macos", false)).toBe(false);
-    expect(executorAnswerAvailable(view, "permission", "old-transcript-request", "macos")).toBe(false);
-    view.pending_permission_ask!.executor_evidence = null;
-    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(false);
-  });
-
-  it.each(["incarnation", "child", "turn", "conversation", "answer", "child_gone", "callback_gone"])("rejects stale or spent %s evidence", (mismatch) => {
-    const view = snapshot();
-    const proof = view.pending_permission_ask!.executor_evidence!;
-    if (mismatch === "incarnation") proof.ask.child = { ...child, executor_incarnation: "old" };
-    if (mismatch === "child") proof.ask.child = { ...child, child_id: "other" };
-    if (mismatch === "turn") proof.ask.turn = { ...turn, turn_number: 2 };
-    if (mismatch === "conversation") proof.ask.turn = { ...turn, conversation_id: "other" };
-    if (mismatch === "answer") proof.answer_id = "recorded";
-    if (mismatch === "child_gone" || mismatch === "callback_gone") proof.reachability = mismatch;
-    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(false);
-  });
-
-  it("accepts uncertain callbacks with persisted identity regardless of generation", () => {
-    const view = snapshot();
-    const proof = view.pending_permission_ask!.executor_evidence!;
-    proof.reachability = "uncertain";
-    proof.connection_generation = 1;
-    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(true);
-    view.pending_permission_ask!.answer_available = false;
-    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(false);
-  });
-
-  it("keeps Mac controls closed when remote ownership/status is absent and preserves local behavior", () => {
-    const view = snapshot();
-    view.executor_context = null;
-    delete view.pending_permission_ask!.answer_available;
-    delete view.pending_permission_ask!.executor_evidence;
-    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(false);
-    expect(executorAnswerAvailable(view, "permission", "permission", "vps")).toBe(true);
-  });
-
-  it("uses the public request and its attested native binding independently", () => {
-    const view = snapshot();
-    view.pending_permission_ask!.ask_id = "turn-public:permission:native";
-    view.pending_permission_ask!.executor_evidence!.ask.ask_id = "native";
-    expect(executorAnswerAvailable(view,"permission","turn-public:permission:native","macos")).toBe(true);
-    expect(executorAnswerAvailable(view,"permission","native","macos")).toBe(false);
-    const proof=view.pending_permission_ask!.executor_evidence!;
-    view.executor_asks=[{evidence:proof,answer:null}];
-    expect(currentExecutorAskRecord(view,"permission","turn-public:permission:native")).toBe(view.executor_asks[0]);
-  });
-  it("retains current receipts after pending clears without attributing them to reused transcript IDs", () => {
+describe("conversation answer fate", () => {
+  it("allows the current request during an outage but refuses stale and closed snapshots", () => {
     const view=snapshot();
-    const proof=view.pending_permission_ask!.executor_evidence!;
-    view.executor_asks=[{evidence:proof,answer:{answer_id:"accepted",ask:proof.ask,accepted_at_vps_ms:100}}];
-    view.pending_permission_ask=null;
-    expect(currentExecutorAnswers(view)).toEqual(view.executor_asks);
-    view.executor_context={child:{...child,child_id:"replacement"},turn};
-    expect(currentExecutorAnswers(view)).toEqual([]);
+    expect(executorAnswerAvailable(view,"permission","current-permission","macos")).toBe(true);
+    expect(executorAnswerAvailable(view,"user_input","current-input","macos")).toBe(true);
+    expect(executorAnswerAvailable(view,"permission","old-permission","macos")).toBe(false);
+    expect(executorAnswerAvailable(view,"permission","current-permission","macos",false)).toBe(false);
+    view.is_running=false;
+    expect(executorAnswerAvailable(view,"permission","current-permission","macos")).toBe(false);
+    view.is_running=true;view.pending_permission_ask=null;
+    expect(executorAnswerAvailable(view,"permission","current-permission","macos")).toBe(false);
   });
-  it("retains durable acceptance independently from callback application", () => {
-    const proof = evidence("permission", "permission");
-    const record: ExecutorAskRecord = { evidence: proof, answer: { answer_id: "answer", ask: proof.ask, accepted_at_vps_ms: 100 } };
-    expect(executorAnswerSentence(record)).toBe("Answer saved on VPS; delivery to Mac is pending.");
-    proof.reachability = "callback_gone";
-    expect(executorAnswerSentence(record)).toBe("Answer saved on VPS; the original Mac request is gone. Application is unconfirmed.");
-    proof.answer_id = "answer";
-    proof.applied_at_mac_ms = 101;
-    proof.reachability = "child_gone";
-    expect(executorAnswerSentence(record)).toBe("Answer applied on Mac.");
-  });
-
-  it.each(["child_gone", "callback_gone"] as const)("names confirmed %s instead of claiming an unknown pending callback", (reachability) => {
-    expect(executorUnavailableSentence({ ...evidence("permission", "permission"), reachability })).toContain("cannot accept an answer");
-    expect(executorUnavailableSentence({ ...evidence("permission", "permission"), reachability })).not.toContain("still pending");
+  it("keeps saved, proven application, and uncertain closed delivery distinct", () => {
+    expect(executorAnswerSentence("saved")).toBe("Answer saved on VPS; delivery to Mac is pending.");
+    expect(executorAnswerSentence("applied")).toBe("Answer applied on Mac.");
+    expect(executorAnswerSentence("unconfirmed")).toContain("Application is unconfirmed.");
+    expect(executorAnswerSentence(undefined)).toBeNull();
   });
 });
 

@@ -137,36 +137,9 @@ export type PermissionAskOption = {
   option_kind: string;
 };
 
-export type ExecutorChildReference = {
-  executor_incarnation: string;
-  child_id: string;
-  conversation_id: string;
-};
-export type ExecutorTurn = { conversation_id: string; turn_number: number };
-export type ExecutorAskReference = {
-  child: ExecutorChildReference;
-  turn: ExecutorTurn;
-  ask_id: string;
-  kind: "permission" | "user_input";
-};
-export type ExecutorAskEvidence = {
-  ask: ExecutorAskReference;
-  connection_generation: number;
-  reachability: "uncertain" | "reachable" | "child_gone" | "callback_gone";
-  observed_at_ms: number;
-  answer_id: string | null;
-  applied_at_mac_ms: number | null;
-};
-export type ExecutorAskRecord = {
-  evidence: ExecutorAskEvidence;
-  answer: { answer_id: string; ask: ExecutorAskReference; accepted_at_vps_ms: number } | null;
-};
-type ExecutorAskStatus = {
-  answer_available?: boolean;
-  executor_evidence?: ExecutorAskEvidence | null;
-};
+export type AnswerFate = "applied" | "saved" | "refused";
 
-export type PendingPermissionAsk = ExecutorAskStatus & {
+export type PendingPermissionAsk = {
   ask_id: string;
   title: string;
   detail: string | null;
@@ -189,7 +162,7 @@ export type UserInputQuestion = {
 
 export type UserInputAnswers = Record<string, { answers: string[] }>;
 
-export type PendingUserInput = ExecutorAskStatus & {
+export type PendingUserInput = {
   request_id: string;
   questions: UserInputQuestion[];
 };
@@ -230,8 +203,6 @@ export type ConversationView = {
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
-  executor_context?: { child: ExecutorChildReference; turn: ExecutorTurn | null } | null;
-  executor_asks?: ExecutorAskRecord[];
 };
 
 /** One earlier conversation of the same owner, as the record lists it.
@@ -333,14 +304,15 @@ export type ConversationEvent =
       "permission_asked",
       { ask_id: string; title: string; detail: string | null; options: PermissionAskOption[] }
     >
-  | Row<"permission_answered", { ask_id: string; option_id: string }>
+  | Row<"permission_answered", { ask_id: string; option_id: string; fate?: AnswerFate; answer_id?: string | null }>
+  | Row<"answer_applied", { answer_id: string }>
   | Row<
       "user_input_requested",
       { request_id: string; questions: UserInputQuestion[] }
     >
   | Row<
       "user_input_answered",
-      { request_id: string; answers: UserInputAnswers }
+      { request_id: string; answers: UserInputAnswers; fate?: AnswerFate; answer_id?: string | null }
     >
   | Row<"user_input_failed", { request_id: string; detail: string }>
   | Row<"provider_selection_reported", { provider: ConversationBackendKey; source_kind: string; model: string; reasoning_effort: string | null; turn_number: number; child_lifetime: string }>
@@ -686,24 +658,22 @@ export async function killConversation(conversationId: string): Promise<void> {
 export function answerPermissionAsk(
   conversationId: string,
   askId: string,
-  optionId: string,
-  executorAsk?: ExecutorAskReference
-): Promise<{ landed: boolean }> {
-  return request<{ landed: boolean }>(
+  optionId: string
+): Promise<{ fate: AnswerFate }> {
+  return request<{ fate: AnswerFate }>(
     `/conversations/${encodeURIComponent(conversationId)}/permission-answers`,
-    postJson({ ask_id: askId, option_id: optionId, ...(executorAsk ? {executor_ask: executorAsk} : {}) })
+    postJson({ ask_id: askId, option_id: optionId })
   );
 }
 
 export function answerUserInput(
   conversationId: string,
   requestId: string,
-  answers: UserInputAnswers,
-  executorAsk?: ExecutorAskReference
-): Promise<{ landed: boolean }> {
-  return request<{ landed: boolean }>(
+  answers: UserInputAnswers
+): Promise<{ fate: AnswerFate }> {
+  return request<{ fate: AnswerFate }>(
     `/conversations/${encodeURIComponent(conversationId)}/user-input-answers`,
-    postJson({ request_id: requestId, answers, ...(executorAsk ? {executor_ask: executorAsk} : {}) })
+    postJson({ request_id: requestId, answers })
   );
 }
 

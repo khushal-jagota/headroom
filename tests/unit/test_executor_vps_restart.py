@@ -21,6 +21,7 @@ from tests.unit.test_executor_request_deadlines import peer
 
 from planner.conversation.backends.contracts import BackendEventSink, BackendPermissionAsk
 from planner.conversation.contracts import (
+    AnswerFate,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
@@ -140,8 +141,9 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
         )
         await first.wait_until_quiescent()
         ask = AskReference(old, token, "allow", AskKind.permission)
-        endpoint.runs.store.publish_ask(ask, ("yes",), 1)
-        saved = endpoint.runs.store.choose_answer(ask, "yes", 1, 2)
+        endpoint.runs.ready = False
+        public_id = next(iter(await first.pending_permission_ask_ids("c")))
+        assert await first.answer_permission_ask("c", public_id, "yes") is AnswerFate.saved
         await first.shutdown()
         identity = replace(identity, connection_generation=2)
         endpoint, restarted = core()
@@ -155,8 +157,10 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                 f.kind is LifecycleKind.turn and f.status is LifecycleStatus.unavailable
                 for f in facts
             )
-            assert not endpoint.runs.store.answer_target_is_open(ask)
-            assert not endpoint.runs.store.answer_is_deliverable(saved, identity)
+            assert not endpoint.runs.children
+            assert (
+                await restarted.answer_permission_ask("c", public_id, "yes") is AnswerFate.refused
+            )
             if stop_before_inventory:
                 await restarted.kill("c")
                 await asyncio.wait_for(stop_entered.wait(), 1)
@@ -193,7 +197,7 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             release_stop.set()
             assert await state.initial_shutdown_task
             assert endpoint.runs.store.has_closed_child_assignment(old)
-            assert endpoint.runs.store.recorded_answer(ask) == saved
+            assert not any(child.saved_answers for child in endpoint.runs.children.values())
             assert not state.child_is_quarantined
             await restarted.wait_until_quiescent()
             assert await restarted.is_running("c")

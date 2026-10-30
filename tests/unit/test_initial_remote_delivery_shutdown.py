@@ -29,7 +29,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore, StoredConversationEvent
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
-from planner.execution_identity import AskKind, ChildReference
+from planner.execution_identity import ChildReference
 from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
@@ -466,23 +466,17 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
     asyncio.run(run())
 
 
-def test_retirement_rolls_back_run_assignment_and_asks_together(
+def test_retirement_rolls_back_run_and_assignment_together(
     tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gap: a crash after stop must not retain authority beside retired metadata."""
-    from planner.conversation.backends.contracts import TurnToken
-    from planner.execution_identity import AskReference
-    from planner.executor.protocol import AskReachability
     from planner.executor.store import ExecutorStore
     from planner.executor.vps_inbox import InboxStore
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     reference = ChildReference("retired-incarnation", "retired-child", "c_atomic_retirement")
-    turn = TurnToken(reference.conversation_id, 1)
     executors = InboxStore(db_path)
     executors.runs.register_child(reference, "ticket", "retirement-ticket", 1)
-    ask = AskReference(reference, turn, "retirement-ask", AskKind.permission)
-    executors.runs.publish_ask(ask, ("allow", "deny"), 1)
     close = ExecutorStore.close_child_in_transaction
 
     def fail_after_close(
@@ -499,10 +493,6 @@ def test_retirement_rolls_back_run_assignment_and_asks_together(
             executors.runs.close_child(reference, 2)
     assert not executors.runs.retained_runs()[0].retirement_confirmed
     assert executors.runs.child_assignment(reference) == ("ticket", "retirement-ticket")
-    evidence = executors.runs.ask_evidence(ask)
-    assert evidence is not None and evidence.reachability is AskReachability.uncertain
     executors.runs.close_child(reference, 3)
     assert executors.runs.retained_runs()[0].retirement_confirmed
     assert executors.runs.child_assignment(reference) is None
-    evidence = executors.runs.ask_evidence(ask)
-    assert evidence is not None and evidence.reachability is AskReachability.child_gone

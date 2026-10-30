@@ -33,7 +33,6 @@ from planner.executor.protocol import (
     AcceptanceReceipt,
     AnswerApplication,
     BackendEvent,
-    BackendEventMethod,
     CommandOutcome,
     EnvelopeKind,
     FileManifest,
@@ -410,77 +409,7 @@ class MacInbox:
 
             def in_commit(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
                 def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-                    conn = connection
                     result = take()
-                    if (
-                        event.method is BackendEventMethod.permission_ask_raised
-                        and event.turn is not None
-                        and result.get("applied") is True
-                    ):
-                        from planner.executor.protocol import decode_event_arguments
-
-                        decoded = decode_event_arguments(event)
-                        from planner.conversation.backends.contracts import (
-                            PermissionAskRaisedArguments,
-                        )
-
-                        assert isinstance(decoded, PermissionAskRaisedArguments)
-                        ask = decoded.ask
-                        self.runs.store.publish_ask_in_transaction(
-                            conn,
-                            AskReference(event.child, event.turn, ask.ask_id, AskKind.permission),
-                            tuple(option.option_id for option in ask.options),
-                            now_ms(),
-                        )
-                    if (
-                        event.method is BackendEventMethod.user_input_requested
-                        and event.turn is not None
-                        and result.get("applied") is True
-                    ):
-                        from planner.executor.protocol import decode_event_arguments
-
-                        decoded = decode_event_arguments(event)
-                        from planner.conversation.backends.contracts import (
-                            UserInputRequestedArguments,
-                        )
-
-                        assert isinstance(decoded, UserInputRequestedArguments)
-                        request = decoded.request
-                        self.runs.store.publish_user_input_request_in_transaction(
-                            conn,
-                            AskReference(
-                                event.child, event.turn, request.request_id, AskKind.user_input
-                            ),
-                            request.questions,
-                            now_ms(),
-                        )
-                    if result.get("applied") is True and event.turn is not None:
-                        if event.method is BackendEventMethod.permission_ask_raised:
-                            self.runs.store.observe_callback_in_transaction(
-                                conn,
-                                AskReference(
-                                    event.child, event.turn, ask.ask_id, AskKind.permission
-                                ),
-                                identity,
-                                now_ms(),
-                            )
-                        elif event.method is BackendEventMethod.user_input_requested:
-                            self.runs.store.observe_callback_in_transaction(
-                                conn,
-                                AskReference(
-                                    event.child, event.turn, request.request_id, AskKind.user_input
-                                ),
-                                identity,
-                                now_ms(),
-                            )
-                    if (
-                        result.get("applied") is True
-                        and event.method is BackendEventMethod.turn_ended
-                        and event.turn is not None
-                    ):
-                        self.runs.store.revoke_turn_callbacks_in_transaction(
-                            conn, event.child, event.turn, identity, now_ms()
-                        )
                     return result
 
                 receipt, taken = self.store.accept_in_transaction(
@@ -498,6 +427,26 @@ class MacInbox:
                 in_commit=in_commit,
                 conversation_id=event.child.conversation_id,
             )
+            proxy = self.runs.children.get(event.child.child_id)
+            if result.taken and proxy is not None and event.turn is not None:
+                decoded = decode_event_arguments(event)
+                from planner.conversation.backends.contracts import (
+                    PermissionAskRaisedArguments,
+                    UserInputRequestedArguments,
+                )
+
+                if isinstance(decoded, PermissionAskRaisedArguments):
+                    proxy.observe_callback(
+                        AskReference(
+                            event.child, event.turn, decoded.ask.ask_id, AskKind.permission
+                        )
+                    )
+                elif isinstance(decoded, UserInputRequestedArguments):
+                    proxy.observe_callback(
+                        AskReference(
+                            event.child, event.turn, decoded.request.request_id, AskKind.user_input
+                        )
+                    )
             return TypeAdapter(AcceptanceReceipt).validate_python(result.result)
         if envelope.kind is EnvelopeKind.cli_write:
             return await self.agent_writes.accept(envelope, identity)
@@ -539,12 +488,18 @@ class MacInbox:
                 )
                 return AcceptedEvent(as_object(receipt), taken)
 
-            return await self.conversations.receive_remote_answer_application(
-                application,
-                in_commit,
-                self.runs.store.record_application_in_transaction,
-                self.runs.store.public_request_id(application.ask),
+            return TypeAdapter(AcceptanceReceipt).validate_python(
+                (
+                    await self.conversations.take_answer_application(
+                        application.ask.turn,
+                        application.answer_id,
+                        application.ask.ask_id,
+                        application.ask.kind.value,
+                        in_commit,
+                    )
+                ).result
             )
+
         raise ValueError("unknown executor envelope")
 
     def _command_outcome(self, conn: sqlite3.Connection, outcome: CommandOutcome) -> JsonObject:

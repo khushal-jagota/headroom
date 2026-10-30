@@ -1069,27 +1069,28 @@ remembering — this system keeps no grant state at all. Ask and answer are both
 notebook rows; an answer only lands on an ask that is still waiting on the live
 turn, and an unanswered ask dies — visibly — when its turn ends.
 
-For a remote child, the VPS saves the selected choice before transmission and
-records callback application separately. A dropped connection supplies no answer
-or refusal. An owner can save a new choice during the outage if the exact persisted
-child, turn, and callback remain open and pending. The request carries the original
-`executor_ask` reference from the snapshot. A remote `{landed: true}` confirms
-VPS acceptance; the UI says "Answer saved on VPS; delivery to Mac is pending."
-Only matching application evidence says "Answer applied on Mac." Fresh evidence
-of the original callback gates delivery after a short link outage in the same VPS process.
-A VPS restart closes that callback; a saved answer remains recorded but is not sent.
-Cancellation persists closure before waiting for the Mac; an ended or replaced turn cannot receive the
-saved answer. Such an answer stays saved and unresolved. A prior transmission
-can still receive its application acknowledgment after closure. See
-[the Mac executor](executor.md) for this boundary and its timing limitations.
+For a remote child, the conversation records the selected choice before
+transmission. The answer method returns `applied`, `saved`, or `refused`.
+A local callback succeeds as `applied`; a remote child holds a saved answer in
+VPS memory and returns `saved`. A dropped connection supplies no answer or
+refusal. The owner can save a choice during the outage while the conversation
+still has the request pending. The UI says "Answer saved on VPS; delivery to Mac
+is pending." A separate `answer_applied` event proves callback application.
+
+Reconnect delivers only to the exact original surviving callback. A replacement
+child receives nothing. After a VPS restart, the choice stays recorded but its
+in-memory delivery command is lost; it is never replayed and application remains
+unconfirmed. Cancellation closes the request before waiting for the Mac. Late
+proof of an earlier transmission can record application without reopening that
+request. See [the Mac executor](executor.md) for the timing limitations.
 
 Agent question requests keep every question in order, including
 its short header, full text, choices, descriptions, whether several choices are allowed,
 and whether a typed answer is allowed. The composer presents one question at a time and
 sends the complete answer map only after all are answered. For a remote child, the same
 authoritative answer path preserves the validated map before transmission. Its identity
-includes the callback type, child, turn, and request. The conversation answer row appears
-after callback application. A lost callback leaves the accepted map unresolved.
+includes the callback type, child, turn, and request. The conversation records the saved map separately
+from callback application. A lost callback leaves application unconfirmed.
 Refreshing the page rebuilds a still-pending request
 from the notebook. Cancelling the turn withdraws it. A malformed question request is
 shown as a failure and refused; it never turns into an approval prompt.

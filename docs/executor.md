@@ -17,9 +17,9 @@ Mac: ordinary Worker files + backend child
                   |
            Mac-initiated app WebSocket
                   |
-VPS: canonical writers + first receipts + complete files + accepted answers
+VPS: canonical writers + first receipts + complete files + conversation answers
                   |
-       reconnect inventory and recorded answers
+       reconnect inventory and process-held answers
                   |
 Mac: the original live callbacks, if they still exist
 ```
@@ -53,10 +53,10 @@ modules.
 
 ## VPS module responsibilities
 
-`vps_runs.py` owns retained Mac runs, command results, reconnection, stop proof,
-and saved answers. Its `MacRuns` object is the Mac backend factory; only Ticket
-Workers can use it. `vps_remote_child.py` implements the conversation's backend
-child interface and keeps the existing admission checks at command emission.
+`vps_runs.py` owns retained Mac runs, command results, reconnection, and stop proof.
+Its `MacRuns` object is the Mac backend factory; only Ticket Workers can use it.
+`vps_remote_child.py` implements the conversation's backend child interface, holds
+saved answers in memory, and keeps the admission checks at command emission.
 
 `vps_inbox.py` owns receipt order, duplicate replies, file reception, and applying
 recorded events through the conversation's shared `take_backend_event` entry point.
@@ -317,9 +317,10 @@ failures also close their original connection. Ordinary reconnect and replay
 recover durable receipts using the original submission identity and content hash.
 Neither failure retries a native operation in place or invents its outcome.
 
-An accepted answer and callback application are different durable facts. Panels
-saves the permission choice or complete question answer map before transmission.
-Reconciliation can give an old answer to its original surviving callback.
+An accepted answer and callback application are different transcript facts. Panels
+records the permission choice or complete question answer map before transmission.
+The live Mac child proxy holds its delivery command in VPS memory. Reconnect can
+give it only to its original surviving callback in the same VPS process.
 An unanswered callback keeps its wait.
 A missing child does not receive a replacement answer, a refusal, or a made-up
 turn ending.
@@ -369,32 +370,29 @@ That historical evidence grants no renewed execution, callback, event, or CLI au
 If the original command evidence is absent, delivery remains uncertain.
 The [retained initial-prompt procedure](initial-mac-prompt-cancellation.md) replaces only the isolated verification app.
 
-The VPS exposes per-ask evidence: uncertain, reachable, child gone, or callback
-gone, alongside the stored answer and its application. A restored link alone
-cannot prove delivery. During an outage, the owner can save an answer for the exact
-original request while its persisted child and turn remain open and pending.
-Reachability may be uncertain. The VPS validates the choice or complete answer map
-and saves it transactionally; the first answer wins. An identical retry returns
-the original receipt, including after closure. A conflicting retry fails.
+The owner can save an answer while the Mac is offline if the conversation still
+has that request pending. The browser submits its public conversation request ID.
+The conversation validates the choice or complete answer map and returns an
+`AnswerFate`: `applied`, `saved`, or `refused`. Local callback success is `applied`;
+a remote answer held by the live child proxy is `saved`. The UI says "Answer saved
+on VPS; delivery to Mac is pending." A separate `answer_applied` transcript event
+proves callback application and changes the display to "Answer applied on Mac."
+A restored link alone cannot prove delivery.
 
-The browser submits the exact child, turn, request kind, and request ID from its
-pending snapshot as `executor_ask`. For remote submissions, `{landed: true}` means
-durable acceptance on VPS. The UI says "Answer saved on VPS; delivery to Mac is
-pending." Only matching application evidence says "Answer applied on Mac."
-Delivery waits for fresh evidence of the original callback on a ready connection.
-A VPS restart closes the original callback before the Mac reconnects. The saved
-choice remains recorded but cannot be delivered to that closed callback. Cancellation,
-a completed turn, or a replaced child/turn also prevents new acceptance and delivery.
-Cancellation persists that closure before waiting for the Mac. Saved answers to
-closed callbacks remain unresolved; reconnect cannot reopen them. An application
-acknowledgment for an answer transmitted before closure can still record its effect.
+Delivery waits for the exact original child, turn, request kind, and callback on
+a ready connection. A replacement child never inherits the saved command. A VPS
+restart loses the delivery command and closes the old run; the recorded choice
+remains, with application unconfirmed, and is never replayed. Cancellation or a
+completed turn also prevents new delivery. An acknowledgment of an answer sent
+before closure can still record its effect, without reopening the closed request.
+A missing acknowledgment remains uncertainty, even if the answer might have arrived.
 
 Panels records callback application separately from tool execution. The clock
 exchange gives bounds for cross-host timing. Exact action timing requires
 correlated backend evidence. It stays unknown when that evidence is absent;
 callback acceptance is not proof that a tool ran.
 
-Code paths: `src/planner/executor/mac_runner.py`, `store.py`, `logic/reconciliation.py`,
+Code paths: `src/planner/executor/mac_runner.py`, `vps_remote_child.py`, `vps_runs.py`,
 `src/planner/conversation/system.py`, `api.py`, `storage.py`.
 
 ## Replacement keeps code apart from data
@@ -582,10 +580,9 @@ observation, or after a VPS restart, it is null. A failed health read leaves the
 current contact unknown. Contact and generation do not decide whether the VPS can save an answer.
 There is no timer-based cutoff that turns historical receipt into current activity.
 
-Conversation reads include nullable `executor_context`, with the actual remote
-child reference and current turn token. Pending ask controls require the exact
-child, turn, request kind, request ID, and pending snapshot membership.
-`answer_available` means the VPS can accept the answer, even while disconnected. One callback's
-evidence cannot authorize another callback, including a reused ID on an old child.
+Conversation pending snapshots determine which public request IDs can be answered.
+These controls remain available during a link outage while the request is current.
+Saved and applied status comes from the selected conversation rows, with separate
+application proof. Health and contact do not grant callback authority.
 
 _Last verified: 2026-10-30._

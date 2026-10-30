@@ -28,22 +28,6 @@ STATEMENTS = (
         executor_incarnation TEXT NOT NULL, child_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
         principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL, created_at_ms INTEGER NOT NULL,
         closed_at_ms INTEGER, PRIMARY KEY(executor_incarnation,child_id))""",
-    """CREATE TABLE executor_asks (
-        ask_key TEXT PRIMARY KEY, reference_json TEXT NOT NULL, option_ids_json TEXT NOT NULL,
-        ask_kind TEXT NOT NULL DEFAULT 'permission' CHECK(ask_kind IN ('permission','user_input')),
-        questions_json TEXT, user_input_answers_json TEXT,
-        executor_incarnation TEXT NOT NULL, child_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
-        connection_generation INTEGER NOT NULL, reachability TEXT NOT NULL,
-        observed_at_ms INTEGER NOT NULL,
-        answer_id TEXT UNIQUE, option_id TEXT, accepted_at_vps_ms INTEGER,
-        applied_at_mac_ms INTEGER,
-        CHECK((ask_kind='permission' AND questions_json IS NULL)
-           OR (ask_kind='user_input' AND questions_json IS NOT NULL)),
-        CHECK((answer_id IS NULL AND option_id IS NULL AND accepted_at_vps_ms IS NULL
-               AND user_input_answers_json IS NULL)
-           OR (answer_id IS NOT NULL AND accepted_at_vps_ms IS NOT NULL
-               AND ((ask_kind='permission' AND option_id IS NOT NULL AND user_input_answers_json IS NULL)
-                    OR (ask_kind='user_input' AND option_id IS NULL AND user_input_answers_json IS NOT NULL)))))""",
     """CREATE TABLE mac_runs (
         conversation_id TEXT PRIMARY KEY, executor_incarnation TEXT NOT NULL, child_id TEXT NOT NULL,
         principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL, turn_number INTEGER NOT NULL,
