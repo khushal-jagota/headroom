@@ -11,7 +11,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal, Protocol, TypedDict
+from typing import Annotated, ClassVar, Literal, Protocol, TypedDict, cast
 
 from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
@@ -927,3 +927,7 @@ def encode_frame(value: object) -> bytes:
     """Local IPC has no message boundaries, so prefix its bounded payload."""
     body = _encode_payload(value)
     return struct.pack("!I", len(body)) + body
+
+
+def as_object(value: object) -> JsonObject:
+    return cast(JsonObject, encode_value(value))

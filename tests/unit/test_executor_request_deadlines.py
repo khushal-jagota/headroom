@@ -11,8 +11,10 @@ from tests.support.executor_control import MessageReader, deliver, message_link
 
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
-from planner.executor import mac
-from planner.executor.mac import MacExecutor
+from planner.executor import catalog_relay as mac
+from planner.executor.catalog_relay import MacCatalogRelay
+from planner.executor.mac_agent_gateway import AgentGateway
+from planner.executor.mac_service import MacService
 from planner.executor.protocol import WireMessage, WireMessageKind
 from planner.executor.vps import ExecutorEndpoint
 
@@ -33,11 +35,13 @@ def peer() -> Any:
     return writer
 
 
-def requester(writer: Any) -> MacExecutor:
-    executor = MacExecutor.__new__(MacExecutor)
+def requester(writer: Any) -> MacService:
+    executor = MacService.__new__(MacService)
     executor.identity = IDENTITY
-    executor._link = message_link(writer, IDENTITY)
-    executor._handshake_accepted = False
+    executor.gateway = AgentGateway.__new__(AgentGateway)
+    executor.gateway._identity = lambda: executor.identity
+    executor.gateway._link = message_link(writer, IDENTITY)
+    executor.gateway._handshake_accepted = False
     return executor
 
 
@@ -266,7 +270,7 @@ def test_catalog_revocation_cannot_write_replacement_or_accept_late_reply(
 ) -> None:
     from dataclasses import replace
 
-    from planner.executor.mac import as_object
+    from planner.executor.protocol import as_object
 
     async def run() -> None:
         original, replacement = peer(), peer()
@@ -327,8 +331,7 @@ def test_catalog_reply_binds_context_schema_and_attempt_without_refreshing_time(
 
     from planner.conversation.contracts import ConversationBackendKey
     from planner.conversation.model_resolution.contracts import CatalogObservation, CatalogResponse
-    from planner.executor.mac import as_object
-    from planner.executor.protocol import ClockSample
+    from planner.executor.protocol import ClockSample, as_object
 
     async def run() -> None:
         writer = peer()
@@ -402,7 +405,13 @@ def test_catalog_reply_binds_context_schema_and_attempt_without_refreshing_time(
     asyncio.run(run())
 
 
-def catalog_native(writer: Any) -> MacExecutor:
+def catalog_frame(executor: MacService, frame: WireMessage) -> None:
+    link = executor.gateway._link
+    assert link is not None
+    executor.catalog.handle(frame, link, admit=lambda: executor.gateway.accepting(link))
+
+
+def catalog_native(writer: Any) -> MacService:
     from tests.support.executor_catalog import ScriptedCatalogObserver
 
     from planner.executor.protocol import ConnectionState
@@ -411,11 +420,11 @@ def catalog_native(writer: Any) -> MacExecutor:
     executor.identity = ExecutorIdentity(
         PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "12345678-1234-5678-1234-567812345678", 1
     )
-    executor.state = ConnectionState.ready
-    executor._handshake_accepted = True
-    executor._transport_admission_stopped = False
-    executor._catalog_tasks = {}
-    executor._catalog_observer = ScriptedCatalogObserver(lambda: executor.identity)
+    executor.gateway.state = ConnectionState.ready
+    executor.gateway._handshake_accepted = True
+    executor.gateway._transport_admission_stopped = False
+    executor.catalog = MacCatalogRelay("https://unused.example")
+    executor.catalog._catalog_observer = ScriptedCatalogObserver(lambda: executor.identity)
     executor.server_url = "https://unused.example"
     return executor
 
@@ -424,27 +433,26 @@ def catalog_native(writer: Any) -> MacExecutor:
 def test_native_catalog_admission_rejects_unready_or_unscoped_authority(invalid: str) -> None:
     from tests.support.executor_catalog import ScriptedCatalogObserver
 
-    from planner.executor.mac import as_object
-    from planner.executor.protocol import ConnectionState
+    from planner.executor.protocol import ConnectionState, as_object
 
     async def run() -> None:
         writer = peer()
         executor = catalog_native(writer)
-        observer = executor._catalog_observer
+        observer = executor.catalog._catalog_observer
         assert isinstance(observer, ScriptedCatalogObserver)
         payload: Any = as_object(catalog_request(executor.identity))
         if invalid == "non_ready":
-            executor.state = ConnectionState.reconciling
+            executor.gateway.state = ConnectionState.reconciling
         elif invalid == "stale_identity":
             payload["expected_context"]["executor_identity"]["connection_generation"] += 1
         elif invalid == "command":
             payload["executable"] = "/arbitrary/provider"
         else:
             payload["expected_context"]["workspace"]["workspace_home_relative"] = "../escape"
-        executor._catalog_frame(WireMessage(WireMessageKind.catalog_request, "untrusted", payload))
+        catalog_frame(executor, WireMessage(WireMessageKind.catalog_request, "untrusted", payload))
         await asyncio.sleep(0)
         assert observer.calls == 0
-        assert not executor._catalog_tasks
+        assert not executor.catalog._catalog_tasks
         writer.send.assert_not_called()
         writer.close.assert_not_called()
 
@@ -468,8 +476,7 @@ def test_native_catalog_capacity_survives_cancellation_until_physical_cleanup(
 ) -> None:
     from tests.support.executor_catalog import ScriptedCatalogObserver
 
-    from planner.executor.mac import as_object
-    from planner.executor.protocol import ConnectionState
+    from planner.executor.protocol import ConnectionState, as_object
 
     async def run() -> None:
         monkeypatch.setattr(mac, "MAX_CATALOG_OBSERVATIONS", 1)
@@ -478,14 +485,14 @@ def test_native_catalog_capacity_survives_cancellation_until_physical_cleanup(
         )
         writer = peer()
         executor = catalog_native(writer)
-        observer = executor._catalog_observer
+        observer = executor.catalog._catalog_observer
         assert isinstance(observer, ScriptedCatalogObserver)
         observer.block = True
         observer.cleanup_release.clear()
         request = catalog_request(executor.identity)
         frame = WireMessage(WireMessageKind.catalog_request, "one", as_object(request))
-        executor._catalog_frame(frame)
-        task = executor._catalog_tasks["one"][2]
+        catalog_frame(executor, frame)
+        task = executor.catalog._catalog_tasks["one"][2]
         await observer.entered.wait()
         cleanup: asyncio.Task[None] | None = None
         if cause == "cancel":
@@ -493,34 +500,34 @@ def test_native_catalog_capacity_survives_cancellation_until_physical_cleanup(
             # A mismatched workspace has no authority over the active observation.
             wrong: Any = as_object(request)
             wrong["expected_context"]["workspace"]["workspace_folder"] = "/different"
-            executor._catalog_frame(WireMessage(WireMessageKind.catalog_cancel, "one", wrong))
+            catalog_frame(executor, WireMessage(WireMessageKind.catalog_cancel, "one", wrong))
             assert not observer.cancelled.is_set()
-            executor._catalog_frame(cancel)
+            catalog_frame(executor, cancel)
         elif cause == "replacement_writer":
             replacement = peer()
-            executor._link = message_link(replacement, IDENTITY)
-            executor._catalog_frame(
-                WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload)
+            executor.gateway._link = message_link(replacement, IDENTITY)
+            catalog_frame(
+                executor, WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload)
             )
             assert not task.cancelling()
-            cleanup = asyncio.create_task(executor._settle_catalogs())
+            cleanup = asyncio.create_task(executor.catalog.settle())
         elif cause in ("disconnect", "quiescence"):
             if cause == "disconnect":
-                executor.state = ConnectionState.disconnected
+                executor.gateway.state = ConnectionState.disconnected
             else:
-                executor._transport_admission_stopped = True
-            cleanup = asyncio.create_task(executor._settle_catalogs())
+                executor.gateway._transport_admission_stopped = True
+            cleanup = asyncio.create_task(executor.catalog.settle())
         await observer.cancelled.wait()
-        assert len(executor._catalog_tasks) == 1
+        assert len(executor.catalog._catalog_tasks) == 1
         # Duplicate/late cancellation must not cancel the cleanup await itself.
         if cause in ("cancel", "deadline_then_cancel"):
             cancel = WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload)
-            executor._catalog_frame(cancel)
-            executor._catalog_frame(cancel)
-        executor._catalog_frame(WireMessage(WireMessageKind.catalog_request, "two", frame.payload))
+            catalog_frame(executor, cancel)
+            catalog_frame(executor, cancel)
+        catalog_frame(executor, WireMessage(WireMessageKind.catalog_request, "two", frame.payload))
         await asyncio.sleep(0)
         assert observer.calls == 1
-        assert len(executor._catalog_tasks) == 1
+        assert len(executor.catalog._catalog_tasks) == 1
         observer.cleanup_release.set()
         if cleanup is not None:
             await cleanup
@@ -529,8 +536,8 @@ def test_native_catalog_capacity_survives_cancellation_until_physical_cleanup(
         await wait_for_settlement(task)
         await asyncio.sleep(0)
         assert writer.send.call_count == (1 if cause == "deadline" else 0)
-        assert not executor._catalog_tasks
-        executor._catalog_frame(WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload))
+        assert not executor.catalog._catalog_tasks
+        catalog_frame(executor, WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload))
         writer.close.assert_not_called()
 
     asyncio.run(run())

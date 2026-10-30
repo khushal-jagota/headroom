@@ -17,7 +17,7 @@ import pytest
 from planner.execution_identity import ChildReference
 from planner.executor import files
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.mac import MacExecutor, as_object
+from planner.executor.mac_service import MacService
 from planner.executor.protocol import (
     AcceptanceReceipt,
     IpcOperation,
@@ -27,6 +27,7 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     WireMessage,
     WireMessageKind,
+    as_object,
 )
 
 
@@ -49,17 +50,17 @@ def test_mac_full_flush_failure_propagates_after_regular_flush(
     assert events == [("fsync", 17), ("fullfsync", 17)]
 
 
-def ipc_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[MacExecutor, IpcRequest]:
-    mac = MacExecutor(
+def ipc_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[MacService, IpcRequest]:
+    mac = MacService(
         paths=ExecutorPaths(tmp_path),
         revision="a" * 40,
         executor_id="owner-mac",
         panels_server_url="https://unused",
     )
-    mac._handshake_accepted = True
+    mac.gateway._handshake_accepted = True
     reference = ChildReference(mac.identity.executor_incarnation, str(uuid4()), "c_one")
     child = SimpleNamespace(reference=reference, ticket_id=None, active_turn=None)
-    monkeypatch.setattr(mac.registry, "authenticate", lambda *_: child)
+    monkeypatch.setattr(mac.runner, "authenticate", lambda *_: child)
 
     async def accept(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
         assert kind is WireMessageKind.envelope
@@ -78,7 +79,7 @@ def ipc_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[MacExec
             ),
         )
 
-    monkeypatch.setattr(mac, "request", accept)
+    monkeypatch.setattr(mac.gateway, "request", accept)
     return mac, IpcRequest(
         "original-submission",
         IpcOperation.write,
@@ -93,7 +94,7 @@ def test_ipc_receives_confirmation_before_source_publication_returns(
 ) -> None:
     async def run() -> None:
         mac, request = ipc_writer(tmp_path, monkeypatch)
-        source_work = mac.registry.source_work
+        source_work = mac.runner.source_work
         release = asyncio.Event()
         confirmed = asyncio.Event()
 
@@ -105,10 +106,12 @@ def test_ipc_receives_confirmation_before_source_publication_returns(
         ) -> OutboxRecord:
             async def publish() -> OutboxRecord:
                 row = await work()
-                response = await mac.request(WireMessageKind.envelope, as_object(row.envelope))
+                response = await mac.gateway.request(
+                    WireMessageKind.envelope, as_object(row.envelope)
+                )
                 from pydantic import TypeAdapter
 
-                mac.spool.acknowledge(
+                mac.outbox.acknowledge(
                     TypeAdapter(AcceptanceReceipt).validate_python(response.payload)
                 )
                 confirmed.set()
@@ -117,18 +120,18 @@ def test_ipc_receives_confirmation_before_source_publication_returns(
 
             return await source_work(child, publish, new_work=new_work)
 
-        monkeypatch.setattr(mac.registry, "source_work", publish_and_confirm)
+        monkeypatch.setattr(mac.runner, "source_work", publish_and_confirm)
         try:
-            response = await asyncio.wait_for(mac.handle_ipc(request), 2)
+            response = await asyncio.wait_for(mac.gateway.handle(request), 2)
             assert confirmed.is_set() and response.result == {"landed": True}
-            assert not mac._publications[request.request_id].task.done()
+            assert not mac.gateway._publications[request.request_id].task.done()
             release.set()
-            await mac._publications[request.request_id].task
+            await mac.gateway._publications[request.request_id].task
             await asyncio.sleep(0)
-            assert not mac._publications and not mac.spool._waiters
+            assert not mac.gateway._publications and not mac.outbox._waiters
         finally:
             release.set()
-            mac.spool.close()
+            mac.outbox.close()
 
     asyncio.run(run())
 
@@ -139,7 +142,7 @@ def test_caller_cancellation_never_cancels_physical_add_or_later_confirmation(
 ) -> None:
     async def run() -> None:
         mac, request = ipc_writer(tmp_path, monkeypatch)
-        source_work = mac.registry.source_work
+        source_work = mac.runner.source_work
         entered, release = asyncio.Event(), asyncio.Event()
 
         async def controlled(
@@ -157,20 +160,20 @@ def test_caller_cancellation_never_cancels_physical_add_or_later_confirmation(
 
             return await source_work(child, publish, new_work=new_work)
 
-        monkeypatch.setattr(mac.registry, "source_work", controlled)
-        task = asyncio.create_task(mac.handle_ipc(request))
+        monkeypatch.setattr(mac.runner, "source_work", controlled)
+        task = asyncio.create_task(mac.gateway.handle(request))
         try:
             await asyncio.wait_for(entered.wait(), 2)
-            publication = mac._publications[request.request_id]
+            publication = mac.gateway._publications[request.request_id]
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
             assert not publication.task.done()
             release.set()
             await publication.task
-            row = mac.spool.lookup(request.request_id)
+            row = mac.outbox.lookup(request.request_id)
             assert row is not None and row.pending
-            mac.spool.acknowledge(
+            mac.outbox.acknowledge(
                 AcceptanceReceipt(
                     row.envelope.sender_id,
                     request.request_id,
@@ -180,7 +183,7 @@ def test_caller_cancellation_never_cancels_physical_add_or_later_confirmation(
                     1,
                 )
             )
-            response = await mac.handle_ipc(
+            response = await mac.gateway.handle(
                 replace(
                     request,
                     operation=IpcOperation.retry,
@@ -188,10 +191,10 @@ def test_caller_cancellation_never_cancels_physical_add_or_later_confirmation(
                 )
             )
             assert response.result == {"landed": True}
-            assert not mac.spool._waiters and not mac._publications
+            assert not mac.outbox._waiters and not mac.gateway._publications
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
-            mac.spool.close()
+            mac.outbox.close()
 
     asyncio.run(run())

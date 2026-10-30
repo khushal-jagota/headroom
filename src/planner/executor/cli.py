@@ -30,7 +30,7 @@ def run(executor_id: str, application_revision: str, panels_server_url: str) -> 
         MacExecutorConfigurationError,
     )
     from planner.environments.mac_executor.launch_agent import validate_executor_launch
-    from planner.executor.mac import MacExecutor
+    from planner.executor.mac_service import MacService
 
     try:
         validate_executor_launch(
@@ -39,7 +39,7 @@ def run(executor_id: str, application_revision: str, panels_server_url: str) -> 
     except MacExecutorConfigurationError as error:
         raise click.ClickException(str(error)) from error
     asyncio.run(
-        MacExecutor(
+        MacService(
             paths=executor_paths(),
             revision=application_revision,
             executor_id=executor_id,
