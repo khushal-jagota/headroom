@@ -28,12 +28,10 @@ from planner.executor.contracts import (
     AnswerApplication,
     AskReachability,
     AskReference,
-    AuthorizedAction,
     ChildCommand,
     ChildInventory,
     ChildOperation,
     ChildReference,
-    ClockSample,
     CommandDisposition,
     CommandOutcome,
     EnvelopeKind,
@@ -308,7 +306,7 @@ def test_terminal_evidence_survives_loss_reconnect_reconcile_and_late_observatio
         store.choose_answer(ASK, "allow", 2, 1203)
 
 
-def test_old_durable_answer_reconciles_once_and_application_is_separate_from_action(
+def test_old_durable_answer_reconciles_once_and_retains_application(
     store: ExecutorStore,
 ) -> None:
     ready_ask(store)
@@ -324,16 +322,6 @@ def test_old_durable_answer_reconciles_once_and_application_is_separate_from_act
     store.record_application(
         AnswerApplication(answer.answer_id, ASK, 3600110), identity=replacement
     )
-    unknown = store.action_timing(ASK)
-    assert unknown is not None
-    assert unknown.unknown_reason == "action not observed"
-    sample = ClockSample(3600000, 3600105, 3600107, 3600012)
-    store.record_action(
-        AuthorizedAction(answer.answer_id, ASK, "tool", 3600200), sample, identity=replacement
-    )
-    timing = store.action_timing(ASK)
-    assert timing is not None
-    assert (timing.elapsed_lower_ms, timing.elapsed_upper_ms) == (3598995, 3599005)
     assert store.reconcile(inventory(identity=replacement), 3600300).answers == ()
     evidence = store.ask_evidence(ASK)
     assert evidence is not None

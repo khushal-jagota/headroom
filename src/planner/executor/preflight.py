@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import stat
 from functools import cache
@@ -13,8 +14,20 @@ from pydantic import TypeAdapter
 
 from planner.executor.configuration import SPOOL_FORMAT_VERSION
 from planner.executor.contracts import QueuedEnvelope
-from planner.executor.legacy_preflight import _mode_if_present, _safe_id
 from planner.executor.outbox_storage import DATABASE_NAME, SCHEMA, SCHEMA_VERSION
+
+
+def _mode_if_present(path: Path) -> int | None:
+    # Path.exists/is_dir/is_file suppress all OSError on newer Python releases.
+    # Only an actual absent path is a successful empty-state observation here.
+    try:
+        return path.lstat().st_mode
+    except FileNotFoundError:
+        return None
+
+
+def _safe_id(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]+", value) is not None
 
 
 def check_spool_compatibility(root: Path, expected_format: int) -> None:

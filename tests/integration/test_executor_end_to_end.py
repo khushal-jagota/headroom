@@ -880,8 +880,6 @@ def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
             assert harness.native.start_count == harness.native.prompt_count == 1
             assert harness.endpoint.store.recorded_answer(harness.ask) == answer
             assert harness.events("permission_asked") == 1
-            timing = harness.endpoint.store.action_timing(harness.ask)
-            assert timing is not None and timing.unknown_reason == "action not observed"
         finally:
             await harness.close()
 

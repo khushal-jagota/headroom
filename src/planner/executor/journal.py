@@ -11,17 +11,19 @@ import shutil
 import sqlite3
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from planner.executor.configuration import OUTBOX_COPY_BYTES, SPOOL_FORMAT_VERSION
+from planner.executor.configuration import OUTBOX_COPY_BYTES, SPOOL_FORMAT_VERSION, ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
+    ChildReference,
     EnvelopeKind,
     FileManifest,
+    FileScope,
     FileSnapshot,
     JournalPublication,
     JsonObject,
@@ -29,7 +31,7 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.files import fsync_directory, fsync_file, safe_component
+from planner.executor.files import fsync_directory, fsync_file, safe_component, snapshot_ticket
 from planner.executor.outbox_storage import (
     DATABASE_NAME,
     connect_database,
@@ -66,6 +68,10 @@ def envelope_payload_digest(
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
+
+
+class _CaptureChanged(Exception):
+    """Another local envelope committed while artifact bytes were inspected."""
 
 
 class FilesystemSpool:
@@ -128,6 +134,89 @@ class FilesystemSpool:
                 self._database.close()
             self._process_lock.close()
 
+    def mint_ticket_envelope(
+        self,
+        *,
+        paths: ExecutorPaths,
+        ticket_id: str,
+        child: ChildReference,
+        kind: EnvelopeKind,
+        payload: JsonObject,
+        submission_id: str | None = None,
+    ) -> QueuedEnvelope:
+        while True:
+            with ExitStack() as pins:
+                previous: dict[str, FileManifest] = {}
+                retained: dict[str, FileSnapshot] = {}
+                expected_child = TypeAdapter(ChildReference).dump_python(child, mode="json")
+                # Pin under the existing journal lock, then inspect bytes outside it.
+                # No capture, network operation, or delivery gate holds this lock.
+                with self._lock:
+                    row = self._db.execute(
+                        "SELECT sequence FROM conversations WHERE conversation_id=?",
+                        (child.conversation_id,),
+                    ).fetchone()
+                    sequence = row[0] if row else 0
+                    for encoded, pending in self._db.execute(
+                        "SELECT envelope_json,pending FROM envelopes WHERE conversation_id=? "
+                        "ORDER BY sequence DESC", (child.conversation_id,)
+                    ):
+                        envelope = TypeAdapter(QueuedEnvelope).validate_json(encoded)
+                        if envelope.payload.get("child") != expected_child:
+                            continue
+                        selected = [
+                            manifest for manifest in envelope.file_dependencies
+                            if manifest.scope is FileScope.ticket
+                            and manifest.owner_id == ticket_id
+                            and manifest.relative_path not in previous
+                        ]
+                        if not selected:
+                            continue
+                        for manifest in selected:
+                            previous[manifest.relative_path] = manifest
+                        if pending:
+                            snapshots = pins.enter_context(
+                                self.pin_snapshots(envelope.submission_id)
+                            )
+                            for snapshot in snapshots:
+                                if snapshot.manifest in selected:
+                                    retained[snapshot.manifest.publication_id] = snapshot
+
+                def reuse(
+                    manifest: FileManifest,
+                    retained: dict[str, FileSnapshot] = retained,
+                ) -> FileSnapshot | None:
+                    return retained.get(manifest.publication_id)
+
+                captured = snapshot_ticket(paths, ticket_id, previous=previous, reuse=reuse)
+                try:
+                    return self.mint_envelope(
+                        conversation_id=child.conversation_id, kind=kind, payload=payload,
+                        snapshots=captured, submission_id=submission_id,
+                        expected_sequence=sequence,
+                    )
+                except _CaptureChanged:
+                    # Recompare against the committed version, not stale capture state.
+                    for snapshot in captured:
+                        if snapshot.local_path.parent.name == ".executor-snapshots":
+                            snapshot.local_path.unlink(missing_ok=True)
+
+    def dependency_acknowledged(self, envelope: QueuedEnvelope, manifest: FileManifest) -> bool:
+        """An earlier exact-owner receipt already proves these immutable bytes."""
+        with self._lock:
+            for (encoded,) in self._db.execute(
+                "SELECT envelope_json FROM envelopes WHERE conversation_id=? "
+                "AND sequence<? AND pending=0",
+                (envelope.conversation_id, envelope.sequence),
+            ):
+                earlier = TypeAdapter(QueuedEnvelope).validate_json(encoded)
+                if (
+                    earlier.payload.get("child") == envelope.payload.get("child")
+                    and manifest in earlier.file_dependencies
+                ):
+                    return True
+            return False
+
     def mint_envelope(
         self,
         *,
@@ -136,6 +225,7 @@ class FilesystemSpool:
         payload: JsonObject,
         snapshots: tuple[FileSnapshot, ...] = (),
         submission_id: str | None = None,
+        expected_sequence: int | None = None,
     ) -> QueuedEnvelope:
         with self._lock:
             safe_component(conversation_id)
@@ -149,6 +239,9 @@ class FilesystemSpool:
             counter = self._db.execute(
                 "SELECT sequence FROM conversations WHERE conversation_id=?", (conversation_id,)
             ).fetchone()
+            current_sequence = counter[0] if counter else 0
+            if expected_sequence is not None and expected_sequence != current_sequence:
+                raise _CaptureChanged
             sequence = previous[1] if previous else (counter[0] if counter else 0) + 1
             digest = envelope_payload_digest(
                 payload,

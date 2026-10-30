@@ -21,19 +21,16 @@ from planner.core.db import connect
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AcceptanceReceipt,
-    AnswerActionTiming,
     AnswerAdmission,
     AnswerApplication,
     AskEvidence,
     AskKind,
     AskReachability,
     AskReference,
-    AuthorizedAction,
     BackendEvent,
     ChildCommand,
     ChildOperation,
     ChildReference,
-    ClockSample,
     CommandDisposition,
     CommandOutcome,
     ConnectionState,
@@ -50,7 +47,6 @@ from planner.executor.contracts import (
     TransactionalWriter,
 )
 from planner.executor.logic.reconciliation import (
-    answer_action_timing,
     answer_target_is_open,
     callback_reachability,
     preserved_reachability,
@@ -981,30 +977,6 @@ class ExecutorStore:
             (application.applied_at_mac_ms, _ask_key(application.ask)),
         )
 
-    def record_action(
-        self, action: AuthorizedAction, sample: ClockSample | None, *, identity: ExecutorIdentity
-    ) -> None:
-        with self._transaction() as connection:
-            self._connected(connection, identity)
-            self.record_action_in_transaction(connection, action, sample)
-
-    @staticmethod
-    def record_action_in_transaction(
-        connection: sqlite3.Connection, action: AuthorizedAction, sample: ClockSample | None
-    ) -> None:
-        row = connection.execute(
-            "SELECT * FROM executor_asks WHERE ask_key=?", (_ask_key(action.ask),)
-        ).fetchone()
-        if row is None or row["answer_id"] != action.answer_id:
-            raise _invalid("Action does not match the recorded answer")
-        if row["action_json"] is not None:
-            if row["action_json"] != _record(action):
-                raise _invalid("Action conflicts with first observed action")
-            return
-        connection.execute(
-            "UPDATE executor_asks SET action_json=?,clock_sample_json=? WHERE ask_key=?",
-            (_record(action), _record(sample) if sample else None, _ask_key(action.ask)),
-        )
 
     def ask_evidence(self, ask: AskReference) -> AskEvidence | None:
         connection = connect(self.db_path)
@@ -1025,21 +997,6 @@ class ExecutorStore:
         finally:
             connection.close()
 
-    def action_timing(self, ask: AskReference) -> AnswerActionTiming | None:
-        connection = connect(self.db_path)
-        try:
-            row = connection.execute(
-                "SELECT * FROM executor_asks WHERE ask_key=?", (_ask_key(ask),)
-            ).fetchone()
-            if row is None or row["answer_id"] is None:
-                return None
-            return answer_action_timing(
-                self._answer(row),
-                _parse(AuthorizedAction, row["action_json"]) if row["action_json"] else None,
-                _parse(ClockSample, row["clock_sample_json"]) if row["clock_sample_json"] else None,
-            )
-        finally:
-            connection.close()
 
     @staticmethod
     def _publication_matches(connection: sqlite3.Connection, manifest: FileManifest) -> bool:

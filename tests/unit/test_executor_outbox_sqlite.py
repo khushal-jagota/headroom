@@ -1,9 +1,8 @@
-"""SQLite atomicity, pinned transfer bytes, indexed heads, and offline conversion."""
+"""SQLite atomicity, pinned transfer bytes, and indexed heads."""
 
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sqlite3
 import subprocess
@@ -11,7 +10,6 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 from pydantic import TypeAdapter
@@ -27,8 +25,7 @@ from planner.executor.contracts import (
 )
 from planner.executor.files import fsync_directory, snapshot_file
 from planner.executor.journal import FilesystemSpool, envelope_payload_digest
-from planner.executor.outbox_conversion import CONVERSION_DIRECTORY, convert_legacy_spool
-from planner.executor.outbox_storage import DATABASE_NAME, publish_metadata, write_file
+from planner.executor.outbox_storage import DATABASE_NAME
 from planner.executor.preflight import check_spool_compatibility
 
 
@@ -216,253 +213,6 @@ def test_schema_tamper_and_partial_fresh_initialization_refuse_without_reset(
     assert contents(broken) == before
 
 
-def legacy_spool(root: Path) -> tuple[Path, QueuedEnvelope]:
-    spool = root / "spool"
-    spool.mkdir()
-    (spool / "lock").touch()
-    sender = uuid4().hex
-    digest = envelope_payload_digest(
-        {"value": 1},
-        (),
-        sender_id=sender,
-        conversation_id="c_one",
-        sequence=2,
-        submission_id="pending",
-        kind=EnvelopeKind.cli_write,
-    )
-    envelope = QueuedEnvelope(
-        sender, "c_one", 2, "pending", EnvelopeKind.cli_write, {"value": 1}, digest, ()
-    )
-    folder = spool / "entries" / "pending"
-    folder.mkdir(parents=True)
-    (folder / "envelope.json").write_bytes(TypeAdapter(QueuedEnvelope).dump_json(envelope))
-    (spool / "metadata.json").write_text(
-        json.dumps(
-            {
-                "format": 1,
-                "sender_id": sender,
-                "sequences": {"c_one": 4},
-                "identities": {
-                    "ack": ["c_one", 1, "a" * 64],
-                    "pending": ["c_one", 2, digest],
-                    "ack-later": ["c_one", 4, "b" * 64],
-                },
-            }
-        )
-    )
-    (spool / ".incomplete-debug").mkdir()
-    (spool / ".incomplete-debug" / "bytes").write_bytes(b"unpublished diagnostic")
-    return spool, envelope
-
-
-def test_offline_conversion_preserves_identity_counters_source_and_lock_inode(
-    tmp_path: Path,
-) -> None:
-    spool, pending = legacy_spool(tmp_path)
-    before = contents(spool)
-    lock_inode = (spool / "lock").stat().st_ino
-    convert_legacy_spool(spool)
-    after = contents(spool)
-    for name, value in before.items():
-        if name != "metadata.json":
-            assert after[name] == value
-    assert (spool / CONVERSION_DIRECTORY / "metadata-v1.json").read_bytes() == before[
-        "metadata.json"
-    ]
-    assert (spool / "lock").stat().st_ino == lock_inode
-    converted = FilesystemSpool(spool)
-    assert converted.pending() == (pending,)
-    assert (
-        converted.mint_envelope(
-            conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={}
-        ).sequence
-        == 5
-    )
-    with sqlite3.connect(spool / DATABASE_NAME) as db:
-        assert db.execute(
-            "SELECT sequence,payload_sha256 FROM identities WHERE submission_id='ack'"
-        ).fetchone() == (1, "a" * 64)
-    converted.close()
-    before = contents(spool)
-    convert_legacy_spool(spool)
-    assert contents(spool) == before
-
-
-@pytest.mark.parametrize("point", ["fence", "backup", "database", "metadata"])
-def test_offline_conversion_interruption_retries_without_reset(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    point: str,
-) -> None:
-    import planner.executor.outbox_conversion as conversion
-
-    spool, pending = legacy_spool(tmp_path)
-    original_metadata = (spool / "metadata.json").read_bytes()
-    real_sync = fsync_directory
-    real_write = write_file
-    real_publish = publish_metadata
-    real_replace = os.replace
-
-    def interrupted_sync(path: Path) -> None:
-        real_sync(path)
-        if point == "fence" and path == spool and (spool / CONVERSION_DIRECTORY).exists():
-            raise OSError("crash after fence")
-
-    def interrupted_write(path: Path, data: bytes) -> None:
-        if point == "backup" and path.name.startswith(".backup-"):
-            path.write_bytes(data[:10])
-            raise OSError("crash during backup")
-        real_write(path, data)
-
-    def interrupted_replace(source: Path, target: Path) -> None:
-        real_replace(source, target)
-        if point == "database" and target == spool / DATABASE_NAME:
-            raise OSError("crash after database publication")
-
-    def interrupted_publish(path: Path, sender: str) -> None:
-        real_publish(path, sender)
-        if point == "metadata":
-            raise OSError("crash after metadata publication")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(conversion, "fsync_directory", interrupted_sync)
-        patch.setattr(conversion, "write_file", interrupted_write)
-        patch.setattr(os, "replace", interrupted_replace)
-        patch.setattr(conversion, "publish_metadata", interrupted_publish)
-        with pytest.raises(OSError, match="crash"):
-            convert_legacy_spool(spool)
-    convert_legacy_spool(spool)
-    converted = FilesystemSpool(spool)
-    assert converted.pending() == (pending,)
-    assert (spool / CONVERSION_DIRECTORY / "metadata-v1.json").read_bytes() == original_metadata
-    assert (
-        converted.mint_envelope(
-            conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={}
-        ).sequence
-        == 5
-    )
-    converted.close()
-
-
-@pytest.mark.parametrize("resumed", [False, True])
-@pytest.mark.parametrize("failed_name", ["envelope.json", "file-0"])
-def test_converter_flushes_source_before_publication_and_retries(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    resumed: bool,
-    failed_name: str,
-) -> None:
-    from dataclasses import replace
-
-    import planner.executor.outbox_conversion as conversion
-    from planner.executor.files import fsync_file
-
-    spool, pending = legacy_spool(tmp_path)
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "file").write_bytes(b"retained legacy snapshot")
-    snapshot = snapshot_file(
-        root=source, relative_path="file", scope=FileScope.ticket, owner_id="t_one"
-    )
-    manifests = (snapshot.manifest,)
-    digest = envelope_payload_digest(
-        pending.payload,
-        manifests,
-        sender_id=pending.sender_id,
-        conversation_id=pending.conversation_id,
-        sequence=pending.sequence,
-        submission_id=pending.submission_id,
-        kind=pending.kind,
-    )
-    pending = replace(pending, file_dependencies=manifests, payload_sha256=digest)
-    entry = spool / "entries" / pending.submission_id
-    (entry / "envelope.json").write_bytes(TypeAdapter(QueuedEnvelope).dump_json(pending))
-    (entry / "file-0").write_bytes(snapshot.local_path.read_bytes())
-    metadata = json.loads((spool / "metadata.json").read_bytes())
-    metadata["identities"][pending.submission_id][2] = digest
-    (spool / "metadata.json").write_text(json.dumps(metadata))
-
-    def interrupted_publish(path: Path, sender: str) -> None:
-        raise OSError("interrupted before metadata publication")
-
-    if resumed:
-        with monkeypatch.context() as patch:
-            patch.setattr(conversion, "publish_metadata", interrupted_publish)
-            with pytest.raises(OSError, match="interrupted"):
-                convert_legacy_spool(spool)
-    before = contents(spool)
-    flushed: list[Path] = []
-    failed_inode = (entry / failed_name).stat().st_ino
-
-    def failed_flush(descriptor: int) -> None:
-        if os.fstat(descriptor).st_ino == failed_inode:
-            raise OSError("source flush failed")
-        fsync_file(descriptor)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(conversion, "fsync_file", failed_flush)
-        with pytest.raises(OSError, match="source flush failed"):
-            convert_legacy_spool(spool)
-    assert contents(spool) == before
-
-    def tracked_flush(descriptor: int) -> None:
-        fsync_file(descriptor)
-        inode = os.fstat(descriptor).st_ino
-        for name in ("file-0", "envelope.json"):
-            path = entry / name
-            if path.stat().st_ino == inode:
-                flushed.append(path)
-
-    def tracked_directory(path: Path) -> None:
-        fsync_directory(path)
-        flushed.append(path)
-
-    real_replace = os.replace
-
-    def checked_publication(source: Path, target: Path) -> None:
-        if target == spool / DATABASE_NAME:
-            assert flushed[:4] == [
-                entry / "file-0",
-                entry / "envelope.json",
-                entry,
-                spool / "entries",
-            ]
-        real_replace(source, target)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(conversion, "fsync_file", tracked_flush)
-        patch.setattr(conversion, "fsync_directory", tracked_directory)
-        patch.setattr(os, "replace", checked_publication)
-        convert_legacy_spool(spool)
-    converted = FilesystemSpool(spool)
-    try:
-        assert converted.pending() == (pending,)
-        assert converted.snapshots(pending.submission_id)[0].local_path.read_bytes() == (
-            b"retained legacy snapshot"
-        )
-    finally:
-        converted.close()
-
-
-def test_converter_refuses_unknown_database_and_active_process_without_mutation(
-    tmp_path: Path,
-) -> None:
-    import fcntl
-
-    spool, _ = legacy_spool(tmp_path)
-    with (spool / "lock").open("r+b") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        before = contents(spool)
-        with pytest.raises(ValueError, match="stop the executor"):
-            convert_legacy_spool(spool)
-        assert contents(spool) == before
-    (spool / DATABASE_NAME).write_bytes(b"unknown database do not overwrite")
-    before = contents(spool)
-    with pytest.raises(ValueError, match="unknown database"):
-        convert_legacy_spool(spool)
-    assert contents(spool) == before
-
-
 def test_database_failure_rolls_back_sequence_and_identity_before_retry(tmp_path: Path) -> None:
     spool = FilesystemSpool(tmp_path / "spool")
     spool._db.execute(
@@ -539,81 +289,6 @@ def test_ack_database_failure_keeps_pending_bytes(tmp_path: Path) -> None:
     assert spool.pending() == (row,)
     assert (spool.root / "entries" / row.submission_id).exists()
     spool.close()
-
-
-@pytest.mark.parametrize("corrupt", [False, True])
-def test_converter_preserves_and_validates_snapshot_bytes(tmp_path: Path, corrupt: bool) -> None:
-    from dataclasses import replace
-
-    spool, pending = legacy_spool(tmp_path)
-    source = tmp_path / "source"
-    source.mkdir()
-    original = b"\x00\xff" * 200_000
-    (source / "file").write_bytes(original)
-    snapshot = snapshot_file(
-        root=source, relative_path="file", scope=FileScope.ticket, owner_id="t_one"
-    )
-    manifests = (snapshot.manifest,)
-    digest = envelope_payload_digest(
-        pending.payload,
-        manifests,
-        sender_id=pending.sender_id,
-        conversation_id=pending.conversation_id,
-        sequence=pending.sequence,
-        submission_id=pending.submission_id,
-        kind=pending.kind,
-    )
-    pending = replace(pending, file_dependencies=manifests, payload_sha256=digest)
-    entry = spool / "entries" / pending.submission_id
-    (entry / "envelope.json").write_bytes(TypeAdapter(QueuedEnvelope).dump_json(pending))
-    (entry / "file-0").write_bytes(b"bad" if corrupt else original)
-    metadata = json.loads((spool / "metadata.json").read_bytes())
-    metadata["identities"][pending.submission_id][2] = digest
-    (spool / "metadata.json").write_text(json.dumps(metadata))
-    before = contents(spool)
-    if corrupt:
-        with pytest.raises(ValueError, match="corrupt immutable snapshot"):
-            convert_legacy_spool(spool)
-        assert contents(spool) == before
-    else:
-        convert_legacy_spool(spool)
-        converted = FilesystemSpool(spool)
-        assert converted.pending() == (pending,)
-        assert converted.snapshots(pending.submission_id)[0].local_path.read_bytes() == original
-        converted.close()
-
-
-@pytest.mark.parametrize("with_fence", [False, True])
-def test_converter_refuses_dangling_database_symlink(tmp_path: Path, with_fence: bool) -> None:
-    spool, _ = legacy_spool(tmp_path)
-    if with_fence:
-        fence = spool / CONVERSION_DIRECTORY
-        fence.mkdir()
-        (fence / "metadata-v1.json").write_bytes((spool / "metadata.json").read_bytes())
-    target = tmp_path / "absent"
-    (spool / DATABASE_NAME).symlink_to(target)
-    original_metadata = (spool / "metadata.json").read_bytes()
-    with pytest.raises(ValueError, match="unknown database"):
-        convert_legacy_spool(spool)
-    assert (spool / DATABASE_NAME).is_symlink()
-    assert not target.exists()
-    assert (spool / "metadata.json").read_bytes() == original_metadata
-
-
-def test_converter_refuses_foreign_sender_database_after_fence(tmp_path: Path) -> None:
-    from planner.executor.outbox_storage import connect_database, initialize_database
-
-    spool, _ = legacy_spool(tmp_path)
-    fence = spool / CONVERSION_DIRECTORY
-    fence.mkdir()
-    (fence / "metadata-v1.json").write_bytes((spool / "metadata.json").read_bytes())
-    db = connect_database(spool / DATABASE_NAME)
-    initialize_database(db, uuid4().hex)
-    db.close()
-    before = contents(spool)
-    with pytest.raises(ValueError, match="sender differs"):
-        convert_legacy_spool(spool)
-    assert contents(spool) == before
 
 
 def test_fresh_directory_ancestors_are_synced_before_child_creation(
@@ -712,29 +387,6 @@ def test_second_process_owner_refuses_without_replacing_lock_or_state(tmp_path: 
     assert (spool.root / "lock").stat().st_ino == lock_inode
     assert spool.pending() == (row,)
     spool.close()
-
-
-def test_offline_conversion_cli_reports_result_and_sqlite_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from click.testing import CliRunner
-
-    import planner.executor.outbox_conversion as conversion
-    from planner.executor.cli import executor_group
-
-    legacy_spool(tmp_path)
-    result = CliRunner().invoke(executor_group, ["convert-spool", "--root", str(tmp_path)])
-    assert result.exit_code == 0
-    assert "Spool format 2 is ready" in result.output
-
-    def failed(path: Path) -> None:
-        raise sqlite3.DatabaseError("invalid legacy database")
-
-    monkeypatch.setattr(conversion, "convert_legacy_spool", failed)
-    result = CliRunner().invoke(executor_group, ["convert-spool", "--root", str(tmp_path)])
-    assert result.exit_code == 1
-    assert "Error: invalid legacy database" in result.output
 
 
 def test_equal_event_bytes_share_inodes_across_restart_and_pinned_cleanup(tmp_path: Path) -> None:
@@ -893,3 +545,159 @@ def test_interrupted_link_publication_preserves_original_and_exact_retry(
         spool.snapshots(retried.submission_id)[0].local_path.stat().st_ino == original.stat().st_ino
     )
     spool.close()
+
+
+def test_ticket_capture_reuses_pending_and_acknowledged_bytes_after_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.executor import files
+    from planner.executor.configuration import ExecutorPaths
+    from planner.executor.contracts import ChildReference
+
+    paths = ExecutorPaths(tmp_path)
+    directory = paths.artifacts / "t_one"
+    directory.mkdir(parents=True)
+    (directory / "image").write_bytes(b"A")
+    child = ChildReference("incarnation", "child", "c_one")
+    spool = FilesystemSpool(paths.spool)
+    original = files.snapshot_file
+    captures = []
+
+    def capture(**kwargs: object) -> FileSnapshot:
+        value = original(**kwargs)  # type: ignore[arg-type]
+        captures.append(value.manifest)
+        return value
+
+    monkeypatch.setattr(files, "snapshot_file", capture)
+
+    def mint() -> QueuedEnvelope:
+        return spool.mint_ticket_envelope(
+            paths=paths, ticket_id="t_one", child=child, kind=EnvelopeKind.cli_write,
+            payload={"child": TypeAdapter(ChildReference).dump_python(child, mode="json")},
+        )
+
+    try:
+        first = mint()
+        second = mint()
+        assert len(captures) == 1
+        assert second.file_dependencies == first.file_dependencies
+        second_path = spool.snapshots(second.submission_id)[0].local_path
+        first_path = spool.snapshots(first.submission_id)[0].local_path
+        assert second_path.stat().st_ino == first_path.stat().st_ino
+        assert not spool.dependency_acknowledged(second, second.file_dependencies[0])
+        spool.acknowledge(receipt(first))
+        assert second_path.read_bytes() == b"A"
+        spool.close()
+        spool = FilesystemSpool(paths.spool)
+        assert spool.dependency_acknowledged(second, second.file_dependencies[0])
+        spool.acknowledge(receipt(second))
+        assert mint().file_dependencies == ()
+        assert len(captures) == 1
+        (directory / "image").write_bytes(b"B")
+        changed = mint()
+        (directory / "image").write_bytes(b"A")
+        returned = mint()
+        assert len(captures) == 3
+        assert returned.file_dependencies != first.file_dependencies
+        assert spool.snapshots(changed.submission_id)[0].local_path.read_bytes() == b"B"
+        assert spool.snapshots(returned.submission_id)[0].local_path.read_bytes() == b"A"
+        child = ChildReference("incarnation", "replacement", "c_two")
+        assert mint().file_dependencies != returned.file_dependencies
+    finally:
+        spool.close()
+
+
+def test_failed_ticket_capture_does_not_advance_comparison_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.executor import files
+    from planner.executor.configuration import ExecutorPaths
+    from planner.executor.contracts import ChildReference
+
+    paths = ExecutorPaths(tmp_path)
+    directory = paths.artifacts / "t_one"
+    directory.mkdir(parents=True)
+    source = directory / "image"
+    source.write_bytes(b"A")
+    child = ChildReference("incarnation", "child", "c_one")
+    spool = FilesystemSpool(paths.spool)
+    original = files.snapshot_file
+
+    def changed_capture(**kwargs: object) -> FileSnapshot:
+        source.write_bytes(b"B")
+        return original(**kwargs)  # type: ignore[arg-type]
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(files, "snapshot_file", changed_capture)
+            with pytest.raises(ValueError, match="changed during"):
+                spool.mint_ticket_envelope(
+                    paths=paths, ticket_id="t_one", child=child,
+                    kind=EnvelopeKind.cli_write,
+                    payload={"child": TypeAdapter(ChildReference).dump_python(child, mode="json")},
+                )
+        assert spool.pending_count() == 0
+        assert list((directory.parent / ".executor-snapshots").iterdir()) == []
+        queued = spool.mint_ticket_envelope(
+            paths=paths, ticket_id="t_one", child=child,
+            kind=EnvelopeKind.cli_write,
+                    payload={"child": TypeAdapter(ChildReference).dump_python(child, mode="json")},
+        )
+        assert queued.sequence == 1
+        assert spool.snapshots(queued.submission_id)[0].local_path.read_bytes() == b"B"
+    finally:
+        spool.close()
+
+
+def test_format_one_remains_untouched_and_unsupported(tmp_path: Path) -> None:
+    root = tmp_path / "spool"
+    root.mkdir()
+    (root / "metadata.json").write_text('{"format":1,"sender_id":"old"}')
+    before = contents(tmp_path)
+    with pytest.raises(ValueError, match="incompatible spool"):
+        check_spool_compatibility(tmp_path, 2)
+    assert contents(tmp_path) == before
+
+
+def test_capture_recompares_if_an_envelope_commits_during_file_inspection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.executor import journal
+    from planner.executor.configuration import ExecutorPaths
+    from planner.executor.contracts import ChildReference
+
+    paths = ExecutorPaths(tmp_path)
+    directory = paths.artifacts / "t_one"
+    directory.mkdir(parents=True)
+    source = directory / "image"
+    source.write_bytes(b"A")
+    child = ChildReference("incarnation", "child", "c_one")
+    payload = {"child": TypeAdapter(ChildReference).dump_python(child, mode="json")}
+    spool = FilesystemSpool(paths.spool)
+    original = journal.snapshot_ticket
+    interleaved = False
+
+    def capture(*args: object, **kwargs: object) -> tuple[FileSnapshot, ...]:
+        nonlocal interleaved
+        captured = original(*args, **kwargs)  # type: ignore[arg-type]
+        if not interleaved:
+            interleaved = True
+            source.write_bytes(b"B")
+            spool.mint_envelope(
+                conversation_id=child.conversation_id, kind=EnvelopeKind.cli_write,
+                payload=payload, snapshots=original(paths, "t_one"),
+            )
+        return captured
+
+    monkeypatch.setattr(journal, "snapshot_ticket", capture)
+    try:
+        result = spool.mint_ticket_envelope(
+            paths=paths, ticket_id="t_one", child=child,
+            kind=EnvelopeKind.cli_write, payload=payload,
+        )
+        assert result.sequence == 2
+        assert spool.snapshots(result.submission_id)[0].local_path.read_bytes() == b"B"
+        assert spool.pending()[0].file_dependencies == result.file_dependencies
+        assert list((directory.parent / ".executor-snapshots").iterdir()) == []
+    finally:
+        spool.close()

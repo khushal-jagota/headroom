@@ -148,14 +148,20 @@ Workers use ordinary file tools in a resolved Ticket directory. Publication
 captures immutable bytes. Transport consumes a `FileSnapshot` containing its
 manifest and local path. Snapshot bytes remain immutable until an authoritative
 receipt. Equal retained bytes share hard links between immutable spool entries.
-Every event keeps its own manifest and publication identity. Pins and receipts
-control each entry's lifetime. The final link removal releases shared storage.
-Unsupported hard-link operations use verified copies. Transient capture and
-network transfer remain unchanged. A transfer pin retains them through receipt cleanup, completion, and
-cancellation; no database transaction spans network I/O. The receiver checks the assigned child, owner, path,
-length, and digest, then publishes a complete file from quarantine. A dependent
-row cannot commit first. A replay of an old publication cannot overwrite a newer
-file at the same URL.
+At completed tool, reply, turn, and CLI boundaries, capture compares content hashes
+with the latest retained manifest for the exact child and conversation. Unchanged
+pending files reuse the original publication and retained snapshots. Unchanged
+acknowledged files need no new capture or publication exchange. A return to earlier
+content after a change creates a fresh publication identity.
+
+Pins keep pending dependencies alive through capture, enqueue, transfer, and receipt
+cleanup. Unsupported hard links use verified copies. A lost receipt retries the
+original identity. Retained envelope JSON reconstructs comparison state after restart.
+No watcher, timer, schema change, or Ticket-wide delivery gate is involved.
+The receiver still checks the assigned child, owner, path, length, and digest.
+New bytes receive publication acceptance before their dependent envelope.
+Ticket URLs remain mutable. The existing per-conversation replay and per-path
+reservations remain the ordering contract. A replacement child starts fresh comparison.
 
 Both directions use HTTP through the app service. The Mac uploads artifact snapshots with PUT and downloads input snapshots with GET.
 Input GET requests specify `Accept-Encoding: identity`, so the server sends the original snapshot bytes without compression.
@@ -370,37 +376,13 @@ Read-only spool inspection establishes compatibility without migration or recove
 The [Mac operator runbook](mac-executor-installation.md) supplies the concrete checks.
 No automatic two-host update or general migration mechanism exists.
 
-## Fresh installation and offline legacy conversion
+## Fresh installation and retained journals
 
-The production installation path is a fresh format-2 journal. No previous executor
-installation on the target Mac is required. The Mac runbook requires compatible
-protocol and journal evidence before installation changes, then read-only spool inspection before startup.
-The handshake refuses incompatible protocols before work. The VPS workflow performs no Mac compatibility check.
-
-An existing format-1 journal has one supported conversion boundary: stop every
-process that can open it, disable automatic restarts, and run the explicit offline
-converter under its exclusive journal lock. Preserve an untouched backup of the
-stopped source before conversion, then run:
-
-```sh
-panels executor convert-spool --root /absolute/path/to/executor-root
-```
-
-The root is the persistent executor root, not its `spool` subdirectory. The command
-requires the executor to be stopped and acquires `spool/lock` exclusively. It is
-not part of ordinary installation, update, rollback, or startup. The converter
-validates the old envelopes, sequences, submission identities including acknowledged
-work, and immutable snapshot bytes before publishing format 2.
-Its local publication fence preserves the old journal when conversion is interrupted;
-a failed conversion never authorizes ordinary startup against partially converted
-state. Inspect the published format-2 journal before starting a compatible executor.
-Keep the stopped source backup for diagnosis, separate from the active journal.
-
-Automatic or in-place upgrades across both hosts are unsupported. Rollback across
-conversion is also unsupported: an old executable must not open the converted
-journal. These restrictions do not prevent the fresh format-2 installation. The
-offline converter supplies no two-host cutover orchestration or durable deployment
-phase machinery.
+The production installation path uses a format-2 journal. Read-only preflight
+refuses unsupported or corrupt journals without mutation. The format-1 converter
+and reader are no longer supported. Preserve historical bytes for their compatible
+historical executable and explicit recovery procedure. Never reset an old journal
+to bypass refusal. The handshake rejects incompatible peers before work.
 
 ## Browser previews
 

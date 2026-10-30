@@ -46,7 +46,6 @@ from planner.executor.contracts import (
     AnswerApplication,
     AskKind,
     AskReference,
-    AuthorizedAction,
     BackendEvent,
     BackendEventMethod,
     CanonicalSkillSnapshot,
@@ -66,7 +65,7 @@ from planner.executor.contracts import (
     SourceRetirementReceipt,
     SourceRetirementRequest,
 )
-from planner.executor.files import safe_component, snapshot_ticket
+from planner.executor.files import safe_component
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
 from planner.executor.workspace import localize_workspace
 from planner.tickets.contracts import TicketLocale
@@ -1059,7 +1058,13 @@ class NativeChildRegistry:
                 BackendEventMethod.turn_ended,
             )
         ):
-            snapshots = await asyncio.to_thread(snapshot_ticket, self.paths, child.ticket_id)
+            await asyncio.to_thread(
+                self.spool.mint_ticket_envelope,
+                paths=self.paths, ticket_id=child.ticket_id, child=reference,
+                kind=EnvelopeKind.backend_event,
+                payload=cast(JsonObject, encode_value(event)),
+            )
+            return
         await self._emit(reference.conversation_id, EnvelopeKind.backend_event, event, snapshots)
 
     def _native_answer_command(self, answer: DurableAnswer) -> ChildCommand:
@@ -1129,18 +1134,6 @@ class NativeChildRegistry:
             submission_id=submission_id,
         )
         self._applications_published.add(application.answer_id)
-
-    async def report_authorized_action(self, action: AuthorizedAction) -> None:
-        application = self._applications.get(action.answer_id)
-        if application is None or application.ask != action.ask:
-            raise ValueError("tool action has no exact applied answer correlation")
-        await self.source_work(
-            action.ask.child,
-            lambda: self._emit(
-                action.ask.child.conversation_id, EnvelopeKind.authorized_action, action
-            ),
-            final_event=True,
-        )
 
     def inventory(
         self, identity: ExecutorIdentity, *, include_pending: bool = True

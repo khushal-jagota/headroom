@@ -58,7 +58,6 @@ from planner.executor.contracts import (
     AnswerApplication,
     AskKind,
     AskReference,
-    AuthorizedAction,
     BackendEvent,
     BackendEventMethod,
     CanonicalSkillSnapshot,
@@ -1512,12 +1511,6 @@ class ExecutorEndpoint:
                     self.store.record_application_in_transaction,
                 ),
             )
-        if envelope.kind is EnvelopeKind.authorized_action:
-            action = TypeAdapter(AuthorizedAction).validate_python(envelope.payload)
-            self._assignment(action.ask.child)
-            return self.store.accept(
-                envelope, lambda conn, row: self._action(conn, action), now_ms(), identity=identity
-            )
         raise ValueError("unknown executor envelope")
 
     def _command_outcome(self, conn: Any, outcome: CommandOutcome) -> JsonObject:
@@ -1528,9 +1521,6 @@ class ExecutorEndpoint:
         self.store.record_application_in_transaction(conn, application)
         return {"recorded": True}
 
-    def _action(self, conn: Any, action: AuthorizedAction) -> JsonObject:
-        self.store.record_action_in_transaction(conn, action, self.clock_sample)
-        return {"recorded": True}
 
     def _resolve_command(self, outcome: CommandOutcome) -> None:
         if not self._outcome_hint_acknowledged(outcome):
@@ -1615,12 +1605,10 @@ class ExecutorEndpoint:
         result: list[JsonObject] = []
         for evidence in self.store.evidence_for_conversation(conversation_id):
             answer = self.store.recorded_answer(evidence.ask)
-            timing = self.store.action_timing(evidence.ask)
             result.append(
                 {
                     "evidence": _object(evidence),
                     "answer": None if answer is None else _object(answer),
-                    "answer_action_timing": None if timing is None else _object(timing),
                 }
             )
         return result

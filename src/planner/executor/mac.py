@@ -69,7 +69,6 @@ from planner.executor.contracts import (
     EnvelopeKind,
     ExecutorHealth,
     ExecutorIdentity,
-    FileSnapshot,
     FileTransfer,
     FrameReader,
     FrameWriter,
@@ -99,7 +98,7 @@ from planner.executor.contracts import (
     WireMessageKind,
 )
 from planner.executor.diagnostics import connection_diagnostics
-from planner.executor.files import IncomingFiles, safe_component, snapshot_ticket
+from planner.executor.files import IncomingFiles, safe_component
 from planner.executor.input_transfers import InputTransferDeadline
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry, now_ms
@@ -733,6 +732,10 @@ class MacExecutor:
         identity = self.identity
         with self.spool.pin_snapshots(envelope.submission_id) as snapshots:
             for snapshot in snapshots:
+                if await asyncio.to_thread(
+                    self.spool.dependency_acknowledged, envelope, snapshot.manifest
+                ):
+                    continue
                 payload = envelope.payload
                 child = payload.get("child")
                 if child is None:
@@ -1085,19 +1088,20 @@ class MacExecutor:
                             TypeAdapter(CliWrite).validate_python(previous.envelope.payload), write
                         )
                         return previous
-                    snapshots: tuple[FileSnapshot, ...] = ()
                     if child.ticket_id is not None:
-                        snapshots = await asyncio.to_thread(
-                            snapshot_ticket, self.paths, child.ticket_id
+                        envelope = await asyncio.to_thread(
+                            self.spool.mint_ticket_envelope,
+                            paths=self.paths, ticket_id=child.ticket_id, child=child.reference,
+                            kind=EnvelopeKind.cli_write, payload=as_object(write),
+                            submission_id=request.request_id,
                         )
-                    envelope = await asyncio.to_thread(
-                        self.spool.mint_envelope,
-                        conversation_id=child.reference.conversation_id,
-                        kind=EnvelopeKind.cli_write,
-                        payload=as_object(write),
-                        snapshots=snapshots,
-                        submission_id=request.request_id,
-                    )
+                    else:
+                        envelope = await asyncio.to_thread(
+                            self.spool.mint_envelope,
+                            conversation_id=child.reference.conversation_id,
+                            kind=EnvelopeKind.cli_write, payload=as_object(write),
+                            submission_id=request.request_id,
+                        )
                     return JournalPublication(envelope, True)
 
                 task = asyncio.create_task(

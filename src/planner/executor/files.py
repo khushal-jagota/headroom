@@ -8,7 +8,7 @@ import os
 import re
 import stat
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -168,20 +168,52 @@ def snapshot_file(
     )
 
 
-def snapshot_ticket(paths: ExecutorPaths, ticket_id: str) -> tuple[FileSnapshot, ...]:
+def file_digest(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    count = 0
+    with regular_descriptor(path) as incoming:
+        while block := os.read(incoming, FILE_CHUNK_BYTES):
+            digest.update(block)
+            count += len(block)
+    return digest.hexdigest(), count
+
+
+def snapshot_ticket(
+    paths: ExecutorPaths,
+    ticket_id: str,
+    *,
+    previous: Mapping[str, FileManifest] | None = None,
+    reuse: Callable[[FileManifest], FileSnapshot | None] | None = None,
+) -> tuple[FileSnapshot, ...]:
     root = paths.artifacts / safe_component(ticket_id)
     if not root.exists():
         return ()
-    return tuple(
-        snapshot_file(
-            root=root,
-            relative_path=path.relative_to(root).as_posix(),
-            scope=FileScope.ticket,
-            owner_id=ticket_id,
-        )
-        for path in sorted(root.rglob("*"))
-        if path.is_file() or path.is_symlink()
-    )
+    snapshots: list[FileSnapshot] = []
+    try:
+        for path in sorted(root.rglob("*")):
+            if not (path.is_file() or path.is_symlink()):
+                continue
+            relative = path.relative_to(root).as_posix()
+            digest = file_digest(path)
+            manifest = previous.get(relative) if previous is not None else None
+            if manifest is not None and (manifest.sha256, manifest.byte_count) == digest:
+                assert reuse is not None
+                retained = reuse(manifest)
+                if retained is not None:
+                    snapshots.append(retained)
+                continue
+            snapshot = snapshot_file(
+                root=root, relative_path=relative, scope=FileScope.ticket, owner_id=ticket_id
+            )
+            snapshots.append(snapshot)
+            if (snapshot.manifest.sha256, snapshot.manifest.byte_count) != digest:
+                raise ValueError("artifact changed during snapshot capture")
+        return tuple(snapshots)
+    except BaseException:
+        for snapshot in snapshots:
+            if snapshot.local_path.parent.name == ".executor-snapshots":
+                snapshot.local_path.unlink(missing_ok=True)
+        raise
 
 
 class IncomingFiles:

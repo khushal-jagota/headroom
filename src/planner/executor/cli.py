@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
-from pathlib import Path
 
 import click
 from pydantic import TypeAdapter
@@ -110,19 +108,3 @@ def quiesce(
     if response.error is not None:
         raise click.ClickException(str(response.error))
     click.echo(json.dumps(response.result))
-
-
-@executor_group.command("convert-spool")
-@click.option("--root", type=click.Path(path_type=Path), required=True)
-def convert_spool(root: Path) -> None:
-    """Convert a stopped executor's legacy spool offline. Preserve its source bytes."""
-    from planner.executor.outbox_conversion import convert_legacy_spool
-
-    try:
-        convert_legacy_spool(root.expanduser().resolve() / "spool")
-    except (OSError, ValueError, sqlite3.Error) as error:
-        raise click.ClickException(str(error)) from error
-    click.echo(
-        "Spool format 2 is ready. "
-        "Automatic upgrades and rollback across conversion are unsupported."
-    )

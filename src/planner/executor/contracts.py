@@ -21,6 +21,7 @@ from pydantic import ConfigDict, Field
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import MoveRetirementResult
 from planner.conversation.events import UserInputAnswer
+from planner.executor.configuration import ExecutorPaths
 
 # Payloads carry existing domain types as JSON; operation-specific codecs validate
 # exact fields before dispatch. Credentials and arbitrary caller headers never travel.
@@ -246,25 +247,6 @@ class AnswerApplication:
     applied_at_mac_ms: int
 
 
-@dataclass(frozen=True, slots=True)
-class AuthorizedAction:
-    """Tool-start evidence, separate from callback application; unknown stays absent."""
-
-    answer_id: str
-    ask: AskReference
-    tool_call_id: str
-    observed_at_mac_ms: int
-
-
-@dataclass(frozen=True, slots=True)
-class AnswerActionTiming:
-    answer_id: str
-    elapsed_lower_ms: int | None
-    elapsed_upper_ms: int | None
-    clock_basis: str
-    unknown_reason: str | None
-
-
 class FileScope(StrEnum):
     ticket = "ticket"
     conversation = "conversation"
@@ -302,7 +284,6 @@ class EnvelopeKind(StrEnum):
     cli_write = "cli_write"
     command_outcome = "command_outcome"
     answer_application = "answer_application"
-    authorized_action = "authorized_action"
 
 
 @dataclass(frozen=True, slots=True)
@@ -672,6 +653,19 @@ class AllocatingDurableSpool(DurableSpool, Protocol):
     @property
     def sender_id(self) -> str:
         """Persisted sender identity, independent of process incarnation."""
+        ...
+
+    def mint_ticket_envelope(
+        self,
+        *,
+        paths: ExecutorPaths,
+        ticket_id: str,
+        child: ChildReference,
+        kind: EnvelopeKind,
+        payload: JsonObject,
+        submission_id: str | None = None,
+    ) -> QueuedEnvelope:
+        """Capture changed artifacts and persist their exact dependencies."""
         ...
 
     def mint_envelope(

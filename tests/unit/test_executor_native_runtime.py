@@ -47,7 +47,6 @@ from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
-    AuthorizedAction,
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
     ChildCommand,
@@ -779,12 +778,8 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
         assert await registry.apply_answer(answer) == first
         assert native.answers == [("ask", "allow")]
         assert registry.inventory(identity).children[0].pending_asks == ()
-        await registry.report_authorized_action(AuthorizedAction("answer", ask, "tool", 10))
-        with pytest.raises(ValueError, match="correlation"):
-            await registry.report_authorized_action(AuthorizedAction("wrong", ask, "tool", 10))
         kinds = [entry.kind for entry in spool.pending()]
         assert EnvelopeKind.answer_application in kinds
-        assert EnvelopeKind.authorized_action in kinds
         assert (
             await registry.execute_command(uncertain)
         ).disposition == CommandDisposition.uncertain
@@ -2892,6 +2887,83 @@ def test_input_progress_socket_failure_closes_original_writer_only(
             replacement.close.assert_not_called()
             replacement.write.assert_not_called()
             assert not executor._input_transfers and executor._transfers == 0
+        finally:
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_changed_capture_replay_reuses_receipts_after_lost_envelope_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from planner.executor.app_transport import ExecutorAppClient
+    from planner.executor.contracts import AcceptanceReceipt, FileManifest, ReceiptDisposition
+
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        executor._handshake_accepted = True
+        child = ChildReference(executor.identity.executor_incarnation, "child", "c_one")
+        directory = executor.paths.artifacts / "t_one"
+        directory.mkdir(parents=True)
+        (directory / "image").write_bytes(b"A")
+
+        def mint() -> QueuedEnvelope:
+            return executor.spool.mint_ticket_envelope(
+                paths=executor.paths, ticket_id="t_one", child=child,
+                kind=EnvelopeKind.cli_write, payload={"child": as_object(child)},
+            )
+
+        first, second = mint(), mint()
+        accepted: set[str] = set()
+        manifests: list[str] = []
+        uploads: list[bytes] = []
+        envelopes: list[str] = []
+        lost = False
+
+        async def upload(slot: object, path: Path) -> None:
+            uploads.append(path.read_bytes())
+
+        async def transport(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+            nonlocal lost
+            if kind in (WireMessageKind.file_manifest, WireMessageKind.file_complete):
+                manifest = TypeAdapter(FileManifest).validate_python(payload["manifest"])
+                if kind is WireMessageKind.file_manifest:
+                    manifests.append(manifest.publication_id)
+                    if manifest.publication_id not in accepted:
+                        return WireMessage(WireMessageKind.file_slot, "slot", {
+                            "transfer_id": "upload", "direction": "upload",
+                            "manifest": payload["manifest"],
+                        })
+                else:
+                    assert uploads == [b"A"]
+                    accepted.add(manifest.publication_id)
+                return WireMessage(WireMessageKind.file_accepted, "accepted", as_object(manifest))
+            row = TypeAdapter(QueuedEnvelope).validate_python(payload)
+            assert all(item.publication_id in accepted for item in row.file_dependencies)
+            envelopes.append(row.submission_id)
+            if not lost:
+                lost = True
+                raise ConnectionError("lost envelope receipt")
+            return WireMessage(WireMessageKind.receipt, "receipt", as_object(AcceptanceReceipt(
+                row.sender_id, row.submission_id, row.payload_sha256,
+                ReceiptDisposition.accepted, {}, 1,
+            )))
+
+        executor._app_client = cast(ExecutorAppClient, SimpleNamespace(upload=upload))
+        monkeypatch.setattr(executor, "_request", transport)
+        try:
+            with pytest.raises(ConnectionError, match="lost envelope"):
+                await executor._replay_envelope(first)
+            assert executor.spool.pending_count() == 2
+            await executor._replay_envelope(first)
+            await executor._replay_envelope(second)
+            assert manifests == [first.file_dependencies[0].publication_id] * 2
+            assert uploads == [b"A"]
+            assert envelopes == [first.submission_id, first.submission_id, second.submission_id]
+            assert mint().file_dependencies == ()
+            assert executor.spool.pending_count() == 1
         finally:
             executor.spool.close()
 

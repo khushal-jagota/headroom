@@ -108,18 +108,16 @@ def test_configuration_cli_requires_explicit_remote_identity(tmp_path: Path) -> 
     assert read_vps_launch(path) == VpsExecutorLaunchConfiguration("remote", executor_id)
 
 
-def test_legacy_remote_snapshot_restores_exact_bytes_but_refuses_launch(tmp_path: Path) -> None:
-    from planner.environments.vps_launch import validate_vps_launch_for_application
-
+@pytest.mark.parametrize("mode", ["local", "remote"])
+def test_version_one_refuses_without_rewriting_bytes(tmp_path: Path, mode: str) -> None:
     path = tmp_path / "executor-launch.json"
-    raw = b'{"version":1,"mode":"remote","socket":"/tmp/executor.sock"}\n'
+    raw = json.dumps(
+        {"version": 1, "mode": mode, "socket": None if mode == "local" else "/tmp/old"}
+    ).encode()
     path.write_bytes(raw)
     path.chmod(0o600)
-    snapshot = snapshot_vps_launch(path)
-    configuration = read_vps_launch(path)
-    assert configuration is not None and configuration.version == 1
-    with pytest.raises(ExecutorLaunchConfigurationError, match="version-2"):
-        validate_vps_launch_for_application(configuration)
-    write_vps_launch(path, VpsExecutorLaunchConfiguration("local"))
-    restore_vps_launch(path, snapshot)
+    with pytest.raises(ExecutorLaunchConfigurationError):
+        snapshot_vps_launch(path)
+    with pytest.raises(ExecutorLaunchConfigurationError):
+        restore_vps_launch(path, raw)
     assert path.read_bytes() == raw

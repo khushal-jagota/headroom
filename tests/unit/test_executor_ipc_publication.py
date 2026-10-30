@@ -22,7 +22,7 @@ from click.testing import CliRunner
 from planner.cli.main import main
 from planner.conversation.backends.contracts import BackendChild
 from planner.executor import ipc_client
-from planner.executor import mac as mac_module
+from planner.executor import journal as journal_module
 from planner.executor.cli import executor_group
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
@@ -141,15 +141,15 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
         original = snapshot_ticket
         captures = 0
 
-        def held_snapshot(*args: object) -> tuple[FileSnapshot, ...]:
+        def held_snapshot(*args: object, **kwargs: object) -> tuple[FileSnapshot, ...]:
             nonlocal captures
             captures += 1
-            snapshots = original(*args)  # type: ignore[arg-type]
+            snapshots = original(*args, **kwargs)  # type: ignore[arg-type]
             entered.set()
             assert release.wait(5)
             return snapshots
 
-        monkeypatch.setattr(mac_module, "snapshot_ticket", held_snapshot)
+        monkeypatch.setattr(journal_module, "snapshot_ticket", held_snapshot)
         short_client_socket(monkeypatch)
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
             try:
@@ -433,13 +433,13 @@ def test_production_six_second_preparation_consumes_shared_thirty_second_budget(
     async def run() -> None:
         captures = 0
 
-        def slow_snapshot(*args: object) -> tuple[FileSnapshot, ...]:
+        def slow_snapshot(*args: object, **kwargs: object) -> tuple[FileSnapshot, ...]:
             nonlocal captures
             captures += 1
             time.sleep(6)
-            return snapshot_ticket(*args)  # type: ignore[arg-type]
+            return snapshot_ticket(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(mac_module, "snapshot_ticket", slow_snapshot)
+        monkeypatch.setattr(journal_module, "snapshot_ticket", slow_snapshot)
         async with ipc_service(tmp_path, monkeypatch) as (executor, _):
             started = time.monotonic()
             response = await asyncio.to_thread(
