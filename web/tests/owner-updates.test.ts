@@ -22,7 +22,7 @@ describe("owner-controlled updates", () => {
     expect(html).toContain("Update canceled before installation. The previous version stayed active.");
     expect(html).not.toContain('role="alert"');
     expect(html).not.toContain("Update failed");
-    expect(html).toContain("Update now");
+    expect(html).toContain("Start update");
   });
   it("posts the exact selected publication identity and explicit activity confirmation", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify(request)));
