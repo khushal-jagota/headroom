@@ -799,10 +799,15 @@ class MacExecutor:
                     self.state = ConnectionState.ready
                     phase = ConnectionPhase.steady_state
                     while not self._stop.is_set():
+                        # Clear before draining so publications during replay stay signalled.
+                        self.registry.outbound_ready.clear()
                         await self._replay()
                         await self._reconcile()
                         await self._replay()
-                        await asyncio.sleep(RECONNECT_INTERVAL_SECONDS)
+                        with contextlib.suppress(TimeoutError):
+                            await asyncio.wait_for(
+                                self.registry.outbound_ready.wait(), RECONNECT_INTERVAL_SECONDS
+                            )
 
                 session_task = asyncio.create_task(
                     observe(session(), ConnectionFailureOrigin.session)
@@ -984,6 +989,7 @@ class MacExecutor:
                         self._match_publication(
                             TypeAdapter(CliWrite).validate_python(previous.envelope.payload), write
                         )
+                        self.registry.outbound_ready.set()
                         return previous
                     if child.ticket_id is not None:
                         envelope = await asyncio.to_thread(
@@ -1003,6 +1009,7 @@ class MacExecutor:
                             payload=as_object(write),
                             submission_id=request.request_id,
                         )
+                    self.registry.outbound_ready.set()
                     return JournalPublication(envelope, True)
 
                 task = asyncio.create_task(

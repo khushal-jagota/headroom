@@ -270,10 +270,7 @@ class ExecutorEndpoint:
         return (
             pending is not None
             and pending[0].child == outcome.child
-            and (
-                pending[0].operation is ChildOperation.stop
-                or "admission_expectation" in pending[0].arguments
-            )
+            and pending[0].operation is ChildOperation.stop
         ) or self.store.is_retirement_outcome(outcome)
 
     def _outcome_hint_acknowledged(self, outcome: CommandOutcome) -> bool:
