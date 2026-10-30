@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from collections.abc import Iterator
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -24,7 +26,9 @@ from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home
 
 
 class SkillTreeProtectionPlugin:
-    def __init__(self, inventory: ProtectionInventory, baseline: Manifest) -> None:
+    def __init__(
+        self, inventory: ProtectionInventory, baseline: Manifest, export_root: Path | None = None
+    ) -> None:
         self.inventory = inventory
         self.baseline = baseline
         self.guard = AuditGuard(inventory)
@@ -33,6 +37,8 @@ class SkillTreeProtectionPlugin:
         self.final: Manifest | None = None
         self.differences: tuple[ManifestDifference, ...] = ()
         self.snapshot_error: str | None = None
+        self.export_error: str | None = None
+        self._export_root = export_root
 
     def pytest_configure(self, config: pytest.Config) -> None:
         config.addinivalue_line(
@@ -75,6 +81,29 @@ class SkillTreeProtectionPlugin:
                 pytest.ExitCode.TESTS_FAILED,
                 pytest.ExitCode.NO_TESTS_COLLECTED,
             ):
+                session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+        # The export root comes from initial kernel admission. Reusable detector
+        # probes explicitly omit it. Test-created sockets cannot disable export.
+        if self._export_root is not None:
+            try:
+                destination = self._export_root / f"skill-tree-{os.getpid()}.json"
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(
+                    json.dumps(
+                        {
+                            "inventory": asdict(self.inventory),
+                            "baseline": asdict(self.baseline),
+                            "final": asdict(self.final) if self.final is not None else None,
+                            "differences": [asdict(item) for item in self.differences],
+                            "receipts": [asdict(item) for item in self.guard.receipts],
+                            "snapshot_error": self.snapshot_error,
+                        },
+                        indent=2,
+                    ) + "\n"
+                )
+            except (OSError, ValueError, TypeError) as error:
+                self.export_error = f"{type(error).__name__}: {error}"
                 session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
         # Emit the diagnosis before TerminalReporter's sessionfinish wrapper prints
@@ -121,14 +150,31 @@ class SkillTreeProtectionPlugin:
                 red=True,
             )
 
+        if self.export_error:
+            terminalreporter.write_line(
+                f"Skill-tree evidence export failed: {self.export_error}", red=True
+            )
 
-def bootstrap() -> SkillTreeProtectionPlugin:
+
+def bootstrap(*, export_root: Path | None = None) -> SkillTreeProtectionPlugin:
     """Freeze launch roots before collection or any synthetic home replacement."""
     inventory, baseline = capture_launch_inventory(dict(os.environ), Path.cwd())
-    return SkillTreeProtectionPlugin(inventory, baseline)
+    return SkillTreeProtectionPlugin(inventory, baseline, export_root)
 
 
 def pytest_configure(config: pytest.Config) -> None:
     """Allow isolated lifecycle proofs to load the same guard with ``-p``."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+    from test_containment.admission import require_containment
+    from test_containment.contracts import ContainmentRefusal
+
+    try:
+        boundary = require_containment()
+    except ContainmentRefusal as error:
+        raise pytest.UsageError(f"Test containment refused: {error}") from error
     if not config.pluginmanager.hasplugin("skill-tree-protection"):
-        config.pluginmanager.register(bootstrap(), "skill-tree-protection")
+        config.pluginmanager.register(
+            bootstrap(export_root=boundary.scratch_root / "reports"), "skill-tree-protection"
+        )

@@ -27,9 +27,19 @@ _BOOTSTRAP_DIAGNOSIS = tree_environment.preflight(TREE, ask_planner=False)
 if _BOOTSTRAP_DIAGNOSIS:
     raise pytest.UsageError(_BOOTSTRAP_DIAGNOSIS)
 
+from test_containment.admission import require_containment  # noqa: E402
+from test_containment.contracts import ContainmentRefusal  # noqa: E402
+
+try:
+    _BOUNDARY = require_containment()
+except ContainmentRefusal as error:
+    raise pytest.UsageError(
+        f"Test containment refused: {error}. Use scripts/run_contained_pytest.py."
+    ) from error
+
 from tests.support.skill_tree_protection.pytest_plugin import bootstrap  # noqa: E402
 
-_SKILL_TREE_PROTECTION = bootstrap()
+_SKILL_TREE_PROTECTION = bootstrap(export_root=_BOUNDARY.scratch_root / "reports")
 
 
 def pytest_configure(config: pytest.Config) -> None:

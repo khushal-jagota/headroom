@@ -200,11 +200,61 @@ A persistent difference fails the session without repair. Without a refusal rece
 the source is unknown. An unaudited child or a legitimate owner change can cause the
 difference. The suite reports evidence without accusation or automatic repair.
 
-This is interpreter protection and persistent-change detection, not containment.
-Native code, separate processes, existing descriptors, writable memory maps, and
-concurrent path changes can bypass the hook. A restored transient change escapes
-the manifest. An abrupt process exit can prevent the final comparison. New external
-link targets are recorded but are not traversed into unrelated account files.
+The audit hook remains interpreter protection. Repository pytest collection also
+requires an operating-system filesystem boundary. Use the worktree's interpreter:
+
+```sh
+.venv/bin/python scripts/run_contained_pytest.py \
+  --evidence /tmp/panels-unit-evidence -- tests/unit/test_synthetic_homes.py
+```
+
+The evidence destination must not exist. Run unit, integration, and E2E selections
+in separate processes. The runner requires Linux, Bubblewrap, usable user and PID
+namespaces, and readable kernel mount evidence. It refuses unsupported platforms
+and missing requirements. It never falls back to an unprotected test run.
+
+The runner exposes system code and the source worktree read-only. Account homes,
+host temporary storage, and host control sockets remain outside the test view.
+Private temporary storage supplies writable homes, data, and caches. A private
+network namespace permits local fixture servers. Child processes inherit the
+boundary. The process has no capabilities and cannot create another user namespace.
+
+Direct `pytest`, `python -m pytest`, and `pytest.main` calls that collect repository
+tests require the same boundary. They refuse before test-module imports if actual
+mounts and namespace restrictions do not establish protection. An inherited marker
+or a contract file alone grants no admission. Disabling the repository conftest or
+replacing source code is outside the supported invocation contract.
+
+The original protected inventory and its baseline stay with the runner. It compares
+that inventory after child teardown. The inner audit hook, receipts, and manifest
+comparison remain active too. Evidence includes full manifests, raw link targets,
+exit status, and timing. A difference fails the run without repair. A manifest does
+not identify a writer without separate evidence. Historical missing manifests are
+unavailable and are never reconstructed.
+
+The provider runner route currently refuses before credential exposure. The
+destination policy of an external egress broker lacks independent admission proof.
+Profile-only disposable checks establish canonical file identity, atomic credential
+refresh, refresh locks, session writes, and exact skill protection. They do not
+establish a working authorized provider route. A pytest provider marker grants
+no exemption. No real credentials enter this implementation's verification.
+
+Host systemd-manager proofs cannot inherit this boundary through a host bus.
+They need contained infrastructure or an explicit unsupported result. A required
+skip does not count as success. Existing publication commands must enter the strict
+runner before collection. Hosted admission and publication compatibility require
+their own evidence. A local pass does not establish either result.
+
+Admission cannot yet distinguish every bind of an existing host tmpfs from a new
+private tmpfs solely through mountinfo. This unresolved provenance gap and provider
+refusal prevent acceptance of this draft. Do not land it or enable publication
+until the remaining proof and integration work is complete.
+
+A restored transient change still escapes the manifest. An abrupt process exit
+can prevent the inner comparison. The runner attempts its original-inventory
+comparison after child exit. New external link targets remain evidence and do not
+cause traversal into unrelated account files. Retention cleanup must still refuse
+while a protected link reaches the temporary tree.
 
 ## Host status and maintenance
 
