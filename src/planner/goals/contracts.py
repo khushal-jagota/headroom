@@ -143,6 +143,7 @@ class ChecklistItem(TypedDict):
     state: Literal["done", "open", "blocked"]
     detail: NotRequired[str]
     action: NotRequired[str]
+    deadline: NotRequired[str | None]
 
 
 class TextBlock(TypedDict):

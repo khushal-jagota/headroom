@@ -162,6 +162,7 @@ export interface ChecklistItem {
   state: "done" | "open" | "blocked";
   detail?: string;
   action?: string;
+  deadline?: string | null;
 }
 
 export interface TextBlock {

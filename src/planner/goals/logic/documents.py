@@ -146,6 +146,16 @@ def prepare_document(value: Any, new_identity: Callable[[], str]) -> PageDocumen
                 if not item["id"].strip() or item["id"] in ids:
                     raise ValueError("page: checklist IDs must be nonempty and unique")
                 ids.add(item["id"])
+                deadline = item.get("deadline")
+                if deadline is not None:
+                    try:
+                        valid_date = date.fromisoformat(deadline).isoformat() == deadline
+                    except ValueError:
+                        valid_date = False
+                    if not valid_date:
+                        raise ValueError(
+                            "checklist item deadline must be an ISO calendar date or null"
+                        )
         if block["type"] == "section" and ("blocks" in block) == ("views" in block):
             raise ValueError("section needs either blocks or views")
         if block["type"] == "table" and any(

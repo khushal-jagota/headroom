@@ -11,6 +11,7 @@ from planner.goals.contracts import (
     ChecklistItem,
     GoalCreateBody,
     GoalEditBody,
+    PageDocument,
     QuantitativeGoalCreateBody,
 )
 
@@ -54,8 +55,35 @@ _NOTES = (
     "deadline is an ISO calendar date or null. kind is binary or quantitative. A supplied "
     "page is a complete page-kit document, not a partial patch. Completion and active "
     "state remain independent. A quantitative chart does not determine completion.",
+    "Checklist items accept an optional deadline as an exact YYYY-MM-DD calendar date. "
+    "Omission or null means undated. Set a date, replace it, or clear it with null through "
+    "the ordinary page edit. Example dates are illustrative; choose dates from the user's "
+    "requirements. Item dates do not change overall deadline, completion, or active state.",
     _DASHBOARD,
 )
+
+
+def _workshop_page(deadline: str | None) -> PageDocument:
+    """Keep the create/change/clear examples on the same complete fictional page."""
+    return {
+        "kind": "headroom.page",
+        "version": 1,
+        "title": "Prepare the workshop",
+        "summary": "",
+        "blocks": [{
+            "type": "checklist",
+            "id": "approach",
+            "title": "Workshop preparation",
+            "items": [
+                {
+                    "id": "book-room", "label": "Book the room",
+                    "state": "open", "deadline": deadline,
+                },
+                {"id": "send-invites", "label": "Send invitations", "state": "open"},
+            ],
+        }],
+    }
+
 
 CREATE = RequestGuidance(
     GoalCreateBody,
@@ -85,18 +113,7 @@ CREATE = RequestGuidance(
             "title": "Prepare the workshop",
             "kind": "binary",
             "primary_checklist_block_id": "approach",
-            "page": {
-                "kind": "headroom.page",
-                "version": 1,
-                "title": "Prepare the workshop",
-                "summary": "",
-                "blocks": [{
-                    "type": "checklist",
-                    "id": "approach",
-                    "title": "Workshop preparation",
-                    "items": [{"label": "Book the room", "state": "open"}],
-                }],
-            },
+            "page": _workshop_page("2026-11-06"),
         },
     },
     notes=(
@@ -131,6 +148,10 @@ EDIT = RequestGuidance(
         "primary_line_chart": {"expected_revision": 1, "primary_chart": _CHART},
         "select_binary_display": {"expected_revision": 1, "primary_checklist_block_id": None},
         "select_checklist": {"expected_revision": 1, "primary_checklist_block_id": "approach"},
+        "change_checklist_deadline": {
+            "expected_revision": 1, "page": _workshop_page("2026-11-09")
+        },
+        "clear_checklist_deadline": {"expected_revision": 1, "page": _workshop_page(None)},
     },
     notes=(
         "Read panels goal show GOAL_ID --json first. Replace expected_revision with the "
@@ -144,6 +165,10 @@ EDIT = RequestGuidance(
         "the selected checklist, explicitly select a replacement or binary completion. "
         "A quantitative goal cannot clear its main chart without an explicit valid display "
         "switch. Ordinary edits preserve existing and legacy display configurations.",
+        "Before an item-date edit, copy the accepted page from goal show and keep every "
+        "block, item ID, state, and unrelated field. Change only the intended item's "
+        "deadline and use the current expected_revision. The workshop examples are "
+        "complete fictional pages; never replace a real page with an example page.",
         *_NOTES,
         *_CHART_NOTES,
     ),

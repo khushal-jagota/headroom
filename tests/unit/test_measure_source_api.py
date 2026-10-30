@@ -166,6 +166,11 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
         assert ("id" in definition["required"]) is (name == "SegmentedView")
         if name == "ChartBlock":
             assert "placement" not in definition["required"]
+        if name == "ChecklistItem":
+            assert "deadline" not in definition["required"]
+            assert definition["properties"]["deadline"]["anyOf"] == [
+                {"type": "string"}, {"type": "null"}
+            ]
     chart = _guidance("goal", "schema", "primary-chart")["schema"]
     for node in _schema_nodes(chart):
         if "$ref" in node:
@@ -290,6 +295,37 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                 response.json()["primary_checklist_block_id"]
                 == body["primary_checklist_block_id"]
             )
+            if name == "checklist_goal":
+                accepted = response.json()
+                saved_page = deepcopy(accepted["page"])
+                item = saved_page["blocks"][0]["items"][0]
+                assert item["deadline"] == "2026-11-06"
+                assert "deadline" not in saved_page["blocks"][0]["items"][1]
+                edit_examples = _guidance("goal", "schema", "edit")["examples"]
+                for edit_name, deadline in (
+                    ("change_checklist_deadline", "2026-11-09"),
+                    ("clear_checklist_deadline", None),
+                ):
+                    edit = deepcopy(edit_examples[edit_name])
+                    edit["expected_revision"] = accepted["revision"]
+                    # These complete-page examples apply to their matching fictional
+                    # create example; real pages must retain all accepted content.
+                    changed = client.patch(
+                        f"/api/goals/{accepted['id']}", json=edit,
+                        headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": accepted["id"]},
+                    )
+                    assert changed.status_code == 200, changed.text
+                    accepted = changed.json()
+                    saved_page["blocks"][0]["items"][0]["deadline"] = deadline
+                    assert accepted["page"] == saved_page
+                    assert accepted["primary_checklist_block_id"] == "approach"
+                    assert accepted["completed"] is False
+                    assert accepted["active"] is True
+                reread = client.get(
+                    f"/api/goals/{accepted['id']}", headers={"X-Plan-Actor": "chief"}
+                )
+                assert reread.status_code == 200, reread.text
+                assert reread.json()["page"] == saved_page
         goal_body["project_id"] = "project_vylo"
         created = client.post("/api/goals", json=goal_body, headers={"X-Plan-Actor": "chief"})
         assert created.status_code == 200, created.text

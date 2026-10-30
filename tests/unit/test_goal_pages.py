@@ -5,20 +5,24 @@ import sys
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
+from pathlib import Path
 from sqlite3 import Connection
 from types import SimpleNamespace
 from typing import Any, cast
-from zoneinfo import ZoneInfo
+from zoneinfo import TZPATH, ZoneInfo
 
 import pytest
 from starlette.requests import Request
 from tests.unit.test_manual_measures import manual_measure
 from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 
+from planner.core.clock import RealClock
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, PlannerError, Principal, PrincipalKind
 from planner.goals import actions, data, views
 from planner.goals.contracts import ChartBlock, ChecklistBlock, Goal, GoalsResponse, SegmentedBlock
+from planner.goals.logic.documents import prepare_document
 from planner.goals.logic.status import (
     calendar_projection,
     chart_target,
@@ -190,8 +194,96 @@ def test_binary_midnight_revision_and_dst_calendar(tmp_db: Connection) -> None:
     )
     assert goal_status(False, "2026-10-28", "2026-10-29") == "bad"
     assert goal_status(True, "2026-10-28", "2026-10-29") == "good"
-    before_dst = datetime(2026, 10, 25, 0, 0, tzinfo=ZoneInfo("Europe/Berlin"))
-    assert calendar_projection(before_dst)[1] - int(before_dst.timestamp()) == 25 * 3600
+    for month, day, hours in ((3, 29, 23), (10, 25, 25)):
+        before_dst = datetime(2026, month, day, 0, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+        assert calendar_projection(before_dst)[1] - int(before_dst.timestamp()) == hours * 3600
+    assert data.read_goal(tmp_db, goal.id).revision == goal.revision
+
+
+def test_goal_calendar_uses_process_tz_before_localtime_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A fixed instant separates the configured calendar date from the fallback date.
+    # RealClock takes the I/O branch; FakeClock already owns the pure midnight case.
+    instant = datetime(2026, 3, 29, 0, 30, tzinfo=UTC)
+    clock = RealClock()
+    monkeypatch.setattr(clock, "now", lambda: instant)
+    zone_file = next(
+        Path(root) / "Europe/Berlin"
+        for root in TZPATH
+        if (Path(root) / "Europe/Berlin").is_file()
+    )
+    fallback_bytes = zone_file.read_bytes()
+    reads: list[str] = []
+
+    def localtime_path(name: str) -> SimpleNamespace:
+        assert name == "/etc/localtime"
+
+        def open_localtime(mode: str) -> BytesIO:
+            assert mode == "rb"
+            reads.append(name)
+            return BytesIO(fallback_bytes)
+
+        return SimpleNamespace(open=open_localtime)
+
+    monkeypatch.setattr(views, "Path", localtime_path)
+    monkeypatch.setenv("TZ", ":Pacific/Honolulu")
+    configured = views.calendar_now(clock)
+    assert configured.isoformat() == "2026-03-28T14:30:00-10:00"
+    assert calendar_projection(configured) == (
+        "2026-03-28",
+        int(datetime(2026, 3, 29, 10, tzinfo=UTC).timestamp()),
+    )
+    assert reads == []
+    monkeypatch.delenv("TZ")
+    fallback = views.calendar_now(clock)
+    assert fallback.isoformat() == "2026-03-29T01:30:00+01:00"
+    assert calendar_projection(fallback) == (
+        "2026-03-29",
+        int(datetime(2026, 3, 29, 22, tzinfo=UTC).timestamp()),
+    )
+    assert reads == ["/etc/localtime"]
+
+
+@pytest.mark.parametrize(
+    ("deadline", "accepted"),
+    [
+        ("2028-02-29", True),
+        ("2026-10-30", True),
+        (None, True),
+        ("", False),
+        ("20261030", False),
+        ("2026-W44-5", False),
+        ("2026-02-29", False),
+        ("2026-10-30T00:00:00Z", False),
+        ("2026-1-2", False),
+        (30, False),
+        (False, False),
+    ],
+)
+def test_nested_checklist_item_deadlines_require_exact_calendar_dates(
+    deadline: Any, accepted: bool
+) -> None:
+    item = {"id": "dated-item", "label": "Review", "state": "open", "deadline": deadline}
+    document = page()
+    document["blocks"] = [{
+        "id": "section", "type": "section", "title": "Delivery", "views": [{
+            "id": "section-view", "label": "Overview", "blocks": [{
+                "id": "grid", "type": "grid", "blocks": [{
+                    "id": "segments", "type": "segmented", "views": [{
+                        "id": "segment-view", "label": "Steps", "blocks": [{
+                            "id": "dates", "type": "checklist", "items": [item],
+                        }],
+                    }],
+                }],
+            }],
+        }],
+    }]
+    if accepted:
+        assert prepare_document(document, lambda: "unused") == document
+    else:
+        with pytest.raises(ValueError, match="deadline"):
+            prepare_document(document, lambda: "unused")
 
 
 def test_document_rejects_bad_ids_and_preserves_static_signed_charts(tmp_db: Connection) -> None:
