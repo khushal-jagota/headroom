@@ -932,7 +932,7 @@ def _run(browser, urls):
         }""")
         settled(page)
         before = newest_reading(page)["scrollTop"]
-        page.keyboard.press("Control+End")
+        page.keyboard.press("Meta+ArrowDown" if sys.platform == "darwin" else "Control+End")
         settled(page)
         assert page.evaluate(
             "window.__nestedEditor.selectionStart === window.__nestedEditor.value.length && window.__nestedEditor.scrollTop > 0"
