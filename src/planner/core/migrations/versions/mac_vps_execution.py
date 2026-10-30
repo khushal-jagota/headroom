@@ -49,10 +49,7 @@ STATEMENTS = (
         principal_json TEXT NOT NULL, recipient_json TEXT NOT NULL, source_turn_json TEXT,
         state TEXT NOT NULL CHECK(state IN ('bound','dispatched','completed')),
         result_json TEXT, created_at_ms INTEGER NOT NULL,
-        held_prompt_json TEXT, held_target_conversation_id TEXT, held_admission_order INTEGER,
-        held_state TEXT CHECK(held_state IN ('pending','dispatching','consumed')),
-        PRIMARY KEY(sender_id,submission_id),
-        UNIQUE(held_target_conversation_id,held_admission_order))""",
+        PRIMARY KEY(sender_id,submission_id))""",
     """CREATE TABLE executor_core_turns (
         conversation_id TEXT PRIMARY KEY, child_json TEXT NOT NULL,
         turn_json TEXT NOT NULL, runtime_json TEXT NOT NULL)""",

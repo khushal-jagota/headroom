@@ -301,6 +301,9 @@ class ConversationStore:
 
     def _reconcile_runtime(self, conn: sqlite3.Connection) -> None:
         conn.execute("BEGIN IMMEDIATE")
+        from planner.executor.native_messages import interrupt_native_messages_in_transaction
+
+        interrupt_native_messages_in_transaction(conn)
         interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
         ids = conn.execute(
             "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
@@ -862,6 +865,14 @@ class ConversationStore:
                                 json.loads(str(previous["payload"])).get("suppression_reason")
                                 or reason
                             )
+                    if reason is None:
+                        from planner.executor.native_messages import (
+                            record_native_message_admission_in_transaction,
+                        )
+
+                        record_native_message_admission_in_transaction(
+                            conn, conversation_id, message
+                        )
                     decisions.append(
                         PromptDispatchDecision(message.sender_message_id, reason, notice)
                     )
@@ -902,6 +913,26 @@ class ConversationStore:
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
                 raise
+
+    async def record_sender_message_returned_to_queue(
+        self, conversation_id: str, message: PromptDiscardedEventPayload
+    ) -> None:
+        """Retain proven non-delivery for operation reporting without retaining text."""
+        def write() -> None:
+            from planner.executor.native_messages import (
+                record_native_message_admission_in_transaction,
+            )
+
+            conn = self._connect()
+            try:
+                with conn:
+                    record_native_message_admission_in_transaction(
+                        conn, conversation_id, message, queued=True
+                    )
+            finally:
+                conn.close()
+
+        await self._write(write)
 
     async def mark_held_sender_messages_leaving_queue(
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
@@ -1677,9 +1708,6 @@ class ConversationStore:
             from planner.executor.native_messages import record_native_message_event_in_transaction
 
             record_native_message_event_in_transaction(conn, conversation_id, payload)
-            from planner.executor.native_messages import consume_native_held_prompt_in_transaction
-
-            consume_native_held_prompt_in_transaction(conn, conversation_id, payload)
             written.append(
                 StoredConversationEvent(
                     conversation_id=conversation_id,
@@ -2276,121 +2304,6 @@ class ConversationStore:
     ) -> None:
         await self.transition_lifecycle(conversation_id, (), executor_turn=metadata)
 
-    async def executor_held_targets(self) -> tuple[str, ...]:
-        def read() -> tuple[str, ...]:
-            conn = self._connect()
-            try:
-                return tuple(
-                    str(row[0])
-                    for row in conn.execute(
-                        "SELECT DISTINCT held_target_conversation_id FROM executor_native_messages "
-                        "WHERE held_state IN ('pending','dispatching') "
-                        "ORDER BY held_target_conversation_id"
-                    )
-                )
-            finally:
-                conn.close()
-
-        return await asyncio.to_thread(read)
-
-    async def read_executor_held_prompts(self, conversation_id: str) -> tuple[tuple[str, str], ...]:
-        return await asyncio.to_thread(self.read_executor_held_prompts_sync, conversation_id)
-
-    def read_executor_held_prompts_sync(self, conversation_id: str) -> tuple[tuple[str, str], ...]:
-        conn = self._connect()
-        try:
-            return tuple(
-                (str(row[0]), str(row[1]))
-                for row in conn.execute(
-                    "SELECT held_prompt_json,held_state FROM executor_native_messages WHERE "
-                    "held_target_conversation_id=? AND held_state IN "
-                    "('pending','dispatching') ORDER BY held_admission_order",
-                    (conversation_id,),
-                )
-            )
-        finally:
-            conn.close()
-
-    async def mark_executor_held_dispatching(
-        self, conversation_id: str, sender_message_ids: tuple[str, ...]
-    ) -> bool:
-        return await self._write(
-            self._mark_executor_held_dispatching_sync, conversation_id, sender_message_ids
-        )
-
-    def _mark_executor_held_dispatching_sync(
-        self, conversation_id: str, sender_message_ids: tuple[str, ...]
-    ) -> bool:
-        def write(conn: sqlite3.Connection) -> bool:
-            changed = False
-            for sender_id in sender_message_ids:
-                if (
-                    conn.execute(
-                        "SELECT 1 FROM executor_native_messages WHERE "
-                        "held_target_conversation_id=? AND submission_id=? "
-                        "AND held_state='pending'",
-                        (conversation_id, sender_id),
-                    ).fetchone()
-                    is None
-                ):
-                    continue
-                cursor = conn.execute(
-                    "UPDATE executor_native_messages SET held_state='dispatching' WHERE "
-                    "held_target_conversation_id=? AND submission_id=? "
-                    "AND held_state='pending'",
-                    (conversation_id, sender_id),
-                )
-                changed = changed or cursor.rowcount > 0
-            return changed
-
-        return self._executor_mutation_sync(write)
-
-    def requeue_executor_held_prompt(self, conversation_id: str, held: object) -> None:
-        """Persist a known non-delivery before its replacement enters the held line."""
-        from planner.executor.codec import encode_value
-
-        encoded = encode_value(held)
-        assert isinstance(encoded, dict)
-        conn = self._connect()
-        try:
-            with conn:
-                rows = conn.execute(
-                    "SELECT * FROM executor_native_messages WHERE "
-                    "held_target_conversation_id=? AND submission_id=? "
-                    "AND held_state='dispatching'",
-                    (conversation_id, encoded.get("sender_message_id")),
-                ).fetchall()
-                for row in rows:
-                    original = json.loads(row["held_prompt_json"])
-                    if any(
-                        original[key] != encoded[key]
-                        for key in (
-                            "content",
-                            "sender_label",
-                            "sender",
-                            "recipient",
-                        )
-                    ):
-                        raise ValueError("requeued held identity or bytes changed")
-                    order = conn.execute(
-                        "SELECT COALESCE(MAX(held_admission_order),0)+1 FROM "
-                        "executor_native_messages WHERE held_target_conversation_id=?",
-                        (conversation_id,),
-                    ).fetchone()[0]
-                    conn.execute(
-                        "UPDATE executor_native_messages SET held_prompt_json=?,"
-                        "held_admission_order=?,held_state='pending' WHERE "
-                        "sender_id=? AND submission_id=?",
-                        (
-                            json.dumps(encoded, sort_keys=True, separators=(",", ":")),
-                            order,
-                            row["sender_id"],
-                            row["submission_id"],
-                        ),
-                    )
-        finally:
-            conn.close()
-
     def read_executor_runtime_snapshots(
         self,
     ) -> tuple[tuple[ConversationRecord, tuple[str, str, str] | None], ...]:
@@ -2399,10 +2312,7 @@ class ConversationStore:
         try:
             rows = conn.execute(
                 "SELECT c.*,e.child_json,e.turn_json,e.runtime_json FROM conversations c "
-                "LEFT JOIN executor_core_turns e ON e.conversation_id=c.conversation_id "
-                "WHERE e.conversation_id IS NOT NULL OR EXISTS (SELECT 1 FROM "
-                "executor_native_messages m WHERE m.held_target_conversation_id=c.conversation_id "
-                "AND m.held_state IN ('pending','dispatching'))"
+                "JOIN executor_core_turns e ON e.conversation_id=c.conversation_id"
             ).fetchall()
             return tuple(
                 (

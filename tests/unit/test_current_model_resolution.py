@@ -497,11 +497,8 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
             from planner.conversation.contracts import PromptDeliveryStarted
 
             if change in ("authored_default", "old_held"):
-                import json
-
                 from pydantic import TypeAdapter
 
-                from planner.conversation.storage import ConversationStore
                 from planner.conversation.system import _HeldPrompt
                 from planner.executor.codec import encode_value
 
@@ -514,25 +511,7 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
                 assert isinstance(held, dict)
                 if change == "old_held":
                     held.pop("reasoning_effort_is_set")
-                conn.execute(
-                    "INSERT INTO executor_native_messages(sender_id,submission_id,payload_sha256,"
-                    "principal_json,recipient_json,state,created_at_ms,held_prompt_json,"
-                    "held_target_conversation_id,held_admission_order,held_state) "
-                    "VALUES('fixture','explicit-default','fixture',?,?,'bound',"
-                    "?, ?, ?,1,'pending')",
-                    (
-                        json.dumps(held["sender"]),
-                        json.dumps(held["recipient"]),
-                        stamp * 1000,
-                        json.dumps(held),
-                        conversation_id,
-                    ),
-                )
-                conn.commit()
-                reopened = ConversationStore(str(path))
-                durable = reopened.read_executor_held_prompts_sync(conversation_id)
-                assert len(durable) == 1
-                replayed = TypeAdapter(_HeldPrompt).validate_json(durable[0][0])
+                replayed = TypeAdapter(_HeldPrompt).validate_python(held)
                 assert replayed.reasoning_effort_is_set is (change == "authored_default")
                 state.held_prompts[0] = replayed
                 await harness.complete_turn(conversation_id)
@@ -722,11 +701,10 @@ def test_refusal_event_keeps_canonical_validation_and_decodes_older_rows() -> No
 
 
 @pytest.mark.parametrize("initial", [True, False])
-def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
+def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial: bool
 ) -> None:
-    """A deliberate same-token kind choice must survive the actual send and held store."""
-    import json
+    """A deliberate same-token kind choice must survive the actual send and held line."""
     import time
     from datetime import UTC, datetime
 
@@ -862,58 +840,10 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
                 held = encode_value(state.held_prompts[0])
                 assert isinstance(held, dict)
                 assert held["selection_kind"] == "concrete"
-                conn.execute(
-                    "INSERT INTO executor_native_messages(sender_id,submission_id,payload_sha256,"
-                    "principal_json,recipient_json,state,created_at_ms,held_prompt_json,"
-                    "held_target_conversation_id,held_admission_order,held_state) "
-                    "VALUES('fixture','exact-kind','fixture',?,?,'bound',?,?,?,1,'pending')",
-                    (
-                        json.dumps(held["sender"]),
-                        json.dumps(held["recipient"]),
-                        stamp * 1000,
-                        json.dumps(held),
-                        conversation_id,
-                    ),
-                )
-                conn.commit()
-                durable = harness.store.read_executor_held_prompts_sync(conversation_id)
-                old_clock = harness.clock
-                await harness.system.shutdown()
-                harness = _Harness(path, clock=old_clock)
-                harness.system.configure_destination_validation(source)
-                # The real constructor restores the durable queue; no queue or phase
-                # is assigned by this fixture and no prior provider effect is retried.
-                state = harness.system._conversations[conversation_id]
-                assert len(state.held_prompts) == 1
-                restored = state.held_prompts[0]
-                assert restored.selection_kind is SelectionKind.concrete
-                assert restored.reasoning_effort_is_set
-                assert restored.reasoning_effort_change is None
-                assert harness.store.read_executor_held_prompts_sync(conversation_id) == durable
-                assert harness.spawned_conversation_ids == []
-                replay_after_restart = await ticket_api.send_to_ticket_conversation(
-                    ticket.id,
-                    body,
-                    Request({"type": "http", "app": FastAPI()}),
-                    conn,
-                    RequestContext(OWNER_PRINCIPAL),
-                    TestClock(datetime.fromtimestamp(stamp, UTC)),
-                    harness.system,
-                    harness.message_files,
-                )
-                assert replay_after_restart["fate"] == "queued"
-                assert harness.spawned_conversation_ids == []
-                with pytest.raises(ValueError, match="different message"):
-                    await ticket_api.send_to_ticket_conversation(
-                        ticket.id,
-                        body.model_copy(update={"selection_kind": SelectionKind.provider_alias}),
-                        Request({"type": "http", "app": FastAPI()}),
-                        conn,
-                        RequestContext(OWNER_PRINCIPAL),
-                        TestClock(datetime.fromtimestamp(stamp, UTC)),
-                        harness.system,
-                        harness.message_files,
-                    )
+                retained_held = state.held_prompts[0]
+                assert retained_held.selection_kind is SelectionKind.concrete
+                assert retained_held.reasoning_effort_is_set
+                assert retained_held.reasoning_effort_change is None
                 # The old absent field retains its historical semantics on new readers.
                 held.pop("selection_kind")
                 assert TypeAdapter(_HeldPrompt).validate_python(held).selection_kind is None
@@ -923,14 +853,14 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
                     PromptDeliveryStarted,
                 )
 
-                held_id = restored.held_prompt_id
+                held_id = retained_held.held_prompt_id
                 retained = await harness.system.promote_held_prompt(
                     conversation_id,
                     held_id,
                     HeldPromptPromotionMode.steer,
                 )
                 assert isinstance(retained, PromptDeliveryQueued)
-                assert state.held_prompts[0] == restored
+                assert state.held_prompts[0] == retained_held
                 promoted = await harness.system.promote_held_prompt(
                     conversation_id,
                     held_id,

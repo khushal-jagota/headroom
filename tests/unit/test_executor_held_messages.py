@@ -1,10 +1,9 @@
-"""Canonical held admissions survive Mac acknowledgment and VPS process loss."""
+"""Native submissions share the memory-only held line and retain honest outcomes."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -12,22 +11,18 @@ from typing import Any
 
 import pytest
 from tests.support.executor_catalog import ScriptedCatalogObserver
-from tests.unit.test_current_model_resolution import Catalogue
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
-from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import (
-    AddressedPromptDeliveryReceipt,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
     HeldPromptPromotionMode,
     PromptDeliveryQueued,
     PromptDeliveryStarted,
-    PromptDeliveryUncertain,
 )
-from planner.conversation.message_content import MessageContent, text_message_content
+from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
     CatalogWorkspaceBinding,
@@ -142,23 +137,6 @@ class HeldCatalogObserver(ScriptedCatalogObserver):
         return expected in self.contexts
 
 
-class BoundarySystem(SqliteProcessConversationSystem):
-    crash_after_held_commit = False
-    pause_drain = False
-
-    async def send_with_receipt(
-        self, conversation_id: str, content: MessageContent, **kwargs: Any
-    ) -> AddressedPromptDeliveryReceipt:
-        receipt = await super().send_with_receipt(conversation_id, content, **kwargs)
-        if self.crash_after_held_commit and isinstance(receipt.fate, PromptDeliveryQueued):
-            raise InjectedCrash("held bytes and first receipt committed before acknowledgment")
-        return receipt
-
-    async def _drain_held_prompts(self, state: Any) -> None:
-        if not self.pause_drain:
-            await super()._drain_held_prompts(state)
-
-
 @dataclass
 class HeldFixture:
     connection: Connection
@@ -166,12 +144,12 @@ class HeldFixture:
     store: ExecutorStore
     spool: FilesystemSpool
     native: ScriptedNative
-    system: BoundarySystem = field(init=False)
+    system: SqliteProcessConversationSystem = field(init=False)
     source: Principal
-    systems: list[BoundarySystem]
+    systems: list[SqliteProcessConversationSystem]
     resolutions: int = 0
 
-    async def new_core(self) -> BoundarySystem:
+    async def new_core(self) -> SqliteProcessConversationSystem:
         for previous in self.systems:
             await previous.shutdown()
 
@@ -197,7 +175,7 @@ class HeldFixture:
                 lambda start: canonical_snapshot(),
             )
 
-        system = BoundarySystem(
+        system = SqliteProcessConversationSystem(
             store=ConversationStore(self.path),
             backend_child_factories={key: factory for key in ConversationBackendKey},
             message_files=ConversationMessageFiles(self.path),
@@ -207,8 +185,11 @@ class HeldFixture:
         observer = HeldCatalogObserver()
         system.configure_destination_validation(observer)
         from types import SimpleNamespace
+
         system._catalog_endpoint = SimpleNamespace(
-            identity=IDENTITY, ready=True, owns_conversation=lambda _: True,
+            identity=IDENTITY,
+            ready=True,
+            owns_conversation=lambda _: True,
         )
         self.systems.append(system)
         return system
@@ -241,7 +222,7 @@ class HeldFixture:
         envelope: QueuedEnvelope,
         write: CliWrite,
         *,
-        system: BoundarySystem | None = None,
+        system: SqliteProcessConversationSystem | None = None,
     ) -> AcceptanceReceipt:
         def resolve(connection: Connection, request: CliWrite, principal: Principal) -> Principal:
             self.resolutions += 1
@@ -258,19 +239,13 @@ class HeldFixture:
             resolve_recipient=resolve,
         )
 
-    async def source_reply_credited(self, system: BoundarySystem | None = None) -> bool:
+    async def source_reply_credited(
+        self, system: SqliteProcessConversationSystem | None = None
+    ) -> bool:
         metadata = await (system or self.system)._store.read_executor_turn("c_source")
         assert metadata is not None
         return {"kind": "chief", "id": "chief"} in json.loads(metadata[2])[
             "explicit_reply_recipients"
-        ]
-
-    def held_rows(self) -> list[dict[str, Any]]:
-        return [
-            dict(row)
-            for row in self.connection.execute(
-                "SELECT * FROM executor_native_messages ORDER BY held_admission_order"
-            )
         ]
 
     async def close(self) -> None:
@@ -359,494 +334,207 @@ async def boot(connection: Connection, root: Path) -> HeldFixture:
     return fixture
 
 
-async def eventually(condition: Callable[[], bool], detail: str) -> None:
-    for _ in range(300):
-        if condition():
-            return
-        await asyncio.sleep(0.01)
-    raise AssertionError(detail)
+def operation_result(fixture: HeldFixture, submission_id: str) -> dict[str, Any]:
+    row = fixture.connection.execute(
+        "SELECT result_json FROM executor_native_messages WHERE submission_id=?",
+        (submission_id,),
+    ).fetchone()
+    return json.loads(row[0])  # type: ignore[no-any-return]
 
 
-def test_held_commit_before_ack_replay_and_mac_ack_restore_exact_target_order(
-    tmp_db: Connection,
-    tmp_path: Path,
+def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
+    tmp_db: Connection, tmp_path: Path
 ) -> None:
     async def run() -> None:
         fixture = await boot(tmp_db, tmp_path)
         try:
-            fixture.system.crash_after_held_commit = True
-            entries = [
-                fixture.entry("held_first", "First line\nUnicode Ω preserved"),
-                fixture.entry("held_second", "Second line\nExact trailing space "),
-            ]
-            first_receipts: list[AcceptanceReceipt] = []
-            for envelope, write in entries:
-                with pytest.raises(InjectedCrash, match="before acknowledgment"):
-                    await fixture.deliver(envelope, write)
-                receipt = fixture.store.lookup_receipt(envelope.sender_id, envelope.submission_id)
-                assert receipt is not None and receipt.result["fate"] == "queued"
-                first_receipts.append(receipt)
-            pending = await fixture.system.held_prompts("c_target")
-            assert [item.sender_message_id for item in pending] == ["held_first", "held_second"]
-            native_before = list(fixture.native.commands)
-            for (envelope, write), receipt in zip(entries, first_receipts, strict=True):
-                assert await fixture.deliver(envelope, write) == receipt
+            entries = [fixture.entry("first", "First Ω"), fixture.entry("second", "Second")]
+            receipts = [await fixture.deliver(envelope, write) for envelope, write in entries]
+            assert [receipt.result["fate"] for receipt in receipts] == ["queued", "queued"]
+            assert [
+                held.sender_message_id for held in await fixture.system.held_prompts("c_target")
+            ] == ["first", "second"]
+            for (envelope, write), receipt in zip(entries, receipts, strict=True):
                 assert await fixture.deliver(envelope, write) == receipt
                 fixture.spool.acknowledge(receipt)
             assert fixture.spool.pending() == ()
             assert fixture.resolutions == 2
-            assert fixture.native.commands == native_before
+            assert not await fixture.source_reply_credited()
+            before = list(fixture.native.commands)
             fresh = await fixture.new_core()
-            await fresh.resume_executor_held_prompts(remote_ready=False)
-            restored = await fresh.held_prompts("c_target")
-            assert restored == pending
-            assert [row["held_target_conversation_id"] for row in fixture.held_rows()] == [
-                "c_target",
-                "c_target",
-            ]
-            assert [row["held_state"] for row in fixture.held_rows()] == ["pending", "pending"]
-            assert not await fixture.source_reply_credited(fresh)
-            for (envelope, write), receipt in zip(entries, first_receipts, strict=True):
+            assert await fresh.held_prompts("c_target") == ()
+            for (envelope, write), receipt in zip(entries, receipts, strict=True):
+                assert operation_result(fixture, envelope.submission_id) == {
+                    "target": {"kind": "chief", "id": "chief"},
+                    "conversation_id": "c_target",
+                    "fate": "interrupted",
+                }
                 assert await fixture.deliver(envelope, write, system=fresh) == receipt
-            assert await fresh.held_prompts("c_target") == restored
-            assert fixture.native.commands == native_before
+            assert fixture.native.commands == before
+            assert not await fixture.source_reply_credited(fresh)
         finally:
             await fixture.close()
 
     asyncio.run(run())
 
 
-def test_idle_held_admission_resumes_after_restart_without_a_fresh_send(
-    tmp_db: Connection,
-    tmp_path: Path,
+@pytest.mark.parametrize("action", ["discard", "promote", "drain"])
+def test_native_terminal_held_outcome_retains_receipt_and_composed_reply_credit(
+    tmp_db: Connection, tmp_path: Path, action: str
 ) -> None:
     async def run() -> None:
         fixture = await boot(tmp_db, tmp_path)
         try:
-            envelope, write = fixture.entry("held_resume", "Resume original bytes Ω")
+            envelope, write = fixture.entry("terminal", "Exact reply Ω")
             receipt = await fixture.deliver(envelope, write)
-            fixture.spool.acknowledge(receipt)
-            assert not await fixture.source_reply_credited()
-            fixture.system.pause_drain = True
-            await fixture.system.interrupt("c_target")
-            assert not await fixture.system.is_running("c_target")
-            assert fixture.held_rows()[0]["held_state"] == "pending"
-            fresh = await fixture.new_core()
-            native_before = len(fixture.native.writes())
-            await fresh.resume_executor_held_prompts(remote_ready=False)
-            await asyncio.sleep(0)
-            assert len(fixture.native.writes()) == native_before
-            await fresh.resume_executor_held_prompts(remote_ready=True)
-            await eventually(
-                lambda: fixture.held_rows()[0]["held_state"] == "consumed",
-                "Restored idle admission did not resume after reconciliation",
-            )
-            assert await fresh.held_prompts("c_target") == ()
-            assert len(fixture.native.writes()) == native_before + 1
-            assert await fixture.source_reply_credited(fresh)
-            assert await fixture.deliver(envelope, write, system=fresh) == receipt
-            assert await fresh.held_prompts("c_target") == ()
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("action", ["discard", "promote"])
-def test_terminal_held_action_and_original_receipt_replay_never_resurrect(
-    tmp_db: Connection,
-    tmp_path: Path,
-    action: str,
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            envelope, write = fixture.entry("held_terminal", "Keep these exact bytes")
-            receipt = await fixture.deliver(envelope, write)
-            held = await fixture.system.held_prompts("c_target")
-            assert len(held) == 1
-            if action == "discard":
-                assert await fixture.system.discard_held_prompt("c_target", held[0].held_prompt_id)
-            else:
-                fate = await fixture.system.promote_held_prompt(
-                    "c_target",
-                    held[0].held_prompt_id,
-                    HeldPromptPromotionMode.send_now,
-                )
-                assert isinstance(fate, PromptDeliveryStarted), repr(fate)
-            assert fixture.held_rows()[0]["held_state"] == "consumed"
-            native_before = list(fixture.native.commands)
-            fresh = await fixture.new_core()
-            await fresh.resume_executor_held_prompts(remote_ready=True)
-            assert await fresh.held_prompts("c_target") == ()
-            assert await fixture.deliver(envelope, write, system=fresh) == receipt
-            assert await fresh.held_prompts("c_target") == ()
-            assert fixture.native.commands == native_before
-            assert await fixture.source_reply_credited(fresh) is (action == "promote")
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-def test_interrupted_dispatch_preserves_bytes_quarantines_and_does_not_credit_reply(
-    tmp_db: Connection,
-    tmp_path: Path,
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            envelope, write = fixture.entry("held_uncertain", "Never drop\nExact Ω bytes ")
-            receipt = await fixture.deliver(envelope, write)
-            fixture.spool.acknowledge(receipt)
-            assert not await fixture.source_reply_credited()
             held = (await fixture.system.held_prompts("c_target"))[0]
-            fixture.native.fail_next_write = True
-            with pytest.raises(InjectedCrash, match="outcome interrupted"):
-                await fixture.system.promote_held_prompt(
-                    "c_target",
-                    held.held_prompt_id,
-                    HeldPromptPromotionMode.send_now,
-                )
-            live_unknown = await fixture.system.held_prompts("c_target")
-            assert len(live_unknown) == 1 and live_unknown[0].delivery_uncertain
-            attempts = len(fixture.native.writes())
-            next_envelope, next_write = fixture.entry("held_live_after_unknown", "Wait live")
-            assert (await fixture.deliver(next_envelope, next_write)).result["fate"] == "queued"
-            live_pending = await fixture.system.held_prompts("c_target")
-            assert isinstance(
-                await fixture.system.promote_held_prompt(
-                    "c_target", live_pending[1].held_prompt_id, HeldPromptPromotionMode.send_now
-                ),
-                PromptDeliveryQueued,
-            )
-            assert len(fixture.native.writes()) == attempts
-            row = fixture.held_rows()[0]
-            assert row["held_state"] == "dispatching"
-            assert json.loads(row["held_prompt_json"])["content"] == encode_value(held.content)
-            native_before = list(fixture.native.commands)
-            fresh = await fixture.new_core()
-            restored = await fresh.held_prompts("c_target")
-            assert len(restored) == 2
-            assert restored[0].content == held.content
-            assert restored[0].delivery_uncertain
-            await fresh.resume_executor_held_prompts(remote_ready=True)
-            await fresh.resume_executor_held_prompts(remote_ready=True)
-            fate = await fresh.promote_held_prompt(
-                "c_target",
-                restored[0].held_prompt_id,
-                HeldPromptPromotionMode.send_now,
-            )
-            assert isinstance(fate, PromptDeliveryUncertain)
-            assert await fixture.deliver(envelope, write, system=fresh) == receipt
-            assert fixture.native.commands == native_before
-            assert not await fixture.source_reply_credited(fresh)
-            assert fixture.held_rows()[0]["held_state"] == "dispatching"
-            assert len(await fresh.held_prompts("c_target")) == 2
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("run_janitor", [False, True])
-def test_automatic_uncertain_drain_never_discards_or_retries_even_after_idle_cleanup(
-    tmp_db: Connection,
-    tmp_path: Path,
-    run_janitor: bool,
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            envelope, write = fixture.entry("held_auto_uncertain", "Retain auto-drain Ω\nBytes ")
-            receipt = await fixture.deliver(envelope, write)
-            fixture.spool.acknowledge(receipt)
-            original = (await fixture.system.held_prompts("c_target"))[0]
-            assert not await fixture.source_reply_credited()
-            fixture.system.pause_drain = True
-            await fixture.system.interrupt("c_target")
-            fresh = await fixture.new_core()
-            fixture.native.uncertain_next_write = True
-            native_before = len(fixture.native.writes())
-            await fresh.resume_executor_held_prompts(remote_ready=True)
-            await eventually(
-                lambda: len(fixture.native.writes()) > native_before,
-                "Automatic drain never reached the native boundary",
-            )
-            # Wait for the core's retained settlement, rather than inspect the
-            # short interval between dispatch marking and outcome processing.
-            await fresh.wait_until_quiescent()
-            uncertain = await fresh.held_prompts("c_target")
-            assert len(uncertain) == 1
-            assert uncertain[0].content == original.content
-            assert uncertain[0].delivery_uncertain
-            assert fixture.held_rows()[0]["held_state"] == "dispatching"
-            assert json.loads(fixture.held_rows()[0]["held_prompt_json"])[
-                "content"
-            ] == encode_value(original.content)
-            assert (
-                tmp_db.execute(
-                    "SELECT count(*) FROM conversation_events WHERE kind='prompt_discarded' "
-                    "AND json_extract(payload,'$.sender_message_id')='held_auto_uncertain'"
-                ).fetchone()[0]
-                == 0
-            )
-            assert not await fixture.source_reply_credited(fresh)
-            attempts = len(fixture.native.writes())
-            if run_janitor:
-                stops_before = sum(
-                    command.operation is ChildOperation.stop for command in fixture.native.commands
-                )
-                await fresh.start_idle_child_janitor()
-                await eventually(
-                    lambda: (
-                        sum(
-                            command.operation is ChildOperation.stop
-                            for command in fixture.native.commands
-                        )
-                        > stops_before
+            if action == "discard":
+                assert await fixture.system.discard_held_prompt("c_target", held.held_prompt_id)
+            elif action == "promote":
+                assert isinstance(
+                    await fixture.system.promote_held_prompt(
+                        "c_target", held.held_prompt_id, HeldPromptPromotionMode.send_now
                     ),
-                    "Idle cleanup did not stop the quarantined child",
+                    PromptDeliveryStarted,
                 )
-                await fresh.wait_until_quiescent()
-                assert len(fixture.native.writes()) == attempts
-                assert (await fresh.held_prompts("c_target"))[0].delivery_uncertain
-            later_envelope, later_write = fixture.entry(
-                "held_after_unknown", "Wait behind uncertainty"
-            )
-            later = await fixture.deliver(later_envelope, later_write, system=fresh)
-            assert later.result["fate"] == "queued"
-            assert len(fixture.native.writes()) == attempts
-            assert [held.sender_message_id for held in await fresh.held_prompts("c_target")] == [
-                "held_auto_uncertain",
-                "held_after_unknown",
-            ]
-            live_pending = await fresh.held_prompts("c_target")
-            assert isinstance(
-                await fresh.promote_held_prompt(
-                    "c_target",
-                    live_pending[1].held_prompt_id,
-                    HeldPromptPromotionMode.send_now,
-                ),
-                PromptDeliveryQueued,
-            )
-            assert len(fixture.native.writes()) == attempts
-            restored = await fixture.new_core()
-            await restored.resume_executor_held_prompts(remote_ready=True)
-            await restored.resume_executor_held_prompts(remote_ready=True)
-            pending = await restored.held_prompts("c_target")
-            assert len(pending) == 2 and pending[0].delivery_uncertain
-            assert not pending[1].delivery_uncertain
-            assert isinstance(
-                await restored.promote_held_prompt(
-                    "c_target",
-                    pending[0].held_prompt_id,
-                    HeldPromptPromotionMode.send_now,
-                ),
-                PromptDeliveryUncertain,
-            )
-            assert isinstance(
-                await restored.promote_held_prompt(
-                    "c_target",
-                    pending[1].held_prompt_id,
-                    HeldPromptPromotionMode.send_now,
-                ),
-                PromptDeliveryQueued,
-            )
-            assert len(fixture.native.writes()) == attempts
-            assert await fixture.deliver(envelope, write, system=restored) == receipt
-            assert not await fixture.source_reply_credited(restored)
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-def test_known_safe_native_command_requeue_persists_new_id_order_and_original_bytes(
-    tmp_db: Connection,
-    tmp_path: Path,
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            first_envelope, first_write = fixture.entry(
-                "held_native_command", "/scripted Ω\nExact "
-            )
-            first_receipt = await fixture.deliver(first_envelope, first_write)
-            second_envelope, second_write = fixture.entry("held_other", "Other held message")
-            await fixture.deliver(second_envelope, second_write)
-            initial = await fixture.system.held_prompts("c_target")
-            assert [held.sender_message_id for held in initial] == [
-                "held_native_command",
-                "held_other",
-            ]
-            fixture.native.refuse_next_steer = True
-            fate = await fixture.system.promote_held_prompt(
-                "c_target",
-                initial[0].held_prompt_id,
-                HeldPromptPromotionMode.steer,
-            )
-            assert isinstance(fate, PromptDeliveryQueued)
-            requeued = await fixture.system.held_prompts("c_target")
-            assert [held.sender_message_id for held in requeued] == [
-                "held_other",
-                "held_native_command",
-            ]
-            assert requeued[1].held_prompt_id != initial[0].held_prompt_id
-            assert requeued[1].content == initial[0].content
-            assert not any(held.delivery_uncertain for held in requeued)
-            rows = fixture.held_rows()
-            assert [row["submission_id"] for row in rows] == ["held_other", "held_native_command"]
-            assert [row["held_state"] for row in rows] == ["pending", "pending"]
-            for row, held in zip(rows, requeued, strict=True):
-                persisted = json.loads(row["held_prompt_json"])
-                assert persisted["held_prompt_id"] == held.held_prompt_id
-                assert persisted["content"] == encode_value(held.content)
-            assert not await fixture.source_reply_credited()
-            native_before = list(fixture.native.commands)
-            fresh = await fixture.new_core()
-            await fresh.resume_executor_held_prompts(remote_ready=True)
-            assert await fresh.held_prompts("c_target") == requeued
-            assert fixture.native.commands == native_before
-            assert await fixture.deliver(first_envelope, first_write, system=fresh) == first_receipt
-            assert await fresh.held_prompts("c_target") == requeued
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-def test_kill_retains_unknown_held_bytes_and_discards_only_known_pending(
-    tmp_db: Connection, tmp_path: Path
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            envelope, write = fixture.entry("held_kill_unknown", "Unknown exact Ω bytes\n")
-            await fixture.deliver(envelope, write)
-            original = (await fixture.system.held_prompts("c_target"))[0]
-            fixture.native.fail_next_write = True
-            with pytest.raises(InjectedCrash):
-                await fixture.system.promote_held_prompt(
-                    "c_target", original.held_prompt_id, HeldPromptPromotionMode.send_now
-                )
-            fresh = await fixture.new_core()
-            later_envelope, later_write = fixture.entry("held_kill_pending", "Known pending")
-            await fixture.deliver(later_envelope, later_write, system=fresh)
-            attempts = len(fixture.native.writes())
-            await fresh.kill("c_target")
-            pending = await fresh.held_prompts("c_target")
-            assert len(pending) == 1 and pending[0].delivery_uncertain
-            assert pending[0].content == original.content
-            states = {row["submission_id"]: row["held_state"] for row in fixture.held_rows()}
-            assert states == {"held_kill_unknown": "dispatching", "held_kill_pending": "consumed"}
-            discarded = tmp_db.execute(
-                "SELECT json_extract(payload,'$.sender_message_id') FROM conversation_events "
-                "WHERE kind='prompt_discarded'"
-            ).fetchall()
-            assert [row[0] for row in discarded] == ["held_kill_pending"]
-            restored = await fixture.new_core()
-            await restored.resume_executor_held_prompts(remote_ready=True)
-            assert await restored.held_prompts("c_target") == pending
-            assert len(fixture.native.writes()) == attempts
-            assert not await fixture.source_reply_credited(restored)
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("automatic", [False, True])
-def test_cancelled_dispatch_marker_keeps_acknowledged_bytes_visible_and_gated(
-    tmp_db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, automatic: bool
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            envelope, write = fixture.entry("held_marker_cancel", "Marker boundary exact Ω")
-            await fixture.deliver(envelope, write)
-            fixture.system.pause_drain = True
-            await fixture.system.interrupt("c_target")
-            fresh = await fixture.new_core()
-            original = fresh._store.mark_executor_held_dispatching
-            marked = asyncio.Event()
-
-            async def cancel_after_commit(target: str, sender_ids: tuple[str, ...]) -> bool:
-                await original(target, sender_ids)
-                marked.set()
-                raise asyncio.CancelledError
-
-            monkeypatch.setattr(fresh._store, "mark_executor_held_dispatching", cancel_after_commit)
-            attempts = len(fixture.native.writes())
-            if automatic:
-                await fresh.resume_executor_held_prompts(remote_ready=True)
-                await asyncio.wait_for(marked.wait(), 2)
-                await asyncio.sleep(0)
             else:
-                held = (await fresh.held_prompts("c_target"))[0]
+                await fixture.system.interrupt("c_target")
+                await fixture.system.wait_until_quiescent()
+            assert await fixture.system.held_prompts("c_target") == ()
+            assert operation_result(fixture, "terminal")["fate"] == (
+                "discarded" if action == "discard" else "started"
+            )
+            assert await fixture.source_reply_credited() is (action != "discard")
+            before = list(fixture.native.commands)
+            fresh = await fixture.new_core()
+            assert await fixture.deliver(envelope, write, system=fresh) == receipt
+            assert await fresh.held_prompts("c_target") == ()
+            assert fixture.native.commands == before
+        finally:
+            await fixture.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("action", ["promote", "drain", "cancel_steer"])
+def test_unknown_native_dispatch_quarantines_live_line_and_is_not_retried_after_restart(
+    tmp_db: Connection, tmp_path: Path, action: str
+) -> None:
+    async def run() -> None:
+        fixture = await boot(tmp_db, tmp_path)
+        try:
+            envelope, write = fixture.entry("uncertain", "Uncertain exact Ω")
+            receipt = await fixture.deliver(envelope, write)
+            held = (await fixture.system.held_prompts("c_target"))[0]
+            if action == "cancel_steer":
+                fixture.native.cancel_next_steer = True
                 with pytest.raises(asyncio.CancelledError):
-                    await fresh.promote_held_prompt(
+                    await fixture.system.promote_held_prompt(
+                        "c_target", held.held_prompt_id, HeldPromptPromotionMode.steer
+                    )
+            elif action == "promote":
+                fixture.native.fail_next_write = True
+                with pytest.raises(InjectedCrash):
+                    await fixture.system.promote_held_prompt(
                         "c_target", held.held_prompt_id, HeldPromptPromotionMode.send_now
                     )
-            pending = await fresh.held_prompts("c_target")
-            assert len(pending) == 1 and pending[0].delivery_uncertain
-            assert fixture.held_rows()[0]["held_state"] == "dispatching"
-            assert len(fixture.native.writes()) == attempts
-            next_envelope, next_write = fixture.entry("held_after_marker", "Stay behind marker")
-            assert (await fixture.deliver(next_envelope, next_write, system=fresh)).result[
-                "fate"
-            ] == "queued"
-            assert len(await fresh.held_prompts("c_target")) == 2
-            restored = await fixture.new_core()
-            await restored.resume_executor_held_prompts(remote_ready=True)
-            restored_pending = await restored.held_prompts("c_target")
-            assert len(restored_pending) == 2 and restored_pending[0].delivery_uncertain
-            assert len(fixture.native.writes()) == attempts
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-def test_native_steer_cancellation_preserves_live_held_unknown_and_never_retries(
-    tmp_db: Connection, tmp_path: Path
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            envelope, write = fixture.entry("held_native_cancel", "Cancelled steer Ω\nExact ")
-            receipt = await fixture.deliver(envelope, write)
-            held = (await fixture.system.held_prompts("c_target"))[0]
-            fixture.native.cancel_next_steer = True
-            with pytest.raises(asyncio.CancelledError):
-                await fixture.system.promote_held_prompt(
-                    "c_target", held.held_prompt_id, HeldPromptPromotionMode.steer
-                )
-            commands = list(fixture.native.commands)
+            else:
+                fixture.native.uncertain_next_write = True
+                await fixture.system.interrupt("c_target")
+                await fixture.system.wait_until_quiescent()
             pending = await fixture.system.held_prompts("c_target")
             assert len(pending) == 1 and pending[0].delivery_uncertain
             assert pending[0].content == held.content
-            assert fixture.held_rows()[0]["held_state"] == "dispatching"
-            next_envelope, next_write = fixture.entry(
-                "held_after_cancel", "Wait behind cancelled steer"
-            )
-            assert (await fixture.deliver(next_envelope, next_write)).result["fate"] == "queued"
-            live_pending = await fixture.system.held_prompts("c_target")
+            assert operation_result(fixture, "uncertain")["fate"] == "uncertain"
+            later_envelope, later_write = fixture.entry("later", "Wait behind unknown")
+            assert (await fixture.deliver(later_envelope, later_write)).result["fate"] == "queued"
+            later = (await fixture.system.held_prompts("c_target"))[1]
+            before = list(fixture.native.commands)
             assert isinstance(
                 await fixture.system.promote_held_prompt(
-                    "c_target", live_pending[1].held_prompt_id, HeldPromptPromotionMode.steer
+                    "c_target", later.held_prompt_id, HeldPromptPromotionMode.send_now
                 ),
                 PromptDeliveryQueued,
             )
-            assert fixture.native.commands == commands
+            await fixture.system.kill("c_target")
+            live = await fixture.system.held_prompts("c_target")
+            assert len(live) == 1 and live[0].delivery_uncertain
+            assert operation_result(fixture, "later")["fate"] == "discarded"
             assert not await fixture.source_reply_credited()
             fresh = await fixture.new_core()
-            await fresh.resume_executor_held_prompts(remote_ready=True)
-            restored = await fresh.held_prompts("c_target")
-            assert len(restored) == 2 and restored[0].delivery_uncertain
-            assert restored[0].content == held.content
+            assert await fresh.held_prompts("c_target") == ()
+            assert operation_result(fixture, "uncertain")["fate"] == "uncertain"
             assert await fixture.deliver(envelope, write, system=fresh) == receipt
-            assert fixture.native.commands == commands
+            assert fixture.native.writes() == [
+                command for command in before if command.operation is ChildOperation.write_prompt
+            ]
+        finally:
+            await fixture.close()
+
+    asyncio.run(run())
+
+
+def test_known_safe_steer_requeue_keeps_live_order_but_loses_waiting_text_on_restart(
+    tmp_db: Connection, tmp_path: Path
+) -> None:
+    async def run() -> None:
+        fixture = await boot(tmp_db, tmp_path)
+        try:
+            first, first_write = fixture.entry("command", "/scripted Ω")
+            receipt = await fixture.deliver(first, first_write)
+            second, second_write = fixture.entry("other", "Other held message")
+            await fixture.deliver(second, second_write)
+            initial = await fixture.system.held_prompts("c_target")
+            fixture.native.refuse_next_steer = True
+            fate = await fixture.system.promote_held_prompt(
+                "c_target", initial[0].held_prompt_id, HeldPromptPromotionMode.steer
+            )
+            assert isinstance(fate, PromptDeliveryQueued)
+            queued = await fixture.system.held_prompts("c_target")
+            assert [held.sender_message_id for held in queued] == ["other", "command"]
+            assert queued[1].content == initial[0].content
+            assert queued[1].held_prompt_id != initial[0].held_prompt_id
+            assert not any(held.delivery_uncertain for held in queued)
+            assert not await fixture.source_reply_credited()
+            before = list(fixture.native.commands)
+            fresh = await fixture.new_core()
+            assert await fresh.held_prompts("c_target") == ()
+            assert operation_result(fixture, "command")["fate"] == "interrupted"
+            assert operation_result(fixture, "other")["fate"] == "interrupted"
+            assert await fixture.deliver(first, first_write, system=fresh) == receipt
+            assert fixture.native.commands == before
+        finally:
+            await fixture.close()
+
+    asyncio.run(run())
+
+
+def test_lost_first_receipt_keeps_operation_binding_and_never_repeats_held_send(
+    tmp_db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def run() -> None:
+        fixture = await boot(tmp_db, tmp_path)
+        try:
+            envelope, write = fixture.entry("lost_receipt", "Waiting before receipt")
+            accept = fixture.store.accept
+
+            def crash(*args: Any, **kwargs: Any) -> AcceptanceReceipt:
+                raise InjectedCrash("first receipt interrupted")
+
+            monkeypatch.setattr(fixture.store, "accept", crash)
+            with pytest.raises(InjectedCrash, match="first receipt interrupted"):
+                await fixture.deliver(envelope, write)
+            assert fixture.store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+            assert operation_result(fixture, "lost_receipt")["fate"] == "queued"
+            before = list(fixture.native.commands)
+            fresh = await fixture.new_core()
+            monkeypatch.setattr(fixture.store, "accept", accept)
+            receipt = await fixture.deliver(envelope, write, system=fresh)
+            assert receipt.result["fate"] == "interrupted"
+            assert await fixture.deliver(envelope, write, system=fresh) == receipt
+            assert fixture.resolutions == 1
+            assert await fresh.held_prompts("c_target") == ()
+            assert fixture.native.commands == before
         finally:
             await fixture.close()
 

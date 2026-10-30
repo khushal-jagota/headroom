@@ -123,12 +123,13 @@ Only registered operations reach canonical writers. Worker authority comes from
 the VPS child assignment, not headers supplied by a Mac process. Unsupported
 commands fail explicitly. This boundary does not grant a Worker owner authority.
 
-An accepted message can wait in the target conversation's held line. Its exact
-content, original target, order, and first receipt share one VPS transaction.
-Restart restores existing pending content before later admission. Promotion and
-discard consume that state through the conversation lifecycle. Interrupted native
-dispatch retains its bytes and exposes uncertainty instead of sending again.
-This persistence cannot recover messages lost before the feature existed.
+An accepted message uses the same memory-only held line as a VPS-sent message.
+The [conversation system](conversation-system.md#processes-honestly) owns its queue
+policy and restart outcomes. The native operation retains submission identity,
+original sender and recipient, and delivery outcome, without saving held content.
+The first receipt remains immutable for deduplication; the operation result records
+later delivery, discard, or restart interruption. Neither restart nor submission
+replay re-sends lost held content.
 
 The outbound journal uses SQLite for envelopes, conversation positions, snapshots,
 and acknowledgment state. A transaction commits a submission and its snapshot references

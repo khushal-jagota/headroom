@@ -54,9 +54,6 @@ from planner.message_delivery import api, service
 class _Operation:
     sender_id: str
     submission_id: str
-    envelope: QueuedEnvelope
-    store: ExecutorStore
-    identity: ExecutorIdentity
     composed_confirmed: bool = False
 
 
@@ -98,12 +95,8 @@ def _now_ms() -> int:
 
 
 @contextmanager
-def _operation_context(
-    envelope: QueuedEnvelope, store: ExecutorStore, identity: ExecutorIdentity
-) -> Iterator[None]:
-    token = _OPERATION.set(
-        _Operation(envelope.sender_id, envelope.submission_id, envelope, store, identity)
-    )
+def _operation_context(envelope: QueuedEnvelope) -> Iterator[None]:
+    token = _OPERATION.set(_Operation(envelope.sender_id, envelope.submission_id))
     try:
         yield
     finally:
@@ -152,12 +145,13 @@ def _save_result(
 ) -> None:
     if composed_content_delivered:
         _credit_reply(connection, row, result)
-    if row["result_json"] is not None:
+    if row["result_json"] is not None and row["state"] == "completed":
         return
+    state = "bound" if result.get("fate") == "queued" else "completed"
     connection.execute(
-        "UPDATE executor_native_messages SET result_json=?,state='completed' "
-        "WHERE sender_id=? AND submission_id=? AND result_json IS NULL",
-        (_json(result), row["sender_id"], row["submission_id"]),
+        "UPDATE executor_native_messages SET result_json=?,state=? "
+        "WHERE sender_id=? AND submission_id=?",
+        (_json(result), state, row["sender_id"], row["submission_id"]),
     )
 
 
@@ -166,119 +160,93 @@ def native_reply_was_composed() -> bool | None:
     return None if operation is None else operation.composed_confirmed
 
 
-def record_native_held_prompt(
-    conversation_id: str, held_prompt: object, queue_position: int
-) -> None:
-    """Publish one actual held admission and its first receipt in one VPS transaction."""
+def _message_operations(
+    connection: sqlite3.Connection,
+    conversation_id: str,
+    submission_id: str | None,
+    sender: Principal | None,
+    recipient: Principal | None,
+) -> tuple[sqlite3.Row, ...]:
+    if submission_id is None or sender is None or recipient is None:
+        return ()
     operation = _OPERATION.get()
-    if operation is None:
-        return
-    from planner.executor.codec import encode_value
+    if operation is not None and operation.submission_id == submission_id:
+        row = connection.execute(
+            "SELECT * FROM executor_native_messages WHERE sender_id=? AND submission_id=?",
+            (operation.sender_id, submission_id),
+        ).fetchone()
+        if row is not None:
+            if row["principal_json"] != _principal_json(sender):
+                raise ValueError("Canonical message sender conflicts with bound operation")
+            if row["recipient_json"] != _principal_json(recipient):
+                raise ValueError("Canonical message recipient conflicts with bound operation")
+    return tuple(
+        row
+        for row in connection.execute(
+            "SELECT * FROM executor_native_messages WHERE submission_id=? "
+            "AND principal_json=? AND recipient_json=?",
+            (submission_id, _principal_json(sender), _principal_json(recipient)),
+        )
+        if row["result_json"] is None
+        or json.loads(row["result_json"]).get("conversation_id") == conversation_id
+    )
 
-    held = encode_value(held_prompt)
-    if not isinstance(held, dict) or held.get("sender_message_id") != operation.submission_id:
-        raise ValueError("held message does not match native submission")
 
-    def write(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-        row = _lookup(connection, envelope)
-        if row is None:
-            raise ValueError("held message lacks its original target binding")
-        if held.get("sender") != json.loads(row["principal_json"]) or held.get(
-            "recipient"
-        ) != json.loads(row["recipient_json"]):
-            raise ValueError("held identity differs from original operation")
-        if row["held_prompt_json"] is not None:
-            if (
-                row["held_prompt_json"] != _json(held)
-                or row["held_target_conversation_id"] != conversation_id
-            ):
-                raise ValueError("native operation already holds another message")
-        else:
-            order = connection.execute(
-                "SELECT COALESCE(MAX(held_admission_order),0)+1 FROM "
-                "executor_native_messages WHERE held_target_conversation_id=?",
-                (conversation_id,),
-            ).fetchone()[0]
-            connection.execute(
-                "UPDATE executor_native_messages SET "
-                "held_prompt_json=?,held_target_conversation_id=?,held_admission_order=?,"
-                "held_state='pending' "
-                "WHERE sender_id=? AND submission_id=?",
-                (_json(held), conversation_id, order, row["sender_id"], row["submission_id"]),
-            )
+def record_native_message_admission_in_transaction(
+    connection: sqlite3.Connection,
+    conversation_id: str,
+    message: PromptDiscardedEventPayload,
+    *,
+    queued: bool = False,
+) -> None:
+    """Keep only the operation's outcome knowledge, never a recoverable payload.
+
+    The shared dispatch decision calls this before any provider can see the text.
+    A proven non-delivery can return it to queued. The first receipt is unchanged.
+    """
+    for row in _message_operations(
+        connection, conversation_id, message.sender_message_id, message.sender, message.recipient
+    ):
+        if row["state"] == "completed":
+            continue
         result: JsonObject = {
             "target": cast(JsonObject, json.loads(row["recipient_json"])),
             "conversation_id": conversation_id,
-            "fate": "queued",
-            "queue_position": queue_position,
+            "fate": "queued" if queued else "uncertain",
+        }
+        connection.execute(
+            "UPDATE executor_native_messages SET state=?,result_json=? "
+            "WHERE sender_id=? AND submission_id=?",
+            (
+                "bound" if queued else "dispatched",
+                _json(result),
+                row["sender_id"],
+                row["submission_id"],
+            ),
+        )
+
+
+def interrupt_native_messages_in_transaction(connection: sqlite3.Connection) -> None:
+    """A runtime restart loses waiting text; an attempted dispatch stays unknown."""
+    for row in connection.execute(
+        "SELECT * FROM executor_native_messages WHERE state IN ('bound','dispatched')"
+    ).fetchall():
+        result: JsonObject = {
+            "target": cast(JsonObject, json.loads(row["recipient_json"])),
+            "conversation_id": (
+                json.loads(row["result_json"]).get("conversation_id")
+                if row["result_json"] is not None
+                else None
+            ),
+            "fate": "interrupted" if row["state"] == "bound" else "uncertain",
         }
         _save_result(connection, row, result)
-        return result
-
-    operation.store.accept(operation.envelope, write, _now_ms(), identity=operation.identity)
-
-
-def consume_native_held_prompt_in_transaction(
-    connection: sqlite3.Connection, conversation_id: str, payload: ConversationEventPayload
-) -> None:
-    """One terminal canonical sender outcome consumes its exact held admission."""
-    if not isinstance(
-        payload,
-        (
-            PromptEventPayload,
-            PromptDeliveryRefusedEventPayload,
-            PromptDeliveryUncertainEventPayload,
-            PromptDiscardedEventPayload,
-        ),
-    ):
-        return
-    submission_id = payload.sender_message_id
-    if submission_id is None:
-        return
-    rows = connection.execute(
-        "SELECT * FROM executor_native_messages WHERE submission_id=? AND "
-        "held_target_conversation_id=? AND held_state IN "
-        "('pending','dispatching')",
-        (submission_id, conversation_id),
-    ).fetchall()
-    for row in rows:
-        if payload.sender != TypeAdapter(Principal).validate_json(
-            row["principal_json"]
-        ) or payload.recipient != TypeAdapter(Principal).validate_json(row["recipient_json"]):
-            continue
-        held = json.loads(row["held_prompt_json"])
-        from planner.executor.codec import encode_value
-
-        if (
-            held["content"] != encode_value(payload.content)
-            or held["sender_label"] != payload.sender_label
-        ):
-            raise ValueError("terminal sender event differs from canonical held bytes")
-        if isinstance(payload, PromptDeliveryUncertainEventPayload):
-            # Keep the original dispatch bytes for reconciliation, without reply
-            # credit or authority to emit them again.
-            continue
-        admission = _ADMISSION.get()
-        if (
-            isinstance(payload, (PromptEventPayload, PromptDeliveryUncertainEventPayload))
-            and admission is not None
-            and admission.composed_content_delivered
-        ):
-            _credit_reply(connection, row, {"fate": "started"})
-        connection.execute(
-            "UPDATE executor_native_messages SET held_state='consumed' WHERE "
-            "sender_id=? AND submission_id=?",
-            (row["sender_id"], row["submission_id"]),
-        )
 
 
 def record_native_message_event_in_transaction(
     connection: sqlite3.Connection, conversation_id: str, payload: ConversationEventPayload
 ) -> None:
-    """Hook after canonical row insert and before its commit, never after receipt."""
-    operation = _OPERATION.get()
-    if operation is None or getattr(payload, "sender_message_id", None) != operation.submission_id:
-        return
+    """Settle immediate or held delivery with its canonical event and reply credit."""
     admission = _ADMISSION.get()
     composed = False
     if isinstance(payload, MessageToOwnerEventPayload):
@@ -296,30 +264,27 @@ def record_native_message_event_in_transaction(
         composed = admission.composed_content_delivered if admission is not None else False
     elif isinstance(payload, PromptDeliveryRefusedEventPayload):
         fate = {"fate": "refused", "refusal_reason": payload.refusal_reason.value}
+    elif isinstance(payload, PromptDiscardedEventPayload):
+        fate = {"fate": "discarded"}
     else:
         return
-    row = connection.execute(
-        "SELECT * FROM executor_native_messages WHERE sender_id=? AND submission_id=?",
-        (operation.sender_id, operation.submission_id),
-    ).fetchone()
-    if row is None:
-        return
-    if getattr(payload, "sender", None) != TypeAdapter(Principal).validate_json(
-        row["principal_json"]
+    for row in _message_operations(
+        connection, conversation_id, payload.sender_message_id, payload.sender, payload.recipient
     ):
-        raise ValueError("Canonical message sender conflicts with bound operation")
-    if getattr(payload, "recipient", None) != TypeAdapter(Principal).validate_json(
-        row["recipient_json"]
-    ):
-        raise ValueError("Canonical message recipient conflicts with bound operation")
-    result: JsonObject = {
-        "target": cast(JsonObject, json.loads(row["recipient_json"])),
-        "conversation_id": conversation_id,
-        **fate,
-    }
-    _save_result(connection, row, result, composed_content_delivered=composed)
-    if composed:
-        operation.composed_confirmed = True
+        result: JsonObject = {
+            "target": cast(JsonObject, json.loads(row["recipient_json"])),
+            "conversation_id": conversation_id,
+            **fate,
+        }
+        _save_result(connection, row, result, composed_content_delivered=composed)
+        operation = _OPERATION.get()
+        if (
+            composed
+            and operation is not None
+            and (row["sender_id"], row["submission_id"])
+            == (operation.sender_id, operation.submission_id)
+        ):
+            operation.composed_confirmed = True
 
 
 async def deliver_native_message(
@@ -412,7 +377,7 @@ async def deliver_native_message(
 
         connection = connect(store.db_path)
         try:
-            with _operation_context(envelope, store, identity):
+            with _operation_context(envelope):
                 delivered = await service.send_message(
                     conversations,
                     connection,
@@ -434,7 +399,8 @@ async def deliver_native_message(
             store._connected(connection, identity)
             row = _lookup(connection, envelope)
             assert row is not None
-            _save_result(connection, row, result)
+            if row["result_json"] is None or result.get("fate") != "queued":
+                _save_result(connection, row, result)
             saved = connection.execute(
                 "SELECT result_json FROM executor_native_messages "
                 "WHERE sender_id=? AND submission_id=?",

@@ -518,18 +518,8 @@ class SqliteProcessConversationSystem:
         self._signal = store.signal_coordinator
         self._runtime_ownership = store.claim_runtime(existing_ownership=runtime_ownership)
         try:
-            from pydantic import TypeAdapter
-
             for record, metadata in store.read_executor_runtime_snapshots():
                 state = _ConversationState(record=record)
-                for payload, delivery_state in store.read_executor_held_prompts_sync(
-                    record.conversation_id
-                ):
-                    held = TypeAdapter(_HeldPrompt).validate_json(payload)
-                    if delivery_state == "dispatching":
-                        held = replace(held, delivery_uncertain=True)
-                        state.child_is_quarantined = True
-                    state.held_prompts.append(held)
                 if metadata is not None:
                     self._restore_executor_turn_metadata(state, metadata)
                 self._conversations[record.conversation_id] = state
@@ -1792,7 +1782,6 @@ class SqliteProcessConversationSystem:
         steer_turn_token: TurnToken | None = None
         immediate_refusal: PromptDeliveryRefusalReason | None = None
         immediate_fate: HeldPromptPromotionFate | None = None
-        durable_held = False
         try:
             position = next(
                 (
@@ -1822,7 +1811,7 @@ class SqliteProcessConversationSystem:
                     except BaseException:
                         self._settle_phase(state)
                         raise
-                durable_held = await self._begin_held_deliveries(state, (held,))
+                self._begin_held_deliveries(state, (held,))
                 del state.held_prompts[position]
                 self._publish_held_prompts_changed(state)
                 reservation = await self._reserve_turn(state)
@@ -1836,7 +1825,7 @@ class SqliteProcessConversationSystem:
                     or held.selection_kind is not None
                 ):
                     return PromptDeliveryQueued(queue_position=position + 1)
-                durable_held = await self._begin_held_deliveries(state, (held,))
+                self._begin_held_deliveries(state, (held,))
                 del state.held_prompts[position]
                 self._publish_held_prompts_changed(state)
                 if not backend_supports_steer(state.record.backend_key):
@@ -1914,11 +1903,7 @@ class SqliteProcessConversationSystem:
                 return PromptDeliveryUncertain()
             except BaseException:
                 async with state.lock:
-                    if durable_held:
-                        self._quarantine_uncertain_held_batch(state, (held,))
-                    else:
-                        self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
-                        self._settle_held_deliveries(state, (held,))
+                    self._quarantine_uncertain_held_batch(state, (held,))
                 raise
             if delivery.suppression_reason is not None:
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
@@ -2021,9 +2006,8 @@ class SqliteProcessConversationSystem:
             assert barrier is not None
             state.steer_settlements.discard(barrier)
             barrier.set()
-            if durable_held:
-                async with state.lock:
-                    self._quarantine_uncertain_held_batch(state, (held,))
+            async with state.lock:
+                self._quarantine_uncertain_held_batch(state, (held,))
             raise
         except Exception as error:
             # An unexpected adapter fault proves neither acceptance nor refusal.
@@ -2042,6 +2026,20 @@ class SqliteProcessConversationSystem:
                     self._store.transition_lifecycle,
                     state.record.conversation_id,
                     (replace(attempt, status=LifecycleStatus.refused),),
+                ),
+            )
+            await self._persist(
+                state,
+                partial(
+                    self._store.record_sender_message_returned_to_queue,
+                    state.record.conversation_id,
+                    PromptDiscardedEventPayload(
+                        content=held.content,
+                        sender_label=held.sender_label,
+                        sender_message_id=held.sender_message_id,
+                        sender=held.sender,
+                        recipient=held.recipient,
+                    ),
                 ),
             )
             # A command the backend takes only as its own turn. Promoting it was the
@@ -2066,7 +2064,6 @@ class SqliteProcessConversationSystem:
                     owner_read_through_sequence=held.owner_read_through_sequence,
                     queue_reason=PromptQueueReason.command_needs_its_own_turn,
                     acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
-                    known_safe_requeue=True,
                 )
 
         async with state.lock:
@@ -2600,7 +2597,6 @@ class SqliteProcessConversationSystem:
         owner_read_through_sequence: int | None,
         acknowledge_owner_on_failure: bool = True,
         queue_reason: PromptQueueReason = PromptQueueReason.requested,
-        known_safe_requeue: bool = False,
     ) -> PromptDeliveryQueued:
         """Put one admitted message at the tail. The conversation lock must be held."""
         from planner.core.db import connect
@@ -2682,46 +2678,14 @@ class SqliteProcessConversationSystem:
             owner_read_through_sequence=owner_read_through_sequence,
             acknowledge_owner_on_failure=acknowledge_owner_on_failure,
         )
-        from planner.executor.native_messages import record_native_held_prompt
-
-        if known_safe_requeue:
-            self._store.requeue_executor_held_prompt(state.record.conversation_id, held)
-        else:
-            record_native_held_prompt(
-                state.record.conversation_id, held, len(state.held_prompts) + 1
-            )
         state.held_prompts.append(held)
         self._publish_held_prompts_changed(state)
         return PromptDeliveryQueued(queue_position=len(state.held_prompts))
 
-    async def _begin_held_deliveries(
+    def _begin_held_deliveries(
         self, state: _ConversationState, held_prompts: tuple[_HeldPrompt, ...]
-    ) -> bool:
+    ) -> None:
         """Keep sender identities visible after dequeue and before their durable outcome."""
-        try:
-            durable = await self._persist(
-                state,
-                partial(
-                    self._store.mark_executor_held_dispatching,
-                    state.record.conversation_id,
-                    tuple(
-                        held.sender_message_id
-                        for held in held_prompts
-                        if held.sender_message_id is not None
-                    ),
-                ),
-            )
-        except BaseException:
-            # Cancellation can outlive the shielded marker write. No native call
-            # starts here; retain the still-visible batch behind an honest barrier.
-            ids = {held.held_prompt_id for held in held_prompts}
-            for position, held in enumerate(state.held_prompts):
-                if held.held_prompt_id in ids:
-                    state.held_prompts[position] = replace(held, delivery_uncertain=True)
-            state.child_is_quarantined = True
-            self._settle_phase(state)
-            self._publish_held_prompts_changed(state)
-            raise
         for held in held_prompts:
             sender_message_id = held.sender_message_id
             if sender_message_id is None:
@@ -2735,8 +2699,6 @@ class SqliteProcessConversationSystem:
                 sender=held.sender,
                 recipient=held.recipient,
             )
-
-        return durable
 
     @staticmethod
     def _settle_held_deliveries(
@@ -4817,7 +4779,7 @@ class SqliteProcessConversationSystem:
                         ),
                     ),
                 )
-                durable_batch = await self._begin_held_deliveries(state, batch)
+                self._begin_held_deliveries(state, batch)
                 for _ in batch:
                     state.held_prompts.popleft()
                 held = batch[0]
@@ -4860,46 +4822,16 @@ class SqliteProcessConversationSystem:
                 await self._record_delivery_uncertainty(state, reservation, batch)
                 return
             except asyncio.CancelledError:
-                if durable_batch:
-                    self._quarantine_uncertain_held_batch(state, batch)
-                    raise
-                self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+                self._quarantine_uncertain_held_batch(state, batch)
                 raise
             except Exception:
                 if reservation.shutdown_owned:
                     await reservation.resolved.wait()
                     self._settle_held_deliveries(state, batch)
                     return
-                if durable_batch:
-                    async with state.lock:
-                        self._quarantine_uncertain_held_batch(state, batch)
-                    return
-                # Nothing named this failure and the text reached no backend, so this one
-                # message is written down as thrown away and the drain carries on. One
-                # message nobody can deliver must not take the line down with it: before
-                # this, the whole rest of the queue was left behind with the conversation
-                # marked idle and no drain left to come back for it.
-                LOGGER.exception(
-                    "conversation %s could not deliver a held message",
-                    state.record.conversation_id,
-                )
-                self._abandon_reserved_turn(state, reservation, _ConversationPhase.draining)
                 async with state.lock:
-                    for message in batch:
-                        await self._append_event(
-                            state,
-                            PromptDiscardedEventPayload(
-                                recovery_references=message.recovery_references,
-                                content=message.content,
-                                sender_label=message.sender_label,
-                                sender_message_id=message.sender_message_id,
-                                sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                                sender=message.sender,
-                                recipient=message.recipient,
-                            ),
-                        )
-                    self._settle_held_deliveries(state, batch)
-                continue
+                    self._quarantine_uncertain_held_batch(state, batch)
+                return
 
             if delivery.suppression_reason is not None:
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.draining)
@@ -6190,16 +6122,6 @@ class SqliteProcessConversationSystem:
         # Child restoration comes only from inventory; historical events can still
         # commit with this turn metadata when its native child no longer exists.
 
-    async def resume_executor_held_prompts(self, *, remote_ready: bool = False) -> None:
-        for conversation_id in await self._store.executor_held_targets():
-            state = await self._conversation_state(conversation_id)
-            if state is None or state.child_is_quarantined:
-                continue
-            if state.executor_child_reference is not None and not remote_ready:
-                continue
-            if state.phase is _ConversationPhase.idle and state.held_prompts:
-                asyncio.create_task(self._drain_held_prompts(state))
-
     async def adopt_remote_child(self, inventory: Any, child: BackendChild) -> bool:
         """Reattach only the exact Mac child and callbacks confirmed by inventory."""
         state = await self._conversation_state(inventory.child.conversation_id)
@@ -6757,16 +6679,6 @@ class SqliteProcessConversationSystem:
             if record is None:
                 return None
             state = _ConversationState(record=record)
-            from pydantic import TypeAdapter
-
-            for payload, delivery_state in await self._store.read_executor_held_prompts(
-                conversation_id
-            ):
-                held = TypeAdapter(_HeldPrompt).validate_json(payload)
-                if delivery_state == "dispatching":
-                    held = replace(held, delivery_uncertain=True)
-                    state.child_is_quarantined = True
-                state.held_prompts.append(held)
             await self._restore_executor_turn(state)
             with nullcontext() if self._signal is None else self._signal.runtime_registry():
                 self._conversations[conversation_id] = state

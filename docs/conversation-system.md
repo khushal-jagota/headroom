@@ -1108,10 +1108,11 @@ that did not actually restore the agent's memory is refused out loud — never
 silently accepted as a fresh brain behind an old transcript. A failed turn
 writes one error-log line with the ids and the tail of the process's stderr.
 
-Executor-admitted held messages survive a VPS restart in the canonical operation
-record. Pending items resume through the held lifecycle. An interrupted dispatch
-stays uncertain. This cannot recover content lost before persistence existed.
-Ordinary local admissions retain the memory-only held line. Kill is
+All agent messages share the same memory-only held line, whether sent from the
+Mac or VPS. A VPS restart loses waiting messages and never restores or re-sends
+them. For Mac submissions, the operation record reports a waiting message as
+interrupted and an attempted dispatch as uncertain. Its first receipt remains
+unchanged, and replaying that submission never delivers it again. Kill is
 the loud version of stopping: it ends the running turn and throws away the
 waiting line, writing a discard row for each thrown-away message, because text
 someone handed over must never vanish without a trace. Pressing New in the pane
@@ -1734,8 +1735,8 @@ application lifespan with fresh synthetic homes.
 
 ## Deferred
 
-- **Local held-line durability**: ordinary local admissions retain the volatile
-  waiting line. Executor-admitted messages now persist their pending content.
+- **Held-line durability**: all agent messages use the volatile waiting line.
+  A VPS restart loses waiting content regardless of where the sender runs.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
