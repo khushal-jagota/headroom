@@ -41,6 +41,19 @@ def evidence(tmp_path: Path) -> Path:
 def test_collection_preserves_all_bytes_and_original_paths(evidence: Path, tmp_path: Path) -> None:
     gate = tmp_path / "publication"
     checks.collect(evidence, gate, IDENTITY, SUCCESS)
+    # The real source fixture includes opt-in probes; publication must omit them
+    # without omitting ordinary integration coverage or repository static checks.
+    probe = "tests/containment/test_contained_pytest.py"
+    assert (SOURCE / probe).is_file()
+    selection = checks.read_object(evidence / "selection/selection.json")
+    for suite in ("unit", "integration", "e2e"):
+        paths = selection[suite]
+        assert isinstance(paths, list)
+        assert paths
+        assert probe not in paths
+        assert all(not path.startswith("tests/containment/") for path in paths)
+    assert selection["ruff_paths"] == ["."]
+    assert selection["mypy"] is True
     for suite in checks.SUITES:
         bundle = evidence / suite
         record = checks.read_object(bundle / "suite-record.json")
