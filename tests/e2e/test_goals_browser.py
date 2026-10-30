@@ -517,6 +517,40 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )
+    # The newly interactive overview must use the real revision-checked writer.
+    # Reuse this connected scenario: component tests cannot prove persisted API
+    # acceptance, effective completion, or reload reads from a card-originated edit.
+    overview_revision = api.get(server, path)["revision"]
+    with page.expect_response(
+        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as overview_saved:
+        card.get_by_role("checkbox", name="Review the updated draft", exact=True).click(
+            timeout=WAIT_MS
+        )
+    assert overview_saved.value.ok
+    assert overview_saved.value.request.post_data_json["expected_revision"] == overview_revision
+    overview_accepted = api.get(server, path)
+    assert overview_accepted["revision"] == overview_revision + 1
+    assert overview_accepted["page"]["blocks"][0]["items"][1]["state"] == "done"
+    assert overview_accepted["completed"] is True
+    page.reload()
+    expect(card.get_by_role("progressbar")).to_have_attribute(
+        "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
+    )
+    card.get_by_role("button", name="2 completed", exact=True).click(timeout=WAIT_MS)
+    with page.expect_response(
+        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as overview_reopened:
+        card.get_by_role("checkbox", name="Review the updated draft", exact=True).click(
+            timeout=WAIT_MS
+        )
+    assert overview_reopened.value.ok
+    assert api.get(server, path)["completed"] is False
+    expect(card.get_by_role("progressbar")).to_have_attribute(
+        "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
+    )
     page.get_by_role("region", name="Active goals", exact=True).get_by_role(
         "link", name="All goals", exact=True
     ).click(timeout=WAIT_MS)

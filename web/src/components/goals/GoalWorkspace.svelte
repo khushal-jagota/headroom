@@ -75,7 +75,7 @@
  {#if goal}
  <GoalHeader {goal}>{#snippet mark()}<ConversationSignalMark signal={navigationConversationSignal(navigation?.selectors.effective,goal.conversation_id)} conversationId={goal.conversation_id}/>{/snippet}</GoalHeader>
  {#if error}<ErrorLine {error}/>{/if}
- {#if checklist}<section class="checklist-panel" aria-label="Completion checklist">{#key `${goal.id}:${checklist.id}`}<PageChecklist block={checklist}/>{/key}</section>{/if}
+ {#if checklist}<section class="checklist-panel" aria-label="Completion checklist">{#key `${goal.id}:${checklist.id}`}<PageChecklist block={checklist} presentation="normal"/>{/key}</section>{/if}
  {#if primary}<section class="measure-panel" aria-label="Current reading"><PageChart block={primary} integrated/>
   {#if goal.kind==='binary'}<div class="panel-actions"><button class="completion-action" onclick={()=>change({completed:!goal!.completed})}>{goal.completed?'Mark not done':'Mark done'}</button></div>{/if}
  </section>{/if}
@@ -83,7 +83,7 @@
  {#each readings.data?.sources.filter(s=>s.health!=='healthy')??[] as source(source.source_id)}<p class="source-warning">{source.source_name}: {source.health}</p>{/each}
  <!-- The saved page is the goal's content. It carries its own authored headings; the page
       renderer adds none, and nothing here wraps it in a section of our own naming. -->
- {#if renderedPage}<div class="goal-page">{#key goal.id}<PageDocument document={renderedPage} showHeader={false}/>{/key}</div>{/if}
+ {#if renderedPage}<div class="goal-page">{#key goal.id}<PageDocument document={renderedPage} showHeader={false} supplementary/>{/key}</div>{/if}
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}
  </div>
  {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:goal:${id}`} label={goal?.title??'Goal'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={{kind:'goal',id}}/>{/snippet}

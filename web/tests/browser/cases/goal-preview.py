@@ -1110,6 +1110,62 @@ def disclosure_motion(title, reduced):
     return samples
 
 
+def overview_checklist_remount(page, fixture, phone, output, mode):
+    # Active filtering destroys a card while its GoalsOverview parent survives.
+    # Existing preview receipts do not prove this separate registry lifetime.
+    identity = "goal_wrenfixture"
+    page.evaluate("location.hash='#/workspace'")
+    page.locator('button[data-chief-destination]').click()
+    card = page.locator(f'[data-goal-card="{identity}"]')
+    checklist = card.locator('[data-block="checklist"]')
+    expect(checklist).to_have_attribute('data-presentation', 'normal')
+    control = checklist.get_by_role('checkbox', name='Confirm intake', exact=True)
+    expect(control).to_be_visible()
+    fixture.hold = True
+    count = len(fixture.writes)
+    with page.expect_request(f'**/api/goals/{identity}'):
+        (control.tap if phone else control.click)()
+    expect(checklist.get_by_text('Saving checklist…')).to_be_visible()
+    assert len(fixture.held) == 1
+
+    def active(value):
+        fixture.goals[identity]['active'] = value
+        fixture.version += 1
+        with page.expect_response(lambda response: (
+            urlsplit(response.url).path == '/api/goals'
+            or parse_qs(urlsplit(response.url).query).get('key') == ['/api/goals']
+        )):
+            page.evaluate("document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))")
+        expect(card).to_have_count(1 if value else 0)
+
+    active(False)
+    active(True)
+    expect(checklist.get_by_text('Saving checklist…')).to_be_visible()
+    expect(control).to_have_attribute('aria-checked', 'true')
+    expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '1')
+    fixture.reject_held()
+    expect(checklist.get_by_role('alert')).to_contain_text('Save rejected')
+    active(False)
+    active(True)
+    expect(checklist.get_by_role('alert')).to_contain_text('Save rejected')
+    expect(control).to_have_attribute('aria-checked', 'false')
+    assert len(fixture.writes) == count + 1
+    retry = checklist.get_by_role('button', name='Retry save', exact=True)
+    (retry.tap if phone else retry.click)()
+    expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '2')
+    expect(checklist.get_by_role('alert')).to_have_count(0)
+    assert len(fixture.writes) == count + 2
+    assert fixture.goals[identity]['page']['blocks'][0]['items'][1]['state'] == 'done'
+    toggle = checklist.locator('[data-checklist-toggle]')
+    (toggle.tap if phone else toggle.click)()
+    expect(toggle).to_have_attribute('aria-expanded', 'false')
+    (toggle.tap if phone else toggle.click)()
+    expect(toggle).to_have_attribute('aria-expanded', 'true')
+    assert len(fixture.writes) == count + 2
+    if output:
+        card.screenshot(path=str(output / f'{mode}-overview.png'))
+
+
 def authored_goal_presentation(browser, url):
     started = time.monotonic()
     artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
@@ -1144,6 +1200,7 @@ def authored_goal_presentation(browser, url):
             page.goto(url + "#/workspace/goal/goal_wrenfixture", wait_until="domcontentloaded")
             goal = page.locator('[data-goal-page="goal_wrenfixture"]')
             checklist = goal.get_by_role("region", name="Completion checklist")
+            expect(checklist.locator("[data-presentation]")).to_have_attribute("data-presentation", "normal")
             expect(checklist.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "1")
             # Saved done rows start in the completed group, without a write or a
             # settlement delay. Existing native controls cover check/uncheck saves.
@@ -1157,7 +1214,7 @@ def authored_goal_presentation(browser, url):
             if output:
                 page.screenshot(path=str(output / f"{mode}.png"))
             motion = disclosure_motion(
-                checklist.get_by_role("button", name="Details for Review release", exact=True),
+                checklist.get_by_role("button", name="Review release", exact=True),
                 reduced,
             )
             expect(checklist.get_by_text(
@@ -1232,13 +1289,14 @@ def authored_goal_presentation(browser, url):
                     ("action", "Submit build", "[data-action]"),
                 ):
                     row = checklist.locator(f'[data-step="{identity}"]')
-                    row.get_by_role("button", name=f"Details for {name}", exact=True).click()
+                    row.get_by_role("button", name=name, exact=True).click()
                     expect(row.locator(child)).to_be_visible()
                     expect(row.locator(".detail")).to_have_count(0)
                 # The shared native checklist renderer also owns the rail preview.
                 # Existing tests exercise its writes and dismissal lifecycle.
                 page.evaluate("location.hash='#/workspace'")
                 panel = open_preview(page, "goal_wrenfixture")
+                expect(panel.locator("[data-block=checklist]")).to_have_attribute("data-presentation", "small")
                 rail_geometry = centered_checklist_row(panel.locator('[data-step="intake"]'))
                 if output:
                     panel.screenshot(path=str(output / "desktop-rail.png"))
@@ -1247,6 +1305,8 @@ def authored_goal_presentation(browser, url):
             assert writes == [], writes
             assert fixture.writes == [], fixture.writes
             assert errors == [], errors
+            if not reduced:
+                overview_checklist_remount(page, fixture, phone, output, mode)
             receipts.append({"mode": mode, "geometry": geometry, "disclosure": motion,
                              "prose_geometry": prose_geometry,
                              "rail_geometry": rail_geometry, "writes": writes, "errors": errors})
@@ -1956,92 +2016,29 @@ def native_goal_edits(browser, url):
 
             nested.get_by_role("radio", name="Show Readiness view", exact=True).click()
             checklist = nested.locator('[data-block="checklist"]')
-            page_text(
-                checklist.get_by_role("textbox", name="Checklist title", exact=True),
-                "Edited nested readiness",
-                "native-checklist",
-                ["title"],
-            )
-            item = checklist.get_by_role("textbox", name="Checklist item label", exact=True)
-            row = checklist.locator('[data-step="native-step"]')
             if phone:
-                item.tap()
-            else:
-                item.focus()
-            detail_button = checklist.get_by_role(
-                "button", name="Details for Native item", exact=True
-            )
-            expanded = detail_button.get_attribute("aria-expanded")
-            item.press("ArrowDown")
-            expect(detail_button).to_have_attribute("aria-expanded", expanded)
-            item.press("Escape")
-            page_text(item, "Edited native item", "native-checklist", ["items", 0, "label"])
-            detail_button = checklist.get_by_role(
-                "button", name="Details for Edited native item", exact=True
-            )
+                expect(checklist).to_have_attribute("data-presentation", "smallest")
+                checklist.locator('[data-checklist-toggle]').tap()
+            expect(checklist).to_have_attribute("data-presentation", "small")
+            expect(checklist.get_by_role("textbox")).to_have_count(0)
+            expect(checklist.get_by_role("heading", name="Nested readiness", exact=True)).to_be_visible()
+            row = checklist.locator('[data-step="native-step"]')
+            detail_button = row.get_by_role("button", name="Native item", exact=True)
             if detail_button.get_attribute("aria-expanded") != "true":
                 (detail_button.tap if phone else detail_button.click)()
-            page_text(
-                row.get_by_role("textbox", name="Details for Edited native item", exact=True),
-                "Edited native detail",
-                "native-checklist",
-                ["items", 0, "detail"],
-                True,
-            )
-            # Failed empty plain drafts must survive a disclosure remount. The
-            # second blur is an explicit retry and preserves the captured revision.
-            if not phone:
-                detail = row.get_by_role(
-                    "textbox", name="Details for Edited native item", exact=True
-                )
-                fixture.fail_next = 1
-                detail.fill("")
-                detail.press("Control+Enter")
-                expect(row.locator(".error-line")).to_contain_text("Save rejected")
-                failed = copy.deepcopy(fixture.writes[-1])
-                count = len(fixture.writes)
-                # Toggle through DOM click so the failed field does not blur and
-                # retry before the remount that this case exists to exercise.
-                detail_button.evaluate("button => button.click()")
-                expect(detail).to_have_count(0)
-                detail_button.click()
-                expect(detail).to_have_text("")
-                expect(row.locator(".error-line")).to_contain_text("Save rejected")
-                assert len(fixture.writes) == count
-                with page.expect_response(
-                    lambda response: (
-                        urlsplit(response.url).path == f"/api/goals/{identity}"
-                        and response.request.method == "PATCH"
-                    )
-                ) as response:
-                    detail.focus()
-                    detail.press("Control+Enter")
-                assert response.value.status == 200
-                expect(row.locator('[contenteditable="false"]')).to_have_count(0)
-                expect(row.locator(".error-line")).to_have_count(0)
-                assert len(fixture.writes) == count + 1
-                assert fixture.writes[-1] == failed
-            page_text(
-                row.get_by_role("textbox", name="Action label for Edited native item", exact=True),
-                "Mark native ready",
-                "native-checklist",
-                ["items", 0, "action"],
-            )
+            expect(row.locator('.detail')).to_have_text("Native detail")
             assert block("native-checklist")["items"][0]["state"] == "open"
             count = len(fixture.writes)
-            action = row.get_by_role("button", name="Mark native ready", exact=True)
+            action = row.get_by_role("button", name="Complete native item", exact=True)
             (action.tap if phone else action.click)()
             wait_writes(count + 1)
             expect(checklist.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "1")
             assert block("native-checklist")["items"][0]["state"] == "done"
             assert len(fixture.writes) == count + 1
-            page_text(
-                checklist.get_by_role("textbox", name="Completed checklist title", exact=True),
-                "Edited nested ready",
-                "native-checklist",
-                ["doneTitle"],
-            )
-            assert block("native-checklist")["doneTitle"] == "Edited nested ready"
+            expect(checklist.get_by_role("heading", name="Nested ready", exact=True)).to_be_visible()
+            expect(checklist.get_by_role("textbox")).to_have_count(0)
+            assert block("native-checklist")["title"] == "Nested readiness"
+            assert block("native-checklist")["doneTitle"] == "Nested ready"
 
             # Artifact cards stay outside the editing action. This is one quick
             # check of that collision, not a repeat of artifact presentation tests.

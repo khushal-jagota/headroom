@@ -36,15 +36,21 @@ Focus loss saves text, dates, and numeric thresholds. Enter saves single-line fi
 
 Native selects save explicit selection changes. Failed structured edits retain their value and expose Retry save and Discard edit.
 
-On the full goal page, visible authored strings outside charts also support native text edits. This includes nested sections, view labels, callouts, saved metric and property strings, row copy, checklist wording, and table copy. Stable block and item IDs remain intact. Table edits retain original row identity after display sorting. Generated counts, chart titles, and measurement readings keep their existing behavior.
+On the full goal page, visible authored strings outside charts also support native text edits. This includes nested sections, view labels, callouts, saved metric and property strings, row copy, and table copy. Stable block and item IDs remain intact. Table edits retain original row identity after display sorting. Generated counts, chart titles, and measurement readings keep their existing behavior.
 
-Text blocks retain Markdown, artifact previews, source links, and download fallbacks. Other authored fields remain plain text. Text editors and disclosure, sort, view selection, or completion actions use separate targets. Sidebar previews and the component gallery retain their existing controls without page-text editors.
+Text blocks retain Markdown, artifact previews, source links, and download fallbacks. Other authored fields remain plain text. Checklist titles, item labels, details, and action labels remain plain text. The goal agent changes checklist text. Other text editors and disclosure, sort, view selection, or completion actions use separate targets. Sidebar previews and the component gallery retain their existing controls without page-text editors.
 
 Each text draft retains its original goal and revision through background refreshes. A stale write fails visibly instead of replacing newer data. The draft remains until an explicit retry or discard. Accepted edits survive reload.
 
 ## Sidebar previews
 
 Active goals appear inside the full Chief card, before its Worker groups. Each row links to its goal page. Hover, keyboard focus, or a touch hold opens the goal preview. The preview shows the Project, deadline, full title, and primary content.
+
+Main goal displays and active goal cards show the normal interactive checklist at every width. Sidebar previews show the small interactive checklist. Both sizes retain checkboxes, item details, actions, and completed items.
+
+Other saved-page checklists use the small presentation. When the goal content is 640 pixels wide or less, their compact summary opens the small interactive checklist. This mobile summary does not replace the main checklist or sidebar preview. Nested sections, views, and grids preserve this presentation context. Generic pages and component samples use the normal presentation unless their host selects another size.
+
+The whole checklist header toggles expansion in open, closed, and complete states. Its ring, title, count, whitespace, and chevron share one target. Keyboard and touch use the same control.
 
 A selected completion checklist uses the same checklist as the goal page. Other goals show their native chart, with its available date ranges and manual controls. Binary goals without a selected checklist retain Mark done and Mark not done. Automatic readings remain read-only.
 
