@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from pydantic import TypeAdapter
 from tests.support.executor_control import paused_outbox
 from tests.support.executor_https import HttpsProxy, serve_executor_app
 
@@ -36,6 +37,7 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryFate,
+    PromptDeliveryMode,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
@@ -87,7 +89,6 @@ from planner.executor.contracts import (
     decode_command_arguments,
 )
 from planner.executor.mac import MacExecutor
-from planner.executor.publication import PublicationReceiver
 from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
 
@@ -220,15 +221,22 @@ class CutReceiptEndpoint(ExecutorEndpoint):
         self, message: WireMessage, identity: ExecutorIdentity, writer: ControlMessageWriter
     ) -> bool:
         sent = await super()._send_reconciliation(message, identity, writer)
-        if message.kind is WireMessageKind.file_slot and self.cut_input:
-            self.cut_input = False
-            self.input_cut_count += 1
-            writer.close()
         return sent
 
     async def _send(self, message: WireMessage) -> None:
         if (
+            message.kind is WireMessageKind.file_transfer
+            and message.payload.get("direction") == "download"
+            and self.cut_input
+        ):
+            self.cut_input = False
+            self.input_cut_count += 1
+            assert self.writer is not None
+            self.writer.close()
+            return
+        if (
             message.kind == WireMessageKind.receipt
+            and self.cut_submission is not None
             and message.payload.get("submission_id") == self.cut_submission
         ):
             self.cut_submission = None
@@ -313,11 +321,6 @@ class ExecutorHarness:
         self.system = make_core(self.endpoint)
         self.endpoint.runtime = SimpleNamespace(
             system=self.system, message_files=ConversationMessageFiles(self.endpoint.db_path)
-        )
-        self.endpoint.file_receiver = PublicationReceiver(
-            self.endpoint.store,
-            self.root / "vps/files",
-            self.root / "vps/quarantine",
         )
         self.transport_app.state.executor_endpoint = self.endpoint
         if wait_ready:
@@ -406,11 +409,6 @@ async def boot(
     system = make_core(endpoint)
     endpoint.runtime = SimpleNamespace(
         system=system, message_files=ConversationMessageFiles(endpoint.db_path)
-    )
-    endpoint.file_receiver = PublicationReceiver(
-        endpoint.store,
-        vps_root / "files",
-        vps_root / "quarantine",
     )
     native = ScriptedNativeChild()
     native.emit_early_event = emit_early_event
@@ -1755,15 +1753,13 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
 def test_kill_stalled_initial_input_fences_reconnect_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from planner.conversation.message_content import MessageFile, MessageText
+    from planner.conversation.message_content import MessageFile
     from planner.executor.contracts import ChildCommand, ChildOperation
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        release_input = asyncio.Event()
-        release_final_event = asyncio.Event()
-        killing: asyncio.Task[None] | None = None
-        sending: asyncio.Task[PromptDeliveryFate] | None = None
+        entered, cleanup = asyncio.Event(), asyncio.Event()
+        sending = None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             await harness.native.sink.turn_ended(
@@ -1773,158 +1769,63 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
                 standard_error_tail=None,
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "first turn did not end")
-            original_child = next(iter(harness.mac.registry.children.values())).reference
-            contents = bytes(range(256)) * 3000
+            original = next(iter(harness.mac.registry.children.values())).reference
             kept = await harness.endpoint.runtime.message_files.keep(
-                "c_scripted", contents, media_type="application/octet-stream"
+                "c_scripted", b"input bytes", media_type="application/octet-stream"
             )
-            input_ready = asyncio.Event()
-            transfer_attempts = 0
-            target_command: str | None = None
-            transfer = harness.endpoint._transfer_command_inputs
-            transfer_locked = harness.endpoint._transfer_command_inputs_locked
+            prepare = harness.mac._prepare_inputs
+            command_id = ""
 
-            async def observe_transfer(command: ChildCommand) -> None:
-                nonlocal transfer_attempts
+            async def stalled(command: ChildCommand) -> None:
+                nonlocal command_id
+                await prepare(command)
                 if command.operation is ChildOperation.write_prompt:
-                    transfer_attempts += 1
-                await transfer(command)
+                    command_id = command.command_id
+                    entered.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        await cleanup.wait()
 
-            async def stall_input(command: ChildCommand) -> None:
-                nonlocal target_command
-                await transfer_locked(command)
-                if command.operation is ChildOperation.write_prompt and target_command is None:
-                    target_command = command.command_id
-                    input_ready.set()
-                    await release_input.wait()
-
-            monkeypatch.setattr(harness.endpoint, "_transfer_command_inputs", observe_transfer)
-            monkeypatch.setattr(harness.endpoint, "_transfer_command_inputs_locked", stall_input)
+            harness.mac.registry.prepare_inputs = stalled
             sending = asyncio.create_task(
                 harness.system.send(
                     "c_scripted",
                     (
-                        MessageText("Cancel this initial delivery"),
                         MessageFile(
-                            kept.stored_file_id,
-                            "application/octet-stream",
-                            "input.bin",
-                            len(contents),
+                            kept.stored_file_id, "application/octet-stream", "input.bin", 11
                         ),
                     ),
                     sender_label="Test",
                 )
             )
-            await asyncio.wait_for(input_ready.wait(), 5)
+            await asyncio.wait_for(entered.wait(), 5)
+            assert harness.mac.registry.ask((command_id,))[0].phase == "preparing"
+            # Reconnect observes the same preparation; it does not replay the provider.
             generation = harness.mac.identity.connection_generation
             assert harness.endpoint.writer is not None
             harness.endpoint.writer.close()
             await eventually(
                 lambda: (
-                    harness.mac.identity.connection_generation > generation
-                    and transfer_attempts >= 2
+                    harness.endpoint.ready
+                    and harness.mac.identity.connection_generation > generation
                 ),
-                "reconnect did not copy the pending initial command",
+                "link did not return",
             )
-
-            final_event_waiting = asyncio.Event()
-            stop_hint_seen = asyncio.Event()
-            native_stop = harness.native.stop
-            accept_envelope = harness.endpoint.accept_envelope
-            resolve_command = harness.endpoint._resolve_command
-
-            async def stop_with_final_event() -> None:
-                assert harness.native.sink is not None
-                await harness.native.sink.vendor_session_cursor_rebound("retirement-final-cursor")
-                await native_stop()
-
-            async def withhold_final_event(
-                envelope: QueuedEnvelope, identity: ExecutorIdentity
-            ) -> AcceptanceReceipt:
-                if (
-                    envelope.kind is EnvelopeKind.backend_event
-                    and envelope.payload.get("method") == "vendor_session_cursor_rebound"
-                    and envelope.payload.get("arguments")
-                    == {"vendor_session_cursor": "retirement-final-cursor"}
-                ):
-                    final_event_waiting.set()
-                    await release_final_event.wait()
-                return await accept_envelope(envelope, identity)
-
-            async def observe_stop_hint(outcome: Any, *, stop_proven: bool = False) -> None:
-                pending = harness.endpoint.pending_commands.get(outcome.command_id)
-                if pending is not None and pending[0].operation is ChildOperation.stop:
-                    stop_hint_seen.set()
-                await resolve_command(outcome, stop_proven=stop_proven)
-
-            monkeypatch.setattr(harness.native, "stop", stop_with_final_event)
-            monkeypatch.setattr(harness.endpoint, "accept_envelope", withhold_final_event)
-            monkeypatch.setattr(harness.endpoint, "_resolve_command", observe_stop_hint)
             killing = asyncio.create_task(harness.system.kill("c_scripted"))
-            fate = await asyncio.wait_for(sending, 2)
-            await asyncio.wait_for(final_event_waiting.wait(), 5)
-            cleanup_task = harness.system._conversations["c_scripted"].initial_shutdown_task
-            assert cleanup_task is not None and not cleanup_task.done()
-            await asyncio.wait_for(stop_hint_seen.wait(), 5)
-            pending_stops = [
-                (command, future)
-                for command, future in harness.endpoint.pending_commands.values()
-                if command.operation is ChildOperation.stop
-            ]
-            assert pending_stops and all(not future.done() for _, future in pending_stops)
-            assert harness.endpoint.store.child_assignment(original_child) is not None
-            assert not cleanup_task.done()
-            release_final_event.set()
-            await asyncio.wait_for(cleanup_task, 5)
-            await killing
+            fate = await asyncio.wait_for(sending, 3)
             assert isinstance(fate, PromptDeliverySuppressed)
-            release_input.set()
-            await eventually(
-                lambda: harness.native.stop_count == 1 and harness.endpoint.ready,
-                "the original child did not stop after cancellation",
-            )
-            await eventually(
-                lambda: not harness.mac.spool.pending() and not harness.endpoint.pending_commands,
-                "canceled delivery or stop receipts remained pending",
-            )
-            assert harness.native.start_count == 1
             assert harness.native.prompt_count == 1
-            assert original_child.child_id not in harness.mac.registry.children
-            assert original_child.child_id not in harness.endpoint.children
-            assert original_child.child_id not in harness.endpoint.sinks
-            assert harness.events("prompt_discarded") == 1
-            assert harness.events("prompt_delivery_uncertain") == 0
-            connection = connect(harness.endpoint.db_path)
-            try:
-                prompt_fact = connection.execute(
-                    "SELECT status FROM conversation_lifecycle_facts "
-                    "WHERE conversation_id=? AND operation='prompt' ORDER BY turn_number DESC",
-                    ("c_scripted",),
-                ).fetchone()
-                assert prompt_fact is not None and prompt_fact[0] == "suppressed"
-                assert (
-                    connection.execute(
-                        "SELECT 1 FROM executor_command_outcomes WHERE command_id=?",
-                        (target_command,),
-                    ).fetchone()
-                    is None
-                )
-                assert (
-                    connection.execute(
-                        "SELECT closed_at_ms FROM executor_child_assignments "
-                        "WHERE child_id=? AND conversation_id=?",
-                        (original_child.child_id, "c_scripted"),
-                    ).fetchone()[0]
-                    is not None
-                )
-            finally:
-                connection.close()
+            cleanup.set()
+            await asyncio.wait_for(killing, 5)
+            await eventually(
+                lambda: original.child_id not in harness.mac.registry.children,
+                "original child did not stop",
+            )
+            assert harness.native.stop_count == 1 and harness.native.prompt_count == 1
+            assert command_id not in harness.mac.registry._invoking_commands
         finally:
-            release_input.set()
-            release_final_event.set()
-            if killing is not None and not killing.done():
-                killing.cancel()
-                await asyncio.gather(killing, return_exceptions=True)
+            cleanup.set()
             if sending is not None and not sending.done():
                 sending.cancel()
                 await asyncio.gather(sending, return_exceptions=True)
@@ -1933,68 +1834,72 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
     asyncio.run(run())
 
 
-def test_concurrent_identical_inputs_keep_distinct_publications(
+def test_concurrent_identical_inputs_keep_independent_downloads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.message_content import MessageFile
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import ChildCommand, ChildOperation
+    from planner.executor.contracts import (
+        ChildCommand,
+        ChildOperation,
+        CommandDisposition,
+        CommandOutcome,
+    )
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         try:
             contents = bytes(range(256)) * 3000
-            commands = []
-            paths = []
+            commands, paths = [], []
             for index in range(2):
-                conversation_id = f"c_input_{index}"
+                conversation = f"c_input_{index}"
                 kept = await harness.endpoint.runtime.message_files.keep(
-                    conversation_id, contents, media_type="application/octet-stream"
+                    conversation, contents, media_type="application/octet-stream"
                 )
                 child = ChildReference(
-                    harness.mac.identity.executor_incarnation,
-                    f"input_child_{index}",
-                    conversation_id,
+                    harness.mac.identity.executor_incarnation, f"input_child_{index}", conversation
                 )
-                commands.append(
-                    ChildCommand(
-                        f"input_command_{index}",
-                        child,
-                        ChildOperation.write_prompt,
-                        TurnToken(conversation_id, 1),
-                        decode_command_arguments(
-                            ChildOperation.write_prompt,
-                            {
-                                "sender_content": [],
-                                "sender_label": "Owner",
-                                "mode": "queue",
-                                "content": encode_value(
-                                    (
-                                        MessageFile(
-                                            kept.stored_file_id,
-                                            "application/octet-stream",
-                                            "input.bin",
-                                            len(contents),
-                                        ),
-                                    )
-                                ),
-                            },
+                harness.endpoint.store.register_child(child, "ticket", "ticket", 1)
+                command = ChildCommand(
+                    f"input_command_{index}",
+                    child,
+                    ChildOperation.write_prompt,
+                    TurnToken(conversation, 1),
+                    WritePrompt(
+                        content=(
+                            MessageFile(
+                                kept.stored_file_id,
+                                "application/octet-stream",
+                                "input.bin",
+                                len(contents),
+                            ),
                         ),
-                    )
+                        sender_content=(),
+                        sender_label="Owner",
+                        mode=PromptDeliveryMode.queue,
+                    ),
+                )
+                commands.append(command)
+                harness.endpoint.pending_commands[command.command_id] = (
+                    command,
+                    asyncio.get_running_loop().create_future(),
                 )
                 paths.append(
                     harness.mac.paths.root
                     / "artifacts/files/conversations"
-                    / conversation_id
+                    / conversation
                     / kept.stored_file_id
                 )
             await asyncio.wait_for(
-                asyncio.gather(
-                    *(harness.endpoint._transfer_command_inputs(command) for command in commands)
-                ),
-                5,
+                asyncio.gather(*(harness.mac._prepare_inputs(command) for command in commands)), 5
             )
             assert [path.read_bytes() for path in paths] == [contents, contents]
+            assert not harness.endpoint._transports[harness.mac.identity].transfers
+            for command in commands:
+                await harness.endpoint._resolve_command(
+                    CommandOutcome(
+                        command.command_id, command.child, CommandDisposition.refused, {}
+                    )
+                )
         finally:
             await harness.close()
 
@@ -2315,50 +2220,35 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
         try:
             reject = True
             rejected = asyncio.Event()
-            completed = 0
+            refusals: list[AcceptanceReceipt] = []
+            generation, writer = harness.mac.identity, harness.endpoint.writer
             send = harness.endpoint._send
-            replay = harness.mac.spool._send_one
 
             async def corrupt_ack(message: WireMessage) -> None:
-                if reject and message.kind is WireMessageKind.file_slot:
+                if reject and message.kind is WireMessageKind.file_transfer:
                     payload = {} if invalid_ack == "empty" else dict(message.payload)
                     if invalid_ack == "mismatched":
                         payload["direction"] = "download"
                     elif invalid_ack == "unknown_slot":
-                        payload["transfer_id"] = "x" * 32
+                        payload["transfer_id"] = "f" * 32
                     elif invalid_ack == "traversal":
                         payload["transfer_id"] = "../escape"
                     elif invalid_ack == "manifest":
                         payload["manifest"] = {}
                     message = WireMessage(
-                        (
-                            WireMessageKind.file_accepted
-                            if invalid_ack == "wrong_kind"
-                            else message.kind
-                        ),
+                        (WireMessageKind.receipt if invalid_ack == "wrong_kind" else message.kind),
                         message.request_id,
                         payload,
                     )
                 await send(message)
-
-            async def observe_rejection(link: Any, envelope: QueuedEnvelope) -> None:
-                try:
-                    await replay(link, envelope)
-                except ValueError:
+                if (
+                    message.kind is WireMessageKind.receipt
+                    and message.payload.get("disposition") == ReceiptDisposition.refused
+                ):
+                    refusals.append(TypeAdapter(AcceptanceReceipt).validate_python(message.payload))
                     rejected.set()
-                    raise
-
-            request = harness.mac._request
-
-            async def count_completions(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-                nonlocal completed
-                if kind is WireMessageKind.file_complete:
-                    completed += 1
-                return await request(kind, payload)
 
             monkeypatch.setattr(harness.endpoint, "_send", corrupt_ack)
-            monkeypatch.setattr(harness.mac.spool, "_send_one", observe_rejection)
-            monkeypatch.setattr(harness.mac, "_request", count_completions)
             ticket_id = next(iter(harness.mac.registry.children.values())).ticket_id
             assert ticket_id is not None
             artifact = harness.mac.paths.artifacts / ticket_id / "typed-ack.bin"
@@ -2376,12 +2266,28 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             target = tmp_path / "vps/files/tickets" / ticket_id / "typed-ack.bin"
             assert not target.exists()
             assert harness.events("tool_call_finished") == 0
-            assert completed == 0
-            assert any(
-                row.kind is EnvelopeKind.backend_event for row in harness.mac.spool.pending()
+            assert len(refusals) == 1
+            assert (
+                harness.endpoint.store.lookup_receipt(
+                    refusals[0].sender_id, refusals[0].submission_id
+                )
+                == refusals[0]
             )
+            await eventually(lambda: not harness.mac.spool.pending(), "Refused item did not drain")
+            assert not harness.endpoint._upload_transfers
             assert artifact.read_bytes() == contents
+            assert harness.mac.identity == generation and harness.endpoint.writer is writer
+            control = await harness.endpoint._request(
+                WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
+            )
+            assert control.kind is WireMessageKind.health
             reject = False
+            await harness.native.sink.tool_call_finished(
+                harness.native.turn,
+                tool_call_id="corrected_descriptor",
+                tool_call_status=ToolCallStatus.completed,
+                detail="The next item uses a valid descriptor.",
+            )
             await eventually(
                 lambda: harness.events("tool_call_finished") == 1,
                 "Corrected artifact acknowledgment did not allow the dependent event",
@@ -2396,107 +2302,81 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("invalid_ack", ["empty", "mismatched", "completion_refused"])
-def test_input_receipt_must_validate_before_command_dispatch(
+@pytest.mark.parametrize("invalid_ack", ["empty", "mismatched", "wrong_kind"])
+def test_input_descriptor_must_validate_before_provider_invocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
-
     from planner.conversation.message_content import MessageFile
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import ChildCommand, ChildOperation, RemoteInputTransferFailed
+    from planner.executor.contracts import ChildCommand, CommandDisposition, CommandOutcome
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        caller = None
         try:
-            reject = True
-            rejected = asyncio.Event()
-            commands = 0
-            assert harness.mac._writer is not None
-            send = harness.mac._writer.send
-            emit_command = harness.endpoint._emit_command
+            assert harness.native.sink is not None and harness.native.turn is not None
+            await harness.native.sink.turn_ended(
+                harness.native.turn,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+            await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
+            send = harness.endpoint._send
 
-            async def corrupt_ack(message: WireMessage) -> None:
-                if reject and message.kind is WireMessageKind.file_accepted:
+            async def corrupt(message: WireMessage) -> None:
+                if (
+                    message.kind is WireMessageKind.file_transfer
+                    and message.payload.get("direction") == "download"
+                ):
                     payload = {} if invalid_ack == "empty" else dict(message.payload)
                     if invalid_ack == "mismatched":
-                        payload["byte_count"] = -1
+                        payload["direction"] = "upload"
                     message = WireMessage(
-                        WireMessageKind.error
-                        if invalid_ack == "completion_refused"
-                        else message.kind,
+                        WireMessageKind.receipt if invalid_ack == "wrong_kind" else message.kind,
                         message.request_id,
                         payload,
                     )
-                    rejected.set()
                 await send(message)
 
-            async def count_commands(command: ChildCommand) -> bool:
-                nonlocal commands
-                emitted = await emit_command(command)
-                if emitted:
-                    commands += 1
-                return emitted
-
-            monkeypatch.setattr(harness.mac._writer, "send", corrupt_ack)
-            monkeypatch.setattr(harness.endpoint, "_emit_command", count_commands)
-            contents = bytes(range(256)) * 3000
+            monkeypatch.setattr(harness.endpoint, "_send", corrupt)
             kept = await harness.endpoint.runtime.message_files.keep(
-                "c_scripted", contents, media_type="application/octet-stream"
+                "c_scripted", b"input bytes", media_type="application/octet-stream"
             )
-            command = ChildCommand(
-                "input_ack_barrier",
-                harness.ask.child,
-                ChildOperation.write_prompt,
-                harness.native.turn,
-                decode_command_arguments(
-                    ChildOperation.write_prompt,
-                    {
-                        "content": encode_value(
-                            (
-                                MessageFile(
-                                    kept.stored_file_id,
-                                    "application/octet-stream",
-                                    "input.bin",
-                                    len(contents),
-                                ),
-                            )
+            outcomes: list[CommandOutcome] = []
+            send_command = harness.endpoint.send_command
+
+            async def observe(command: ChildCommand) -> CommandOutcome:
+                outcome = await send_command(command)
+                outcomes.append(outcome)
+                return outcome
+
+            monkeypatch.setattr(harness.endpoint, "send_command", observe)
+            result = await asyncio.wait_for(
+                harness.system.send(
+                    "c_scripted",
+                    (
+                        MessageFile(
+                            kept.stored_file_id, "application/octet-stream", "input.bin", 11
                         ),
-                        "sender_content": encode_value(text_message_content("Inspect the bytes")),
-                        "sender_label": "Test",
-                        "mode": "queue",
-                    },
+                    ),
+                    sender_label="Owner",
                 ),
+                5,
             )
+            assert isinstance(result, PromptDeliveryRefused)
+            assert len(outcomes) == 1 and outcomes[0].disposition is CommandDisposition.refused
+            assert harness.native.prompt_count == 1
+            assert outcomes[0].command_id not in harness.mac.registry._invoking_commands
             target = (
                 harness.mac.paths.root
                 / "artifacts/files/conversations/c_scripted"
                 / kept.stored_file_id
             )
-            generation = harness.mac.identity.connection_generation
-            harness.native.required_input_path = target
-            harness.native.required_input_contents = contents
-            caller = asyncio.create_task(harness.endpoint.send_command(command))
-            await asyncio.wait_for(rejected.wait(), 8)
-            with pytest.raises(RemoteInputTransferFailed):
-                await asyncio.wait_for(caller, 8)
-            assert harness.mac.identity.connection_generation == generation
-            assert commands == 0 and harness.native.prompt_count == 1
-            assert command.command_id not in harness.endpoint.pending_commands
-            assert target.read_bytes() == contents
-            assert (
-                await harness.endpoint.runtime.message_files.read("c_scripted", kept.stored_file_id)
-                == contents
-            )
+            assert not target.exists()
             control = await harness.endpoint._request(
                 WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
             )
             assert control.kind is WireMessageKind.health
-
         finally:
-            if caller is not None and not caller.done():
-                caller.cancel()
-                await asyncio.gather(caller, return_exceptions=True)
             await harness.close()
 
     asyncio.run(run())
@@ -2744,22 +2624,22 @@ def test_revocation_before_emission_blocks_immediate_send_and_pending_replay(
         try:
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
-            transfer = harness.endpoint._transfer_command_inputs
+            transfer = harness.endpoint._emit_command
             preparations = 0
 
-            async def prepare(command: ChildCommand) -> None:
+            async def prepare(command: ChildCommand, *args: Any) -> bool:
                 nonlocal preparations
-                await transfer(command)
                 if command.operation is ChildOperation.answer_permission_ask:
                     preparations += 1
                     (prepared if preparations == 1 else replay_prepared).set()
                     await emit.wait()
+                return await transfer(command, *args)
 
             async def stalled_cancel(*args: object) -> None:
                 cancel_entered.set()
                 await cancel_finish.wait()
 
-            monkeypatch.setattr(harness.endpoint, "_transfer_command_inputs", prepare)
+            monkeypatch.setattr(harness.endpoint, "_emit_command", prepare)
             monkeypatch.setattr(harness.system, "_cancel_child_turn", stalled_cancel)
             assert await post_owner_answer(harness, harness.ask) == {"landed": True}
             await asyncio.wait_for(prepared.wait(), 2)

@@ -260,6 +260,8 @@ class ExecutorAppClient:
             compress=False,
         ) as response:
             if response.status != 204:
+                if 400 <= response.status < 500:
+                    raise ValueError("executor upload refused")
                 raise ConnectionError("executor upload refused")
 
     async def download(
@@ -362,6 +364,7 @@ def build_executor_router() -> APIRouter:
             raise HTTPException(409, "file generation unavailable or encoded body")
         try:
             await service.upload(transfer_id, request.stream())
+            await endpoint.store_upload(identity, transfer_id)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
         return Response(status_code=204)

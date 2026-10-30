@@ -1316,7 +1316,9 @@ class SqliteProcessConversationSystem:
                 return False
             reservation.shutdown_owned = True
             suppressed = (
-                child.cancel_initial_delivery() if isinstance(child, RemoteBackendChild) else True
+                await child.cancel_initial_delivery()
+                if isinstance(child, RemoteBackendChild)
+                else True
             )
             old_facts = await self._store.lifecycle_facts(state.record.conversation_id)
             previous_prompt = next(

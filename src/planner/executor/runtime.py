@@ -72,6 +72,7 @@ from planner.executor.contracts import (
     Quiescence,
     StartRun,
     Steer,
+    WithdrawCommands,
     WritePrompt,
 )
 from planner.executor.files import safe_component
@@ -349,6 +350,9 @@ class NativeChildRegistry:
         self.message_files = message_files
         self.children: dict[str, _Child] = {}
         self.outcomes: dict[str, CommandOutcome] = {}
+        self.prepare_inputs: Callable[[ChildCommand], Awaitable[None]] | None = None
+        self._withdrawn_commands: set[str] = set()
+        self._preparations: dict[str, asyncio.Task[None]] = {}
         self._commands: dict[str, ChildCommand] = {}
         self._tasks: dict[str, asyncio.Task[CommandOutcome]] = {}
         self._applications: dict[str, AnswerApplication] = {}
@@ -582,6 +586,10 @@ class NativeChildRegistry:
         # Admission closes before the first await. Failed attempts retain this fence,
         # but a later explicit stop can retry once its previous owner finished.
         self._retiring_children.add(reference.child_id)
+        preparing = set(self._preparations)
+        for key, other in self._commands.items():
+            if other.child == reference and other.operation is not ChildOperation.stop:
+                self.withdraw(key)
         commands = [
             task
             for key, task in self._tasks.items()
@@ -591,6 +599,12 @@ class NativeChildRegistry:
             and not task.done()
         ]
         if child is None:
+            settling = [
+                self._tasks[key] for key in preparing if self._commands[key].child == reference
+            ]
+            if settling:
+                await asyncio.gather(*(asyncio.shield(task) for task in settling))
+                commands = [task for task in commands if not task.done()]
             unsettled = (
                 bool(commands)
                 or bool(self._source_work.get(reference, 0))
@@ -611,7 +625,7 @@ class NativeChildRegistry:
                     await asyncio.gather(*(asyncio.shield(task) for task in commands))
                 await self._finish_source_work(reference)
                 async with child.lock:
-                    self._invoking_commands.add(command.command_id)
+                    self._mark_invoking(command)
                     await child.native.stop()
                 await self._finish_source_work(reference)
                 if reference in self._failed_source_work or any(
@@ -753,7 +767,7 @@ class NativeChildRegistry:
                 model=resolved.model,
                 reasoning_effort=resolved.reasoning_effort,
             )
-            self._invoking_commands.add(command.command_id)
+            self._mark_invoking(command)
             await native.start(
                 resolved,
                 vendor_session_cursor=args.vendor_session_cursor,
@@ -786,7 +800,7 @@ class NativeChildRegistry:
         )
         previous_turn = child.active_turn
         child.active_turn = command.turn
-        self._invoking_commands.add(command.command_id)
+        self._mark_invoking(command)
         try:
             result = await child.native.write_prompt(
                 command.turn,
@@ -823,7 +837,7 @@ class NativeChildRegistry:
             model=child.model,
             reasoning_effort=child.reasoning_effort,
         )
-        self._invoking_commands.add(command.command_id)
+        self._mark_invoking(command)
         outcome = await child.native.steer(
             command.turn,
             args.content,
@@ -849,7 +863,7 @@ class NativeChildRegistry:
         }
 
     async def _cancel_turn(self, child: _Child, command: ChildCommand) -> JsonObject:
-        self._invoking_commands.add(command.command_id)
+        self._mark_invoking(command)
         await child.native.cancel_running_turn()
         return {}
 
@@ -888,7 +902,7 @@ class NativeChildRegistry:
         self, child: _Child, command: ChildCommand, args: AnswerPermission
     ) -> JsonObject:
         self._check_answer(child, command, args.answer)
-        self._invoking_commands.add(command.command_id)
+        self._mark_invoking(command)
         await child.native.answer_permission_ask(args.ask_id, args.option_id)
         return self._answer_application(command, child.asks.pop(args.ask_id, None))
 
@@ -896,12 +910,91 @@ class NativeChildRegistry:
         self, child: _Child, command: ChildCommand, args: AnswerUserInput
     ) -> JsonObject:
         self._check_answer(child, command, args.answer)
-        self._invoking_commands.add(command.command_id)
+        self._mark_invoking(command)
         await child.native.answer_user_input(args.request_id, args.answers)
         pending = child.user_inputs.pop(args.request_id, None)
         return self._answer_application(command, None if pending is None else pending[0])
 
+    def withdraw_commands(self, request: WithdrawCommands) -> tuple[str, ...]:
+        if request.child.executor_incarnation != self.incarnation:
+            raise ValueError("withdraw belongs to another executor")
+        for command_id in request.command_ids:
+            previous = self._commands.get(command_id)
+            if previous is not None and previous.child != request.child:
+                raise ValueError("withdraw command belongs to another child")
+        return tuple(key for key in request.command_ids if self.withdraw(key))
+
+    def withdraw(self, command_id: str) -> bool:
+        """True proves this command has not called, and now cannot call, its provider."""
+        if command_id in self._withdrawn_commands:
+            return True
+        if command_id in self._invoking_commands or command_id in self.outcomes:
+            return False
+        self._withdrawn_commands.add(command_id)
+        task = self._preparations.get(command_id)
+        if task is not None:
+            task.cancel()
+        return True
+
+    def _mark_invoking(self, command: ChildCommand) -> None:
+        if command.command_id in self._withdrawn_commands:
+            raise _CommandAdmissionRefused("command withdrawn before provider invocation")
+        self._invoking_commands.add(command.command_id)
+
     async def _execute(self, command: ChildCommand) -> CommandOutcome:
+        if command.operation is not ChildOperation.stop and self.prepare_inputs is not None:
+
+            async def prepare() -> None:
+                assert self.prepare_inputs is not None
+                await self.prepare_inputs(command)
+
+            task = asyncio.create_task(prepare())
+            self._preparations[command.command_id] = task
+            if command.command_id in self._withdrawn_commands:
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                if command.command_id not in self._withdrawn_commands:
+                    raise
+            except Exception as error:
+                outcome = CommandOutcome(
+                    command.command_id,
+                    command.child,
+                    CommandDisposition.refused,
+                    {
+                        "error_type": "AdmissionRefused"
+                        if isinstance(error, AdmissionRefused)
+                        else "BackendSpawnFailed"
+                        if command.operation is ChildOperation.start
+                        else "PromptWriteRefused",
+                        "error_message": str(error),
+                        "reason": error.reason
+                        if isinstance(error, AdmissionRefused)
+                        else "input_unavailable",
+                        **(
+                            {"corrective_action": error.corrective_action}
+                            if isinstance(error, AdmissionRefused)
+                            else {}
+                        ),
+                    },
+                )
+                self.outcomes[command.command_id] = outcome
+                return outcome
+            finally:
+                self._preparations.pop(command.command_id, None)
+        if command.command_id in self._withdrawn_commands:
+            outcome = CommandOutcome(
+                command.command_id,
+                command.child,
+                CommandDisposition.refused,
+                {"reason": "withdrawn_before_invocation"},
+            )
+            self.outcomes[command.command_id] = outcome
+            return outcome
+        return await self._execute_ready(command)
+
+    async def _execute_ready(self, command: ChildCommand) -> CommandOutcome:
         if command.child.executor_incarnation != self.incarnation:
             outcome = CommandOutcome(
                 command.command_id,

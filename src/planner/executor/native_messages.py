@@ -313,6 +313,7 @@ async def deliver_native_message(
                         if "mode" in body
                         else (api._message_delivery_mode())
                     )
+                store.install_files(envelope.file_dependencies)
                 recipient = resolve_recipient(connection, write, principal)
                 service.require_reach(connection, principal, recipient)
                 connection.execute(

@@ -45,9 +45,15 @@ def test_native_admission_and_generation_file_slots(
             finally:
                 await production_client.close()
             service = harness.endpoint._transports[identity]
+
+            # This case isolates HTTP body validation; connected item acceptance
+            # exercises the real store_upload path in the file-producing event case.
+            async def keep_transfer(identity: object, transfer_id: str) -> None:
+                pass
+
+            monkeypatch.setattr(harness.endpoint, "store_upload", keep_transfer)
             data = bytes(range(256)) * 1000
             manifest = FileManifest(
-                "publication",
                 FileScope.ticket,
                 "ticket",
                 "binary.dat",
@@ -149,7 +155,6 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
             service = harness.endpoint._transports[identity]
             data = b"x" * 1000000
             manifest = FileManifest(
-                "publication",
                 FileScope.ticket,
                 "ticket",
                 "binary.dat",
@@ -241,8 +246,16 @@ def test_malformed_control_cannot_fence_current_peer(
 def test_duplicate_hello_preserves_active_file_reservations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from pydantic import TypeAdapter
+
     from planner.executor.codec import encode_value
-    from planner.executor.contracts import WireMessage, WireMessageKind
+    from planner.executor.contracts import (
+        FileTransfer,
+        FileUploadRequest,
+        WireMessage,
+        WireMessageKind,
+    )
+    from planner.executor.mac import as_object
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -251,15 +264,25 @@ def test_duplicate_hello_preserves_active_file_reservations(
             assert identity is not None
             writer = harness.endpoint.writer
             service = harness.endpoint._transports[identity]
+            child = next(iter(harness.mac.registry.children.values()))
+            assert child.ticket_id is not None
             manifest = FileManifest(
-                "publication",
                 FileScope.ticket,
-                "ticket",
+                child.ticket_id,
                 "empty",
                 hashlib.sha256(b"").hexdigest(),
                 0,
             )
-            slot = service.create_upload(manifest)
+            descriptor, kind = await harness.endpoint._file(
+                WireMessage(
+                    WireMessageKind.put_file,
+                    "reservation",
+                    as_object(FileUploadRequest(manifest, child.reference)),
+                ),
+                identity,
+            )
+            assert kind is WireMessageKind.file_transfer
+            slot = TypeAdapter(FileTransfer).validate_python(descriptor)
             payload = encode_value(harness.mac.health())
             assert isinstance(payload, dict)
             async with harness.proxy.session_factory() as session:
@@ -289,7 +312,10 @@ def test_duplicate_hello_preserves_active_file_reservations(
                 source = tmp_path / "empty-source"
                 source.write_bytes(b"")
                 await native_client.upload(slot, source)
-                assert service.upload_path(slot.transfer_id).read_bytes() == b""
+                assert slot.transfer_id not in service.transfers
+                assert not harness.endpoint.store.file_target(manifest).exists()
+                harness.endpoint.store.install_files((manifest,))
+                assert harness.endpoint.store.file_target(manifest).read_bytes() == b""
             finally:
                 await native_client.close()
         finally:

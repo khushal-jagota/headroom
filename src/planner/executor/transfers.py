@@ -181,8 +181,7 @@ class GenerationTransfers:
             finally:
                 self.active.discard(task)
                 transfer.readers -= 1
-                if transfer.release_requested:
-                    self.release(transfer_id)
+                self.release(transfer_id)
 
         return chunks()
 

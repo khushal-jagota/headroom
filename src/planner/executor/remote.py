@@ -36,7 +36,6 @@ from planner.executor.contracts import (
     CommandDisposition,
     CommandOutcome,
     JsonObject,
-    RemoteInputTransferFailed,
     StartRun,
     Steer,
     StopRun,
@@ -50,7 +49,7 @@ from planner.executor.wire import ProtocolRefused, encode_message
 type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
 type SendCommand = Callable[[ChildCommand], Awaitable[CommandOutcome]]
 type AssignChild = Callable[[ResolvedConversationStart, backend.BackendEventSink], ChildReference]
-type CancelInitialDelivery = Callable[[ChildReference, tuple[str, ...]], bool]
+type CancelInitialDelivery = Callable[[ChildReference, tuple[str, ...]], Awaitable[bool]]
 
 
 @dataclass(slots=True)
@@ -125,15 +124,15 @@ class RemoteBackendChild:
         if self._retire_reference is not None:
             self._retire_reference(self.reference)
 
-    def cancel_initial_delivery(self) -> bool:
-        """Fence initial work; true proves the prompt never crossed the wire.
+    async def cancel_initial_delivery(self) -> bool:
+        """Fence initial work; true proves the prompt never called the provider.
 
         A successful child start does not prove prompt acceptance. Restored children
         lack complete local transmission history.
         """
         self.initial_delivery_cancelled = True
         may_have_sent = (
-            self._cancel_initial_delivery(
+            await self._cancel_initial_delivery(
                 self.reference, tuple(command.command_id for command in self.initial_commands)
             )
             if self._cancel_initial_delivery is not None
@@ -176,15 +175,7 @@ class RemoteBackendChild:
                 )
             except ProtocolRefused as error:
                 raise backend.BackendSpawnFailed(str(error)) from error
-        try:
-            result = await self._send_command(command)
-        except RemoteInputTransferFailed as error:
-            error_type = (
-                backend.BackendSpawnFailed
-                if operation is ChildOperation.start
-                else backend.PromptWriteRefused
-            )
-            raise error_type(str(error)) from error
+        result = await self._send_command(command)
         if result.disposition is CommandDisposition.uncertain:
             if operation is ChildOperation.steer:
                 return {
