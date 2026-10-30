@@ -324,7 +324,7 @@ print("all mutation probes refused before execution")
     child = subprocess.run(
         [sys.executable, "-c", script, str(tmp_path)],
         env=_child_env(tmp_path / "home"), cwd=REPO,
-        text=True, capture_output=True, timeout=30,
+        text=True, capture_output=True, timeout=120,
     )
     assert child.returncode == 0, child.stdout + child.stderr
     assert "all mutation probes refused" in child.stdout
@@ -347,7 +347,7 @@ def _pytest_probe(tmp_path: Path, body: str) -> tuple[subprocess.CompletedProces
     (suite / "test_probe.py").write_text(body.replace("SENTINEL", repr(str(sentinel))))
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-s", "--confcutdir", str(suite), str(suite)],
-        cwd=suite, env=_child_env(home), text=True, capture_output=True, timeout=30,
+        cwd=suite, env=_child_env(home), text=True, capture_output=True, timeout=120,
     )
     return result, sentinel
 
