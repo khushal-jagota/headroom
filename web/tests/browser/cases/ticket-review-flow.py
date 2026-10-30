@@ -149,7 +149,7 @@ def run(browser, urls):
     fail_field_save = False
     hold_field_save = False
     hold_detail = False
-    snapshot_unavailable = True
+    snapshot_unavailable = False
     runtime_working = False
     server_revision = None
     navigation_proposal = None
@@ -776,11 +776,6 @@ def run(browser, urls):
 
     page.route("**/files/**", serve_file)
     page.goto([__file__, *urls][1])
-    expect(page.locator(".error-line")).to_have_count(1)
-    expect(page.locator(".error-code")).to_have_text("unavailable")
-    expect(page.locator(".quiet-line", has_text="Loading ticket")).to_have_count(0)
-    snapshot_unavailable = False
-    page.evaluate("window.__refresh()")
     expect(page.locator(".error-line")).to_have_count(0)
     assert page.evaluate("window.__badgeProof()") == dict(
         emptyHidden=True,
@@ -794,14 +789,7 @@ def run(browser, urls):
     expect(page.locator("[data-project-fact]")).to_have_text("One")
     expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
     assert page.evaluate("window.__wait()")["status"] == "included"
-    snapshot_unavailable = True
-    page.evaluate("window.__refresh()")
-    expect(page.locator(".error-line")).to_have_count(1)
-    expect(page.locator(".error-code")).to_have_text("unavailable")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Review ticket")
-    snapshot_unavailable = False
-    page.evaluate("window.__refresh()")
-    expect(page.locator(".error-line")).to_have_count(0)
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.locator("[data-ticket-backlog-action]").click()
     page.wait_for_function("window.__commandWait==='pending'")

@@ -243,9 +243,11 @@ await run(['gate']);
         "PLAN_DB_PATH": "/never-use-production", "PANELS_REAL_CLAUDE_TESTS": "1",
     })
     workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
-    steps = workflow["jobs"]["deploy"]["steps"]
+    steps = (step for job in workflow["jobs"].values() for step in job.get("steps", ()))
+    suite_steps = [step for step in steps if step.get("name") in SUITES]
+    assert len(suite_steps) == len(SUITES)
     scripts = {step["name"]: step["run"].replace("/home/vps/Deployments/Panels", str(shadow))
-               for step in steps if step.get("name") in SUITES}
+               for step in suite_steps}
     selection: dict[str, object] = {
         "unit": ["tests/unit/test_gate.py"], "integration": ["tests/integration/test_gate.py"],
         "e2e": ["tests/e2e/test_gate.py"], "vitest": ["web/tests/gate.test.ts"],
@@ -263,7 +265,7 @@ def test_actual_suite_commands_admit_real_proof_and_refuse_controlled_faults(
     assert result.returncode == 0, result.stdout + result.stderr
     for name in ("unit.xml", "integration.xml", "e2e.xml", "vitest.json", "browser.json"):
         assert (gate.gate / "reports" / name).is_file()
-    assert "Codex before pytest" in result.stderr
+    assert "Codex before pytest" in result.stdout
     assert "Required frontend proof:" in result.stdout
     assert "Required browser proof: 1 independent cases executed" in result.stdout
     assert Path(gate.environment["GATE_PROTECTED_MARKER"]).read_text() == "suite wrote here"
@@ -289,9 +291,9 @@ def test_actual_suite_commands_admit_real_proof_and_refuse_controlled_faults(
                 try:
                     result = gate.run(SUITES[-1])
                     assert result.returncode != 0, result.stdout + result.stderr
-                    assert f"scenario selector: {key}" in result.stderr
-                    assert "private-value" not in result.stderr
-                    assert "ERR_MODULE_NOT_FOUND" not in result.stderr
+                    assert f"scenario selector: {key}" in result.stdout
+                    assert "private-value" not in result.stdout
+                    assert "ERR_MODULE_NOT_FOUND" not in result.stdout
                     assert not Path(gate.environment["GATE_LEGACY_MARKER"]).exists()
                     assert not Path(gate.environment["GATE_RUNNER_MARKER"]).exists()
                     assert receipt_path.read_bytes() == passed_receipt
@@ -315,13 +317,13 @@ def test_actual_suite_commands_admit_real_proof_and_refuse_controlled_faults(
         ("skip", "unexpected required skip"),
     ):
         result = gate.run(SUITES[0], fault=fault)
-        assert result.returncode != 0 and expected in result.stderr, result.stdout + result.stderr
+        assert result.returncode != 0 and expected in result.stdout, result.stdout + result.stderr
 
     pytest_tool = gate.source / ".venv/bin/pytest"
     pytest_tool.rename(pytest_tool.with_suffix(".hidden"))
     try:
         result = gate.run(SUITES[0])
-        assert result.returncode == 127 and "No such file" in result.stderr
+        assert result.returncode == 127 and "No such file" in result.stdout
     finally:
         pytest_tool.with_suffix(".hidden").rename(pytest_tool)
 
@@ -337,7 +339,7 @@ def test_actual_suite_commands_admit_real_proof_and_refuse_controlled_faults(
     for fault, expected in (("invalid-browser", "JSONDecodeError"),
                             ("missing-browser", "No such file")):
         result = gate.run(SUITES[-1], fault=fault)
-        assert result.returncode != 0 and expected in result.stderr, result.stdout + result.stderr
+        assert result.returncode != 0 and expected in result.stdout, result.stdout + result.stderr
         assert not Path(gate.environment["GATE_LEGACY_MARKER"]).exists()
 
     # Old requested source explicitly selects its original exit-code route.

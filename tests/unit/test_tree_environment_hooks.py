@@ -28,6 +28,7 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
     )
     shutil.copyfile(source_tree / "tests/conftest.py", tree / "tests/conftest.py")
     shutil.copytree(source_tree / "scripts/development_safety", tree / "scripts/development_safety")
+    shutil.copytree(source_tree / "scripts/test_containment", tree / "scripts/test_containment")
 
     shutil.copytree(
         source_tree / "tests/support/skill_tree_protection",
@@ -40,6 +41,9 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
 
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
+    # This copied-tree proof exercises ordinary default admission. The caller
+    # already supplies the actual OS boundary around all fixture subprocesses.
+    env.pop("PANELS_REQUIRE_TEST_CONTAINMENT", None)
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     env["PYTHONNOUSERSITE"] = "1"
     created = subprocess.run(
