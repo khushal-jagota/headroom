@@ -121,9 +121,25 @@ def independent_removal_oracle(connection: sqlite3.Connection, cutoff_unix: int)
         row["conversation_id"]: row["through_sequence"]
         for row in _rows(connection, "conversation_error_acknowledgements")
     }
+    tables = {row[0] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    unresolved_native: set[str] = set()
+    if "executor_child_assignments" in tables:
+        unresolved_native.update(
+            row["conversation_id"] for row in _rows(connection, "executor_child_assignments")
+            if row["closed_at_ms"] is None
+        )
+    if "executor_core_turns" in tables:
+        for row in _rows(connection, "executor_core_turns"):
+            runtime = _object(row["runtime_json"])
+            if runtime is None or runtime.get("source_retired") is not True:
+                unresolved_native.add(row["conversation_id"])
     result: set[EventKey] = set()
     for conversation in _rows(connection, "conversations"):
         identity = conversation["conversation_id"]
+        if identity in unresolved_native:
+            continue
         try:
             pairs = json.loads(conversation["identity_environment_variables"])
             environment = dict(pairs)

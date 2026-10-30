@@ -15,6 +15,8 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "review_messages",
         "review_work_cards",
         "owner_message_preview",
+        "video_upload_ledger",
+        "mac_vps_execution",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

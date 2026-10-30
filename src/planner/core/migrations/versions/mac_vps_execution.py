@@ -212,6 +212,10 @@ def _create_launch_validation() -> None:
             "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='manager_wakes' AND sql IS NOT NULL"
         )
     )
+    # Rebuilding an empty AUTOINCREMENT table must retain already issued wake IDs.
+    wake_sequence = conn.exec_driver_sql(
+        "SELECT seq FROM sqlite_sequence WHERE name='manager_wakes'"
+    ).scalar_one_or_none()
     conn.exec_driver_sql(
         table_sql.replace('"manager_wakes"', "manager_wakes_new", 1)
         .replace("CREATE TABLE manager_wakes ", "CREATE TABLE manager_wakes_new ", 1)
@@ -220,6 +224,14 @@ def _create_launch_validation() -> None:
     conn.exec_driver_sql("INSERT INTO manager_wakes_new SELECT * FROM manager_wakes")
     conn.exec_driver_sql("DROP TABLE manager_wakes")
     conn.exec_driver_sql("ALTER TABLE manager_wakes_new RENAME TO manager_wakes")
+    if wake_sequence is not None:
+        conn.exec_driver_sql(
+            "INSERT INTO sqlite_sequence(name,seq) SELECT 'manager_wakes',? WHERE NOT EXISTS "
+            "(SELECT 1 FROM sqlite_sequence WHERE name='manager_wakes')", (wake_sequence,)
+        )
+        conn.exec_driver_sql(
+            "UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name='manager_wakes'", (wake_sequence,)
+        )
     for (sql,) in indexes:
         conn.exec_driver_sql(sql)
     conn.exec_driver_sql(

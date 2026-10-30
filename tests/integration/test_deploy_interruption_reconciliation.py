@@ -329,7 +329,8 @@ def test_unresumable_ticket_recovery_keeps_conversation_status_readable(
 
     with TestClient(app) as client:
         assert _settled_recovery_state(path) == "unable_to_resume"
-        assert catalogue.calls
+        # Exact provider intent is independent of advisory catalog discovery.
+        assert catalogue.calls == []
         assert len(backend.writes) == 1
         with connect(str(path)) as conn:
             assert (

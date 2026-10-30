@@ -79,6 +79,8 @@ def classify_conversation(
     source: ConversationRetentionInput, *, cutoff_unix: int
 ) -> ConversationRetentionDecision:
     reasons: set[str] = set()
+    if source.native_execution_unresolved:
+        reasons.add("unsettled_native_execution")
     terminal_statuses = {
         LifecycleKind.turn: {
             LifecycleStatus.completed,

@@ -124,7 +124,19 @@ def test_notice_actual_wire_receipt_and_fresh_worker_link(
                 await _start(restarted, target)
             backend = restarted.backend(target)
             backend.spawn_fails = delivery == "refused"
-            backend.write_fails = delivery == "unknown"
+            if delivery == "unknown":
+                from typing import Any
+
+                from tests.unit.test_conversation_system import _FakeBackendChild
+
+                from planner.conversation.backends.contracts import PromptWriteFailed
+
+                async def possible_emission(
+                    self: _FakeBackendChild, *args: Any, **kwargs: Any
+                ) -> None:
+                    raise PromptWriteFailed("acknowledgment lost after possible transmission")
+
+                monkeypatch.setattr(_FakeBackendChild, "write_prompt", possible_emission)
             backend.composed_content_delivered = delivery != "context_missing"
             if actual_restart:
                 monkeypatch.setattr(conversation_start, "new_conversation_id", lambda: target)

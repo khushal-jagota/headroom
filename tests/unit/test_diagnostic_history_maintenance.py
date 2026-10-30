@@ -513,3 +513,42 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
                         assert event["sequence"] == sequence
 
     _run(exercise)
+
+
+def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(archive: Path) -> None:
+    """A locally ended turn cannot release history while its Mac child may still run."""
+    from planner.maintenance.diagnostic_history_measure import independent_removal_oracle
+
+    def candidates() -> set[tuple[str, int]]:
+        report = read_report(archive, as_of_unix=AS_OF)
+        keys = {(c.conversation_id, c.sequence) for d in report.decisions for c in d.candidates}
+        with closing(sqlite3.connect(archive)) as conn:
+            assert independent_removal_oracle(conn, report.cutoff_unix) == keys
+        return keys
+
+    expected = {("history", 2), ("history", 3)}
+    assert candidates() == expected
+    with closing(sqlite3.connect(archive)) as conn:
+        conn.execute(
+            "INSERT INTO executor_child_assignments VALUES ('mac','child','history',"
+            "'ticket','ticket',1,NULL)"
+        )
+        conn.commit()
+    assert candidates() == set()
+    with closing(sqlite3.connect(archive)) as conn:
+        conn.execute("UPDATE executor_child_assignments SET closed_at_ms=2")
+        conn.execute(
+            "INSERT INTO executor_core_turns VALUES ('history','{}','{}',?)",
+            (json.dumps({"source_retired": False}),),
+        )
+        conn.commit()
+    assert candidates() == set()
+    with closing(sqlite3.connect(archive)) as conn:
+        conn.execute("UPDATE executor_core_turns SET runtime_json=?",
+                     (json.dumps({"source_retired": True}),))
+        conn.commit()
+    assert candidates() == expected
+    with closing(sqlite3.connect(archive)) as conn:
+        conn.execute("UPDATE executor_core_turns SET runtime_json='malformed'")
+        conn.commit()
+    assert candidates() == set()

@@ -118,8 +118,8 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     refused = launch()
     assert refused.returncode != 0
     assert not refused.stdout
-    assert "legacy VPS executor socket configuration" in refused.stderr
+    assert "malformed VPS executor launch configuration" in refused.stderr
     configuration.write_text('{"version":1,"mode":"remote","socket":"/legacy/executor.sock"}')
     legacy = launch()
     assert legacy.returncode != 0 and not legacy.stdout
-    assert "version-2 executor ID descriptor" in legacy.stderr
+    assert "malformed VPS executor launch configuration" in legacy.stderr
