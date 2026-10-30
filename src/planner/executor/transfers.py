@@ -33,7 +33,7 @@ async def wait_for_settlement(task: asyncio.Task[Any]) -> None:
 
 
 async def settled_io[Result](function: Callable[..., Result], *args: Any) -> Result:
-    """Keep file resources alive until an admitted thread operation settles."""
+    """Keep ownership until a complete blocking I/O unit settles, even on cancellation."""
     task = asyncio.create_task(asyncio.to_thread(function, *args))
     try:
         return await asyncio.shield(task)

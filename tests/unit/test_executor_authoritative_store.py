@@ -1845,7 +1845,12 @@ def test_historical_inventory_stops_stale_handlers_without_touching_replacement_
                 await asyncio.sleep(0)
                 assert not task.done()
                 if phase == "lock":
-                    # Finalizer detached before waiting for its ACK lock.
+                    # Database checks now yield before the finalizer's ACK lock.
+                    # Wait for detachment while that lock is still held.
+                    async with asyncio.timeout(2):
+                        while endpoint._retained_inventory or endpoint._inventory:
+                            assert not task.done()
+                            await asyncio.sleep(0)
                     assert not endpoint._retained_inventory and not endpoint._inventory
             else:
                 await entered.wait()

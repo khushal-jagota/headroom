@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
+from functools import partial
 from typing import cast
 
 from pydantic import TypeAdapter
@@ -45,7 +46,9 @@ from planner.executor.contracts import (
     QueuedEnvelope,
 )
 from planner.executor.store import ExecutorStore
+from planner.executor.transfers import settled_io
 from planner.message_delivery import api, service
+from planner.message_delivery.contracts import MessageDeliveryMode
 
 
 # The context reaches ConversationStore's shielded asyncio.to_thread append. The
@@ -303,10 +306,11 @@ async def deliver_native_message(
     Resolver checks original help identity/target and chain only on first admission.
     Replays read the original canonical outcome before any mutable reachability.
     """
-    prior = store.preflight(envelope, identity=identity)
+    prior = await settled_io(partial(store.preflight, envelope, identity=identity))
     if prior is not None:
         return prior
-    try:
+
+    def admit() -> tuple[bool, JsonObject, Principal, str, MessageDeliveryMode]:
         with store._transaction() as connection:
             store._preflight(connection, envelope, identity)
             row = _lookup(connection, envelope)
@@ -364,13 +368,19 @@ async def deliver_native_message(
                 )
                 dispatch = True
                 result = {}
+        return dispatch, result, recipient, message, mode
+
+    try:
+        dispatch, result, recipient, message, mode = await settled_io(admit)
     except PlannerError as error:
         rejection = error
 
         def refuse(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
             raise rejection
 
-        return store.accept(envelope, refuse, _now_ms(), identity=identity)
+        return await settled_io(
+            partial(store.accept, envelope, refuse, _now_ms(), identity=identity)
+        )
 
     if dispatch:
         from planner.core.db import connect
@@ -393,20 +403,24 @@ async def deliver_native_message(
             result = cast(JsonObject, error.to_payload())
         finally:
             connection.close()
+
         # The event hook has already saved an actual native/owner outcome. Queued
         # or immediate-refusal outcomes have no event, so save their actual return.
-        with store._transaction() as connection:
-            store._connected(connection, identity)
-            row = _lookup(connection, envelope)
-            assert row is not None
-            if row["result_json"] is None or result.get("fate") != "queued":
-                _save_result(connection, row, result)
-            saved = connection.execute(
-                "SELECT result_json FROM executor_native_messages "
-                "WHERE sender_id=? AND submission_id=?",
-                (envelope.sender_id, envelope.submission_id),
-            ).fetchone()
-            result = cast(JsonObject, json.loads(saved[0]))
+        def save_returned_result() -> JsonObject:
+            with store._transaction() as connection:
+                store._connected(connection, identity)
+                row = _lookup(connection, envelope)
+                assert row is not None
+                if row["result_json"] is None or result.get("fate") != "queued":
+                    _save_result(connection, row, result)
+                saved = connection.execute(
+                    "SELECT result_json FROM executor_native_messages "
+                    "WHERE sender_id=? AND submission_id=?",
+                    (envelope.sender_id, envelope.submission_id),
+                ).fetchone()
+                return cast(JsonObject, json.loads(saved[0]))
+
+        result = await settled_io(save_returned_result)
 
     def accepted(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
         del connection, envelope
@@ -419,4 +433,4 @@ async def deliver_native_message(
             )
         return result
 
-    return store.accept(envelope, accepted, _now_ms(), identity=identity)
+    return await settled_io(partial(store.accept, envelope, accepted, _now_ms(), identity=identity))

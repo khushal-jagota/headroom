@@ -546,6 +546,13 @@ async def validate_ticket_creation(
     *,
     principal: Principal | None = None,
 ) -> CanonicalModelValidation:
+    return resolve_ticket_creation_validation(raw, conn, principal=principal)
+
+
+def resolve_ticket_creation_validation(
+    raw: JsonDict, conn: sqlite3.Connection, *, principal: Principal | None = None
+) -> CanonicalModelValidation:
+    """Resolve creation policy using only the caller's database transaction."""
     from planner.conversation.launch_intent import bind_model_intent
 
     selection, _ = resolve_ticket_creation_selection(raw, conn, principal=principal)
