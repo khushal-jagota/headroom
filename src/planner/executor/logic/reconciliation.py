@@ -18,7 +18,6 @@ def answer_target_is_open(admission: AnswerAdmission) -> bool:
         or context.turn != admission.ask.turn
         or context.ended
         or context.source_retired
-        or context.move_retirement_uncertain
         or context.delivery_uncertain
         or context.callbacks_revoked
         or admission.reachability not in (AskReachability.reachable, AskReachability.uncertain)

@@ -19,7 +19,6 @@ from typing import Annotated, ClassVar, Literal, Protocol, TypedDict
 from pydantic import ConfigDict, Field
 
 from planner.conversation.backends.contracts import TurnToken
-from planner.conversation.contracts import MoveRetirementResult
 from planner.conversation.events import UserInputAnswer
 from planner.executor.configuration import ExecutorPaths
 
@@ -204,7 +203,6 @@ class ExecutorTurnContext:
     pending_user_input_ids: tuple[str, ...]
     ended: bool
     source_retired: bool
-    move_retirement_uncertain: bool
     delivery_uncertain: bool
     callbacks_revoked: bool
 
@@ -421,23 +419,6 @@ class ChildInventory:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceRetirementRequest:
-    expected_identity: ExecutorIdentity
-    ticket_id: str
-    conversation_id: str | None
-    assigned_children: tuple[ChildReference, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class SourceRetirementReceipt:
-    identity: ExecutorIdentity
-    ticket_id: str
-    conversation_id: str | None
-    assigned_children: tuple[ChildReference, ...]
-    result: MoveRetirementResult
-
-
-@dataclass(frozen=True, slots=True)
 class ReconciliationInventory:
     identity: ExecutorIdentity
     children: tuple[ChildInventory, ...]
@@ -554,8 +535,6 @@ class WireMessageKind(StrEnum):
     reconcile_inventory = "reconcile_inventory"
     reconcile_result = "reconcile_result"
     reconciliation_ready = "reconciliation_ready"
-    source_retire = "source_retire"
-    source_retired = "source_retired"
     envelope = "envelope"
     receipt = "receipt"
     file_manifest = "file_manifest"

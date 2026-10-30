@@ -6123,9 +6123,6 @@ class SqliteProcessConversationSystem:
         state.executor_child_reference = None if runtime.get("source_retired") else child
         state.next_turn_number = max(state.next_turn_number, token.turn_number + 1)
         state.has_delivered_prompt = True
-        if runtime.get("move_retirement_uncertain"):
-            state.child_is_quarantined = True
-            return
         if runtime.get("source_retired"):
             state.last_ended_turn_token = token
             state.last_ended_turn_was_automatic_compaction = runtime.get(

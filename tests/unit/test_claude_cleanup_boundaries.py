@@ -14,13 +14,14 @@ import pytest
 from claude_agent_sdk import ClaudeAgentOptions
 from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
 from tests.support.executor_catalog import ScriptedCatalogObserver
-from tests.unit.test_current_model_resolution import Catalogue
-from tests.unit.test_executor_native_runtime import _fixture_admission, canonical_snapshot
-from tests.unit.test_executor_source_retirement import IDENTITY as SOURCE_IDENTITY
-from tests.unit.test_executor_source_retirement import drain
-from tests.unit.test_ticket_move_lifecycle import endpoint
+from tests.unit.test_executor_native_runtime import (
+    _fixture_admission,
+    acknowledge_pending,
+    canonical_snapshot,
+)
+from tests.unit.test_executor_retired_journal import IDENTITY as SOURCE_IDENTITY
+from tests.unit.test_executor_retired_journal import endpoint
 
-from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkBackendChildFactory,
@@ -32,7 +33,6 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
-    MoveRetirementDisposition,
     ResolvedConversationStart,
 )
 from planner.conversation.message_content import text_message_content
@@ -55,7 +55,6 @@ from planner.executor.contracts import (
     CommandOutcome,
     EnvelopeKind,
     ReceiptDisposition,
-    SourceRetirementRequest,
 )
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry
@@ -243,9 +242,8 @@ def test_claude_stop_result_controls_canonical_retirement(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("boundary", ["move", "quiesce"])
-def test_claude_disconnect_failure_cannot_confirm_source_move_or_quiescence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+def test_claude_disconnect_failure_cannot_confirm_quiescence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gap: these gates previously exercised only a fake native stop exception."""
 
@@ -279,21 +277,13 @@ def test_claude_disconnect_failure_cannot_confirm_source_move_or_quiescence(
         client = clients[0]
         original_disconnect = client.disconnect
         monkeypatch.setattr(client, "disconnect", disconnect_failure)
-        drain(registry)
+        acknowledge_pending(cast(FilesystemSpool, registry.spool))
+        for command_id in tuple(registry.outcomes):
+            registry.confirm_command(command_id)
         try:
-            if boundary == "move":
-                request = SourceRetirementRequest(IDENTITY, "t_source", "c_source", (reference,))
-                receipt = await registry.retire_source("move", request, IDENTITY)
-                assert receipt.result.disposition is MoveRetirementDisposition.uncertain
-                assert await registry.retire_source("move", request, IDENTITY) == receipt
-                delayed = replace(start, command_id="delayed-start")
-                assert (
-                    await registry.execute_command(delayed)
-                ).disposition is CommandDisposition.refused
-            else:
-                with pytest.raises(RuntimeError, match="before native termination"):
-                    await registry.quiesce()
-                assert registry.admission_stopped
+            with pytest.raises(RuntimeError, match="before native termination"):
+                await registry.quiesce()
+            assert registry.admission_stopped
             assert registry.children[reference.child_id] is child
             assert child.native is native and native._client is client
             assert not client.disconnected

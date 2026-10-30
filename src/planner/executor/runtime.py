@@ -31,8 +31,6 @@ from planner.conversation.backends.contracts import (
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
-    MoveRetirementDisposition,
-    MoveRetirementResult,
     ResolvedConversationStart,
 )
 from planner.conversation.logic.user_input import ordered_user_input_answers
@@ -62,8 +60,6 @@ from planner.executor.contracts import (
     JsonObject,
     Quiescence,
     ReconciliationInventory,
-    SourceRetirementReceipt,
-    SourceRetirementRequest,
 )
 from planner.executor.files import safe_component
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
@@ -150,13 +146,9 @@ class NativeChildRegistry:
         self.admission_stopped = False
         self._retired_children: set[str] = set()
         self._retiring_children: set[str] = set()
-        self._retiring_tickets: set[str] = set()
         self._source_work: dict[ChildReference, int] = {}
         self._source_tasks: dict[ChildReference, set[asyncio.Task[object]]] = {}
         self._failed_source_work: set[ChildReference] = set()
-        self._retirements: dict[
-            str, tuple[SourceRetirementRequest, asyncio.Task[SourceRetirementReceipt]]
-        ] = {}
 
     def authenticate(self, child_id: str | None, capability: str | None) -> _Child:
         child = self.children.get(child_id or "")
@@ -164,7 +156,6 @@ class NativeChildRegistry:
             child is None
             or child_id in self._retired_children
             or child_id in self._retiring_children
-            or child.ticket_id in self._retiring_tickets
             or capability is None
             or not secrets.compare_digest(child.capability, capability)
         ):
@@ -172,11 +163,9 @@ class NativeChildRegistry:
         return child
 
     def begin_source_work(self, child: ChildReference, *, final_event: bool = False) -> None:
-        native = self.children.get(child.child_id)
         if (
             child.child_id in self._retired_children
             or (child.child_id in self._retiring_children and not final_event)
-            or (native is not None and native.ticket_id in self._retiring_tickets)
         ):
             raise PermissionError("source child is retired or retiring")
         key = child
@@ -228,134 +217,6 @@ class NativeChildRegistry:
         self._source_work[key] -= 1
         if not self._source_work[key]:
             del self._source_work[key]
-
-    async def retire_source(
-        self,
-        request_id: str,
-        request: SourceRetirementRequest,
-        identity: ExecutorIdentity,
-    ) -> SourceRetirementReceipt:
-        previous = self._retirements.get(request_id)
-        if previous is not None:
-            if previous[0] != request:
-                raise ValueError("source retirement id reused with different content")
-            return await asyncio.shield(previous[1])
-        task = asyncio.create_task(self._retire_source(request, identity))
-        self._retirements[request_id] = (request, task)
-        return await asyncio.shield(task)
-
-    async def _retire_source(
-        self,
-        request: SourceRetirementRequest,
-        identity: ExecutorIdentity,
-    ) -> SourceRetirementReceipt:
-        def receipt(
-            disposition: MoveRetirementDisposition, reason: str | None = None
-        ) -> SourceRetirementReceipt:
-            return SourceRetirementReceipt(
-                identity,
-                request.ticket_id,
-                request.conversation_id,
-                request.assigned_children,
-                MoveRetirementResult(disposition, reason),
-            )
-
-        refs = set(request.assigned_children)
-        ids = {ref.child_id for ref in refs}
-        if (
-            request.expected_identity != identity
-            or identity.executor_incarnation != self.incarnation
-            or len(ids) != len(request.assigned_children)
-            or any(ref.executor_incarnation != self.incarnation for ref in refs)
-            or request.ticket_id in self._retiring_tickets
-        ):
-            return receipt(
-                MoveRetirementDisposition.refused,
-                "source identity is not current or retirement is in progress",
-            )
-        conversations = {ref.conversation_id for ref in refs}
-        if request.conversation_id is not None:
-            conversations.add(request.conversation_id)
-        children = [
-            child
-            for child in self.children.values()
-            if child.ticket_id == request.ticket_id
-            or child.reference.conversation_id in conversations
-        ]
-        if any(
-            child.ticket_id != request.ticket_id or child.reference not in refs
-            for child in children
-        ):
-            return receipt(
-                MoveRetirementDisposition.refused,
-                "source child assignment is unknown or conflicting",
-            )
-        self._retiring_tickets.add(request.ticket_id)
-        self._retiring_children.update(ids)
-        try:
-            busy = (
-                any(
-                    child.active_turn is not None
-                    or child.asks
-                    or child.user_inputs
-                    or child.lock.locked()
-                    for child in children
-                )
-                or any(
-                    count
-                    for ref, count in self._source_work.items()
-                    if ref.conversation_id in conversations
-                )
-                or any(
-                    not task.done()
-                    for key, task in self._tasks.items()
-                    if self._commands[key].child.child_id in ids
-                )
-                or any(
-                    outcome.disposition is CommandDisposition.uncertain
-                    for outcome in self.outcomes.values()
-                    if outcome.child.child_id in ids
-                )
-                or any(
-                    command_id not in self._outcomes_published
-                    for command_id, outcome in self.outcomes.items()
-                    if outcome.child.child_id in ids
-                )
-                or any(
-                    answer_id not in self._applications_published
-                    for answer_id, application in self._applications.items()
-                    if application.ask.child.child_id in ids
-                )
-                or any(self.spool.has_pending(conv) for conv in conversations)
-            )
-            if busy:
-                return receipt(
-                    MoveRetirementDisposition.refused, "source has activity or waiting messages"
-                )
-            # Tombstone identities before native effects, fencing delayed starts.
-            self._retired_children.update(ids)
-            for child in children:
-                try:
-                    async with child.lock:
-                        await child.native.stop()
-                except Exception:
-                    return receipt(
-                        MoveRetirementDisposition.uncertain, "source stop could not be confirmed"
-                    )
-            for child in children:
-                self.children.pop(child.reference.child_id, None)
-            if any(
-                count
-                for ref, count in self._source_work.items()
-                if ref.conversation_id in conversations
-            ) or any(self.spool.has_pending(conv) for conv in conversations):
-                return receipt(
-                    MoveRetirementDisposition.uncertain, "source retirement produced unsettled work"
-                )
-            return receipt(MoveRetirementDisposition.retired)
-        finally:
-            self._retiring_tickets.discard(request.ticket_id)
-            self._retiring_children.difference_update(ids)
 
     async def execute_command(self, command: ChildCommand) -> CommandOutcome:
         previous = self._commands.get(command.command_id)
@@ -503,8 +364,6 @@ class NativeChildRegistry:
         if stop_owner is not current:
             # Never join another stop: two owners otherwise wait on one another.
             return outcome(CommandDisposition.refused, "child_stop_in_progress")
-        if child is not None and child.ticket_id in self._retiring_tickets:
-            return outcome(CommandDisposition.refused, "source_retirement_in_progress")
 
         # Admission closes before the first await. Failed attempts retain this fence,
         # but a later explicit stop can retry once its previous owner finished.

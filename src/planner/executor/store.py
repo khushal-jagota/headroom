@@ -672,7 +672,6 @@ class ExecutorStore:
                 TypeAdapter(bool).validate_python(runtime.get(key, False), strict=True)
                 for key in (
                     "source_retired",
-                    "move_retirement_uncertain",
                     "delivery_uncertain",
                     "callbacks_revoked",
                 )
