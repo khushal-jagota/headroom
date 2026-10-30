@@ -8,8 +8,6 @@ import json
 import os
 import re
 import sqlite3
-from collections.abc import Callable
-from contextlib import AbstractContextManager
 from dataclasses import asdict
 from functools import partial
 from pathlib import Path
@@ -18,6 +16,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
+from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
 from planner.core.db import connect
@@ -45,6 +44,8 @@ from planner.executor.protocol import (
     QueuedEnvelope,
     ReceiptDisposition,
     TransactionalWriter,
+    as_object,
+    decode_event_arguments,
 )
 from planner.executor.store import ExecutorStore, VpsDatabase
 from planner.executor.vps_agent_writes import AgentWrites
@@ -99,76 +100,75 @@ class InboxStore(VpsDatabase):
         *,
         identity: ExecutorIdentity,
         check_files: bool = True,
-        transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
-        | None = None,
-        before_commit: Callable[[sqlite3.Connection], None] | None = None,
-        before_outcome_commit: Callable[[sqlite3.Connection, AcceptanceReceipt, bool], None]
-        | None = None,
     ) -> AcceptanceReceipt:
-        effect_accepted = False
-        selected: AcceptanceReceipt | None = None
+        with self._transaction() as connection:
+            receipt, _ = self.accept_in_transaction(
+                connection, envelope, writer, now_ms, identity=identity, check_files=check_files
+            )
+            return receipt
 
-        def publish_effect(connection: sqlite3.Connection) -> None:
-            if effect_accepted and before_commit is not None:
-                before_commit(connection)
-            if selected is not None and before_outcome_commit is not None:
-                before_outcome_commit(connection, selected, effect_accepted)
+    def accept_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        envelope: QueuedEnvelope,
+        writer: TransactionalWriter,
+        now_ms: int,
+        *,
+        identity: ExecutorIdentity,
+        check_files: bool = True,
+    ) -> tuple[AcceptanceReceipt, bool]:
+        """Apply once and record the receipt; the caller owns commit and publication."""
+        if not connection.in_transaction:
+            raise RuntimeError("inbox acceptance requires an open transaction")
+        previous = self._prior_receipt(connection, envelope, identity)
+        if previous is not None:
+            return previous, False
+        disposition = ReceiptDisposition.accepted
+        connection.execute("SAVEPOINT domain_write")
+        try:
+            self._validate_envelope(connection, envelope, check_files=check_files)
+            if check_files:
+                self.install_files(envelope.file_dependencies)
+            result = writer(connection, envelope)
+            if not connection.in_transaction:
+                raise RuntimeError("Executor domain writer committed its transaction")
+            connection.execute("RELEASE SAVEPOINT domain_write")
+        except (PlannerError, ValueError, KeyError, TypeError) as error:
+            connection.execute("ROLLBACK TO SAVEPOINT domain_write")
+            connection.execute("RELEASE SAVEPOINT domain_write")
+            disposition = ReceiptDisposition.refused
+            refusal = error if isinstance(error, PlannerError) else _invalid(str(error))
+            result = cast(JsonObject, refusal.to_payload())
+            self.runs._mark_refused_cleanup_evidence(connection, envelope, identity)
+        if disposition is ReceiptDisposition.accepted and result.get("fate") == "uncertain":
+            disposition = ReceiptDisposition.uncertain
+        if disposition is ReceiptDisposition.refused and envelope.kind is EnvelopeKind.cli_write:
+            from planner.executor.refusals import record_refused_write
 
-        with self._transaction(transaction_context, publish_effect) as connection:
-            previous = self._prior_receipt(connection, envelope, identity)
-            if previous is not None:
-                selected = previous
-                return previous
-            disposition = ReceiptDisposition.accepted
-            connection.execute("SAVEPOINT domain_write")
-            try:
-                self._validate_envelope(connection, envelope, check_files=check_files)
-                if check_files:
-                    self.install_files(envelope.file_dependencies)
-                result = writer(connection, envelope)
-                if not connection.in_transaction:
-                    raise RuntimeError("Executor domain writer committed its transaction")
-                connection.execute("RELEASE SAVEPOINT domain_write")
-                effect_accepted = True
-            except (PlannerError, ValueError, KeyError, TypeError) as error:
-                connection.execute("ROLLBACK TO SAVEPOINT domain_write")
-                connection.execute("RELEASE SAVEPOINT domain_write")
-                disposition = ReceiptDisposition.refused
-                refusal = error if isinstance(error, PlannerError) else _invalid(str(error))
-                result = cast(JsonObject, refusal.to_payload())
-                self.runs._mark_refused_cleanup_evidence(connection, envelope, identity)
-            if disposition is ReceiptDisposition.accepted and result.get("fate") == "uncertain":
-                disposition = ReceiptDisposition.uncertain
-            if (
-                disposition is ReceiptDisposition.refused
-                and envelope.kind is EnvelopeKind.cli_write
-            ):
-                from planner.executor.refusals import record_refused_write
-
-                record_refused_write(connection, self.db_path, envelope, result)
-            selected = AcceptanceReceipt(
+            record_refused_write(connection, self.db_path, envelope, result)
+        selected = AcceptanceReceipt(
+            envelope.sender_id,
+            envelope.submission_id,
+            envelope.payload_sha256,
+            disposition,
+            result,
+            now_ms,
+        )
+        connection.execute(
+            "INSERT INTO mac_inbox_positions VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(sender_id,conversation_id) DO UPDATE SET "
+            "sequence=excluded.sequence,submission_id=excluded.submission_id,"
+            "disposition=excluded.disposition,result_json=excluded.result_json",
+            (
                 envelope.sender_id,
+                envelope.conversation_id,
+                envelope.sequence,
                 envelope.submission_id,
-                envelope.payload_sha256,
-                disposition,
-                result,
-                now_ms,
-            )
-            connection.execute(
-                "INSERT INTO mac_inbox_positions VALUES(?,?,?,?,?,?) "
-                "ON CONFLICT(sender_id,conversation_id) DO UPDATE SET "
-                "sequence=excluded.sequence,submission_id=excluded.submission_id,"
-                "disposition=excluded.disposition,result_json=excluded.result_json",
-                (
-                    envelope.sender_id,
-                    envelope.conversation_id,
-                    envelope.sequence,
-                    envelope.submission_id,
-                    disposition.value,
-                    _record(selected),
-                ),
-            )
-            return selected
+                disposition.value,
+                _record(selected),
+            ),
+        )
+        return selected, disposition is not ReceiptDisposition.refused
 
     def file_target(self, manifest: FileManifest) -> Path:
         safe_component(manifest.owner_id)
@@ -408,20 +408,10 @@ class MacInbox:
             # recording boundary (which correctly fences real persistence failures).
             await settled_io(partial(self.store.preflight, envelope, identity=identity))
 
-            def accept(
-                row: QueuedEnvelope,
-                write: TransactionalWriter,
-                *,
-                transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
-                | None = None,
-                before_commit: Callable[[sqlite3.Connection], None] | None = None,
-                before_outcome_commit: Callable[[sqlite3.Connection, AcceptanceReceipt, bool], None]
-                | None = None,
-            ) -> AcceptanceReceipt:
+            def in_commit(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
                 def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
                     conn = connection
-                    accepted = envelope
-                    result = write(conn, accepted)
+                    result = take()
                     if (
                         event.method is BackendEventMethod.permission_ask_raised
                         and event.turn is not None
@@ -483,23 +473,32 @@ class MacInbox:
                                 identity,
                                 now_ms(),
                             )
-                    if event.method is BackendEventMethod.turn_ended and event.turn is not None:
+                    if (
+                        result.get("applied") is True
+                        and event.method is BackendEventMethod.turn_ended
+                        and event.turn is not None
+                    ):
                         self.runs.store.revoke_turn_callbacks_in_transaction(
                             conn, event.child, event.turn, identity, now_ms()
                         )
                     return result
 
-                return self.store.accept(
-                    row,
+                receipt, taken = self.store.accept_in_transaction(
+                    connection,
+                    envelope,
                     effect,
                     now_ms(),
                     identity=identity,
-                    transaction_context=transaction_context,
-                    before_commit=before_commit,
-                    before_outcome_commit=before_outcome_commit,
                 )
+                return AcceptedEvent(as_object(receipt), taken)
 
-            return await self.conversations.receive_remote_backend_event(event, envelope, accept)
+            result = await self.conversations.take_backend_event(
+                event.turn,
+                decode_event_arguments(event),
+                in_commit=in_commit,
+                conversation_id=event.child.conversation_id,
+            )
+            return TypeAdapter(AcceptanceReceipt).validate_python(result.result)
         if envelope.kind is EnvelopeKind.cli_write:
             return await self.agent_writes.accept(envelope, identity)
 
@@ -529,16 +528,20 @@ class MacInbox:
                 envelope.conversation_id,
             )
             await settled_io(partial(self.store.preflight, envelope, identity=identity))
-            return await self.conversations.receive_remote_answer_application(
-                application,
-                envelope,
-                lambda row, write, **publication: self.store.accept(
-                    row,
-                    write,
+
+            def in_commit(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
+                receipt, taken = self.store.accept_in_transaction(
+                    connection,
+                    envelope,
+                    lambda conn, row: take(),
                     now_ms(),
                     identity=identity,
-                    **publication,
-                ),
+                )
+                return AcceptedEvent(as_object(receipt), taken)
+
+            return await self.conversations.receive_remote_answer_application(
+                application,
+                in_commit,
                 self.runs.store.record_application_in_transaction,
                 self.runs.store.public_request_id(application.ask),
             )

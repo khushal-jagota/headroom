@@ -29,9 +29,9 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
-from planner.conversation.backend_event_contracts import ExecutorEffectResult, ExecutorEffectWriter
+from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
 from planner.conversation.backends.contracts import AdmissionRefused, BackendSpawnFailed, TurnToken
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
@@ -94,11 +94,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
 from planner.execution_identity import ChildReference
 from planner.executor.protocol import (
-    AcceptanceReceipt,
     ChildCommand,
-    ExecutorEffectAcceptor,
-    JsonObject,
-    QueuedEnvelope,
     StartRun,
     Steer,
     WritePrompt,
@@ -2010,16 +2006,14 @@ class ConversationStore:
 
     @staticmethod
     def _encode_signal_result(result: object) -> object:
-        if isinstance(result, ExecutorEffectResult):
+        if isinstance(result, AcceptedEvent):
             return {
-                "executor_effect": {
-                    "receipt": TypeAdapter(AcceptanceReceipt).dump_python(
-                        result.receipt, mode="json"
-                    ),
+                "accepted_event": {
+                    "result": result.result,
                     "written": [
                         ConversationStore._encode_signal_result(row) for row in result.written
                     ],
-                    "fresh": result.fresh,
+                    "taken": result.taken,
                 }
             }
         if isinstance(result, PromptDispatchDecision):
@@ -2050,15 +2044,15 @@ class ConversationStore:
     def _decode_signal_result(result: object) -> object:
         if not isinstance(result, dict):
             return result
-        if "executor_effect" in result:
-            value = result["executor_effect"]
-            return ExecutorEffectResult(
-                TypeAdapter(AcceptanceReceipt).validate_python(value["receipt"]),
+        if "accepted_event" in result:
+            value = result["accepted_event"]
+            return AcceptedEvent(
+                value["result"],
+                value["taken"],
                 tuple(
                     cast(StoredConversationEvent, ConversationStore._decode_signal_result(row))
                     for row in value["written"]
                 ),
-                value["fresh"],
             )
         if "dispatch_decision" in result:
             return PromptDispatchDecision(**result["dispatch_decision"])
@@ -2393,68 +2387,70 @@ class ConversationStore:
 
     async def accept_executor_effect(
         self,
-        envelope: QueuedEnvelope,
-        acceptor: ExecutorEffectAcceptor,
-        writer: ExecutorEffectWriter,
+        writer: Callable[
+            [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
+        ],
+        in_commit: CommitParticipant | None,
         mutation: SignalRuntimeMutation | None,
-    ) -> ExecutorEffectResult:
-        return await self._write(
-            self._accept_executor_effect_sync, envelope, acceptor, writer, mutation
-        )
+    ) -> AcceptedEvent:
+        return await self._write(self._accept_executor_effect_sync, writer, in_commit, mutation)
 
     def _accept_executor_effect_sync(
         self,
-        envelope: QueuedEnvelope,
-        acceptor: ExecutorEffectAcceptor,
-        writer: ExecutorEffectWriter,
+        writer: Callable[
+            [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
+        ],
+        in_commit: CommitParticipant | None,
         mutation: SignalRuntimeMutation | None,
-    ) -> ExecutorEffectResult:
-        coordinator = self.signal_coordinator
-        admission: SignalAdmission | None = None
-        written: tuple[StoredConversationEvent, ...] = ()
-        outcome: ExecutorEffectResult | None = None
-
-        @contextmanager
-        def transaction_context(conn: sqlite3.Connection) -> Iterator[None]:
-            nonlocal admission
-            if coordinator is None:
-                yield
-                return
-            candidate = self._signal_attempt.get()
-            assert candidate is not None
-            admission = coordinator.prepare_mutation(
-                conn, mutation, operation_id=candidate[1], retain_failure=True
-            )
-            assert self._bind_signal_admission is not None
-            with self._bind_signal_admission(conn, admission):
-                yield
-
-        def write(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-            nonlocal written
-            result, written = writer(connection, envelope)
-            return result
-
-        def before_commit(conn: sqlite3.Connection) -> None:
+    ) -> AcceptedEvent:
+        conn = self._connect()
+        try:
+            coordinator = self.signal_coordinator
+            admission = None
+            binding: AbstractContextManager[None] = nullcontext()
             if coordinator is not None:
-                assert admission is not None
-                coordinator.apply_mutation(conn, admission)
+                candidate = self._signal_attempt.get()
+                assert candidate is not None
+                admission = coordinator.prepare_mutation(
+                    conn,
+                    mutation,
+                    operation_id=candidate[1],
+                    retain_failure=True,
+                )
+                assert self._bind_signal_admission is not None
+                binding = self._bind_signal_admission(conn, admission)
+            with binding:
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    written: tuple[StoredConversationEvent, ...] = ()
 
-        def before_outcome_commit(
-            conn: sqlite3.Connection, receipt: AcceptanceReceipt, fresh: bool
-        ) -> None:
-            nonlocal outcome
-            outcome = ExecutorEffectResult(receipt, written if fresh else (), fresh)
-            self._record_signal_result(conn, outcome)
+                    def take() -> dict[str, JsonValue]:
+                        nonlocal written
+                        result, written = writer(conn)
+                        return result
 
-        acceptor(
-            envelope,
-            write,
-            transaction_context=transaction_context,
-            before_commit=before_commit,
-            before_outcome_commit=before_outcome_commit,
-        )
-        assert outcome is not None
-        return outcome
+                    outcome = (
+                        AcceptedEvent(take(), True) if in_commit is None else in_commit(conn, take)
+                    )
+                    if not conn.in_transaction:
+                        raise RuntimeError(
+                            "commit participant committed the conversation transaction"
+                        )
+                    outcome = replace(outcome, written=written if outcome.taken else ())
+                    if outcome.taken and self.signal_coordinator is not None:
+                        assert admission is not None
+                        self.signal_coordinator.apply_mutation(conn, admission)
+                    self._record_signal_result(conn, outcome)
+                    if in_commit is None:
+                        self._commit_rows(conn, tuple(row.payload for row in outcome.written))
+                    else:
+                        conn.commit()
+                    return outcome
+                except BaseException:
+                    conn.rollback()
+                    raise
+        finally:
+            conn.close()
 
     @staticmethod
     def lifecycle_facts_in_transaction(

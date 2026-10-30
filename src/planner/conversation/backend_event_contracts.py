@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypeGuard
 
+from pydantic import JsonValue
+
 from planner.conversation.backends.contracts import BackendChild, TurnToken
 from planner.conversation.events import (
     AutomaticCompactionResult,
@@ -17,10 +19,10 @@ from planner.conversation.events import (
 from planner.conversation.lifecycle import LifecycleFact
 from planner.core.contracts import Principal
 from planner.execution_identity import ChildReference
-from planner.executor.protocol import AcceptanceReceipt, ChildCommand, JsonObject, QueuedEnvelope
 
 if TYPE_CHECKING:
     from planner.conversation.storage import StoredConversationEvent
+    from planner.executor.protocol import ChildCommand
 
 
 class RetainedDeliveryChild(BackendChild, Protocol):
@@ -67,13 +69,22 @@ class InterpretedTurnEnding:
     failure_notice: bool
 
 
+# The participant calls this only after replay and admission checks. Neither function
+# commits; a refusal must report taken=False after rolling its savepoint back.
+type EventTaken = Callable[[], dict[str, JsonValue]]
+
+
 @dataclass(frozen=True, slots=True)
-class ExecutorEffectResult:
-    receipt: AcceptanceReceipt
-    written: tuple[StoredConversationEvent, ...]
-    fresh: bool
+class AcceptedEvent:
+    """A participant's result and whether its effect survived acceptance.
+
+    Replays and refusals return taken=False even if a savepoint rolled back a write.
+    The conversation does not inspect the participant's opaque result.
+    """
+
+    result: dict[str, JsonValue]
+    taken: bool
+    written: tuple[StoredConversationEvent, ...] = ()
 
 
-type ExecutorEffectWriter = Callable[
-    [sqlite3.Connection, QueuedEnvelope], tuple[JsonObject, tuple[StoredConversationEvent, ...]]
-]
+type CommitParticipant = Callable[[sqlite3.Connection, EventTaken], AcceptedEvent]

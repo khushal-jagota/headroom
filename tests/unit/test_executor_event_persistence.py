@@ -8,13 +8,12 @@ import threading
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 import pytest
 from tests.unit.test_conversation_api import _Harness, _start
-from tests.unit.test_conversation_executor_publication import _envelope
+from tests.unit.test_conversation_executor_publication import _envelope, _take_event
 
-from planner.conversation.backend_event_contracts import ExecutorEffectResult
+from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
 from planner.conversation.events import ConversationEventKind
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
@@ -23,14 +22,13 @@ from planner.core.db import ChangeSignallingConnection, connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
-    AcceptanceReceipt,
     BackendEvent,
     BackendEventMethod,
     EnvelopeKind,
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
-    TransactionalWriter,
+    as_object,
 )
 from planner.executor.vps_inbox import InboxStore
 
@@ -88,25 +86,24 @@ def test_worker_progress_and_cancellation_retain_lock_through_finalization(
             loop_thread = threading.get_ident()
             writer_threads: list[int] = []
 
-            def accept(
-                row: QueuedEnvelope, write: TransactionalWriter, **publication: Any
-            ) -> AcceptanceReceipt:
+            def accept(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
                 def blocked(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-                    result = write(connection, envelope)
+                    result = take()
                     writer_threads.append(threading.get_ident())
                     entered.set()
                     if not release.wait(3):
                         raise RuntimeError("controlled release failed")
                     return result
 
-                return store.accept(row, blocked, 1001, identity=identity, **publication)
+                receipt, taken = store.accept_in_transaction(
+                    connection, envelope, blocked, 1001, identity=identity
+                )
+                return AcceptedEvent(as_object(receipt), taken)
 
             # A regressed synchronous writer cannot deadlock the test process.
             watchdog = threading.Timer(2, release.set)
             watchdog.start()
-            caller = asyncio.create_task(
-                harness.system.receive_remote_backend_event(event, envelope, accept)
-            )
+            caller = asyncio.create_task(_take_event(harness.system, event, envelope, accept))
             try:
                 assert await asyncio.to_thread(entered.wait, 1)
                 # This continuation is unrelated event-loop work during the controlled write.
@@ -120,15 +117,16 @@ def test_worker_progress_and_cancellation_retain_lock_through_finalization(
                 owned = tuple(state.settlement_tasks)
                 assert owned and not all(task.done() for task in owned)
                 assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+                assert not any(
+                    row.kind is ConversationEventKind.tool_call_started
+                    for row in await harness.store.read_events_after("c", 0)
+                )
                 release.set()
                 await asyncio.gather(*owned)
                 assert not state.lock.locked()
                 receipt = store.lookup_receipt(envelope.sender_id, envelope.submission_id)
                 assert receipt is not None and receipt.disposition is ReceiptDisposition.accepted
-                assert (
-                    await harness.system.receive_remote_backend_event(event, envelope, accept)
-                    == receipt
-                )
+                assert await _take_event(harness.system, event, envelope, accept) == receipt
                 events = await harness.store.read_events_after("c", 0)
                 assert (
                     sum(row.kind is ConversationEventKind.tool_call_started for row in events) == 1
@@ -148,34 +146,36 @@ def test_ambiguous_commit_recovers_typed_result_for_every_receipt(
     async def exercise() -> None:
         async with _case(tmp_path, True) as (harness, store, identity, event, envelope):
 
-            def accept(
-                row: QueuedEnvelope, write: TransactionalWriter, **publication: Any
-            ) -> AcceptanceReceipt:
+            def accept(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
                 def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
                     if outcome == "refused":
+                        take()  # The receipt savepoint must roll back an already-written effect.
                         raise PlannerError(ErrorCode.validation, "controlled refusal", {})
-                    return write(connection, envelope)
+                    return take()
 
-                return store.accept(row, effect, 1001, identity=identity, **publication)
+                receipt, taken = store.accept_in_transaction(
+                    connection, envelope, effect, 1001, identity=identity
+                )
+                return AcceptedEvent(as_object(receipt), taken)
 
             if outcome == "replay":
-                await harness.system.receive_remote_backend_event(event, envelope, accept)
+                await _take_event(harness.system, event, envelope, accept)
             coordinator = harness.store.signal_coordinator
             assert coordinator is not None
             original_record = coordinator.record_result
             original_commit = ChangeSignallingConnection.commit
             target: list[sqlite3.Connection] = []
-            seen: list[ExecutorEffectResult] = []
+            seen: list[AcceptedEvent] = []
             original_encode = harness.store._encode_signal_result
 
             def encode(result: object) -> object:
-                if isinstance(result, ExecutorEffectResult):
+                if isinstance(result, AcceptedEvent):
                     seen.append(result)
                 return original_encode(result)
 
             def record(connection: sqlite3.Connection, result: object) -> None:
                 original_record(connection, result)
-                if isinstance(result, dict) and "executor_effect" in result and not target:
+                if isinstance(result, dict) and "accepted_event" in result and not target:
                     target.append(connection)
 
             def commit(connection: ChangeSignallingConnection) -> None:
@@ -188,9 +188,7 @@ def test_ambiguous_commit_recovers_typed_result_for_every_receipt(
                 fault.setattr(coordinator, "record_result", record)
                 fault.setattr(harness.store, "_encode_signal_result", encode)
                 fault.setattr(ChangeSignallingConnection, "commit", commit)
-                task = asyncio.create_task(
-                    harness.system.receive_remote_backend_event(event, envelope, accept)
-                )
+                task = asyncio.create_task(_take_event(harness.system, event, envelope, accept))
                 for _ in range(500):
                     if harness.store.recording_failures("c"):
                         break
@@ -203,16 +201,13 @@ def test_ambiguous_commit_recovers_typed_result_for_every_receipt(
                 receipt = await asyncio.wait_for(task, 5)
             assert receipt.disposition.value == ("refused" if outcome == "refused" else "accepted")
             assert len(seen) == 1
-            assert seen[0].fresh is (outcome == "accepted")
+            assert seen[0].taken is (outcome == "accepted")
             assert bool(seen[0].written) is (outcome == "accepted")
             events = await harness.store.read_events_after("c", 0)
             assert sum(row.kind is ConversationEventKind.tool_call_started for row in events) == (
                 0 if outcome == "refused" else 1
             )
-            assert (
-                await harness.system.receive_remote_backend_event(event, envelope, accept)
-                == receipt
-            )
+            assert await _take_event(harness.system, event, envelope, accept) == receipt
 
     asyncio.run(asyncio.wait_for(exercise(), 10))
 
@@ -251,12 +246,17 @@ def test_common_turn_ending_preserves_compaction_and_missing_reply(
                 )
                 row = _envelope(1, EnvelopeKind.backend_event, finished)
 
-                def accept(
-                    row: QueuedEnvelope, write: TransactionalWriter, **publication: Any
-                ) -> AcceptanceReceipt:
-                    return store.accept(row, write, 1001, identity=identity, **publication)
+                def accept(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
+                    receipt, taken = store.accept_in_transaction(
+                        connection,
+                        row,
+                        lambda connection, envelope: take(),
+                        1001,
+                        identity=identity,
+                    )
+                    return AcceptedEvent(as_object(receipt), taken)
 
-                await harness.system.receive_remote_backend_event(finished, row, accept)
+                await _take_event(harness.system, finished, row, accept)
             events = await harness.store.read_events_after("c", 0)
             endings = [
                 row.payload for row in events if isinstance(row.payload, TurnEndedEventPayload)
@@ -270,5 +270,188 @@ def test_common_turn_ending_preserves_compaction_and_missing_reply(
                 sum(row.kind is ConversationEventKind.explicit_reply_missing for row in events) == 1
             )
             assert state.running_turn is None
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: Path) -> None:
+    """Compare the real callback queue and inbox, including request reuse and closure."""
+    from dataclasses import fields
+    from typing import cast
+
+    from planner.conversation.backends.contracts import (
+        AgentMessageCompletedArguments,
+        BackendPermissionAsk,
+        BackendUserInputRequest,
+        ContextCompactedArguments,
+        DecodedBackendEventArguments,
+        PermissionAskRaisedArguments,
+        PlanUpdatedArguments,
+        ProviderSelectionReportedArguments,
+        TokenUsageReportedArguments,
+        ToolCallFinishedArguments,
+        ToolCallStartedArguments,
+        TurnEndedArguments,
+        UserInputFailedArguments,
+        UserInputRequestedArguments,
+    )
+    from planner.conversation.events import (
+        ConversationTurnEnding,
+        PermissionAskOption,
+        ToolCallStatus,
+        UserInputQuestion,
+    )
+    from planner.core.clock import RealClock
+    from planner.executor.vps_transport import VpsExecutor
+
+    async def exercise() -> None:
+        transcripts = []
+        for path in ("local", "mac"):
+            root = tmp_path / path
+            root.mkdir()
+            async with _case(root, True) as (harness, store, identity, first, _):
+                state = harness.system._conversations["c"]
+                await state.backend_event_queue.join()
+                token = first.turn
+                assert token is not None
+                sink = harness.backends["c"].sink
+                assert sink is not None
+                endpoint = VpsExecutor(str(harness.db_path), RealClock())
+                endpoint.bind_conversations(harness.system)
+                endpoint.runs.identity = identity
+                permission = PermissionAskRaisedArguments(
+                    ask=BackendPermissionAsk(
+                        "ask", "Run?", None, (PermissionAskOption("allow", "Allow", "allow_once"),)
+                    )
+                )
+                sequence: tuple[tuple[BackendEventMethod, DecodedBackendEventArguments], ...] = (
+                    (
+                        BackendEventMethod.provider_selection_reported,
+                        ProviderSelectionReportedArguments(
+                            provider=state.record.backend_key,
+                            source_kind="response",
+                            model="reported-model",
+                            child_lifetime="test-child",
+                        ),
+                    ),
+                    (
+                        BackendEventMethod.tool_call_started,
+                        ToolCallStartedArguments(
+                            tool_call_id="tool",
+                            title="Work",
+                            tool_kind="other",
+                        ),
+                    ),
+                    (BackendEventMethod.plan_updated, PlanUpdatedArguments(entries=())),
+                    (
+                        BackendEventMethod.token_usage_reported,
+                        TokenUsageReportedArguments(input_tokens=42),
+                    ),
+                    (BackendEventMethod.permission_ask_raised, permission),
+                    (BackendEventMethod.permission_ask_raised, permission),
+                    (
+                        BackendEventMethod.user_input_requested,
+                        UserInputRequestedArguments(
+                            request=BackendUserInputRequest(
+                                "question",
+                                (UserInputQuestion("q", "Scope", "Choose", (), False, True),),
+                            )
+                        ),
+                    ),
+                    (
+                        BackendEventMethod.user_input_failed,
+                        UserInputFailedArguments(request_id="question", detail="withdrawn"),
+                    ),
+                    (
+                        BackendEventMethod.tool_call_finished,
+                        ToolCallFinishedArguments(
+                            tool_call_id="tool", tool_call_status=ToolCallStatus.completed
+                        ),
+                    ),
+                    (
+                        BackendEventMethod.agent_message_completed,
+                        AgentMessageCompletedArguments(
+                            content=text_message_content("backend prose")
+                        ),
+                    ),
+                    (BackendEventMethod.context_compacted, ContextCompactedArguments()),
+                    (
+                        BackendEventMethod.turn_ended,
+                        TurnEndedArguments(ending=ConversationTurnEnding.completed),
+                    ),
+                )
+                for index, (method, arguments) in enumerate(sequence, 1):
+                    if path == "local":
+                        await getattr(sink, method.value)(
+                            token,
+                            **{
+                                field.name: getattr(arguments, field.name)
+                                for field in fields(arguments)
+                            },
+                        )
+                        await state.backend_event_queue.join()
+                    else:
+                        from planner.executor.protocol import encode_value
+
+                        event = BackendEvent(
+                            first.child, method, token, cast(JsonObject, encode_value(arguments))
+                        )
+                        envelope = _envelope(index, EnvelopeKind.backend_event, event)
+                        receipt = await endpoint.inbox.accept(envelope, identity)
+                        assert receipt.disposition is ReceiptDisposition.accepted
+                        assert await endpoint.inbox.accept(envelope, identity) == receipt
+                rows = await harness.store.read_events_after("c", 0)
+                transcripts.append([(row.sequence, row.kind, row.payload) for row in rows])
+                assert state.running_turn is None
+        assert transcripts[0] == transcripts[1]
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+def test_stale_events_receive_durable_ignored_acceptance_without_rows_or_live_frames(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    from planner.core.clock import RealClock
+    from planner.executor.vps_transport import VpsExecutor
+
+    async def exercise() -> None:
+        async with _case(tmp_path, True) as (harness, store, identity, first, _):
+            state = harness.system._conversations["c"]
+            await state.backend_event_queue.join()
+            assert first.turn is not None
+            token = replace(first.turn, turn_number=first.turn.turn_number + 1)
+            original_turn = state.running_turn
+            original_record = await harness.store.read_conversation("c")
+            original_rows = await harness.store.read_events_after("c", 0)
+            endpoint = VpsExecutor(str(harness.db_path), RealClock())
+            endpoint.bind_conversations(harness.system)
+            endpoint.runs.identity = identity
+            with harness.live_tail.subscribe("c") as tail:
+                sequence: tuple[tuple[BackendEventMethod, JsonObject], ...] = (
+                    (first.method, first.arguments),
+                    (BackendEventMethod.context_compacted, {}),
+                    (
+                        BackendEventMethod.vendor_session_cursor_rebound,
+                        {"vendor_session_cursor": "stale-session"},
+                    ),
+                    (BackendEventMethod.agent_message_delta, {"text_delta": "stale"}),
+                    (BackendEventMethod.turn_ended, {"ending": "completed"}),
+                )
+                for index, (method, args) in enumerate(sequence, 1):
+                    event = BackendEvent(first.child, method, token, args)
+                    envelope = _envelope(index, EnvelopeKind.backend_event, event)
+                    receipt = await endpoint.inbox.accept(envelope, identity)
+                    assert receipt.disposition is ReceiptDisposition.accepted
+                    assert receipt.result == {"applied": False}
+                    assert (
+                        store.lookup_receipt(envelope.sender_id, envelope.submission_id) == receipt
+                    )
+                    assert await endpoint.inbox.accept(envelope, identity) == receipt
+                assert tail._items.empty()
+            assert await harness.store.read_conversation("c") == original_record
+            assert await harness.store.read_events_after("c", 0) == original_rows
+            assert state.running_turn is original_turn
 
     asyncio.run(asyncio.wait_for(exercise(), 10))
