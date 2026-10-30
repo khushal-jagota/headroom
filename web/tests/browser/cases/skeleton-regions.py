@@ -10,7 +10,7 @@ from playwright.sync_api import expect
 
 def checklist_header_and_presentations(page):
     # One existing component host isolates header hits and recursive presentation.
-    # Pointer hits at opposite corners catch an icon-only disclosure regression.
+    # Opposite edge midpoints test whitespace inside the rounded header target.
     checklist = page.locator('[data-checklist-fixture] [data-block="checklist"]')
     page.emulate_media(reduced_motion="no-preference")
     for variant in ("empty", "partial", "complete"):
@@ -25,12 +25,12 @@ def checklist_header_and_presentations(page):
         assert target and checklist.locator('[id="' + target + '"]').count() == 1
         box = toggle.bounding_box()
         assert box and box['width'] > 200 and box['height'] >= 40, box
-        toggle.click(position={'x': 2, 'y': 2})
+        toggle.click(position={'x': 2, 'y': box['height'] / 2})
         expect(toggle).to_have_accessible_name('Show checklist')
         expect(toggle).to_have_attribute('aria-expanded', 'false')
         expect(checklist.locator('[data-checklist-body]')).to_have_attribute('aria-hidden', 'true')
         expect(checklist.get_by_role('checkbox')).to_have_count(0)
-        toggle.click(position={'x': box['width'] - 2, 'y': box['height'] - 2})
+        toggle.click(position={'x': box['width'] - 2, 'y': box['height'] / 2})
         expect(toggle).to_have_attribute('aria-expanded', 'true')
         toggle.focus()
         toggle.press('Space')
