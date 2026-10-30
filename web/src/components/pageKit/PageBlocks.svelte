@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Block } from "../../lib/pageKit";
+  import MarkdownBlock from "../MarkdownBlock.svelte";
   import PageBlocks from "./PageBlocks.svelte";
   import PageChart from "./PageChart.svelte";
   import PageChecklist from "./PageChecklist.svelte";
@@ -23,7 +24,7 @@
     {#if block.type === "section"}
       <PageSection {block} {view} />
     {:else if block.type === "text"}
-      <div class="text" data-block="text">{block.text}</div>
+      <div class="text" data-block="text"><MarkdownBlock text={block.text} quiet="" /></div>
     {:else if block.type === "callout"}
       <aside class="callout" data-block="callout" data-tone={block.tone}>
         {#if block.title}<p class="callout-title">{block.title}</p>{/if}
@@ -117,7 +118,13 @@
     font-size: var(--type-prose-lg);
     font-weight: 400;
     line-height: 1.6;
+  }
+  .text :global(p) {
     white-space: pre-wrap;
+  }
+  .text :global(.file-preview-slot),
+  .text :global(.file-preview-slot p) {
+    white-space: normal;
   }
 
   .callout {

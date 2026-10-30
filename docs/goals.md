@@ -71,7 +71,7 @@ The `completed` response field remains the effective completion for existing cli
 
 Each goal keeps notes, research, and evidence in its own managed folder beside the database. Completion, deactivation, and conversation reset preserve that folder and its links. The goal page keeps current content in page JSON. Supporting files and measurements remain separate from that document.
 
-The goal workspace lists files through the shared Artifacts disclosure. Files open in the existing preview beside the goal conversation. Markdown and conversation links use the same preview. Folder index pages represent their supporting assets in the catalog.
+Authored page text blocks render Markdown, preserving prose line breaks. Links to supported goal artifacts show the shared file preview. Open a file from its preview or a conversation link to read it beside the goal conversation. External links remain ordinary links, and unsupported managed files remain downloads. The goal page presents files through these authored links, without a separate file inventory. Folder index pages still represent their supporting assets in the catalog.
 
 The owner, Chief, and the goal's own agent can read, write, list, and delete its managed files. File access is separate from source and manual measurement permissions.
 
