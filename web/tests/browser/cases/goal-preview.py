@@ -762,7 +762,7 @@ def agent_unit_spacing(browser, url):
             meter = gauge.get_by_role("meter")
             meter.scroll_into_view_if_needed()
             expect(meter).to_have_attribute("aria-valuetext", "0 events")
-            unit = gauge.locator('[aria-hidden="true"] span').filter(
+            unit = gauge.locator('figure [aria-hidden="true"] span').filter(
                 has_text=re.compile(r"^ events$")
             )
             expect(unit).to_have_count(1)
