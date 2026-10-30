@@ -2238,25 +2238,6 @@ class ConversationStore:
             self._commit_rows(conn, ())
             return result
 
-    async def save_move_retirement(self, conversation_id: str, *, uncertain: bool) -> None:
-        """Retain remote turn history while retiring its live source association."""
-
-        def write(conn: sqlite3.Connection) -> None:
-            row = conn.execute(
-                "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
-                (conversation_id,),
-            ).fetchone()
-            if row is not None:
-                runtime = json.loads(row[0])
-                runtime["source_retired"] = not uncertain
-                runtime["move_retirement_uncertain"] = uncertain
-                conn.execute(
-                    "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
-                    (json.dumps(runtime), conversation_id),
-                )
-
-        await self._write(self._executor_mutation_sync, write)
-
     async def revoke_executor_turn_asks(self, child: ChildReference, turn: TurnToken) -> None:
         """Close callbacks before a remote cancellation can await transport."""
 

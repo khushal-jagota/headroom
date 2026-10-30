@@ -412,9 +412,9 @@ turn an attachment somebody sent into a file nobody can retrieve, while the row 
 says that the attachment was sent.
 
 Tickets retain their creation-time machine choice. The former Ticket-switching
-workflow is removed. Existing source-retirement wire receipts and journal facts
-remain readable. Ordinary child retirement, cancellation, identity fencing, and
-replay protection retain their existing behavior.
+workflow and its unused source-retirement wire protocol are removed. Ordinary
+exact-child stop, cancellation, identity fencing, and replay protection retain
+their existing behavior.
 
 A finished tool call keeps the readable text that its backend reports. Claude can
 report a result as a list of text and non-text blocks. Panels joins its text blocks

@@ -349,22 +349,6 @@ An incompatible rollback preserves the journal and refuses mutation.
 Code paths: `src/planner/executor/entrypoint.py`, `cli.py`, `preflight.py`,
 `configuration.py`, `mac.py`.
 
-## Explicit locale moves
-
-The VPS serializes a move with Ticket sends, resets, and Worker admission. A Mac
-source supplies fresh evidence for all VPS-assigned source children, including a
-start that has not reached the Mac. The executor refuses active turns, callbacks,
-unsent journal work, uncertain operations, and unfinished publication. Historical
-handshake inventory alone cannot authorize a move.
-
-After idle admission, the executor fences the old child identities against future
-commands and IPC writes, then retires those children. A receipt names the exact
-incarnation and connection generation. The VPS checks that identity again through
-the canonical write. An absent conversation still requires current source proof.
-New destination children receive fresh identities, including a later return to Mac.
-Failure after retirement begins reports retired or uncertain source state separately
-from an admission refusal.
-
 ## Installation compatibility
 
 The operator compares candidate protocol and journal constants with fresh installed

@@ -206,7 +206,6 @@ def test_first_answer_after_loss_is_durable_without_current_generation_or_readin
         "assignment",
         "ended",
         "source_retired",
-        "move_retirement_uncertain",
         "delivery_uncertain",
         "pending",
         "child",
@@ -222,7 +221,7 @@ def test_first_answer_requires_open_assignment_and_exact_persisted_pending_turn(
     ready_ask(store)
     if closure == "assignment":
         store.close_child(CHILD, 1100)
-    elif closure in {"ended", "source_retired", "move_retirement_uncertain", "delivery_uncertain"}:
+    elif closure in {"ended", "source_retired", "delivery_uncertain"}:
         persist_pending_turn(store, ASK, runtime_overrides={closure: True})
     elif closure == "pending":
         persist_pending_turn(store, ASK, runtime_overrides={"pending_permission_ask_ids": []})

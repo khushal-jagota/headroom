@@ -686,22 +686,6 @@ class ConversationAlreadyStarted(Exception):
     """
 
 
-class MoveRetirementDisposition(StrEnum):
-    refused = "refused"
-    retired = "retired"
-    uncertain = "uncertain"
-
-
-@dataclass(frozen=True, slots=True)
-class MoveRetirementResult:
-    """Refused precedes effects; retired proves absence; uncertain cannot prove absence."""
-
-    disposition: MoveRetirementDisposition
-    reason: str | None = None
-
-
-
-
 class ConversationSystem(Protocol):
     """Everything the rest of Panels can do to a conversation.
 

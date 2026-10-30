@@ -92,7 +92,6 @@ from planner.executor.contracts import (
     ReceiptDisposition,
     ReconciliationInventory,
     ReconciliationResult,
-    SourceRetirementRequest,
     UnconfirmedCliResult,
     WireMessage,
     WireMessageKind,
@@ -363,7 +362,6 @@ class MacExecutor:
             if not self._handshake_accepted and message.kind in (
                 WireMessageKind.command,
                 WireMessageKind.command_outcome_ack,
-                WireMessageKind.source_retire,
             ):
                 raise ProtocolRefused("peer sent work before validated handshake")
             if message.kind == WireMessageKind.health and "clock_probe" in message.payload:
@@ -380,10 +378,6 @@ class MacExecutor:
                         },
                     )
                 )
-            elif message.kind == WireMessageKind.source_retire:
-                task = asyncio.create_task(self._retire_source(message))
-                self._command_tasks.add(task)
-                task.add_done_callback(self._command_tasks.discard)
             elif message.kind == WireMessageKind.command:
                 task = asyncio.create_task(self._command(message))
                 self._command_tasks.add(task)
@@ -549,14 +543,6 @@ class MacExecutor:
                 task.cancel()
         for task in tasks:
             await wait_for_settlement(task)
-
-    async def _retire_source(self, message: WireMessage) -> None:
-        request = TypeAdapter(SourceRetirementRequest).validate_python(message.payload)
-        receipt = await self.registry.retire_source(message.request_id, request, self.identity)
-        with contextlib.suppress(ConnectionError, BrokenPipeError):
-            await self._send(
-                WireMessage(WireMessageKind.source_retired, message.request_id, as_object(receipt))
-            )
 
     async def _command(self, message: WireMessage) -> None:
         command = TypeAdapter(ChildCommand).validate_python(message.payload)
