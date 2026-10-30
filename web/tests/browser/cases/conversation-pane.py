@@ -493,7 +493,7 @@ def _run(browser, urls):
 
     # Set this to keep a picture of what the assertions checked. The test proves the same
     # thing with or without it.
-    screenshot_dir = os.environ.get("UNANSWERED_SEND_SCREENSHOT_DIR")
+    screenshot_dir = os.environ.get("UNANSWERED_SEND_SCREENSHOT_DIR", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     if screenshot_dir:
         os.makedirs(screenshot_dir, exist_ok=True)
 
@@ -1793,7 +1793,7 @@ def _run(browser, urls):
     for text in ("Owner answer one.", "Owner answer two.", "final answer", "middle commentary"):
         page.get_by_text(text, exact=True).wait_for()
         assert page.get_by_text(text, exact=True).count() == 1
-    legacy_evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    legacy_evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     if legacy_evidence:
         from pathlib import Path
         Path(legacy_evidence, "legacy-owner-fold-proof.json").write_text(json.dumps({
@@ -2533,7 +2533,7 @@ def _projected_visual_relationships(browser, url):
     }""")
     proof = {"focus": focus, "full": full}
     print("PROJECTED_VISUAL_PROOF " + json.dumps(proof), flush=True)
-    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     if evidence:
         output = Path(evidence)
         output.mkdir(parents=True, exist_ok=True)
@@ -2565,7 +2565,7 @@ def _conversation_repairs(browser, url):
     from pathlib import Path
     from urllib.parse import unquote
 
-    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     output = Path(evidence) if evidence else None
     if output:
         output.mkdir(parents=True, exist_ok=True)
