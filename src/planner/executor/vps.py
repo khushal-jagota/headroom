@@ -1937,7 +1937,6 @@ class ExecutorEndpoint:
                     self.ready = True
                 if hasattr(self.store, "mark_ready"):
                     self.store.mark_ready(identity, now_ms())
-                await self.runtime.system.resume_executor_held_prompts(remote_ready=True)
                 if self.writer is not writer or self.identity != identity:
                     return
                 for answer in self.store.unapplied_answers():

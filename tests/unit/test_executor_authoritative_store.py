@@ -1438,7 +1438,7 @@ def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
     import asyncio
     from types import SimpleNamespace
     from typing import cast
-    from unittest.mock import AsyncMock, Mock
+    from unittest.mock import Mock
 
     from tests.unit.test_executor_request_deadlines import peer
 
@@ -1454,7 +1454,7 @@ def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()
         endpoint.runtime = SimpleNamespace(
-            system=SimpleNamespace(resume_executor_held_prompts=AsyncMock())
+            system=SimpleNamespace()
         )
         head = envelope()
         frame = WireMessage(WireMessageKind.envelope, "head", cast(JsonObject, encode_value(head)))

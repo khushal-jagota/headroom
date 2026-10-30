@@ -306,7 +306,6 @@ def create_app(
                 if conversation_system_for_test is None
                 else conversation_system_for_test
             )
-            await conversation.system.resume_executor_held_prompts()
             if not config.test_mode:
                 from planner.core.loops import prepare_background_loops
 

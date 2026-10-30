@@ -278,7 +278,7 @@ def test_failed_input_removes_only_commands_without_possible_native_admission(
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()
         endpoint.runtime = SimpleNamespace(
-            system=SimpleNamespace(resume_executor_held_prompts=AsyncMock())
+            system=SimpleNamespace()
         )
         command = ChildCommand(
             "command",
@@ -360,7 +360,7 @@ def test_canceled_input_command_preserves_only_possible_native_outcome(
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()
         endpoint.runtime = SimpleNamespace(
-            system=SimpleNamespace(resume_executor_held_prompts=AsyncMock())
+            system=SimpleNamespace()
         )
         command = ChildCommand(
             "command",
