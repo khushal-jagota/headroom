@@ -706,7 +706,7 @@ def _run(browser, urls):
         # All original candidates disappear again, and the saved position now exceeds
         # the shortened transcript's range. The native clamp reaches the newest line.
         before = newest_reading(page)["scrollTop"]
-        page.evaluate("window.__replaceAllScrollRows(20)")
+        page.evaluate("window.__replaceAllScrollRows(2)")
         settled(page)
         limit = page.locator(THREAD).evaluate("thread => thread.scrollHeight-thread.clientHeight")
         actual = newest_reading(page)["scrollTop"]
@@ -833,7 +833,14 @@ def _run(browser, urls):
         assert page.evaluate("window.__raceImage.getBoundingClientRect().height") == 180
 
     def descendant_keyboard_case(page, url):
-        for key in ["PageDown", "Home", "End", "Control+Home", "Control+End"]:
+        import sys
+
+        # macOS uses plain Home/End for document edges; Control+Home/End is
+        # a Windows/Linux native shortcut and does not scroll Chromium on Mac.
+        keys = ["PageDown", "Home", "End"]
+        if sys.platform != "darwin":
+            keys += ["Control+Home", "Control+End"]
+        for key in keys:
             prepare_scroll_case(page, url, "plain", "scrollback")
             install_controlled_image(page)
             page.evaluate("""() => {

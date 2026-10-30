@@ -697,6 +697,7 @@
             if (reservedSpacePixels > 0 && heldSent !== null) { liveArrivalPixels = 0; pendingFullMessageKey = null; arrivingMessages.clear(); }
             if (reservedSpacePixels === 0 && heldSent !== null && sentMessageToPlace === null) {
               heldSent = null;
+              answerRoomMessageId = null;
               withTheNewestLineBeforeTheWrite = true;
             }
           }
