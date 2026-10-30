@@ -31,13 +31,17 @@ export function manualAcceptedValue(state: ManualMeasureState, cumulative: boole
   return (cumulative ? state.latest_observation : state.observation)?.value;
 }
 
+export function isManualWriteConflict(error: unknown): error is PlannerFetchError {
+  return error instanceof PlannerFetchError && error.status === 409;
+}
+
 export function manualErrorMessage(error: unknown): string {
-  if (error instanceof PlannerFetchError && error.status === 409) return 'This reading changed. Press Escape to use the accepted value, or edit again.';
+  if (isManualWriteConflict(error)) return 'This reading changed. Press Escape to use the accepted value, or edit again.';
   return error instanceof Error ? error.message : 'Could not save this reading.';
 }
 
 export function manualConflictState(error: unknown): ManualMeasureState | undefined {
-  if (!(error instanceof PlannerFetchError) || error.status !== 409 || !error.detail || typeof error.detail !== 'object') return undefined;
+  if (!isManualWriteConflict(error) || !error.detail || typeof error.detail !== 'object') return undefined;
   const detail = error.detail as { state?: ManualMeasureState; current_state?: ManualMeasureState };
   return detail.state ?? detail.current_state;
 }

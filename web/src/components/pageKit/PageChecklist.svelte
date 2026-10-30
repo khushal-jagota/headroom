@@ -11,11 +11,15 @@
   let failed = $state<Record<string, { state: "done" | "open"; error: unknown }>>({});
   let demoStates = $state<Record<string, "done" | "open">>({});
   let requestSequence = 0;
+  const localRequests = new Map<string, number>();
   let disposed = false;
   let saveError = $derived(Object.values(failed)[0]?.error);
   let saving = $derived(Object.keys(pending).length > 0);
   async function persist(id: string, state: "done" | "open") {
     const request = ++requestSequence;
+    const blockId = block.id;
+    const session = context?.checklistSession?.(blockId, id);
+    localRequests.set(id, request);
     pending = { ...pending, [id]: { state, request } };
     const remaining = { ...failed };
     delete remaining[id];
@@ -23,7 +27,11 @@
     message = "";
     try {
       if (context?.updateBlock) {
-        await context.updateBlock(block.id, old => old.type === "checklist" ? { ...old, items: old.items.map(item => item.id === id ? { ...item, state } : item) } : old);
+        const write = () => context.updateBlock!(blockId, old => {
+          if (old.type !== "checklist" || !old.items.some(item => item.id === id)) throw new Error("This checklist item no longer exists.");
+          return { ...old, items: old.items.map(item => item.id === id ? { ...item, state } : item) };
+        });
+        await (session ? session.run({ state }, write) : write());
       } else {
         // The component gallery has no writer. Its interactions accept local state.
         demoStates = { ...demoStates, [id]: state };
@@ -50,7 +58,7 @@
       delete next[id];
       pending = next;
       failed = { ...failed, [id]: { state, error } };
-    }
+    } finally { if (localRequests.get(id) === request) localRequests.delete(id); }
   }
   let { block }: { block: ChecklistBlock } = $props();
 
@@ -83,8 +91,35 @@
     }));
   }
 
-  let done = $state<string[]>([]);
-  let settled = $state<string[]>([]);
+  // Reattach native feedback to commands submitted by an earlier mounted control.
+  $effect(() => {
+    if (!context?.checklistSession) return;
+    const subscriptions = block.items.map(item => {
+      const session = context.checklistSession!(block.id, item.id);
+      const sync = () => {
+        if (localRequests.has(item.id)) return;
+        const receipt = session.current;
+        if (receipt?.status === "pending") {
+          pending = { ...pending, [item.id]: { state: receipt.command.state, request: ++requestSequence } };
+        } else {
+          if (!receipt && pending[item.id]?.state === "done" && !timers.has(item.id)) {
+            timers.set(item.id, window.setTimeout(() => { timers.delete(item.id); void settle(item.id); }, reduced ? 0 : settleMs));
+          }
+          const next = { ...pending }; delete next[item.id]; pending = next;
+        }
+        const next = { ...failed };
+        if (receipt?.status === "failed") next[item.id] = { state: receipt.command.state, error: receipt.error };
+        else delete next[item.id];
+        failed = next;
+      };
+      untrack(sync);
+      return session.subscribe(sync);
+    });
+    return () => subscriptions.forEach(unsubscribe => unsubscribe());
+  });
+
+  let done = $state<string[]>(untrack(() => block.items.filter(item => item.state === "done").map(item => item.id)));
+  let settled = $state<string[]>(untrack(() => block.items.filter(item => item.state === "done").map(item => item.id)));
   let acceptedDone = $derived(block.items.filter(item => (demoStates[item.id] ?? item.state) === "done").map(item => item.id));
   $effect(() => {
     const ids = block.items.filter(item => (pending[item.id]?.state ?? demoStates[item.id] ?? item.state) === "done").map(item => item.id);

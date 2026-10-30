@@ -1,8 +1,8 @@
 import React, { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { PlannerFetchError } from '../../api';
+import { RequestSession, type RequestReceipt } from '../../goals/requestSessions';
 import { motion, useReducedMotion } from 'motion/react';
 import type { ChartBlock, ManualMeasureState, ManualWriteBody, MeasureValue } from '../../goals/contracts';
-import { manualAcceptedValue, manualConflictState, manualErrorMessage, manualMeasurementHttp, manualStateCanReplace, parseManualDraft, type ManualMeasurementAdapter } from '../../goals/manualMeasurements';
+import { isManualWriteConflict, manualAcceptedValue, manualConflictState, manualErrorMessage, manualMeasurementHttp, manualStateCanReplace, parseManualDraft, type ManualMeasurementAdapter } from '../../goals/manualMeasurements';
 import { AnimatedCounter } from './animated-counter';
 import { LineChart } from './line-chart-integrated';
 import { motionTokens } from '../lib/motion-tokens';
@@ -25,13 +25,15 @@ type InlineControl = { prepare(): Promise<boolean>; focus(): void };
 type InlineProps = {
   value: number | undefined; state: ManualMeasureState | null; label: string; unit?: string; decimals?: number;
   onSave(value: number, basis: ManualMeasureState): Promise<ManualMeasureState>; onCancel(): Promise<ManualMeasureState | null>; pending: boolean; blocked: boolean; cumulative: boolean;
-  focusToken?: number; center?: boolean; control: React.Ref<InlineControl>;
+  focusToken?: number; center?: boolean; control: React.Ref<InlineControl>; recovery?: RequestReceipt<ManualWriteBody>; onEdit(): void;
 };
 
 /** Native input stays over the exact approved rolling counter. Drafts never become accepted values. */
-function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onCancel, pending, blocked, cumulative, focusToken = 0, center = false, control }: InlineProps) {
+function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onCancel, pending, blocked, cumulative, focusToken = 0, center = false, control, recovery, onEdit }: InlineProps) {
   const format = (number: number | undefined) => number == null ? '' : String(number);
-  const [draft, setDraft] = useState(format(value)), [error, setError] = useState(''), [focused, setFocused] = useState(false), [saveFailed, setSaveFailed] = useState(false);
+  const recovered = recovery?.command.operation === 'replace' ? recovery : undefined;
+  const recoveredValue = recovery?.command.operation === 'replace' ? String(recovery.command.value) : format(value);
+  const [draft, setDraft] = useState(recoveredValue), [error, setError] = useState(recovered?.status === 'failed' ? manualErrorMessage(recovered.error) : ''), [focused, setFocused] = useState(false), [saveFailed, setSaveFailed] = useState(recovered?.status === 'failed' && !(isManualWriteConflict(recovered.error)));
   const input = useRef<HTMLInputElement>(null), cancel = useRef(false), commitPromise = useRef<Promise<boolean> | null>(null);
   const basis = useRef(state), draftRef = useRef(draft), errorRef = useRef(error), focusedRef = useRef(false), id = useId();
   const accepted = useRef({ value, state }); accepted.current = { value, state };
@@ -44,6 +46,11 @@ function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onC
     }
     previousLabel.current = label;
   }, [value, state, label]);
+  useEffect(() => {
+    if (recovery?.command.operation !== 'replace') return;
+    setText(String(recovery.command.value));
+    if (recovery.status === 'failed') fail(manualErrorMessage(recovery.error), !(isManualWriteConflict(recovery.error)));
+  }, [recovery]);
   useEffect(() => { if (focusToken) { input.current?.focus(); input.current?.select(); } }, [focusToken]);
   function commit(explicitRetry = false): Promise<boolean> {
     if (commitPromise.current) return commitPromise.current;
@@ -59,7 +66,7 @@ function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onC
         const next = await onSave(number, initial);
         setText(format(manualAcceptedValue(next, cumulative))); fail(''); basis.current = next; cancel.current = true;
         return true;
-      } catch (error) { fail(manualErrorMessage(error), true); return false; }
+      } catch (error) { fail(manualErrorMessage(error), !(isManualWriteConflict(error))); return false; }
     })();
     commitPromise.current = attempt;
     void attempt.finally(() => { commitPromise.current = null; });
@@ -81,7 +88,7 @@ function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onC
       <span className="counter-display" aria-hidden="true">{value != null && <AnimatedCounter value={value} decimals={fractionDigits} />}</span>
       <input ref={input} aria-label={label} aria-invalid={!!error} aria-describedby={error ? id : undefined} inputMode="decimal" enterKeyHint="done" autoComplete="off" spellCheck={false} placeholder="—" value={draft} data-reading={value ?? 'missing'} readOnly={pending || !state}
         onFocus={event => { focusedRef.current = true; setFocused(true); cancel.current = false; if (!errorRef.current) basis.current = accepted.current.state; event.currentTarget.select(); }}
-        onChange={event => { if (errorRef.current) basis.current = accepted.current.state; setText(event.target.value); fail(''); }}
+        onChange={event => { onEdit(); if (errorRef.current) basis.current = accepted.current.state; setText(event.target.value); fail(''); }}
         onBlur={() => { focusedRef.current = false; setFocused(false); void commit(); }}
         onKeyDown={event => {
           if (event.key === 'Enter') { event.preventDefault(); void commit(true).then(ok => { if (ok) input.current?.blur(); }).catch(cause => fail(manualErrorMessage(cause), true)); }
@@ -92,8 +99,10 @@ function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onC
   </div>;
 }
 
-export function ManualMeasurement({ block, values, adapter: suppliedAdapter, narrow = false, compact = false, integrated = false, preferenceKey }: { block: ChartBlock; values: MeasureValue[]; adapter?: ManualMeasurementAdapter; narrow?: boolean; compact?: boolean; integrated?: boolean; preferenceKey: string }) {
+export function ManualMeasurement({ block, values, adapter: suppliedAdapter, narrow = false, compact = false, integrated = false, preferenceKey, session: suppliedSession }: { block: ChartBlock; values: MeasureValue[]; adapter?: ManualMeasurementAdapter; narrow?: boolean; compact?: boolean; integrated?: boolean; preferenceKey: string; session?: RequestSession<ManualWriteBody> }) {
   const adapter = useMemo(() => suppliedAdapter ?? manualMeasurementHttp(block.measure_id!), [suppliedAdapter, block.measure_id]);
+  const session = useMemo(() => suppliedSession ?? new RequestSession<ManualWriteBody>(), [suppliedSession, block.measure_id]);
+  const [recovery, setRecovery] = useState(session.current);
   const foldable = block.placement === 'supporting' && narrow;
   const [preferences, setPreferences] = useState(() => { const saved = readChartPreference(preferenceKey); return block.ranges?.length && !block.ranges.some(range => range.id === saved.range) ? { ...saved, range: block.ranges[0].id } : saved; });
   const host = useRef<HTMLElement>(null), focusInside = useRef(false);
@@ -101,12 +110,12 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   useLayoutEffect(() => { if (foldable && !preferences.expanded && focusInside.current) host.current?.querySelector<HTMLButtonElement>('.support-summary')?.focus(); }, [foldable, preferences.expanded]);
   const cumulative = block.manual!.model === 'cumulative_target', reading = block.manual!.model === 'individual_readings';
   const [state, setState] = useState<ManualMeasureState | null>(null), stateRef = useRef<ManualMeasureState | null>(null);
-  const [selectedDate, setSelectedDate] = useState<string | undefined>(), selectedRef = useRef<string | undefined>(undefined);
+  const [selectedDate, setSelectedDate] = useState<string | undefined>(session.current?.command.date), selectedRef = useRef<string | undefined>(session.current?.command.date);
   const [acceptedHistory, setAcceptedHistory] = useState<Map<string, MeasureValue>>(new Map()), acceptedHistoryRef = useRef(new Map<string, MeasureValue>());
   const history = useMemo(() => [...values.filter(value => value.measure_id !== block.measure_id || !acceptedHistory.has(value.date)), ...acceptedHistory.values()].sort((a, b) => a.date.localeCompare(b.date)), [values, acceptedHistory, block.measure_id]);
   const [readRefreshVersion, setReadRefreshVersion] = useState(0), refreshSkipped = useRef(false);
-  const [pending, setPending] = useState(false), [error, setError] = useState(''), [focusToken, setFocusToken] = useState(0);
-  const retryRequest = useRef<ManualWriteBody | null>(null), pendingPromise = useRef<Promise<void> | null>(null), readEpoch = useRef(0), selectionPending = useRef(false);
+  const [pending, setPending] = useState(session.current?.status === 'pending'), [error, setError] = useState(session.current?.status === 'failed' ? manualErrorMessage(session.current.error) : ''), [focusToken, setFocusToken] = useState(0);
+  const retryRequest = useRef<ManualWriteBody | null>(session.current?.command ?? null), pendingPromise = useRef<Promise<void> | null>(null), readEpoch = useRef(0), selectionPending = useRef(false);
   const actionTail = useRef<Promise<void>>(Promise.resolve());
   const runAction = (action: () => Promise<void>) => { const next = actionTail.current.then(action); actionTail.current = next.catch(() => {}); return next; };
   const control = useRef<InlineControl>(null), reduce = useReducedMotion();
@@ -145,12 +154,25 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
     return () => { readEpoch.current++; };
   }, [adapter, values, cumulative, pending, selectedDate, readRefreshVersion]);
 
+  useEffect(() => {
+    const sync = () => {
+      const receipt = session.current;
+      setRecovery(receipt); setPending(receipt?.status === 'pending');
+      retryRequest.current = receipt?.command ?? null;
+      setError(receipt?.status === 'failed' ? manualErrorMessage(receipt.error) : '');
+      const current = receipt?.status === 'failed' ? manualConflictState(receipt.error) : undefined;
+      if (current) accept(current, receipt?.command.date);
+    };
+    sync();
+    return session.subscribe(sync);
+  }, [session]);
+
   async function send(body: ManualWriteBody): Promise<void> {
     if (pendingPromise.current) return pendingPromise.current;
     setPending(true); setError(''); retryRequest.current = body; readEpoch.current++;
     const attempt = (async () => {
       try {
-        const result = await adapter.write(body);
+        const result = await session.run(body, () => adapter.write(body));
         // The acknowledgement can describe an old replay. Only coherent current state drives the chart.
         readEpoch.current++;
         accept(result.state, body.date);
@@ -158,7 +180,6 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
       } catch (cause) {
         readEpoch.current++;
         const current = manualConflictState(cause); if (current) accept(current, body.date);
-        if (body.operation === 'increment' && cause instanceof PlannerFetchError && cause.status === 409) retryRequest.current = null;
         setError(manualErrorMessage(cause)); throw cause;
       } finally { setPending(false); pendingPromise.current = null; }
     })();
@@ -167,7 +188,8 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   }
   async function replacement(value: number, basis: ManualMeasureState) {
     const retry = retryRequest.current;
-    if (retry?.operation === 'replace' && retry.value === value && retry.expected_write_revision === basis.write_revision) { await send(retry); return stateRef.current!; }
+    if (session.current?.status === 'failed' && isManualWriteConflict(session.current.error)) throw session.current.error;
+    if (retry?.operation === 'replace' && retry.value === value) { await send(retry); return stateRef.current!; }
     // Cumulative writes use the action's measure-local date, even across midnight.
     setPending(true); readEpoch.current++;
     try {
@@ -211,9 +233,9 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   const numberText = (number: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 20 }).format(number);
   const unit = block.unit ?? block.format?.suffix?.trim() ?? '';
   const inline = <InlineValue control={control} value={current} state={state} onSave={replacement} cumulative={cumulative} onCancel={async () => {
-    if (retryRequest.current?.operation === 'replace') { const next = await refresh(); retryRequest.current = null; setError(''); return next; }
+    if (retryRequest.current) { const next = await refresh(); session.discard(); retryRequest.current = null; setError(''); return next; }
     return stateRef.current;
-  }} pending={pending} blocked={!!retryRequest.current && retryRequest.current.operation === 'increment'}
+  }} recovery={recovery} onEdit={() => { if (session.current?.status === 'failed') { session.discard(); retryRequest.current = null; setError(''); } }} pending={pending} blocked={!!retryRequest.current && retryRequest.current.operation === 'increment'}
     label={cumulative ? title : `${title} for ${selected ? dateLabel(selected) : 'selected date'}`} unit={reading ? unit : ''} decimals={block.format?.decimals ?? 0} center={cumulative} focusToken={focusToken} />;
   const adds = <div className="add-buttons">{block.manual!.increments?.map((amount, index) => <button type="button" key={`${index}:${amount}`} disabled={!state} aria-busy={pending || undefined} onClick={() => void increment(amount)}>{amount > 0 ? '+' : ''}{amount}</button>)}</div>;
   const acceptedObservation = cumulative ? state?.latest_observation : state?.observation;
@@ -256,7 +278,7 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
         </div></div>}
     </>}
     {range}
-    {error && retryRequest.current?.operation !== 'replace' && <div className="manual-write-error error" role="alert">{error}<button type="button" disabled={pending} onClick={() => { const retry = retryRequest.current; if (retry) void send(retry).catch(() => {}); else void refresh().then(() => { setError(''); }).catch(cause => setError(manualErrorMessage(cause))); }}>Retry</button></div>}
+    {error && retryRequest.current?.operation !== 'replace' && <div className="manual-write-error error" role="alert">{error}<button type="button" disabled={pending} onClick={() => { const retry = retryRequest.current; if (retry && !(isManualWriteConflict(session.current?.error))) void send(retry).catch(() => {}); else void refresh().then(() => { session.discard(); setError(''); }).catch(cause => setError(manualErrorMessage(cause))); }}>Retry</button></div>}
   </article>;
   return <section ref={host} onFocusCapture={() => { focusInside.current = true; }} onBlurCapture={event => { if (event.relatedTarget && !host.current?.contains(event.relatedTarget as Node)) focusInside.current = false; }}>
     {foldable ? <SupportingMetric title={title} reading={current === undefined ? '—' : <AnimatedCounter value={current} decimals={block.format?.decimals ?? 0} suffix={unit} />} status={comparison} open={preferences.expanded} onToggle={() => { void runAction(async () => { if (preferences.expanded && !await control.current?.prepare()) return; preference({ expanded: !preferences.expanded }); }); }}>{card}</SupportingMetric> : card}
