@@ -80,6 +80,9 @@ class HeaderBoundedProtocol(ResponseHandler):
                 return
             super().data_received(data)
             return
+        if not data:
+            super().data_received(data)
+            return
         while self.header_pending and data:
             # Only copy the bounded leading portion, even if a peer writes a
             # huge body and its headers in the same TCP packet.

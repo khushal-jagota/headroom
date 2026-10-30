@@ -323,6 +323,60 @@ def test_websocket_redirect_never_connects_to_redirect_destination() -> None:
     asyncio.run(exercise())
 
 
+def test_complete_body_reaches_eof_after_parser_flow_control() -> None:
+    from planner.previews.transport import HeaderBoundedProtocol
+
+    class ObservedTransport(asyncio.Transport):
+        def __init__(self) -> None:
+            self.pauses = 0
+            self.resumes = 0
+            self.closed = False
+
+        def get_extra_info(self, name: str, default: Any = None) -> Any:
+            return default
+
+        def pause_reading(self) -> None:
+            self.pauses += 1
+
+        def resume_reading(self) -> None:
+            self.resumes += 1
+
+        def is_closing(self) -> bool:
+            return self.closed
+
+        def close(self) -> None:
+            self.closed = True
+
+    async def exercise() -> None:
+        protocol = HeaderBoundedProtocol(asyncio.get_running_loop())
+        transport = ObservedTransport()
+        protocol.connection_made(transport)
+        protocol.set_response_params(read_bufsize=65536, auto_decompress=False)
+        initial_pauses, initial_resumes = transport.pauses, transport.resumes
+        body = b"x" * 184031
+        headers = (
+            f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\n"
+            "Connection: close\r\n\r\n"
+        ).encode()
+        try:
+            protocol.data_received(headers + body)
+            async with asyncio.timeout(1):
+                _, payload = await protocol.read()
+                received = await payload.readexactly(len(body))
+            eof_after_drain = payload.is_eof()
+        finally:
+            protocol.connection_lost(None)
+
+        assert transport.pauses > initial_pauses
+        assert transport.resumes > initial_resumes
+        assert received == body
+        assert eof_after_drain
+        assert payload.at_eof()
+        assert payload.exception() is None
+
+    asyncio.run(exercise())
+
+
 def test_upstream_header_budget_applies_before_parser_allocation() -> None:
     from unittest.mock import create_autospec
 
