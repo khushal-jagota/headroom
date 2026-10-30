@@ -793,7 +793,9 @@ def agent_unit_spacing(browser, url):
                 gauge.get_by_role("button", name=re.compile("Captured event gauge")).tap()
             meter = gauge.get_by_role("meter")
             meter.scroll_into_view_if_needed()
-            expect(meter).to_have_attribute("aria-valuetext", "0 events, Within limit, 1 events limit")
+            expect(meter).to_have_attribute(
+                "aria-valuetext", "0 events, Within limit, 1 events limit"
+            )
             expect(gauge.locator("figure")).to_have_class(re.compile(r".*success.*"))
             expect(gauge.locator(".observation-details")).to_contain_text(
                 "Source coverage for 2026-10-29: unknown."
@@ -892,8 +894,7 @@ def manual_unit_spacing(browser, url):
                     today = chart.get_by_role("button", name=re.compile("^30 Oct,"))
                     yesterday = chart.get_by_role("button", name=re.compile("^29 Oct,"))
                     for day, token in (("30", "--accent-done"), ("29", "--accent-error"),
-                                       ("28", "--accent-done"), ("26", "--accent-done"),
-                                       ("27", "--text-faintest")):
+                                       ("28", "--accent-done"), ("26", "--accent-done")):
                         bar = chart.get_by_role(
                             "button", name=re.compile(f"^{day} Oct,")
                         ).locator(".bar")
@@ -913,6 +914,11 @@ def manual_unit_spacing(browser, url):
                     expect(actual_tip).to_have_text("22 minutes")
                     expect(target_tip).to_have_text("20 minutes")
                     missing = chart.get_by_role("button", name=re.compile("^27 Oct, no reading"))
+                    expect(missing.locator(".bar")).to_have_class("bar missing")
+                    expect(missing.locator(".bar")).to_have_css(
+                        "background-color", "rgba(0, 0, 0, 0)"
+                    )
+                    expect(missing.locator(".bar")).to_have_css("border-top-style", "dashed")
                     missing.focus()
                     expect(actual_tip).to_have_text("No reading")
                     expect(value).to_have_attribute("data-reading", "12")
