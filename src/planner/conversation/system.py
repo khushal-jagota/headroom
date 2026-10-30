@@ -6039,6 +6039,11 @@ class SqliteProcessConversationSystem:
                 or state.last_ended_turn_token is None
             ):
                 raise ValueError("remote inventory lacks an exact interrupted child")
+            pending = state.initial_shutdown_task
+            if pending is not None and not pending.done():
+                if getattr(state.initial_shutdown_child, "reference", None) != reference:
+                    raise ValueError("Pending retirement belongs to another child")
+                return
             state.child = child
             self._schedule_remote_retirement(state, child)
 

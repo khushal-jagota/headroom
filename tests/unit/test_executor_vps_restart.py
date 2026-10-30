@@ -52,8 +52,9 @@ from planner.executor.contracts import (
 from planner.executor.vps import ExecutorEndpoint
 
 
+@pytest.mark.parametrize("stop_before_inventory", [False, True])
 def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
-    tmp_db: Connection, tmp_path: Path
+    tmp_db: Connection, tmp_path: Path, stop_before_inventory: bool
 ) -> None:
     """Gap: startup, inventory retirement, and admission must share one child fence."""
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
@@ -150,6 +151,10 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             )
             assert not endpoint.store.answer_target_is_open(ask)
             assert not endpoint.store.answer_is_deliverable(saved, identity)
+            if stop_before_inventory:
+                await restarted.kill("c")
+                await asyncio.wait_for(stop_entered.wait(), 1)
+            stopping_child = state.child
             before = len(commands)
             await restarted.send("c", text_message_content("Blocked"), sender_label="Test")
             assert len(commands) == before
@@ -171,6 +176,8 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                 endpoint.writer,
             )
             await asyncio.wait_for(stop_entered.wait(), 1)
+            if stop_before_inventory:
+                assert state.child is stopping_child
             assert commands[-1].operation is ChildOperation.stop and commands[-1].child == old
             assert state.child_is_quarantined
             assert state.initial_shutdown_task is not None
