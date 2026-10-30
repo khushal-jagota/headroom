@@ -80,8 +80,14 @@ first receipt together. If a receipt disappears, replay returns that first resul
 Permanent assignment or payload failures get a refused receipt, so the next item
 in that conversation can proceed. A lost connection, missing file bytes, or a busy
 database leaves the item pending for retry.
-Separate conversations retain separate order. The one retry timer drains existing
-work and does not create Tickets or other application work.
+Separate conversations retain separate order. Saving a backend event, command result,
+or CLI write wakes the sender immediately. The five-second retry timer still checks
+for existing work and does not create Tickets or other application work.
+
+Prompt and steer calls can use the Mac's direct result before its journal receipt
+arrives. An event reported before the prompt returns can then finish admission
+without waiting for a result queued behind it. Stop and retirement results still
+require their journal receipt.
 
 A CLI write can outlast its connection. The client keeps its original request ID as
 the submission ID after any possible send, including partial-send failure, timeout,

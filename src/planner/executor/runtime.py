@@ -130,6 +130,7 @@ class NativeChildRegistry:
         self.paths = paths
         self.incarnation = incarnation
         self.spool = spool
+        self.outbound_ready = asyncio.Event()
         self.factory = factory
         self.message_files = message_files
         self.children: dict[str, _Child] = {}
@@ -858,6 +859,7 @@ class NativeChildRegistry:
             snapshots=snapshots,
             submission_id=submission_id,
         )
+        self.outbound_ready.set()
 
     async def report_event(
         self,

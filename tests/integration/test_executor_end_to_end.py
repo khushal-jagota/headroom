@@ -97,6 +97,7 @@ class ScriptedNativeChild:
         self.user_answers: list[tuple[str, tuple[UserInputAnswer, ...]]] = []
         self.required_input_path: Path | None = None
         self.required_input_contents: bytes | None = None
+        self.emit_early_event = False
 
     async def start(
         self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
@@ -112,6 +113,15 @@ class ScriptedNativeChild:
             assert self.required_input_path.read_bytes() == self.required_input_contents
         self.prompt_count += 1
         self.turn = turn_token
+        if self.emit_early_event:
+            assert self.sink is not None
+            await self.sink.tool_call_started(
+                turn_token,
+                tool_call_id=f"early-{self.prompt_count}",
+                title="Before prompt returns",
+                tool_kind="other",
+                detail=None,
+            )
         return BackendPromptAccepted(True)
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
@@ -349,10 +359,12 @@ async def boot(
     backend_key: ConversationBackendKey = ConversationBackendKey.codex,
     model: str = "scripted",
     reasoning_effort: str | None = None,
+    emit_early_event: bool = False,
+    reconnect_interval: float | None = None,
 ) -> ExecutorHarness:
-    from planner.executor import mac as mac_module
-
-    monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.02)
+    if reconnect_interval is not None:
+        # Only fixtures with short reconnect deadlines accelerate this timer.
+        monkeypatch.setattr("planner.executor.mac.RECONNECT_INTERVAL_SECONDS", reconnect_interval)
     monkeypatch.setenv("CODEX_HOME", str(root / "native-codex-home"))
     vps_root = root / "vps"
     vps_root.mkdir()
@@ -393,6 +405,7 @@ async def boot(
         vps_root / "quarantine",
     )
     native = ScriptedNativeChild()
+    native.emit_early_event = emit_early_event
     from fastapi import FastAPI
 
     from planner.core.response_compression import (
@@ -504,6 +517,89 @@ async def boot(
     except BaseException:
         await harness.close()
         raise
+
+
+def test_early_prompt_event_and_idle_publications_do_not_wait_for_retry_timer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real FIFO/event admission must progress at the shipped five-second interval."""
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, emit_early_event=True)
+        try:
+            generation = harness.mac.identity.connection_generation
+            assert harness.events("tool_call_started") == 1
+            assert harness.native.sink is not None and harness.native.turn is not None
+            await harness.native.sink.turn_ended(
+                harness.native.turn,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+            await eventually(
+                lambda: harness.system._conversations["c_scripted"].running_turn is None,
+                "First turn did not finish promptly",
+                seconds=2,
+            )
+            result = await asyncio.wait_for(
+                harness.system.send(
+                    "c_scripted", text_message_content("Again"), sender_label="Owner"
+                ),
+                2,
+            )
+            assert isinstance(result, PromptDeliveryStarted)
+            await eventually(
+                lambda: harness.events("tool_call_started") == 2,
+                "Event before prompt result stalled FIFO replay",
+                seconds=2,
+            )
+            # Let the sender become idle; an event alone must wake it too.
+            await asyncio.sleep(0.1)
+            assert harness.native.turn is not None
+            await harness.native.sink.tool_call_started(
+                harness.native.turn,
+                tool_call_id="idle",
+                title="While idle",
+                tool_kind="other",
+                detail=None,
+            )
+            await eventually(
+                lambda: harness.events("tool_call_started") == 3,
+                "Idle backend event waited for the retry timer",
+                seconds=2,
+            )
+            await asyncio.sleep(0.1)
+            child = next(iter(harness.mac.registry.children.values()))
+            response = await asyncio.wait_for(
+                harness.mac.handle_ipc(
+                    IpcRequest(
+                        "idle-write",
+                        IpcOperation.write,
+                        child.reference.child_id,
+                        child.capability,
+                        {
+                            "operation": "ticket.edit",
+                            "arguments": {"ticket_id": child.ticket_id, "body": {"recap": "awake"}},
+                        },
+                    )
+                ),
+                2,
+            )
+            assert response.error is None
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                assert (
+                    connection.execute(
+                        "SELECT recap FROM tickets WHERE id=?", (child.ticket_id,)
+                    ).fetchone()[0]
+                    == "awake"
+                )
+            assert harness.mac.identity.connection_generation == generation
+            assert harness.mac.state is ConnectionState.ready and harness.endpoint.ready
+            assert harness.native.prompt_count == 2
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
 
 
 def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
@@ -923,7 +1019,7 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
     from planner.tickets import data
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         first_inventory, release_inventory = asyncio.Event(), asyncio.Event()
         try:
             child = next(iter(harness.mac.registry.children.values()))
@@ -1107,7 +1203,7 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
     from planner.tickets import data
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         first_inventory, release_inventory = asyncio.Event(), asyncio.Event()
         try:
             registered = next(iter(harness.mac.registry.children.values()))
@@ -2917,7 +3013,7 @@ def test_ready_transition_sweeps_answer_saved_after_reconciliation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: AskKind
 ) -> None:
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         resume = None
         ready_release = asyncio.Event()
         reached = asyncio.Event()
@@ -3049,7 +3145,7 @@ def test_revocation_before_emission_blocks_immediate_send_and_pending_replay(
     async def run() -> None:
         from planner.executor.contracts import ChildCommand, ChildOperation
 
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         prepared, emit, replay_prepared = asyncio.Event(), asyncio.Event(), asyncio.Event()
         cancel_entered, cancel_finish = asyncio.Event(), asyncio.Event()
         interrupt = None
@@ -3168,7 +3264,7 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
     async def run() -> None:
         from collections.abc import Coroutine
 
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         first_entered, first_release, first_returned = (
             asyncio.Event(),
             asyncio.Event(),
