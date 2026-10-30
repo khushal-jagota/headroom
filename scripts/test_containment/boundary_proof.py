@@ -193,10 +193,14 @@ def entrypoint_admission_proof(storage: Path, output: Path) -> list[dict[str, An
         ],
         "dev-pytest": [str(ROOT / "scripts/dev"), "pytest", "--collect-only", "-q", case],
         "default-discovery": [
-            sys.executable, "-m", "pytest", "--collect-only", "-q", "tests",
+            sys.executable, "-m", "pytest", "--collect-only", "--import-mode=importlib",
+            "-q", "tests",
         ],
         "explicit-probes": [
             sys.executable, "-m", "pytest", "-q", "tests/containment/test_contained_pytest.py",
+        ],
+        "explicit-probes-directory": [
+            sys.executable, "-m", "pytest", "--collect-only", "-q", "tests/containment",
         ],
         "explicit-plugin": [
             sys.executable, "-m", "pytest", "-p",
@@ -223,7 +227,7 @@ def entrypoint_admission_proof(storage: Path, output: Path) -> list[dict[str, An
             (output / (label + "-stderr.txt")).write_bytes(result.stderr)
             diagnosed = b"Test containment refused" in result.stderr
             guard_active = b"Skill-tree guard receipts" in result.stdout
-            if selected or route == "explicit-probes":
+            if selected or route.startswith("explicit-probes"):
                 passed = result.returncode != 0 and diagnosed
             else:
                 passed = result.returncode == 0 and guard_active
