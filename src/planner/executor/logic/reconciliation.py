@@ -1,7 +1,7 @@
 """Exact callback liveness."""
 
 from planner.execution_identity import AskKind, AskReference
-from planner.executor.contracts import AnswerAdmission, AskReachability, ChildInventory
+from planner.executor.protocol import AnswerAdmission, AskReachability, ChildInventory
 
 
 def answer_target_is_open(admission: AnswerAdmission) -> bool:

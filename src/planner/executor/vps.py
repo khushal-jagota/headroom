@@ -22,9 +22,7 @@ from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
     DeliveryCancelled,
 )
-from planner.conversation.contracts import (
-    ResolvedConversationStart,
-)
+from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageFile
 from planner.conversation.model_resolution.contracts import (
@@ -51,13 +49,12 @@ from planner.execution_identity import (
     ExecutorIdentity,
     parse_identity,
 )
-from planner.executor.codec import encode_value
-from planner.executor.configuration import (
-    CATALOG_CANCEL_TIMEOUT_SECONDS,
-    CATALOG_TIMEOUT_SECONDS,
-    REQUEST_TIMEOUT_SECONDS,
-)
-from planner.executor.contracts import (
+from planner.executor.configuration import CATALOG_CANCEL_TIMEOUT_SECONDS, CATALOG_TIMEOUT_SECONDS
+from planner.executor.files import snapshot_file
+from planner.executor.link import Link, accept_link
+from planner.executor.link_files import GenerationTransfers, settled_io
+from planner.executor.mutations import write_ticket_mutation
+from planner.executor.protocol import (
     LIVE_BACKEND_EVENT_METHODS,
     AcceptanceReceipt,
     AnswerApplication,
@@ -96,13 +93,11 @@ from planner.executor.contracts import (
     WithdrawCommands,
     WithdrawResult,
     WritePrompt,
+    encode_value,
 )
-from planner.executor.files import snapshot_file
-from planner.executor.mutations import write_ticket_mutation
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore, MissingFiles
-from planner.executor.transfers import GenerationTransfers, settled_io
 from planner.tickets.contracts import TicketLocale
 
 
@@ -124,7 +119,7 @@ class ExecutorEndpoint:
         self.runtime: Any = None
         self.app: Any = None
         self.identity: ExecutorIdentity | None = None
-        self.writer: ControlMessageWriter | None = None
+        self.link: Link | None = None
         self.ready = False
         self.children: dict[str, RemoteBackendChild] = {}
         self.sinks: dict[str, BackendEventSink] = {}
@@ -136,7 +131,6 @@ class ExecutorEndpoint:
         self._prompt_command_ids: set[str] = set()
         self._emission_tasks: dict[str, set[asyncio.Task[bool]]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
-        self._send_lock = asyncio.Lock()
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self.factory = RemoteBackendChildFactory(
             self.assign_child,
@@ -146,14 +140,10 @@ class ExecutorEndpoint:
             self.retire_child,
             self.principal_for_start,
         )
-        self._responses: dict[str, asyncio.Future[WireMessage]] = {}
-        self._catalog_responses: dict[
-            str, tuple[CatalogRequest, ControlMessageWriter, asyncio.Future[WireMessage]]
-        ] = {}
         self.clock_sample: ClockSample | None = None
         self.process_id: int | None = None
         self.observed_at_ms: int | None = None
-        self.last_contact_at_ms: int | None = None
+        self._last_contact_at_ms: int | None = None
         self.lost_at_ms: int | None = None
         self._transports: dict[ExecutorIdentity, GenerationTransfers] = {}
         self._transport_roots: dict[ExecutorIdentity, tempfile.TemporaryDirectory[str]] = {}
@@ -163,16 +153,24 @@ class ExecutorEndpoint:
         self._transport_lock = asyncio.Lock()
         self._receiver_work: dict[ExecutorIdentity, set[asyncio.Task[Any]]] = {}
 
+    @property
+    def last_contact_at_ms(self) -> int | None:
+        link = self.link
+        if link is not None and link.last_received_at_ms is not None:
+            return link.last_received_at_ms
+        return self._last_contact_at_ms
+
+    @last_contact_at_ms.setter
+    def last_contact_at_ms(self, value: int | None) -> None:
+        self._last_contact_at_ms = value
+
     async def close(self) -> None:
         # Revoke admission synchronously before file cleanup yields.
         self.ready = False
-        writer, self.writer = self.writer, None
+        self._last_contact_at_ms = self.last_contact_at_ms
+        writer, self.link = self.link, None
         if writer is not None:
             writer.close()
-        self._fail_catalogs()
-        for future in self._responses.values():
-            if not future.done():
-                future.set_exception(ConnectionError("executor app stopped"))
         for task in tuple(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -278,10 +276,10 @@ class ExecutorEndpoint:
                 emission.cancel()
             if not future.done() and command.command_id not in self._possibly_emitted_commands:
                 future.set_exception(DeliveryCancelled())
-        if prompt_may_have_sent and self.ready and self.writer is not None:
+        if prompt_may_have_sent and self.ready and self.link is not None:
             identity = self.identity
             try:
-                response = await self._request(
+                response = await self.link.request(
                     WireMessageKind.withdraw, _object(WithdrawCommands(child, command_ids))
                 )
                 if (
@@ -297,59 +295,31 @@ class ExecutorEndpoint:
                 pass  # Loss supplies no proof of non-invocation.
         return prompt_may_have_sent
 
-    async def _send(self, message: WireMessage) -> None:
-        writer = self.writer
-        async with self._send_lock:
-            if writer is None or self.writer is not writer:
-                raise ConnectionError("executor link unavailable")
-            await writer.send(message)
-
-    async def _reconciliation_current(
-        self, identity: ExecutorIdentity, writer: ControlMessageWriter
-    ) -> bool:
-        if self.writer is not writer or self.identity != identity:
+    async def _reconciliation_current(self, identity: ExecutorIdentity, writer: Link) -> bool:
+        if self.link is not writer or writer.is_closing() or self.identity != identity:
             return False
         try:
             await settled_io(self.store.verify_connection, identity)
         except PlannerError:
             return False
-        return self.writer is writer and self.identity == identity
+        return self.link is writer and not writer.is_closing() and self.identity == identity
 
     async def _send_reconciliation(
-        self, message: WireMessage, identity: ExecutorIdentity, writer: ControlMessageWriter
+        self,
+        message: WireMessage,
+        identity: ExecutorIdentity,
+        writer: Link,
     ) -> bool:
-        # This handler owns a particular connection, including while waiting for
-        # another sender or completing an already started send.
         if not await self._reconciliation_current(identity, writer):
             return False
-        async with self._send_lock:
-            if self.writer is not writer or self.identity != identity:
-                return False
-            await writer.send(message)
+        if not await writer.tell(
+            message.kind,
+            message.payload,
+            request_id=message.request_id,
+            admit=lambda: self.link is writer and self.identity == identity,
+        ):
+            return False
         return await self._reconciliation_current(identity, writer)
-
-    async def _request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-        request_id = str(uuid4())
-        future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
-        self._responses[request_id] = future
-        writer = self.writer
-        deadline: asyncio.Timeout | None = None
-        try:
-            deadline = asyncio.timeout(REQUEST_TIMEOUT_SECONDS)
-            async with deadline:
-                await self._send(WireMessage(kind, request_id, payload))
-                return await future
-        except TimeoutError:
-            if writer is not None:
-                writer.close()
-            raise
-        finally:
-            self._responses.pop(request_id, None)
-
-    def _fail_catalogs(self, writer: ControlMessageWriter | None = None) -> None:
-        for _, captured_writer, future in self._catalog_responses.values():
-            if (writer is None or writer is captured_writer) and not future.done():
-                future.set_exception(ConnectionError("executor catalog connection lost"))
 
     async def observe_catalog(
         self,
@@ -359,7 +329,7 @@ class ExecutorEndpoint:
         deadline: float | None = None,
     ) -> CatalogResult:
         """Read scoped metadata without child authority or transport timeout effects."""
-        identity, writer = self.identity, self.writer
+        identity, writer = self.identity, self.link
         failure_reason = ValidationReason.catalog_unavailable
         if not attempt_id:
             raise ValueError("catalog attempt ID must be nonempty")
@@ -371,22 +341,21 @@ class ExecutorEndpoint:
         ):
             return self._catalog_failure(request, ValidationReason.offline)
         request_id = str(uuid4())
-        future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
-        self._catalog_responses[request_id] = (request, writer, future)
         expires = asyncio.get_running_loop().time() + CATALOG_TIMEOUT_SECONDS
         if deadline is not None:
             expires = min(expires, deadline)
         completed = False
         try:
             async with asyncio.timeout_at(expires):
-                async with self._send_lock:
-                    if self.writer is not writer or self.identity != identity or not self.ready:
-                        raise ConnectionError("catalog generation changed")
-                    await writer.send(
-                        WireMessage(WireMessageKind.catalog_request, request_id, _object(request)),
-                    )
-                response = await future
-                if self.writer is not writer or self.identity != identity or not self.ready:
+                response = await writer.request(
+                    WireMessageKind.catalog_request,
+                    _object(request),
+                    request_id=request_id,
+                    timeout=max(0, expires - asyncio.get_running_loop().time()),
+                    close_on_timeout=False,
+                    admit=lambda: self.link is writer and self.identity == identity and self.ready,
+                )
+                if self.link is not writer or self.identity != identity or not self.ready:
                     raise ConnectionError("catalog generation changed")
                 if response.kind is not WireMessageKind.catalog_response:
                     raise ValueError("unexpected catalog reply")
@@ -412,11 +381,6 @@ class ExecutorEndpoint:
         except (ValueError, TypeError, KeyError):
             pass
         finally:
-            self._catalog_responses.pop(request_id, None)
-            if not future.done():
-                future.cancel()
-            elif not future.cancelled():
-                future.exception()
             if not completed:
                 # Cancellation is a bounded read-only frame on the original
                 # writer. A lost frame leaves the native deadline in force.
@@ -555,18 +519,16 @@ class ExecutorEndpoint:
         request_id: str,
         request: CatalogRequest,
         identity: ExecutorIdentity,
-        writer: ControlMessageWriter,
+        writer: Link,
     ) -> None:
         try:
             async with asyncio.timeout(CATALOG_CANCEL_TIMEOUT_SECONDS):
-                async with self._send_lock:
-                    current = self.writer is writer and self.identity == identity and self.ready
-                    if current:
-                        await writer.send(
-                            WireMessage(
-                                WireMessageKind.catalog_cancel, request_id, _object(request)
-                            ),
-                        )
+                await writer.tell(
+                    WireMessageKind.catalog_cancel,
+                    _object(request),
+                    request_id=request_id,
+                    admit=lambda: self.link is writer and self.identity == identity and self.ready,
+                )
         except (ConnectionError, OSError, ValueError, TimeoutError):
             pass
 
@@ -574,10 +536,10 @@ class ExecutorEndpoint:
         self,
         command: ChildCommand,
         identity: ExecutorIdentity | None = None,
-        writer: ControlMessageWriter | None = None,
+        writer: Link | None = None,
     ) -> bool:
         identity = self.identity if identity is None else identity
-        writer = self.writer if writer is None else writer
+        writer = self.link if writer is None else writer
         task = asyncio.create_task(self._emit_command_unsettled(command, identity, writer))
         tasks = self._emission_tasks.setdefault(command.command_id, set())
         tasks.add(task)
@@ -596,7 +558,7 @@ class ExecutorEndpoint:
         self,
         command: ChildCommand,
         expected_identity: ExecutorIdentity | None = None,
-        expected_writer: ControlMessageWriter | None = None,
+        expected_writer: Link | None = None,
     ) -> bool:
         """The final guard is shared by immediate sends and reconnect replay."""
         if command.operation not in (
@@ -605,33 +567,39 @@ class ExecutorEndpoint:
         ):
             if self._initial_command_cancelled(command):
                 return False
-            if expected_identity != self.identity or expected_writer is not self.writer:
+            if expected_identity != self.identity or expected_writer is not self.link:
                 raise ConnectionError("command input generation changed")
-            if self.writer is None or not self.ready:
+            if self.link is None or not self.ready:
                 raise ConnectionError("executor link unavailable")
             if not await self._command_policy_allows_emission(command, expected_identity):
                 return False
-            async with self._send_lock:
+            writer = self.link
+            assert writer is not None
+
+            def admit() -> bool:
                 if self._initial_command_cancelled(command):
                     return False
                 pending = self.pending_commands.get(command.command_id)
                 if pending is not None and pending[1].done():
                     return False
-                if expected_identity != self.identity or expected_writer is not self.writer:
+                if expected_identity != self.identity or expected_writer is not self.link:
                     raise ConnectionError("command input generation changed")
-                writer: ControlMessageWriter | None = self.writer
-                if writer is None or not self.ready:
+                if not self.ready:
                     raise ConnectionError("executor link unavailable")
-                # From this point even a failed/partial write may have reached native.
                 self._possibly_emitted_commands.add(command.command_id)
                 if command.operation is ChildOperation.write_prompt:
                     self._prompt_command_ids.add(command.command_id)
-                await writer.send(
-                    WireMessage(WireMessageKind.command, command.command_id, _object(command)),
-                )
                 return True
+
+            return await writer.tell(
+                WireMessageKind.command,
+                _object(command),
+                request_id=command.command_id,
+                admit=admit,
+            )
         answer = self._command_answer(command)
-        identity, writer = self.identity, self.writer
+        identity = self.identity
+        answer_link = self.link
         emitted = False
 
         async def emit() -> None:
@@ -640,28 +608,27 @@ class ExecutorEndpoint:
                 self.store.answer_is_deliverable, answer, identity
             ):
                 return
-            async with self._send_lock:
-                if (
-                    identity is None
-                    or writer is None
-                    or not self.ready
-                    or self.identity != identity
-                    or self.writer is not writer
-                    or command.operation
-                    != (
+            if answer_link is None:
+                return
+            emitted = await answer_link.tell(
+                WireMessageKind.command,
+                _object(command),
+                request_id=command.command_id,
+                admit=lambda: (
+                    self.ready
+                    and self.identity == identity
+                    and self.link is answer_link
+                    and command.operation
+                    == (
                         ChildOperation.answer_user_input
                         if answer.ask.kind is AskKind.user_input
                         else ChildOperation.answer_permission_ask
                     )
-                    or command.child != answer.ask.child
-                    or command.turn != answer.ask.turn
-                    or command.command_id != answer.answer_id
-                ):
-                    return
-                await writer.send(
-                    WireMessage(WireMessageKind.command, command.command_id, _object(command)),
-                )
-                emitted = True
+                    and command.child == answer.ask.child
+                    and command.turn == answer.ask.turn
+                    and command.command_id == answer.answer_id
+                ),
+            )
 
         await self.runtime.system.emit_executor_answer(command.child.conversation_id, emit)
         return emitted
@@ -903,8 +870,8 @@ class ExecutorEndpoint:
         future: asyncio.Future[CommandOutcome] = asyncio.get_running_loop().create_future()
         self.pending_commands[command.command_id] = (command, future)
         try:
-            if self.ready and self.writer is not None:
-                identity, writer = self.identity, self.writer
+            if self.ready and self.link is not None:
+                identity, writer = self.identity, self.link
                 try:
                     if not future.done() and not await self._emit_command(
                         command, identity, writer
@@ -1018,7 +985,7 @@ class ExecutorEndpoint:
                         and event.turn is not None
                         and result.get("applied") is True
                     ):
-                        from planner.executor.codec import decode_event_arguments
+                        from planner.executor.protocol import decode_event_arguments
 
                         decoded = decode_event_arguments(event)
                         from planner.conversation.backends.contracts import (
@@ -1038,7 +1005,7 @@ class ExecutorEndpoint:
                         and event.turn is not None
                         and result.get("applied") is True
                     ):
-                        from planner.executor.codec import decode_event_arguments
+                        from planner.executor.protocol import decode_event_arguments
 
                         decoded = decode_event_arguments(event)
                         from planner.conversation.backends.contracts import (
@@ -1305,7 +1272,7 @@ class ExecutorEndpoint:
             "connection_state": "ready"
             if self.ready
             else "disconnected"
-            if self.writer is None
+            if self.link is None
             else "reconciling",
             "reconciliation_ready": self.ready,
         }
@@ -1412,16 +1379,14 @@ class ExecutorEndpoint:
             await self._dispatch_answer(answer)
         return True
 
-    async def _reconnect(
-        self, identity: ExecutorIdentity, writer: ControlMessageWriter
-    ) -> set[str]:
+    async def _reconnect(self, identity: ExecutorIdentity, writer: Link) -> set[str]:
         pending = {
             key: command
             for key, (command, future) in tuple(self.pending_commands.items())
             if not future.done()
             and command.child.executor_incarnation == identity.executor_incarnation
         }
-        response = await self._request(
+        response = await writer.request(
             WireMessageKind.reconnect_ask, _object(ReconnectAsk(tuple(pending)))
         )
         if not await self._reconciliation_current(identity, writer):
@@ -1467,39 +1432,28 @@ class ExecutorEndpoint:
         return unknown
 
     async def _session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
-        identity = None
-        try:
-            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                hello = await reader.receive()
-            if hello.kind is not WireMessageKind.hello:
-                raise ValueError("executor handshake required")
-            parsed_identity = parse_identity(hello.payload.get("identity"))
-            health = TypeAdapter(ExecutorHealth).validate_python(hello.payload)
-            if health.identity != parsed_identity:
-                raise ValueError("identity coercion refused")
-            if type(hello.payload.get("process_id")) is not int or health.process_id < 1:
-                raise ValueError("invalid executor process identity")
+        link: Link | None = None
+        admitted: Link | None = None
+
+        async def admit(health: ExecutorHealth, candidate: Link) -> ExecutorIdentity:
+            nonlocal admitted
+            identity = health.identity
             async with self._transport_lock:
-                old_identity = self.identity
-                old_writer = self.writer
-                await settled_io(self.store.begin_connection, health.identity, now_ms())
-                # Only an admitted writer owns generation cleanup. A duplicate hello
-                # must not revoke resources from the already accepted connection.
-                identity = health.identity
+                old_identity, old_link = self.identity, self.link
+                await settled_io(self.store.begin_connection, identity, now_ms())
+                admitted = candidate
                 self.process_id = health.process_id
                 self.observed_at_ms = now_ms()
                 self.lost_at_ms = None
-                self._fail_catalogs(old_writer)
                 self.clock_sample = None
-                self.identity, self.writer, self.ready = identity, writer, False
+                self.identity, self.link, self.ready = identity, candidate, False
                 self.last_contact_at_ms = now_ms()
-
-            if old_writer is not None and old_writer is not writer:
-                old_writer.close()
+                if old_link is not None:
+                    old_link.close()
             if old_identity is not None:
                 await self._close_transport(old_identity)
-            if self.writer is not writer or self.identity != identity:
-                return
+            if self.link is not candidate:
+                raise ConnectionError("executor generation replaced during admission")
             if (
                 old_identity is not None
                 and old_identity.executor_incarnation != identity.executor_incarnation
@@ -1518,67 +1472,53 @@ class ExecutorEndpoint:
                 await self.runtime.system.interrupt_replaced_executor_runs(
                     identity.executor_incarnation
                 )
-            async with self._send_lock:
-                if self.writer is not writer or self.identity != identity:
-                    return
-                await writer.send(
-                    WireMessage(
-                        WireMessageKind.hello_accepted, hello.request_id, _object(identity)
-                    ),
-                )
-            if self.writer is not writer or self.identity != identity:
+            return identity
+
+        try:
+            link = await accept_link(reader, admit, writer=writer)
+            identity = link.identity
+            if self.link is not link:
                 return
+            for kind in (
+                WireMessageKind.transport_open,
+                WireMessageKind.reconciliation_ready,
+                WireMessageKind.live_backend_event,
+                WireMessageKind.envelope,
+                WireMessageKind.error,
+                WireMessageKind.command_outcome,
+                WireMessageKind.read_request,
+                WireMessageKind.put_file,
+                WireMessageKind.get_file,
+            ):
+                link.on(kind, partial(self._handle, identity=identity, writer=link))
             probe = asyncio.create_task(self._measure_clock())
             self._tasks.add(probe)
             probe.add_done_callback(self._tasks.discard)
-            while self.writer is writer and self.identity == identity:
-                message = await reader.receive()
-                # Decode and fence synchronously before domain work can yield.
-                # A valid frame proves receipt even when its operation is refused.
-                if self.writer is not writer or self.identity != identity:
-                    break
-                self.last_contact_at_ms = now_ms()
-                task = asyncio.create_task(
-                    self._handle(
-                        message,
-                        identity,
-                        writer,
-                    )
-                )
-                self._tasks.add(task)
-                task.add_done_callback(self._tasks.discard)
-        except (
-            ConnectionError,
-            OSError,
-            ValueError,
-            TimeoutError,
-            PlannerError,
-        ):
+            await link.closed()
+        except (ConnectionError, OSError, ValueError, TimeoutError, PlannerError):
             pass
-        except BaseException:
-            raise
         finally:
-            if identity is not None and self.writer is writer and self.identity == identity:
-                # Detach this generation before cleanup yields to a replacement hello.
-                self.ready = False
-                self.writer = None
-                self.lost_at_ms = now_ms()
-                self._fail_catalogs(writer)
-                for response_future in self._responses.values():
-                    if not response_future.done():
-                        response_future.set_exception(ConnectionError("executor link lost"))
-                await settled_io(self.store.mark_lost, identity, now_ms())
-            writer.close()
-            if identity is not None:
+            owned = link or admitted
+            if owned is not None:
+                identity = owned.identity
+                owned.close()
+                if self.link is owned:
+                    self.ready = False
+                    self._last_contact_at_ms = self.last_contact_at_ms
+                    self.link = None
+                    self.lost_at_ms = now_ms()
+                    await settled_io(self.store.mark_lost, identity, now_ms())
                 await self._close_transport(identity)
 
     async def _measure_clock(self) -> None:
-        identity, writer = self.identity, self.writer
+        identity, writer = self.identity, self.link
+        if writer is None:
+            return
         sent = now_ms()
-        response = await self._request(
+        response = await writer.request(
             WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": sent}}
         )
-        if self.identity != identity or self.writer is not writer:
+        if self.identity != identity or self.link is not writer:
             return
         self.clock_sample = ClockSample(
             sent,
@@ -1591,7 +1531,7 @@ class ExecutorEndpoint:
         self,
         message: WireMessage,
         identity: ExecutorIdentity,
-        writer: ControlMessageWriter,
+        writer: Link,
     ) -> None:
         try:
             await self._handle_message(
@@ -1608,23 +1548,12 @@ class ExecutorEndpoint:
         self,
         message: WireMessage,
         identity: ExecutorIdentity,
-        writer: ControlMessageWriter,
+        writer: Link,
     ) -> None:
-        if self.writer is not writer or self.identity != identity:
+        if self.link is not writer or self.identity != identity:
             return
+        self.last_contact_at_ms = now_ms()
         try:
-            catalog = self._catalog_responses.get(message.request_id)
-            if catalog is not None and catalog[1] is writer:
-                if not catalog[2].done():
-                    catalog[2].set_result(message)
-                return
-            if message.kind is WireMessageKind.catalog_response:
-                return  # Revoked, expired, or superseded observations stay revoked.
-            pending_response = self._responses.get(message.request_id)
-            if pending_response is not None:
-                if not pending_response.done():
-                    pending_response.set_result(message)
-                return
             response_kind = WireMessageKind.error
             result: JsonObject
             if message.kind is WireMessageKind.transport_open:
@@ -1639,7 +1568,7 @@ class ExecutorEndpoint:
                     service = GenerationTransfers(
                         identity,
                         root_path / "s",
-                        lambda: self.identity == identity and self.writer is writer,
+                        lambda: self.identity == identity and self.link is writer,
                     )
                     try:
                         await settled_io(self.store.verify_connection, identity)
@@ -1662,27 +1591,22 @@ class ExecutorEndpoint:
                 # FIFO puts the ready ACK before any newly admitted command.
                 if hasattr(self.store, "mark_ready"):
                     await settled_io(self.store.mark_ready, identity, now_ms())
-                async with self._send_lock:
-                    if self.writer is not writer or self.identity != identity:
-                        return
-                    await writer.send(
-                        WireMessage(
-                            WireMessageKind.reconciliation_ready,
-                            message.request_id,
-                            {"ready": True},
-                        ),
-                    )
-                    if self.writer is not writer or self.identity != identity:
-                        return
-                    # Retirement can register a command while mark_ready or the ACK
-                    # yields. Capture it before opening ordinary dispatch admission.
-                    reconnect_commands = tuple(
-                        pending
-                        for command_id, pending in self.pending_commands.items()
-                        if command_id in unknown or command_id not in registered_before_ask
-                    )
-                    self.ready = True
-                if self.writer is not writer or self.identity != identity:
+                if not await writer.tell(
+                    WireMessageKind.reconciliation_ready,
+                    {"ready": True},
+                    request_id=message.request_id,
+                    admit=lambda: self.link is writer and self.identity == identity,
+                ):
+                    return
+                if self.link is not writer or self.identity != identity:
+                    return
+                reconnect_commands = tuple(
+                    pending
+                    for command_id, pending in self.pending_commands.items()
+                    if command_id in unknown or command_id not in registered_before_ask
+                )
+                self.ready = True
+                if self.link is not writer or self.identity != identity:
                     return
                 for answer in await settled_io(self.store.unapplied_answers):
                     await self._dispatch_answer(answer)
@@ -1733,12 +1657,12 @@ class ExecutorEndpoint:
                 result, response_kind = await self._file(message, identity)
             else:
                 raise ValueError("unsupported executor frame")
-            if self.writer is writer and self.identity == identity:
-                await self._send(WireMessage(response_kind, message.request_id, result))
+            if self.link is writer and self.identity == identity:
+                await writer.tell(response_kind, result, request_id=message.request_id)
         except (sqlite3.OperationalError, OSError):
             writer.close()
         except (ValueError, PlannerError, KeyError, TypeError) as error:
-            if self.writer is writer:
+            if self.link is writer:
                 response = WireMessage(
                     WireMessageKind.error,
                     message.request_id,
@@ -1746,7 +1670,7 @@ class ExecutorEndpoint:
                     if isinstance(error, PlannerError)
                     else {"error": {"code": "validation", "message": str(error)}},
                 )
-                await self._send(response)
+                await writer.tell(response.kind, response.payload, request_id=response.request_id)
 
     async def _read(self, read: LiveReadRequest) -> JsonObject:
         if not read.path.startswith(

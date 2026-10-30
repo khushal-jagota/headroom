@@ -26,7 +26,7 @@ def cold_python(program: str) -> subprocess.CompletedProcess[str]:
 @pytest.mark.parametrize(
     "module",
     [
-        "planner.executor.contracts",
+        "planner.executor.protocol",
         "planner.executor.mac_outbox",
         "planner.conversation.model_resolution.contracts",
         "planner.executor.runtime",
@@ -43,7 +43,7 @@ def test_ordinary_entrypoint_imports_in_its_own_cold_process(module: str) -> Non
 
 
 def test_public_conversation_exports_keep_canonical_objects_after_cold_contract_import() -> None:
-    result = cold_python('''
+    result = cold_python("""
 import sys
 import planner.conversation as conversation
 from planner.conversation import contracts
@@ -82,12 +82,12 @@ for name in conversation.__all__:
         expected = getattr(implementation if name in implementation_names else contracts, name)
     assert getattr(conversation, name) is expected
     assert getattr(conversation, name) is expected
-''')
+""")
     assert result.returncode == 0, result.stderr
 
 
 def test_cold_catalog_context_retains_runtime_executor_identity_validation() -> None:
-    result = cold_python('''
+    result = cold_python("""
 from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 from planner.conversation.model_resolution.contracts import (
@@ -127,5 +127,5 @@ except ValidationError as error:
     assert ("executor_identity", "connection_generation") in locations
 else:
     raise AssertionError("malformed identity passed runtime validation")
-''')
+""")
     assert result.returncode == 0, result.stderr

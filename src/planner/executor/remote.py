@@ -25,8 +25,7 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.contracts import Principal
 from planner.execution_identity import ChildReference, ProtocolRefused
-from planner.executor.codec import decode_prompt_result, decode_provider_submission, encode_value
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     AnswerPermission,
     AnswerUserInput,
     CancelTurn,
@@ -43,9 +42,12 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
     WritePrompt,
+    decode_prompt_result,
+    decode_provider_submission,
+    encode_message,
+    encode_value,
 )
 from planner.executor.skills import validate_skill_snapshot
-from planner.executor.wire import encode_message
 
 type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
 type SendCommand = Callable[[ChildCommand], Awaitable[CommandOutcome]]

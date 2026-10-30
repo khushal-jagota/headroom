@@ -22,15 +22,15 @@ from planner.conversation.contracts import ConversationBackendKey
 from planner.core.clock import RealClock
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
-from planner.executor.codec import encode_value
-from planner.executor.contracts import (
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import (
     CliWrite,
     EnvelopeKind,
     OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
+    encode_value,
 )
-from planner.executor.mac_outbox import MacOutbox
 from planner.executor.vps import ExecutorEndpoint
 
 

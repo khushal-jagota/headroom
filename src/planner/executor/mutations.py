@@ -11,7 +11,7 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.executor.contracts import CliWrite, JsonObject
+from planner.executor.protocol import CliWrite, JsonObject
 from planner.tickets import actions, views
 from planner.tickets.contracts import ReviewTransferNotice
 

@@ -12,19 +12,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
-from tests.unit.test_executor_authoritative_store import (
-    CHILD,
-    IDENTITY,
-    envelope,
-)
+from tests.support.executor_control import deliver, message_link
+from tests.unit.test_executor_authoritative_store import CHILD, IDENTITY, envelope
 from tests.unit.test_executor_authoritative_store import store as store
 from tests.unit.test_executor_request_deadlines import peer
 
 from planner.core.clock import RealClock
 from planner.core.db import connect
 from planner.executor import store as store_module
-from planner.executor.codec import encode_value, envelope_payload_digest
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     AcceptanceReceipt,
     CommandDisposition,
     CommandOutcome,
@@ -34,6 +30,8 @@ from planner.executor.contracts import (
     ReceiptDisposition,
     WireMessage,
     WireMessageKind,
+    encode_value,
+    envelope_payload_digest,
 )
 from planner.executor.store import ExecutorStore
 from planner.executor.vps import ExecutorEndpoint
@@ -49,7 +47,7 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
         endpoint.identity = IDENTITY
         writer = peer()
         writer.wait_closed = AsyncMock()
-        endpoint.writer = writer
+        endpoint.link = message_link(writer, IDENTITY)
         sibling = replace(CHILD, child_id="sibling", conversation_id="other-conversation")
         store.register_child(sibling, "ticket", "other-ticket", 1000)
         app = FastAPI()
@@ -127,17 +125,16 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
             )
             assert read == {"conversation_id": sibling.conversation_id}
             heartbeat = asyncio.create_task(endpoint._measure_clock())
-            while not endpoint._responses:
+            while not endpoint.link._pending:
                 await asyncio.sleep(0)
-            request_id = next(iter(endpoint._responses))
-            await endpoint._handle_message(
+            request_id = next(iter(endpoint.link._pending))
+            await deliver(
+                endpoint.link,
                 WireMessage(
                     WireMessageKind.health,
                     request_id,
                     {"mac_received_at_ms": 1001, "mac_sent_at_ms": 1002},
                 ),
-                IDENTITY,
-                endpoint.writer,
             )
             await asyncio.wait_for(heartbeat, 1)
             assert endpoint.clock_sample is not None

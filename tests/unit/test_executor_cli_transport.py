@@ -10,12 +10,7 @@ from click.testing import CliRunner
 
 from planner.cli import http
 from planner.cli.main import main
-from planner.executor.contracts import (
-    IpcOperation,
-    IpcResponse,
-    JsonObject,
-    QueuedCliResult,
-)
+from planner.executor.protocol import IpcOperation, IpcResponse, JsonObject, QueuedCliResult
 
 
 def test_worker_recap_queued_exits_three_before_domain_result(

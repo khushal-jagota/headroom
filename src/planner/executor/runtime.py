@@ -45,9 +45,9 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.environments.hermes_home import resolve_planner_home
 from planner.execution_identity import AskKind, AskReference, ChildReference
-from planner.executor.codec import encode_backend_event, encode_value
 from planner.executor.configuration import NATIVE_SKILLS_DIR_ENV, ExecutorPaths
-from planner.executor.contracts import (
+from planner.executor.files import safe_component
+from planner.executor.protocol import (
     LIVE_BACKEND_EVENT_METHODS,
     AnswerApplication,
     AnswerPermission,
@@ -72,8 +72,9 @@ from planner.executor.contracts import (
     Steer,
     WithdrawCommands,
     WritePrompt,
+    encode_backend_event,
+    encode_value,
 )
-from planner.executor.files import safe_component
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
 from planner.tickets.contracts import TicketLocale
 from planner.workspace_localization import localize_workspace

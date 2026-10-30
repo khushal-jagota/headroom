@@ -29,7 +29,7 @@ from planner.conversation.system import (
 )
 from planner.core.contracts import CHIEF_PRINCIPAL
 from planner.execution_identity import ChildReference
-from planner.executor.contracts import ChildCommand, CommandOutcome
+from planner.executor.protocol import ChildCommand, CommandOutcome
 from planner.executor.remote import RemoteBackendChild
 
 

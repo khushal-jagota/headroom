@@ -26,7 +26,9 @@ from planner.execution_identity import ChildReference
 from planner.executor import ipc_client
 from planner.executor.cli import executor_group
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.contracts import (
+from planner.executor.mac import MacExecutor
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import (
     AcceptanceReceipt,
     ChildCommand,
     ChildOperation,
@@ -38,11 +40,10 @@ from planner.executor.contracts import (
     JsonObject,
     ReceiptDisposition,
     StopRun,
+    encode_frame,
+    read_typed_frame,
 )
-from planner.executor.mac import MacExecutor
-from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import _Child
-from planner.executor.wire import encode_frame, read_typed_frame
 
 
 @asynccontextmanager

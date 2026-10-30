@@ -16,7 +16,7 @@ from planner.conversation.events import (
 )
 from planner.conversation.lifecycle import LifecycleFact
 from planner.core.contracts import Principal
-from planner.executor.contracts import AcceptanceReceipt, JsonObject, QueuedEnvelope
+from planner.executor.protocol import AcceptanceReceipt, JsonObject, QueuedEnvelope
 
 if TYPE_CHECKING:
     from planner.conversation.storage import StoredConversationEvent

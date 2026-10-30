@@ -9,10 +9,8 @@ import pytest
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
-from planner.executor.contracts import (
-    ConnectionFailureCategory,
-)
 from planner.executor.diagnostics import ConnectionDiagnostics, classify_connection_failure
+from planner.executor.protocol import ConnectionFailureCategory
 
 
 def forbidden_handshake() -> aiohttp.WSServerHandshakeError:
@@ -112,7 +110,7 @@ def test_retry_boundary_keeps_wait_and_propagates_cancellation(
 
 
 def test_context_is_finite_and_never_exposes_custom_names_or_messages() -> None:
-    from planner.executor.contracts import ConnectionFailureOrigin, ConnectionPhase
+    from planner.executor.protocol import ConnectionFailureOrigin, ConnectionPhase
 
     class SecretCredentialName(ValueError):
         pass
@@ -183,13 +181,9 @@ def test_connection_reports_precise_session_phase_before_cleanup(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
-    from planner.executor import mac
+    from planner.executor import link, mac
     from planner.executor.configuration import ExecutorPaths
-    from planner.executor.contracts import (
-        ConnectionState,
-        WireMessage,
-        WireMessageKind,
-    )
+    from planner.executor.protocol import ConnectionState, WireMessage, WireMessageKind
 
     async def run() -> None:
         executor = mac.MacExecutor(
@@ -222,7 +216,7 @@ def test_connection_reports_precise_session_phase_before_cleanup(
 
         client = SimpleNamespace(websocket=websocket, close=AsyncMock())
 
-        async def request(kind: WireMessageKind, payload: object) -> WireMessage:
+        async def request(self: object, kind: WireMessageKind, payload: object) -> WireMessage:
             if kind is WireMessageKind.hello:
                 fail("hello")
                 return WireMessage(
@@ -241,14 +235,14 @@ def test_connection_reports_precise_session_phase_before_cleanup(
         async def replay(link: object) -> None:
             fail("steady_state")
 
-        monkeypatch.setattr(mac, "ExecutorAppClient", Mock(return_value=client))
+        monkeypatch.setattr(link, "ExecutorAppClient", Mock(return_value=client))
 
         # Hold the reader open so only the selected session phase fails.
         async def read_forever(reader: object) -> None:
             await asyncio.Event().wait()
 
-        monkeypatch.setattr(executor, "_read_loop", read_forever)
-        monkeypatch.setattr(executor, "_request", request)
+        monkeypatch.setattr(link.Link, "_receive", read_forever)
+        monkeypatch.setattr(link.Link, "request", request)
         monkeypatch.setattr(executor.spool, "send_pending", replay)
         try:
             with pytest.raises(ValueError) as caught:
@@ -260,7 +254,7 @@ def test_connection_reports_precise_session_phase_before_cleanup(
             ]
             assert executor.state is ConnectionState.disconnected
             assert not executor._handshake_accepted
-            assert executor._writer is None
+            assert executor._link is None
             assert bool(closed) is (failed_phase != "app_connect")
         finally:
             executor.spool.close()
@@ -274,7 +268,7 @@ def test_reader_failure_is_reported_before_session_cleanup(
     import asyncio
     from unittest.mock import AsyncMock
 
-    from planner.executor import mac
+    from planner.executor import link, mac
     from planner.executor.configuration import ExecutorPaths
 
     async def run() -> None:
@@ -298,7 +292,7 @@ def test_reader_failure_is_reported_before_session_cleanup(
             yield SimpleNamespace(closed=False, send_bytes=AsyncMock(), aclose=AsyncMock())
 
         client = SimpleNamespace(websocket=websocket, close=AsyncMock())
-        monkeypatch.setattr(mac, "ExecutorAppClient", Mock(return_value=client))
+        monkeypatch.setattr(link, "ExecutorAppClient", Mock(return_value=client))
 
         async def read(reader: object) -> None:
             raise failure
@@ -306,8 +300,8 @@ def test_reader_failure_is_reported_before_session_cleanup(
         async def request(*args: object) -> None:
             await asyncio.Event().wait()
 
-        monkeypatch.setattr(executor, "_read_loop", read)
-        monkeypatch.setattr(executor, "_request", request)
+        monkeypatch.setattr(link.Link, "_receive", read)
+        monkeypatch.setattr(link.Link, "request", request)
         try:
             with pytest.raises(asyncio.IncompleteReadError) as caught:
                 await executor._connected()

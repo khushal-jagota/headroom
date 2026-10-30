@@ -1,14 +1,11 @@
-"""Versioned boundary between the Mac executor and the one VPS store.
-
-No transport disconnect is a domain refusal, child ending, or permission answer.
-All wire payloads are validated at ingress; JSON dictionaries are not HTTP routes.
-Domain writes and their receipt share a transaction. Native child effects instead
-retain command outcomes and report uncertainty without automatic redispatch.
-"""
+"""Typed executor messages and their bounded encoding. Identity lives in its leaf module."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
+import struct
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -19,15 +16,42 @@ from typing import Annotated, ClassVar, Literal, Protocol, TypedDict
 from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
 from planner.conversation.admission.contracts import AdmissionExpectation
-from planner.conversation.backends.contracts import TurnToken
+from planner.conversation.backends.contracts import (
+    AgentMessageCompletedArguments,
+    AgentMessageDeltaArguments,
+    BackendPromptAccepted,
+    ComposerCatalogReportedArguments,
+    ContextCompactedArguments,
+    DecodedBackendEventArguments,
+    ModelThinkingHappenedArguments,
+    PermissionAskRaisedArguments,
+    PlanUpdatedArguments,
+    ProviderSelectionReportedArguments,
+    TokenUsageReportedArguments,
+    ToolCallFinishedArguments,
+    ToolCallProgressArguments,
+    ToolCallStartedArguments,
+    TurnEndedArguments,
+    TurnToken,
+    UserInputFailedArguments,
+    UserInputRequestedArguments,
+    VendorSessionCursorReboundArguments,
+)
 from planner.conversation.contracts import PromptDeliveryMode, ResolvedConversationStart
-from planner.conversation.events import UserInputAnswer
+from planner.conversation.events import ProviderSubmissionFact, UserInputAnswer
 from planner.conversation.message_content import MessageContent
-from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
+from planner.execution_identity import (
+    AskKind,
+    AskReference,
+    ChildReference,
+    ExecutorIdentity,
+    ProtocolRefused,
+)
+from planner.executor.configuration import MAX_ENVELOPE_BYTES
 
-# Payloads carry existing domain types as JSON; operation-specific codecs validate
-# exact fields before dispatch. Credentials and arbitrary caller headers never travel.
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+
+
 type JsonObject = dict[str, JsonValue]
 
 
@@ -782,3 +806,124 @@ class OutboxLink(Protocol):
     ) -> AcceptanceReceipt | None:
         """Stage immutable bytes, or return the item's permanent refusal receipt."""
         ...
+
+
+def encode_value(value: object) -> JsonValue:
+    return TypeAdapter(object).dump_python(value, mode="json")  # type: ignore[no-any-return]
+
+
+def encode_backend_event(
+    method: BackendEventMethod,
+    turn: object,
+    arguments: dict[str, object],
+) -> JsonObject:
+    del method, turn
+    return {key: encode_value(value) for key, value in arguments.items()}
+
+
+def decode_event_arguments(event: BackendEvent) -> DecodedBackendEventArguments:
+    """Decode one closed callback shape without changing its wire representation."""
+    match event.method:
+        case BackendEventMethod.agent_message_delta:
+            return TypeAdapter(AgentMessageDeltaArguments).validate_python(event.arguments)
+        case BackendEventMethod.model_thinking_happened:
+            return TypeAdapter(ModelThinkingHappenedArguments).validate_python(event.arguments)
+        case BackendEventMethod.provider_selection_reported:
+            return TypeAdapter(ProviderSelectionReportedArguments).validate_python(event.arguments)
+        case BackendEventMethod.agent_message_completed:
+            return TypeAdapter(AgentMessageCompletedArguments).validate_python(event.arguments)
+        case BackendEventMethod.tool_call_started:
+            return TypeAdapter(ToolCallStartedArguments).validate_python(event.arguments)
+        case BackendEventMethod.tool_call_progress:
+            return TypeAdapter(ToolCallProgressArguments).validate_python(event.arguments)
+        case BackendEventMethod.tool_call_finished:
+            return TypeAdapter(ToolCallFinishedArguments).validate_python(event.arguments)
+        case BackendEventMethod.plan_updated:
+            return TypeAdapter(PlanUpdatedArguments).validate_python(event.arguments)
+        case BackendEventMethod.token_usage_reported:
+            return TypeAdapter(TokenUsageReportedArguments).validate_python(event.arguments)
+        case BackendEventMethod.context_compacted:
+            return TypeAdapter(ContextCompactedArguments).validate_python(event.arguments)
+        case BackendEventMethod.permission_ask_raised:
+            return TypeAdapter(PermissionAskRaisedArguments).validate_python(event.arguments)
+        case BackendEventMethod.user_input_requested:
+            return TypeAdapter(UserInputRequestedArguments).validate_python(event.arguments)
+        case BackendEventMethod.user_input_failed:
+            return TypeAdapter(UserInputFailedArguments).validate_python(event.arguments)
+        case BackendEventMethod.turn_ended:
+            return TypeAdapter(TurnEndedArguments).validate_python(event.arguments)
+        case BackendEventMethod.vendor_session_cursor_rebound:
+            return TypeAdapter(VendorSessionCursorReboundArguments).validate_python(event.arguments)
+        case BackendEventMethod.composer_catalog_reported:
+            return TypeAdapter(ComposerCatalogReportedArguments).validate_python(event.arguments)
+
+
+def decode_prompt_result(result: JsonObject) -> BackendPromptAccepted:
+    return BackendPromptAccepted(
+        composed_content_delivered=bool(result["composed_content_delivered"]),
+        provider_submission=decode_provider_submission(result.get("provider_submission")),
+    )
+
+
+def decode_provider_submission(raw: object) -> ProviderSubmissionFact | None:
+    """Historical outcomes remain readable without an invented provider fact."""
+    if raw is None:
+        return None
+    return TypeAdapter(ProviderSubmissionFact).validate_python(raw)
+
+
+def envelope_payload_digest(
+    payload: JsonObject,
+    manifests: tuple[FileManifest, ...],
+    *,
+    sender_id: str,
+    conversation_id: str,
+    sequence: int,
+    submission_id: str,
+    kind: EnvelopeKind,
+) -> str:
+    value = {
+        "payload": payload,
+        "sender_id": sender_id,
+        "conversation_id": conversation_id,
+        "sequence": sequence,
+        "submission_id": submission_id,
+        "kind": kind.value,
+        "file_dependencies": TypeAdapter(tuple[FileManifest, ...]).dump_python(
+            manifests, mode="json"
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+
+
+def _encode_payload(value: object) -> bytes:
+    body = TypeAdapter(type(value)).dump_json(value)
+    if not body or len(body) > MAX_ENVELOPE_BYTES:
+        raise ProtocolRefused("frame exceeds envelope limit")
+    return body
+
+
+async def read_typed_frame[T](reader: FrameReader, value_type: type[T]) -> T:
+    header = await reader.readexactly(4)
+    length = struct.unpack("!I", header)[0]
+    if not length or length > MAX_ENVELOPE_BYTES:
+        raise ProtocolRefused("invalid frame length")
+    return TypeAdapter(value_type).validate_json(await reader.readexactly(length), strict=True)
+
+
+def encode_message(message: WireMessage) -> bytes:
+    return _encode_payload(message)
+
+
+def decode_message(body: bytes) -> WireMessage:
+    if not body or len(body) > MAX_ENVELOPE_BYTES:
+        raise ProtocolRefused("message exceeds envelope limit")
+    return TypeAdapter(WireMessage).validate_json(body, strict=True)
+
+
+def encode_frame(value: object) -> bytes:
+    """Local IPC has no message boundaries, so prefix its bounded payload."""
+    body = _encode_payload(value)
+    return struct.pack("!I", len(body)) + body

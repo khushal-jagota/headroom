@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter
+from tests.support.executor_control import message_link
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.contracts import (
@@ -28,12 +29,11 @@ from planner.conversation.storage import ConversationStore, StoredConversationEv
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.execution_identity import AskKind, ChildReference
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
-    ControlMessageWriter,
     WireMessage,
     WireMessageKind,
     decode_command_arguments,
@@ -52,14 +52,21 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
     async def run() -> None:
         endpoint = ExecutorEndpoint(db_path, RealClock())
         endpoint.ready = True
-        endpoint.writer = cast(ControlMessageWriter, SimpleNamespace(close=lambda: None, send=None))
         from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
         from planner.execution_identity import ExecutorIdentity
-        from planner.executor.codec import encode_value, envelope_payload_digest
-        from planner.executor.contracts import EnvelopeKind, JsonObject, QueuedEnvelope
+        from planner.executor.protocol import (
+            EnvelopeKind,
+            JsonObject,
+            QueuedEnvelope,
+            encode_value,
+            envelope_payload_digest,
+        )
 
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "original-incarnation", 1
+        )
+        endpoint.link = message_link(
+            SimpleNamespace(close=lambda: None, send=None, is_closing=lambda: False), identity
         )
         endpoint.store.begin_connection(identity, 1)
         reference = ChildReference("original-incarnation", "original-child", "c_cancel")
@@ -73,8 +80,9 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
         emitted: list[ChildCommand] = []
 
         async def frame(message: WireMessage) -> None:
+            assert endpoint.link is not None
             if message.kind is WireMessageKind.withdraw:
-                endpoint._responses[message.request_id].set_result(
+                endpoint.link._pending[message.request_id].set_result(
                     WireMessage(
                         WireMessageKind.withdraw_result, message.request_id, {"withdrawn": []}
                     )
@@ -97,7 +105,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                     )
                 )
 
-        monkeypatch.setattr(endpoint.writer, "send", frame)
+        monkeypatch.setattr(endpoint.link._writer, "send", frame)
         factory = RemoteBackendChildFactory(
             lambda start, sink: reference,
             endpoint.send_command,
@@ -382,12 +390,13 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
 
     from planner.conversation.backends.contracts import TurnToken
     from planner.core.errors import PlannerError
-    from planner.executor.codec import encode_value, envelope_payload_digest
-    from planner.executor.contracts import (
+    from planner.executor.protocol import (
         EnvelopeKind,
         JsonObject,
         QueuedEnvelope,
         ReceiptDisposition,
+        encode_value,
+        envelope_payload_digest,
     )
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
@@ -475,8 +484,7 @@ def test_retirement_rolls_back_metadata_assignment_and_asks_together(
     """Gap: a crash after stop must not retain authority beside retired metadata."""
     from planner.conversation.backends.contracts import TurnToken
     from planner.execution_identity import AskReference
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import AskReachability
+    from planner.executor.protocol import AskReachability, encode_value
     from planner.executor.store import ExecutorStore
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])

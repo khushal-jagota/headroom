@@ -22,7 +22,7 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import ChangeSignallingConnection, connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     AcceptanceReceipt,
     BackendEvent,
     BackendEventMethod,

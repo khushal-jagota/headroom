@@ -1586,7 +1586,7 @@ def test_remote_kill_cannot_retire_or_end_a_successor_after_cancel(
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
     from planner.execution_identity import ChildReference
-    from planner.executor.contracts import (
+    from planner.executor.protocol import (
         ChildCommand,
         ChildOperation,
         CommandDisposition,
@@ -1687,7 +1687,7 @@ def test_remote_kill_retires_same_child_without_ending_its_completed_copy_twice(
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
     from planner.execution_identity import ChildReference
-    from planner.executor.contracts import ChildCommand, CommandDisposition, CommandOutcome
+    from planner.executor.protocol import ChildCommand, CommandDisposition, CommandOutcome
     from planner.executor.remote import RemoteBackendChild
 
     async def exercise() -> None:

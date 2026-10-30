@@ -17,7 +17,7 @@ from planner.cli.errors import exit_with_human_error
 from planner.core.authctx import normalize_manager_identity
 
 if TYPE_CHECKING:
-    from planner.executor.contracts import IpcResponse
+    from planner.executor.protocol import IpcResponse
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:8767"
 _TIMEOUT = 30.0
@@ -209,9 +209,9 @@ def _fail_response(resp: httpx.Response, data: Any, as_json: bool) -> NoReturn:
 def _executor_send(
     method: str, path: str, *, as_json: bool, json_body: Any, params: dict[str, Any] | None
 ) -> Any:
-    from planner.executor.contracts import IpcOperation
     from planner.executor.ipc_client import request
     from planner.executor.mutations import cli_mutation
+    from planner.executor.protocol import IpcOperation
 
     try:
         if method.upper() == "GET":

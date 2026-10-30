@@ -23,7 +23,19 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
-from planner.executor.contracts import (
+from planner.executor.files import (
+    contained_path,
+    copy_verified,
+    directory_descriptor,
+    file_digest,
+    safe_component,
+)
+from planner.executor.logic.reconciliation import (
+    answer_target_is_open,
+    callback_reachability,
+    preserved_reachability,
+)
+from planner.executor.protocol import (
     AcceptanceReceipt,
     AnswerAdmission,
     AnswerApplication,
@@ -43,18 +55,6 @@ from planner.executor.contracts import (
     QueuedEnvelope,
     ReceiptDisposition,
     TransactionalWriter,
-)
-from planner.executor.files import (
-    contained_path,
-    copy_verified,
-    directory_descriptor,
-    file_digest,
-    safe_component,
-)
-from planner.executor.logic.reconciliation import (
-    answer_target_is_open,
-    callback_reachability,
-    preserved_reachability,
 )
 
 
@@ -1035,7 +1035,7 @@ class ExecutorStore:
     def _validate_envelope(
         self, connection: sqlite3.Connection, envelope: QueuedEnvelope, *, check_files: bool = True
     ) -> None:
-        from planner.executor.codec import envelope_payload_digest
+        from planner.executor.protocol import envelope_payload_digest
 
         if envelope.payload_sha256 != envelope_payload_digest(
             envelope.payload,

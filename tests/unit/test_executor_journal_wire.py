@@ -10,17 +10,18 @@ import pytest
 
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ProtocolRefused
-from planner.executor.contracts import (
+from planner.executor.files import snapshot_file
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
     FileScope,
     IpcResponse,
     OutboxEntry,
     ReceiptDisposition,
+    encode_frame,
+    read_typed_frame,
 )
-from planner.executor.files import snapshot_file
-from planner.executor.mac_outbox import MacOutbox
-from planner.executor.wire import encode_frame, read_typed_frame
 
 
 def test_journal_restarts_after_ack_without_reusing_sequence(tmp_path: Path) -> None:

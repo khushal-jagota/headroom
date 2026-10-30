@@ -46,25 +46,25 @@ from planner.execution_identity import (
     ProtocolRefused,
     parse_identity,
 )
-from planner.executor.app_transport import (
-    ControlWebSocket,
-    ExecutorAppClient,
-    create_client_session,
-    validate_server_url,
-)
-from planner.executor.codec import encode_value
 from planner.executor.configuration import (
     CATALOG_CANCEL_TIMEOUT_SECONDS,
     CATALOG_TIMEOUT_SECONDS,
     CLI_RESULT_TIMEOUT_SECONDS,
     MAX_CATALOG_OBSERVATIONS,
-    MAX_ENVELOPE_BYTES,
-    MAX_TRANSFERS,
     RECONNECT_INTERVAL_SECONDS,
-    REQUEST_TIMEOUT_SECONDS,
     ExecutorPaths,
 )
-from planner.executor.contracts import (
+from planner.executor.diagnostics import connection_diagnostics
+from planner.executor.files import (
+    contained_path,
+    copy_verified,
+    directory_descriptor,
+    safe_component,
+)
+from planner.executor.link import Link, create_client_session, dial_link, validate_server_url
+from planner.executor.link_files import get_file, put_file, settled_io
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import (
     AcceptanceReceipt,
     BackendEvent,
     ChildCommand,
@@ -72,8 +72,6 @@ from planner.executor.contracts import (
     ConnectionFailureOrigin,
     ConnectionPhase,
     ConnectionState,
-    ControlMessageReader,
-    ControlMessageWriter,
     EnvelopeKind,
     EnvelopeRefusal,
     ExecutorHealth,
@@ -104,18 +102,11 @@ from planner.executor.contracts import (
     WithdrawCommands,
     WithdrawResult,
     WritePrompt,
+    encode_frame,
+    encode_value,
+    read_typed_frame,
 )
-from planner.executor.diagnostics import connection_diagnostics
-from planner.executor.files import (
-    contained_path,
-    copy_verified,
-    directory_descriptor,
-    safe_component,
-)
-from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry, now_ms
-from planner.executor.transfers import settled_io
-from planner.executor.wire import encode_frame, read_typed_frame
 from planner.tickets.contracts import TicketLocale
 
 
@@ -151,9 +142,7 @@ class MacExecutor:
         self.server_url = validate_server_url(panels_server_url)
         self.executor_id = executor_id
         self._session_factory = session_factory
-        self._app_client: ExecutorAppClient | None = None
         self._transfers = 0
-        self._transfer_capacity = asyncio.Semaphore(MAX_TRANSFERS)
         self._transport_admission_stopped = False
         self.spool = MacOutbox(paths.spool)
         self.identity = ExecutorIdentity(
@@ -162,9 +151,7 @@ class MacExecutor:
         self._handshake_accepted = False
         self.state = ConnectionState.disconnected
         self.lost_at_ms: int | None = None
-        self._writer: ControlMessageWriter | None = None
-        self._write_lock = asyncio.Lock()
-        self._pending: dict[str, asyncio.Future[WireMessage]] = {}
+        self._link: Link | None = None
         self._publications: dict[str, _IpcPublication] = {}
         self._ipc_lookups: set[asyncio.Task[OutboxRecord | None]] = set()
         self._stop = asyncio.Event()
@@ -173,9 +160,7 @@ class MacExecutor:
         self._command_tasks: set[asyncio.Task[None]] = set()
         self._quiesce_lock = asyncio.Lock()
         self._catalog_observer = catalog_observer
-        self._catalog_tasks: dict[
-            str, tuple[CatalogRequest, ControlMessageWriter, asyncio.Task[None]]
-        ] = {}
+        self._catalog_tasks: dict[str, tuple[CatalogRequest, Link, asyncio.Task[None]]] = {}
         self.registry = registry or NativeChildRegistry(
             paths=paths,
             incarnation=self.identity.executor_incarnation,
@@ -239,120 +224,62 @@ class MacExecutor:
             self.lost_at_ms,
         )
 
-    async def _send(self, message: WireMessage) -> None:
-        async with self._write_lock:
-            writer = self._writer
-            if writer is None:
-                raise ConnectionError("executor link unavailable")
-            await writer.send(message)
-
     async def _send_live_event(self, event: BackendEvent) -> None:
-        # Live text has no receipt or retry. Never carry it into a new generation.
-        writer = self._writer
-        identity = self.identity
-        if writer is None or self.state is not ConnectionState.ready:
-            return
-        with contextlib.suppress(ConnectionError, OSError):
-            async with self._write_lock:
-                if self._writer is writer and self.identity == identity:
-                    await writer.send(
-                        WireMessage(
-                            WireMessageKind.live_backend_event, uuid4().hex, as_object(event)
-                        )
-                    )
+        link = self._link
+        if link is not None and self.state is ConnectionState.ready:
+            with contextlib.suppress(ConnectionError, OSError):
+                await link.tell(WireMessageKind.live_backend_event, as_object(event))
 
-    async def _request(
-        self, kind: WireMessageKind, payload: JsonObject, *, request_id: str | None = None
-    ) -> WireMessage:
-        request_id = request_id or uuid4().hex
-        future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
-        writer = self._writer
-        try:
-            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                async with self._write_lock:
-                    if writer is None or self._writer is not writer:
-                        raise ConnectionError("executor link unavailable")
-                    await writer.send(WireMessage(kind, request_id, payload))
-                response = await future
-            if response.kind in (WireMessageKind.error, WireMessageKind.protocol_refused):
-                raise ValueError(str(response.payload))
-            return response
-        except TimeoutError:
-            # The operation may have committed. Disconnect this generation so
-            # reconciliation recovers its receipt, without retrying it here.
-            if writer is not None:
-                writer.close()
-            raise
-        finally:
-            self._pending.pop(request_id, None)
-
-    async def _read_loop(self, reader: ControlMessageReader) -> None:
-        while True:
-            message = await reader.receive()
-            if message.kind in (WireMessageKind.catalog_request, WireMessageKind.catalog_cancel):
-                self._catalog_frame(message)
-                continue
-            if not self._handshake_accepted and message.kind in (
-                WireMessageKind.command,
-                WireMessageKind.reconnect_ask,
-                WireMessageKind.withdraw,
-            ):
-                raise ProtocolRefused("peer sent work before validated handshake")
-            if message.kind == WireMessageKind.health and "clock_probe" in message.payload:
-                probe = cast(JsonObject, message.payload["clock_probe"])
-                received = now_ms()
-                await self._send(
-                    WireMessage(
-                        WireMessageKind.health,
-                        message.request_id,
-                        {
-                            "vps_sent_at_ms": probe["vps_sent_at_ms"],
-                            "mac_received_at_ms": received,
-                            "mac_sent_at_ms": now_ms(),
-                        },
+    async def _on_message(self, message: WireMessage) -> WireMessage | None:
+        if message.kind in (WireMessageKind.catalog_request, WireMessageKind.catalog_cancel):
+            self._catalog_frame(message)
+            return None
+        if not self._handshake_accepted and message.kind in (
+            WireMessageKind.command,
+            WireMessageKind.reconnect_ask,
+            WireMessageKind.withdraw,
+        ):
+            raise ProtocolRefused("peer sent work before validated handshake")
+        if message.kind is WireMessageKind.health and "clock_probe" in message.payload:
+            probe = cast(JsonObject, message.payload["clock_probe"])
+            received = now_ms()
+            return WireMessage(
+                WireMessageKind.health,
+                message.request_id,
+                {
+                    "vps_sent_at_ms": probe["vps_sent_at_ms"],
+                    "mac_received_at_ms": received,
+                    "mac_sent_at_ms": now_ms(),
+                },
+            )
+        if message.kind is WireMessageKind.withdraw:
+            request = TypeAdapter(WithdrawCommands).validate_python(message.payload)
+            return WireMessage(
+                WireMessageKind.withdraw_result,
+                message.request_id,
+                as_object(WithdrawResult(self.registry.withdraw_commands(request))),
+            )
+        if message.kind is WireMessageKind.command:
+            command = TypeAdapter(ChildCommand).validate_python(message.payload)
+            link = self._link
+            if link is None:
+                return None
+            task = asyncio.create_task(self._command(message, command, link))
+            self._command_tasks.add(task)
+            task.add_done_callback(self._command_tasks.discard)
+        elif message.kind is WireMessageKind.reconnect_ask:
+            ask = TypeAdapter(ReconnectAsk).validate_python(message.payload)
+            await self.registry.flush_command_output(ask.command_ids)
+            return WireMessage(
+                WireMessageKind.reconnect_result,
+                message.request_id,
+                as_object(
+                    ReconnectResult(
+                        self.identity, self.registry.ask(ask.command_ids), self.registry.inventory()
                     )
-                )
-            elif message.kind is WireMessageKind.withdraw:
-                request = TypeAdapter(WithdrawCommands).validate_python(message.payload)
-                withdrawn = self.registry.withdraw_commands(request)
-                await self._send(
-                    WireMessage(
-                        WireMessageKind.withdraw_result,
-                        message.request_id,
-                        as_object(WithdrawResult(withdrawn)),
-                    )
-                )
-            elif message.kind == WireMessageKind.command:
-                task = asyncio.create_task(self._command(message))
-                self._command_tasks.add(task)
-                task.add_done_callback(self._command_tasks.discard)
-            elif message.kind is WireMessageKind.reconnect_ask:
-                ask = TypeAdapter(ReconnectAsk).validate_python(message.payload)
-                await self.registry.flush_command_output(ask.command_ids)
-                await self._send(
-                    WireMessage(
-                        WireMessageKind.reconnect_result,
-                        message.request_id,
-                        as_object(
-                            ReconnectResult(
-                                self.identity,
-                                self.registry.ask(ask.command_ids),
-                                self.registry.inventory(),
-                            )
-                        ),
-                    )
-                )
-            else:
-                future = self._pending.get(message.request_id)
-                if future is not None and not future.done():
-                    if message.kind is WireMessageKind.reconciliation_ready:
-                        if not self._handshake_accepted or message.payload != {"ready": True}:
-                            raise ProtocolRefused("invalid reconciliation acknowledgment")
-                        # Clear outage before readiness becomes visible to readers.
-                        self.lost_at_ms = None
-                        self.state = ConnectionState.ready
-                    future.set_result(message)
+                ),
+            )
+        return None
 
     def _catalog_frame(self, message: WireMessage) -> None:
         # Metadata never enters the child registry or the durable journal.
@@ -370,7 +297,7 @@ class MacExecutor:
             or request.expected_context.executor_identity != identity
             or not self._handshake_accepted
             or self.state != ConnectionState.ready
-            or self._writer is None
+            or self._link is None
         ):
             return
         workspace = request.expected_context.workspace
@@ -386,7 +313,7 @@ class MacExecutor:
                 return
         existing = self._catalog_tasks.get(message.request_id)
         if message.kind is WireMessageKind.catalog_cancel:
-            if existing is not None and existing[0] == request and existing[1] is self._writer:
+            if existing is not None and existing[0] == request and existing[1] is self._link:
                 # Repeated cancellation must not interrupt physical cleanup.
                 if not existing[2].cancelling():
                     existing[2].cancel()
@@ -397,7 +324,7 @@ class MacExecutor:
             # The caller's bounded read yields unresolved evidence. No queue can
             # reserve unbounded tasks while an earlier probe physically settles.
             return
-        writer = self._writer
+        writer = self._link
         deadline = asyncio.get_running_loop().time() + CATALOG_TIMEOUT_SECONDS
         task = asyncio.create_task(self._catalog(message, request, identity, writer, deadline))
         self._catalog_tasks[message.request_id] = (request, writer, task)
@@ -416,7 +343,7 @@ class MacExecutor:
         message: WireMessage,
         request: CatalogRequest,
         identity: ExecutorIdentity,
-        writer: ControlMessageWriter,
+        writer: Link,
         deadline: float,
     ) -> None:
         observer = self._catalog_observer
@@ -468,22 +395,18 @@ class MacExecutor:
             # A catalog result has no authority after cancellation or generation
             # replacement. In particular, never write through self._send here.
             async with asyncio.timeout(CATALOG_CANCEL_TIMEOUT_SECONDS):
-                async with self._write_lock:
-                    if (
-                        self._writer is not writer
-                        or self.identity != identity
-                        or self.state != ConnectionState.ready
-                        or self._transport_admission_stopped
-                        or owner.cancelling()
-                    ):
-                        return
-                    await writer.send(
-                        WireMessage(
-                            WireMessageKind.catalog_response,
-                            message.request_id,
-                            as_object(CatalogResponse(request.backend_key, identity, result)),
-                        )
-                    )
+                await writer.tell(
+                    WireMessageKind.catalog_response,
+                    as_object(CatalogResponse(request.backend_key, identity, result)),
+                    request_id=message.request_id,
+                    admit=lambda: (
+                        self._link is writer
+                        and self.identity == identity
+                        and self.state is ConnectionState.ready
+                        and not self._transport_admission_stopped
+                        and not owner.cancelling()
+                    ),
+                )
         except (ConnectionError, OSError, ValueError, TimeoutError):
             # A read-only failure does not disturb a shared execution connection.
             return
@@ -500,20 +423,25 @@ class MacExecutor:
         for task in tasks:
             await wait_for_settlement(task)
 
-    async def _command(self, message: WireMessage) -> None:
-        command = TypeAdapter(ChildCommand).validate_python(message.payload)
+    async def _command(self, message: WireMessage, command: ChildCommand, link: Link) -> None:
         try:
             outcome = await self.registry.execute_command(command)
         except (OSError, ValueError):
             # Required output may not have reached disk. Reconnect retries that
             # publication before answering the ask; it never repeats the provider call.
-            if self._writer is not None:
-                self._writer.close()
+            link.close()
             return
-        with contextlib.suppress(ConnectionError, BrokenPipeError):
-            await self._send(
-                WireMessage(WireMessageKind.command_outcome, message.request_id, as_object(outcome))
-            )
+        # A command belongs to the retained native registry, not the connection
+        # that first carried it. Publish its stable outcome on the admitted link;
+        # if hello has not completed, the reconnect ask will read that outcome.
+        current = self._link
+        if current is not None and self._handshake_accepted:
+            with contextlib.suppress(ConnectionError, BrokenPipeError):
+                await current.tell(
+                    WireMessageKind.command_outcome,
+                    as_object(outcome),
+                    request_id=command.command_id,
+                )
 
     async def _prepare_inputs(self, command: ChildCommand) -> None:
         args = command.arguments
@@ -527,12 +455,14 @@ class MacExecutor:
                     await self.get_file(command, piece.stored_file_id)
 
     async def get_file(self, command: ChildCommand, stored_file_id: str) -> None:
-        identity, client = self.identity, self._app_client
+        identity, link = self.identity, self._link
+        if link is None:
+            raise ConnectionError("executor link unavailable")
         self._transfers += 1
         temporary = self.paths.run / (".input-" + uuid4().hex)
         try:
-            async with self._transfer_capacity:
-                response = await self._request(
+            async with link.transfer_capacity():
+                response = await self.request(
                     WireMessageKind.get_file,
                     as_object(FileDownloadRequest(command.command_id, stored_file_id)),
                 )
@@ -541,7 +471,6 @@ class MacExecutor:
                 if (
                     response.kind is not WireMessageKind.file_transfer
                     or slot.direction != "download"
-                    or client is None
                     or manifest.scope is not FileScope.conversation
                     or manifest.owner_id != command.child.conversation_id
                     or Path(manifest.relative_path).name != stored_file_id
@@ -552,7 +481,7 @@ class MacExecutor:
                     root, f"{safe_component(manifest.owner_id)}/{manifest.relative_path}"
                 )
                 self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
-                await client.download(slot, temporary)
+                await get_file(link, slot, temporary)
                 if identity != self.identity or not self._handshake_accepted:
                     raise ConnectionError("input generation changed")
 
@@ -575,13 +504,20 @@ class MacExecutor:
             temporary.unlink(missing_ok=True)
             self._transfers -= 1
 
-    async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-        return await self._request(kind, payload)
+    async def request(
+        self, kind: WireMessageKind, payload: JsonObject, *, request_id: str | None = None
+    ) -> WireMessage:
+        link = self._link
+        if link is None:
+            raise ConnectionError("executor link unavailable")
+        return await link.request(kind, payload, request_id=request_id)
 
     async def put_file(
         self, envelope: QueuedEnvelope, snapshot: FileSnapshot
     ) -> AcceptanceReceipt | None:
-        identity, client = self.identity, self._app_client
+        identity, link = self.identity, self._link
+        if link is None:
+            raise ConnectionError("executor link unavailable")
         child = envelope.payload.get("child")
         if child is None:
             ask = cast(JsonObject, envelope.payload.get("ask", {}))
@@ -590,10 +526,10 @@ class MacExecutor:
             raise ValueError("file upload lacks assigned child")
         self._transfers += 1
         try:
-            async with self._transfer_capacity:
+            async with link.transfer_capacity():
                 request_id = uuid4().hex
                 try:
-                    response = await self._request(
+                    response = await self.request(
                         WireMessageKind.put_file,
                         {
                             "manifest": as_object(snapshot.manifest),
@@ -606,16 +542,15 @@ class MacExecutor:
                         response.kind is not WireMessageKind.file_transfer
                         or slot.direction != "upload"
                         or slot.manifest != snapshot.manifest
-                        or client is None
                     ):
                         raise ValueError("invalid upload transfer")
-                    await client.upload(slot, snapshot.local_path)
+                    await put_file(link, slot, snapshot.local_path)
                 except ValueError as error:
                     if identity != self.identity or not self._handshake_accepted:
                         raise ConnectionError("file generation changed") from error
                     # This item cannot use the descriptor. Answer its request and
                     # obtain a durable refusal without disturbing other conversations.
-                    refused = await self._request(
+                    refused = await self.request(
                         WireMessageKind.error,
                         as_object(EnvelopeRefusal(envelope, str(error))),
                         request_id=request_id,
@@ -645,40 +580,44 @@ class MacExecutor:
         self.state = ConnectionState.reconciling
         self._handshake_accepted = False
         identity = self.identity
-        client = ExecutorAppClient(
-            self.server_url, self.executor_id, identity, self._session_factory
-        )
-        self._app_client = client
         reader_task: asyncio.Task[None] | None = None
         session_task: asyncio.Task[None] | None = None
         stop_task: asyncio.Task[bool] | None = None
         try:
-            async with client.websocket("/api/executor/connect", MAX_ENVELOPE_BYTES) as peer:
-                stream = ControlWebSocket(peer)
-                self._writer = stream
-                phase = ConnectionPhase.hello
+            async with dial_link(
+                self.server_url, self.executor_id, identity, self._session_factory
+            ) as link:
+                self._link = link
+                for kind in (
+                    WireMessageKind.catalog_request,
+                    WireMessageKind.catalog_cancel,
+                    WireMessageKind.health,
+                    WireMessageKind.withdraw,
+                    WireMessageKind.command,
+                    WireMessageKind.reconnect_ask,
+                ):
+                    link.on(kind, self._on_message)
                 reader_task = asyncio.create_task(
-                    observe(self._read_loop(stream), ConnectionFailureOrigin.reader)
+                    observe(link.closed(), ConnectionFailureOrigin.reader)
                 )
 
                 async def session() -> None:
                     nonlocal phase
                     phase = ConnectionPhase.hello
-                    response = await self._request(WireMessageKind.hello, as_object(self.health()))
-                    if (
-                        response.kind is not WireMessageKind.hello_accepted
-                        or parse_identity(response.payload) != identity
-                    ):
-                        raise ValueError("handshake identity changed")
+                    await link.request(WireMessageKind.hello, as_object(self.health()))
                     self._handshake_accepted = True
                     phase = ConnectionPhase.transport_open
-                    opened = await self._request(
+                    opened = await link.request(
                         WireMessageKind.transport_open, {"identity": as_object(identity)}
                     )
                     if opened.kind is not WireMessageKind.transport_opened:
                         raise ValueError("file generation refused")
                     phase = ConnectionPhase.reconnect_ask
-                    await self._request(WireMessageKind.reconciliation_ready, as_object(identity))
+                    response = await link.request(
+                        WireMessageKind.reconciliation_ready, as_object(identity)
+                    )
+                    if response.payload != {"ready": True}:
+                        raise ProtocolRefused("invalid reconciliation acknowledgment")
                     self.lost_at_ms = None
                     self.state = ConnectionState.ready
                     phase = ConnectionPhase.steady_state
@@ -688,40 +627,34 @@ class MacExecutor:
                     observe(session(), ConnectionFailureOrigin.session)
                 )
                 stop_task = asyncio.create_task(self._stop.wait())
-                done, _ = await asyncio.wait(
-                    (reader_task, session_task, stop_task), return_when=asyncio.FIRST_COMPLETED
-                )
-                for done_task in done:
-                    await done_task
+                try:
+                    done, _ = await asyncio.wait(
+                        (reader_task, session_task, stop_task), return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for done_task in done:
+                        await done_task
+                finally:
+                    self._link = None
+                    self._handshake_accepted = False
+                    self.state = ConnectionState.disconnected
+                    for task in (reader_task, session_task, stop_task):
+                        task.cancel()
+                    link.close()
+                    await self._settle_catalogs()
+                    await asyncio.gather(
+                        reader_task, session_task, stop_task, return_exceptions=True
+                    )
         except Exception as error:
             connection_diagnostics.report(
                 error, phase=phase, origin=ConnectionFailureOrigin.session
             )
             raise
         finally:
-            # Revoke this generation before cleanup awaits. Native commands stay
-            # under registry ownership and retain outcomes for reconciliation.
             self._handshake_accepted = False
             self.state = ConnectionState.disconnected
+            self._link = None
             if self.lost_at_ms is None:
                 self.lost_at_ms = now_ms()
-            writer, self._writer = self._writer, None
-            self._app_client = None
-            if writer is not None:
-                writer.close()
-            for future in self._pending.values():
-                if not future.done():
-                    future.set_exception(ConnectionError("executor link lost"))
-            tasks = [task for task in (reader_task, session_task, stop_task) if task is not None]
-            await self._settle_catalogs()
-            for cleanup_task in tasks:
-                cleanup_task.cancel()
-            try:
-                await client.close()
-            finally:
-                await asyncio.gather(*tasks, return_exceptions=True)
-                if writer is not None:
-                    await writer.wait_closed()
 
     async def handle_ipc(self, request: IpcRequest) -> IpcResponse:
         try:
@@ -774,7 +707,7 @@ class MacExecutor:
             if request.operation == IpcOperation.read:
                 if self.state != ConnectionState.ready:
                     raise ConnectionError("VPS unavailable; reads never use journal")
-                response = await self._request(
+                response = await self.request(
                     WireMessageKind.read_request,
                     as_object(
                         LiveReadRequest(

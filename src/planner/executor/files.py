@@ -14,7 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from planner.executor.configuration import FILE_CHUNK_BYTES
-from planner.executor.contracts import FileManifest, FileScope, FileSnapshot
+from planner.executor.protocol import FileManifest, FileScope, FileSnapshot
 
 
 def fsync_file(descriptor: int) -> None:

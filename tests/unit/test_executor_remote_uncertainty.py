@@ -16,8 +16,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.execution_identity import ChildReference
-from planner.executor.codec import encode_value
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
     ChildCommand,
@@ -25,6 +24,7 @@ from planner.executor.contracts import (
     CommandDisposition,
     CommandOutcome,
     StartRun,
+    encode_value,
 )
 from planner.executor.remote import RemoteBackendChildFactory
 
@@ -121,10 +121,9 @@ def test_each_native_start_reads_database_snapshot_and_replay_keeps_command(
     from planner.core.clock import RealClock
     from planner.core.contracts import OWNER_PRINCIPAL
     from planner.executor.configuration import MAX_ENVELOPE_BYTES
-    from planner.executor.contracts import JsonObject, WireMessage, WireMessageKind
+    from planner.executor.protocol import JsonObject, WireMessage, WireMessageKind, encode_message
     from planner.executor.remote import RemoteBackendChild
     from planner.executor.vps import ExecutorEndpoint
-    from planner.executor.wire import encode_message
     from planner.managed_skills import read_all_skill_sources, write_skill_source
     from planner.tickets import data
 
@@ -266,8 +265,13 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
 
     from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
     from planner.execution_identity import ExecutorIdentity
-    from planner.executor.codec import encode_value, envelope_payload_digest
-    from planner.executor.contracts import EnvelopeKind, JsonObject, QueuedEnvelope
+    from planner.executor.protocol import (
+        EnvelopeKind,
+        JsonObject,
+        QueuedEnvelope,
+        encode_value,
+        envelope_payload_digest,
+    )
     from planner.executor.routing import LocaleBackendChildFactory
     from planner.executor.store import ExecutorStore
 
@@ -474,7 +478,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         assert state.running_turn is not None and not state.child_is_quarantined
 
         from planner.core.contracts import ErrorCode, PlannerError
-        from planner.executor.contracts import BackendEvent, BackendEventMethod, ReceiptDisposition
+        from planner.executor.protocol import BackendEvent, BackendEventMethod, ReceiptDisposition
 
         # A real refused native publication marks exact cleanup evidence within its
         # receipt transaction. Later successful stops cannot erase that refusal.

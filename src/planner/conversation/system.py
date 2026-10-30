@@ -195,7 +195,7 @@ from planner.core import change_signal
 from planner.core.commit_capture import register_capture_task
 from planner.core.contracts import JsonDict, PlannerError, Principal, PrincipalKind
 from planner.execution_identity import ChildReference
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     AcceptanceReceipt,
     AnswerApplication,
     BackendEvent,
@@ -1565,7 +1565,7 @@ class SqliteProcessConversationSystem:
                 async with state.lock:
                     if snapshot is None or command.child != child.reference:
                         raise ValueError("Retirement lacks exact child metadata")
-                    from planner.executor.codec import encode_value
+                    from planner.executor.protocol import encode_value
 
                     runtime = json.loads(snapshot[2])
                     commands = tuple(
@@ -1620,7 +1620,7 @@ class SqliteProcessConversationSystem:
                 return False
             runtime = json.loads(metadata[2])
             if state.executor_child_reference == reference:
-                from planner.executor.codec import encode_value
+                from planner.executor.protocol import encode_value
 
                 runtime["initial_commands"] = encode_value(state.executor_initial_commands)
             runtime["source_retired"] = True
@@ -6127,7 +6127,7 @@ class SqliteProcessConversationSystem:
     def _executor_turn_metadata(
         state: _ConversationState, running: _RunningTurn
     ) -> tuple[str, str, str] | None:
-        from planner.executor.codec import encode_value
+        from planner.executor.protocol import encode_value
         from planner.executor.remote import RemoteBackendChild
 
         child = state.child
@@ -6315,7 +6315,7 @@ class SqliteProcessConversationSystem:
         from pydantic import TypeAdapter
 
         from planner.execution_identity import AskKind
-        from planner.executor.contracts import ReceiptDisposition
+        from planner.executor.protocol import ReceiptDisposition
 
         written: tuple[StoredConversationEvent, ...] = ()
         fresh = False
@@ -6431,7 +6431,7 @@ class SqliteProcessConversationSystem:
             return receipt
 
     async def receive_remote_live_backend_event(self, event: BackendEvent) -> None:
-        from planner.executor.codec import decode_event_arguments
+        from planner.executor.protocol import decode_event_arguments
         from planner.executor.remote import RemoteBackendChild
 
         state = await self._conversation_state(event.child.conversation_id)
@@ -6476,8 +6476,11 @@ class SqliteProcessConversationSystem:
         envelope: QueuedEnvelope,
         acceptor: ExecutorEffectAcceptor,
     ) -> AcceptanceReceipt:
-        from planner.executor.codec import decode_event_arguments
-        from planner.executor.contracts import BackendEventMethod, ReceiptDisposition
+        from planner.executor.protocol import (
+            BackendEventMethod,
+            ReceiptDisposition,
+            decode_event_arguments,
+        )
 
         reservation = state.reserved_turn
         if reservation is not None and event.turn == reservation.token:

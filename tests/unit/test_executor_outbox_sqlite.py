@@ -19,7 +19,9 @@ import pytest
 from pydantic import TypeAdapter
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
-from planner.executor.contracts import (
+from planner.executor.files import snapshot_file
+from planner.executor.mac_outbox import DATABASE_NAME, MacOutbox
+from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
     FileScope,
@@ -31,8 +33,6 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.files import snapshot_file
-from planner.executor.mac_outbox import DATABASE_NAME, MacOutbox
 
 
 def entry(
@@ -87,7 +87,7 @@ def test_process_crash_before_or_after_add_commit(tmp_path: Path, commit: bool) 
 import os, sys
 from pathlib import Path
 from planner.executor.mac_outbox import MacOutbox
-from planner.executor.contracts import OutboxEntry, EnvelopeKind
+from planner.executor.protocol import OutboxEntry, EnvelopeKind
 box = MacOutbox(Path(sys.argv[1]))
 if sys.argv[2] == 'False':
     box._db.execute("BEGIN IMMEDIATE")

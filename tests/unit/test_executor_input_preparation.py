@@ -10,7 +10,7 @@ from tests.unit.test_executor_native_runtime import isolated_native_home as isol
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
 
 from planner.execution_identity import ChildReference
-from planner.executor.contracts import ChildCommand, ChildOperation, CommandDisposition, StopRun
+from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition, StopRun
 from planner.executor.runtime import NativeChildRegistry
 
 

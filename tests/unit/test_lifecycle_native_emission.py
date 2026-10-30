@@ -36,13 +36,13 @@ from planner.conversation.model_resolution.contracts import (
 )
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.codec import encode_value
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     OutboxEntry,
     StartRun,
     Steer,
     WritePrompt,
     decode_command_arguments,
+    encode_value,
 )
 from planner.tickets.contracts import TicketLocale
 
@@ -125,7 +125,9 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
     from planner.core.db import connect, create_schema
     from planner.execution_identity import ChildReference, ProtocolRefused, parse_identity
     from planner.executor.configuration import ExecutorPaths
-    from planner.executor.contracts import (
+    from planner.executor.mac import MacExecutor
+    from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.protocol import (
         AcceptanceReceipt,
         ChildCommand,
         ChildOperation,
@@ -137,8 +139,6 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
         WireMessage,
         WireMessageKind,
     )
-    from planner.executor.mac import MacExecutor
-    from planner.executor.mac_outbox import MacOutbox
 
     def payload_object(value: object) -> JsonObject:
         payload = encode_value(value)
@@ -268,7 +268,9 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
             submitted: list[dict[str, Any]] = []
             executor._handshake_accepted = True
 
-            async def request(kind: WireMessageKind, payload: dict[str, Any]) -> WireMessage:
+            async def request(
+                kind: WireMessageKind, payload: dict[str, Any], *, request_id: str | None = None
+            ) -> WireMessage:
                 assert kind is WireMessageKind.envelope
                 submitted.append(payload)
                 receipt = AcceptanceReceipt(
@@ -281,7 +283,7 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
                 )
                 return WireMessage(WireMessageKind.receipt, "fixture", payload_object(receipt))
 
-            executor._request = request  # type: ignore[method-assign]
+            executor.request = request  # type: ignore[method-assign]
             sender_task = asyncio.create_task(executor.spool.send_pending(executor))
             try:
                 async with asyncio.timeout(2):
@@ -295,7 +297,7 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
             assert len(replayed_original) == 2
             assert all(entry == original[entry["submission_id"]] for entry in replayed_original)
             assert executor.spool.pending_count() == 0 and not executor.registry.children
-            assert PROTOCOL_VERSION == 15 and SPOOL_FORMAT_VERSION == 4
+            assert PROTOCOL_VERSION == 16 and SPOOL_FORMAT_VERSION == 5
             with pytest.raises(ProtocolRefused):
                 parse_identity(
                     encode_value(
@@ -306,7 +308,7 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
                 parse_identity(
                     encode_value(replace(executor.identity, connection_generation=1))
                 ).protocol_version
-                == 15
+                == PROTOCOL_VERSION
             )
         finally:
             executor.spool.close()
@@ -411,8 +413,8 @@ def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
     )
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.execution_identity import ChildReference
-    from planner.executor.contracts import ChildCommand, ChildOperation, CommandDisposition
     from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition
     from planner.executor.runtime import NativeChildRegistry
 
     async def run() -> None:
@@ -463,8 +465,8 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
     from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.execution_identity import ChildReference
-    from planner.executor.contracts import ChildCommand, ChildOperation, CommandDisposition
     from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition
     from planner.executor.runtime import NativeChildRegistry, _Child
 
     async def run() -> None:
@@ -535,8 +537,8 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
     from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.execution_identity import ChildReference
-    from planner.executor.contracts import ChildCommand, ChildOperation, CommandDisposition
     from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition
     from planner.executor.runtime import NativeChildRegistry, _Child
 
     async def run() -> None:
@@ -641,8 +643,8 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.execution_identity import ChildReference
     from planner.executor.configuration import ExecutorPaths
-    from planner.executor.contracts import ChildCommand, CommandDisposition
     from planner.executor.mac_outbox import MacOutbox
+    from planner.executor.protocol import ChildCommand, CommandDisposition
     from planner.executor.remote import RemoteBackendChild
     from planner.executor.runtime import NativeChildRegistry
 

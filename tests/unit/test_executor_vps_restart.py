@@ -13,10 +13,12 @@ from pathlib import Path
 from sqlite3 import Connection
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
+from tests.support.executor_control import message_link
 from tests.unit.test_executor_native_runtime import canonical_snapshot
+from tests.unit.test_executor_request_deadlines import peer
 
 from planner.conversation.backends.contracts import BackendEventSink, BackendPermissionAsk
 from planner.conversation.contracts import (
@@ -35,8 +37,7 @@ from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
-from planner.executor.codec import encode_value
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     ChildCommand,
     ChildInventory,
     ChildOperation,
@@ -45,6 +46,7 @@ from planner.executor.contracts import (
     ReconnectResult,
     WireMessage,
     WireMessageKind,
+    encode_value,
 )
 from planner.executor.vps import ExecutorEndpoint
 
@@ -106,7 +108,7 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                 SimpleNamespace(identity=identity, ready=True, owns_conversation=lambda _: True),
             )
             endpoint.runtime = SimpleNamespace(system=system)
-            endpoint.writer = cast(Any, Mock(send=AsyncMock()))
+            endpoint.link = message_link(peer(), identity)
             return endpoint, system
 
         endpoint, first = core()
@@ -161,8 +163,8 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             before = len(commands)
             await restarted.send("c", text_message_content("Blocked"), sender_label="Test")
             assert len(commands) == before
-            assert endpoint.writer is not None
-            endpoint._request = AsyncMock(  # type: ignore[method-assign]
+            assert endpoint.link is not None
+            endpoint.link.request = AsyncMock(  # type: ignore[method-assign]
                 return_value=WireMessage(
                     WireMessageKind.reconnect_result,
                     "ask",
@@ -174,7 +176,7 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                     ),
                 )
             )
-            await endpoint._reconnect(identity, endpoint.writer)
+            await endpoint._reconnect(identity, endpoint.link)
             await asyncio.wait_for(stop_entered.wait(), 1)
             if stop_before_inventory:
                 assert state.child is stopping_child

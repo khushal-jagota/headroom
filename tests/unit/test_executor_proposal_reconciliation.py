@@ -19,16 +19,16 @@ from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
-from planner.executor.codec import encode_value
-from planner.executor.contracts import (
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mutations import cli_mutation, write_ticket_mutation
+from planner.executor.protocol import (
     CliWrite,
     EnvelopeKind,
     JsonObject,
     OutboxEntry,
     QueuedEnvelope,
+    encode_value,
 )
-from planner.executor.mac_outbox import MacOutbox
-from planner.executor.mutations import cli_mutation, write_ticket_mutation
 from planner.executor.store import ExecutorStore
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data

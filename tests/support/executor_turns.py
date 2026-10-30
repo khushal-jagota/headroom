@@ -5,8 +5,7 @@ from collections.abc import Mapping
 
 from planner.core.db import connect
 from planner.execution_identity import AskKind, AskReference
-from planner.executor.codec import encode_value
-from planner.executor.contracts import JsonValue
+from planner.executor.protocol import JsonValue, encode_value
 from planner.executor.store import ExecutorStore
 
 

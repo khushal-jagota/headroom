@@ -11,7 +11,7 @@ from planner.conversation.events import (
     ToolCallStatus,
 )
 from planner.conversation.storage import ConversationStore
-from planner.executor.contracts import JsonObject, QueuedEnvelope
+from planner.executor.protocol import JsonObject, QueuedEnvelope
 
 
 def record_refused_write(

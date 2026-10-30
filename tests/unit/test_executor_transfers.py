@@ -15,9 +15,9 @@ import pytest
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import TRANSFER_CHUNK_BYTES
-from planner.executor.contracts import FileManifest, FileScope, FileSnapshot
 from planner.executor.files import copy_verified
-from planner.executor.transfers import GenerationTransfers
+from planner.executor.link_files import GenerationTransfers
+from planner.executor.protocol import FileManifest, FileScope, FileSnapshot
 
 
 def _manifest(data: bytes) -> FileManifest:
@@ -127,7 +127,7 @@ def test_snapshot_copy_cancellation_drains_thread_before_shutdown(
         assert finish.wait(5)
         copy_verified(source, destination, manifest)
 
-    monkeypatch.setattr("planner.executor.transfers.copy_verified", paused_copy)
+    monkeypatch.setattr("planner.executor.link_files.copy_verified", paused_copy)
 
     async def exercise() -> None:
         service = _service(tmp_path / "transfers")

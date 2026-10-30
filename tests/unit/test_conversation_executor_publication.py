@@ -23,14 +23,15 @@ from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
-from planner.executor.codec import encode_value, envelope_payload_digest
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     AnswerApplication,
     BackendEvent,
     BackendEventMethod,
     EnvelopeKind,
     JsonObject,
     QueuedEnvelope,
+    encode_value,
+    envelope_payload_digest,
 )
 from planner.executor.store import ExecutorStore
 
@@ -242,7 +243,7 @@ def test_restart_closes_native_request_before_initial_signal_snapshot(
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
     from planner.conversation.contracts import SignalSnapshot
-    from planner.executor.contracts import ChildCommand, CommandOutcome
+    from planner.executor.protocol import ChildCommand, CommandOutcome
     from planner.executor.remote import RemoteBackendChild
 
     path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
@@ -333,7 +334,7 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
     from planner.core.contracts import ErrorCode, PlannerError
-    from planner.executor.contracts import (
+    from planner.executor.protocol import (
         ChildCommand,
         ChildOperation,
         CommandDisposition,
