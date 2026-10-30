@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import logging
 import math
 import os
 import time
@@ -616,23 +615,9 @@ class MacExecutor:
     async def _replay(self) -> None:
         # Drain the pending prefix captured for this pass, not newly produced work.
         # Admit one head per conversation and refill capacity after every receipt.
-        # A blocked conversation retains its bytes without stopping other heads.
         async with self._replay_lock:
             ceilings = await asyncio.to_thread(self.spool.pending_sequence_ceilings)
-            tasks: dict[asyncio.Task[bool], str] = {}
-            blocked: set[str] = set()
-
-            async def submit(envelope: QueuedEnvelope) -> bool:
-                try:
-                    await self._replay_envelope(envelope)
-                    return True
-                except (TimeoutError, ConnectionError, BrokenPipeError, aiohttp.ClientError):
-                    raise
-                except (ValueError, OSError):
-                    logging.getLogger(__name__).exception(
-                        "executor conversation replay blocked: %s", envelope.conversation_id
-                    )
-                    return False
+            tasks: dict[asyncio.Task[None], str] = {}
 
             async def admit() -> None:
                 active = set(tasks.values())
@@ -641,9 +626,11 @@ class MacExecutor:
                         break
                     if (
                         envelope.sequence <= ceilings.get(envelope.conversation_id, 0)
-                        and envelope.conversation_id not in active | blocked
+                        and envelope.conversation_id not in active
                     ):
-                        tasks[asyncio.create_task(submit(envelope))] = envelope.conversation_id
+                        tasks[asyncio.create_task(self._replay_envelope(envelope))] = (
+                            envelope.conversation_id
+                        )
                         active.add(envelope.conversation_id)
 
             try:
@@ -651,9 +638,8 @@ class MacExecutor:
                 while tasks:
                     done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                     for task in done:
-                        conversation = tasks.pop(task)
-                        if not await task:
-                            blocked.add(conversation)
+                        tasks.pop(task)
+                        await task
                     await admit()
             finally:
                 for task in tasks:

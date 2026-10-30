@@ -77,6 +77,9 @@ Code paths: `src/planner/executor/skills.py`, `src/planner/executor/remote.py`,
 The Mac saves its authored work before transmission. Each submission keeps its
 identity and position within its conversation. The VPS commits the write and its
 first receipt together. If a receipt disappears, replay returns that first result.
+Permanent assignment or payload failures get a refused receipt, so the next item
+in that conversation can proceed. A lost connection, missing file bytes, or a busy
+database leaves the item pending for retry.
 Separate conversations retain separate order. The one retry timer drains existing
 work and does not create Tickets or other application work.
 

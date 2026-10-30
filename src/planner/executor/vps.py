@@ -82,6 +82,7 @@ from planner.executor.contracts import (
     JsonObject,
     LiveReadRequest,
     QueuedEnvelope,
+    ReceiptDisposition,
     ReconciliationInventory,
     ReconciliationResult,
     RemoteInputTransferFailed,
@@ -1177,11 +1178,33 @@ class ExecutorEndpoint:
     ) -> AcceptanceReceipt:
         previous = await settled_io(partial(self.store.preflight, envelope, identity=identity))
         if previous is not None:
-            if envelope.kind is EnvelopeKind.command_outcome:
+            if (
+                envelope.kind is EnvelopeKind.command_outcome
+                and previous.disposition is ReceiptDisposition.accepted
+            ):
                 await self._resolve_command(
                     TypeAdapter(CommandOutcome).validate_python(envelope.payload)
                 )
             return previous
+        try:
+            return await self._apply_envelope(envelope, identity)
+        except PlannerError as error:
+            if error.code is ErrorCode.gateway_offline:
+                raise
+            refusal = error
+        except ValueError as error:
+            refusal = PlannerError(ErrorCode.validation, str(error))
+
+        def refuse(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
+            raise refusal
+
+        return await settled_io(
+            partial(self.store.accept, envelope, refuse, now_ms(), identity=identity)
+        )
+
+    async def _apply_envelope(
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+    ) -> AcceptanceReceipt:
         if envelope.kind is EnvelopeKind.backend_event:
             event = TypeAdapter(BackendEvent).validate_python(envelope.payload)
             await settled_io(self._assignment, event.child)

@@ -1095,18 +1095,11 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
     asyncio.run(run())
 
 
-def test_replay_failure_blocks_only_its_conversation(
+def test_replay_protocol_error_surfaces_and_preserves_pending_conversation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
-        from planner.executor.contracts import (
-            AcceptanceReceipt,
-            ReceiptDisposition,
-            WireMessage,
-            WireMessageKind,
-        )
-
         executor = MacExecutor(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
@@ -1114,7 +1107,7 @@ def test_replay_failure_blocks_only_its_conversation(
             panels_server_url="https://unused",
         )
         executor._handshake_accepted = True
-        for conversation in ("c_a", "c_a", "c_b"):
+        for conversation in ("c_a", "c_a"):
             executor.spool.mint_envelope(
                 conversation_id=conversation, kind=EnvelopeKind.cli_write, payload={}
             )
@@ -1123,27 +1116,14 @@ def test_replay_failure_blocks_only_its_conversation(
         async def transport(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
             row = TypeAdapter(QueuedEnvelope).validate_python(payload)
             visited.append(row.conversation_id)
-            if row.conversation_id == "c_a":
-                raise ValueError("one conversation cannot be accepted")
-            return WireMessage(
-                WireMessageKind.receipt,
-                "reply",
-                as_object(
-                    AcceptanceReceipt(
-                        row.sender_id,
-                        row.submission_id,
-                        row.payload_sha256,
-                        ReceiptDisposition.accepted,
-                        {"original": True},
-                        1,
-                    )
-                ),
-            )
+            raise ValueError("invalid protocol response")
 
         monkeypatch.setattr(executor, "_request", transport)
-        await executor._replay()
-        assert visited == ["c_a", "c_b"]
-        assert [row.conversation_id for row in executor.spool.pending()] == ["c_a", "c_a"]
+        pending = executor.spool.pending()
+        with pytest.raises(ValueError, match="invalid protocol response"):
+            await executor._replay()
+        assert visited == ["c_a"]
+        assert executor.spool.pending() == pending
         executor.spool.close()
 
     asyncio.run(run())
