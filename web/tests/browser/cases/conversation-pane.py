@@ -1241,10 +1241,11 @@ def _run(browser, urls):
     )
     assert (
         model_picker.locator("button").evaluate_all(
-            "buttons => buttons.filter(button => button.tabIndex === 0).length"
+            "buttons => buttons.filter(button => !button.closest('form') && button.tabIndex === 0).length"
         )
         == 1
     )
+    assert model_picker.get_by_role("button", name="Use", exact=True).evaluate("button => button.tabIndex === 0")
     _settle_conversation_layout(page)
     page.mouse.move(0, 0)
     model_picker.locator('[data-conversation-picker-choice="sonnet"]').hover()
