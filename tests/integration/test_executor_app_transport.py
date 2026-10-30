@@ -383,8 +383,6 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
     """The same TLS host crosses held caller, native uncertainty, core ownership and replay."""
     import json
 
-    from pydantic import TypeAdapter
-
     from planner.conversation.backends.contracts import PromptWriteFailed, TurnToken
     from planner.conversation.contracts import (
         HeldPromptPromotionMode,
@@ -394,33 +392,10 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
     from planner.conversation.events import ConversationTurnEnding
     from planner.conversation.message_content import text_message_content
     from planner.core.db import connect
-    from planner.executor.contracts import (
-        AcceptanceReceipt,
-        EnvelopeKind,
-        ExecutorIdentity,
-        QueuedEnvelope,
-        WireMessageKind,
-    )
-    from planner.executor.mac import as_object
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        outcome_waiting, release_outcome = asyncio.Event(), asyncio.Event()
         try:
-            accept = harness.endpoint._accept_envelope
-
-            async def hold_uncertain_outcome(
-                envelope: QueuedEnvelope, identity: ExecutorIdentity
-            ) -> AcceptanceReceipt:
-                if (
-                    envelope.kind is EnvelopeKind.command_outcome
-                    and envelope.payload.get("disposition") == "uncertain"
-                ):
-                    outcome_waiting.set()
-                    await release_outcome.wait()
-                return await accept(envelope, identity)
-
-            monkeypatch.setattr(harness.endpoint, "_accept_envelope", hold_uncertain_outcome)
             assert harness.native.sink is not None and harness.native.turn is not None
             first_turn = harness.native.turn
             await harness.system.send(
@@ -478,8 +453,6 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
                 lambda: harness.events("prompt_delivery_uncertain") == 1,
                 "native held uncertainty did not become durable",
             )
-            await asyncio.wait_for(outcome_waiting.wait(), 2)
-            # The direct result must fence possible delivery before FIFO acceptance.
             state = await harness.system._conversation_state("c_scripted")
             assert state is not None
             assert state.child_is_quarantined and state.reserved_turn is not None
@@ -501,34 +474,21 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
                 )
             finally:
                 connection.close()
-            row = harness.mac.spool._db.execute(
-                "SELECT envelope_json FROM envelopes WHERE "
-                "json_extract(envelope_json, '$.payload.disposition')='uncertain'",
-            ).fetchone()
-            assert row is not None
-            envelope = TypeAdapter(QueuedEnvelope).validate_json(row[0])
-            assert (
-                harness.endpoint.store.lookup_receipt(envelope.sender_id, envelope.submission_id)
-                is None
-            )
-            release_outcome.set()
-            await eventually(
-                lambda: (
-                    harness.endpoint.store.lookup_receipt(
-                        envelope.sender_id, envelope.submission_id
-                    )
-                    is not None
-                ),
-                "uncertain outcome did not receive its canonical receipt",
-            )
-            replay = await harness.mac._request(WireMessageKind.envelope, as_object(envelope))
-            assert replay.kind is WireMessageKind.receipt
+            uncertain = [
+                outcome for outcome in harness.mac.registry.outcomes.values()
+                if outcome.disposition.value == "uncertain"
+            ]
+            assert len(uncertain) == 1
+            outcome = uncertain[0]
+            assert harness.mac.registry.ask((outcome.command_id,))[0].outcome == outcome
+            assert await harness.mac.registry.execute_command(
+                harness.mac.registry._commands[outcome.command_id]
+            ) == outcome
             assert harness.native.prompt_count == 2
             assert harness.events("prompt_delivery_uncertain") == 1
             remaining = await harness.system.held_prompts("c_scripted")
             assert any(item.sender_message_id == "must-not-drain" for item in remaining)
         finally:
-            release_outcome.set()
             await harness.close()
 
     asyncio.run(run())

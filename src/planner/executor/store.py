@@ -28,6 +28,7 @@ from planner.executor.contracts import (
     AskReachability,
     AskReference,
     ChildCommand,
+    ChildInventory,
     ChildOperation,
     ChildReference,
     CommandOutcome,
@@ -40,8 +41,6 @@ from planner.executor.contracts import (
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
-    ReconciliationInventory,
-    ReconciliationResult,
     TransactionalWriter,
 )
 from planner.executor.logic.reconciliation import (
@@ -190,7 +189,7 @@ class ExecutorStore:
     ) -> None:
         # A refused domain command is an ordinary answer. Only a required native
         # publication can invalidate evidence that cleanup waits for.
-        if envelope.kind in (EnvelopeKind.backend_event, EnvelopeKind.command_outcome):
+        if envelope.kind in (EnvelopeKind.backend_event, EnvelopeKind.child_stopped):
             child_payload = envelope.payload.get("child")
         elif envelope.kind is EnvelopeKind.answer_application:
             ask = envelope.payload.get("ask")
@@ -258,7 +257,7 @@ class ExecutorStore:
 
     def has_accepted_command_outcome(self, outcome: CommandOutcome) -> bool:
         """A retained result alone does not prove its original FIFO publication."""
-        submission_id = "outcome_" + hashlib.sha256(outcome.command_id.encode()).hexdigest()
+        submission_id = "stopped_" + hashlib.sha256(outcome.command_id.encode()).hexdigest()
         connection = connect(self.db_path)
         try:
             row = connection.execute(
@@ -282,7 +281,7 @@ class ExecutorStore:
                     conversation_id=outcome.child.conversation_id,
                     sequence=receipt["sequence"],
                     submission_id=submission_id,
-                    kind=EnvelopeKind.command_outcome,
+                    kind=EnvelopeKind.child_stopped,
                 )
                 if digest == receipt["payload_sha256"]:
                     return True
@@ -559,78 +558,22 @@ class ExecutorStore:
             ),
         )
 
-    def reconcile(self, inventory: ReconciliationInventory, now_ms: int) -> ReconciliationResult:
-        receipts: list[AcceptanceReceipt] = []
-        answers: list[DurableAnswer] = []
-        evidence: list[AskEvidence] = []
-        acknowledged_commands: list[str] = []
+    def observe_children(
+        self, identity: ExecutorIdentity, children: tuple[ChildInventory, ...], now_ms: int
+    ) -> None:
+        """Update callback reachability once, from this connection's exact live children."""
         with self._transaction() as connection:
-            self._connected(connection, inventory.identity)
-            for queued in inventory.queued_envelopes:
-                row = connection.execute(
-                    "SELECT * FROM executor_receipts WHERE sender_id=? AND submission_id=?",
-                    (queued.sender_id, queued.submission_id),
-                ).fetchone()
-                if row:
-                    if (
-                        row["payload_sha256"] != queued.payload_sha256
-                        or row["conversation_id"] != queued.conversation_id
-                        or row["sequence"] != queued.sequence
-                    ):
-                        raise _invalid("Reconciliation submission conflicts with receipt")
-                    receipts.append(self._receipt(row))
-            for outcome in inventory.retained_command_outcomes:
-                recorded = connection.execute(
-                    "SELECT outcome_json FROM executor_command_outcomes "
-                    "WHERE executor_incarnation=? AND command_id=?",
-                    (outcome.child.executor_incarnation, outcome.command_id),
-                ).fetchone()
-                if recorded is not None:
-                    if recorded[0] != _record(outcome):
-                        raise _invalid("Command outcome conflicts with first result")
-                    if not self.is_retirement_outcome(outcome) or self.has_accepted_command_outcome(
-                        outcome
-                    ):
-                        acknowledged_commands.append(outcome.command_id)
+            self._connected(connection, identity)
             for row in connection.execute("SELECT * FROM executor_asks").fetchall():
                 ask = _parse(AskReference, row["reference_json"])
                 reachability = preserved_reachability(
-                    AskReachability(row["reachability"]),
-                    callback_reachability(ask, inventory.children),
+                    AskReachability(row["reachability"]), callback_reachability(ask, children)
                 )
                 connection.execute(
                     "UPDATE executor_asks SET connection_generation=?,reachability=?,"
-                    "observed_at_ms=? "
-                    "WHERE ask_key=?",
-                    (
-                        inventory.identity.connection_generation,
-                        reachability.value,
-                        now_ms,
-                        row["ask_key"],
-                    ),
+                    "observed_at_ms=? WHERE ask_key=?",
+                    (identity.connection_generation, reachability.value, now_ms, row["ask_key"]),
                 )
-                evidence.append(
-                    AskEvidence(
-                        ask,
-                        inventory.identity.connection_generation,
-                        reachability,
-                        now_ms,
-                        row["answer_id"],
-                        row["applied_at_mac_ms"],
-                    )
-                )
-                if row["answer_id"] and row["applied_at_mac_ms"] is None:
-                    # Only surviving exact callbacks receive stored answers. Lost answers
-                    # remain durable, visible and unresolved; never target a replacement.
-                    if reachability == AskReachability.reachable:
-                        answers.append(self._answer(row))
-        return ReconciliationResult(
-            inventory.identity,
-            tuple(receipts),
-            tuple(answers),
-            tuple(evidence),
-            tuple(acknowledged_commands),
-        )
 
     @staticmethod
     def _answer(row: sqlite3.Row) -> DurableAnswer:

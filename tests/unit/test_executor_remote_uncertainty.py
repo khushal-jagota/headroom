@@ -309,9 +309,14 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
             if command.operation is ChildOperation.write_prompt
             else {},
         )
+        if (
+            command.operation is not ChildOperation.stop
+            or disposition is not CommandDisposition.succeeded
+        ):
+            return outcome
         sequence += 1
         payload = cast(JsonObject, encode_value(outcome))
-        submission = "outcome_" + hashlib.sha256(command.command_id.encode()).hexdigest()
+        submission = "stopped_" + hashlib.sha256(command.command_id.encode()).hexdigest()
         digest = envelope_payload_digest(
             payload,
             (),
@@ -319,7 +324,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
             conversation_id=command.child.conversation_id,
             sequence=sequence,
             submission_id=submission,
-            kind=EnvelopeKind.command_outcome,
+            kind=EnvelopeKind.child_stopped,
         )
         store.accept(
             QueuedEnvelope(
@@ -327,7 +332,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
                 command.child.conversation_id,
                 sequence,
                 submission,
-                EnvelopeKind.command_outcome,
+                EnvelopeKind.child_stopped,
                 payload,
                 digest,
             ),
@@ -378,11 +383,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         await system.kill("c_retry")
         await system.wait_until_quiescent()
         assert system._conversations["c_retry"].child_is_quarantined
-        original_rows = tuple(
-            tmp_db.execute(
-                "SELECT outcome_json FROM executor_command_outcomes ORDER BY rowid"
-            ).fetchall()
-        )
+        assert tmp_db.execute("SELECT count(*) FROM executor_command_outcomes").fetchone()[0] == 0
         await system.shutdown()
         restored = core(restored=True)
         await restored.kill("c_retry")
@@ -390,14 +391,9 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         assert not restored._conversations["c_retry"].child_is_quarantined
         assert store.child_assignment(references[0]) is None
         assert stops == 2
-        assert (
-            tuple(
-                tmp_db.execute(
-                    "SELECT outcome_json FROM executor_command_outcomes ORDER BY rowid LIMIT 3"
-                ).fetchall()
-            )
-            == original_rows
-        )
+        recorded = tmp_db.execute("SELECT outcome_json FROM executor_command_outcomes").fetchall()
+        assert len(recorded) == 1
+        assert json.loads(recorded[0][0])["disposition"] == "succeeded"
         # A separate explicit send uses the same conversation with a fresh identity.
         restored._backend_child_factories = {key: factory for key in ConversationBackendKey}
         await restored.send("c_retry", text_message_content("fresh"), sender_label="Test")
@@ -433,7 +429,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
 
         factory.send_command = observe_cleanup
         original_admission = healthy._admit_dispatch_messages
-        healthy._admit_dispatch_messages = suppress  # type: ignore[method-assign]
+        healthy._admit_dispatch_messages = suppress
         from planner.conversation.contracts import PromptDeliverySuppressed
 
         result = await healthy.send(
@@ -445,7 +441,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         assert state.child is None and not state.child_is_quarantined
         assert store.child_assignment(references[-1]) is None
         factory.send_command = original_native
-        healthy._admit_dispatch_messages = original_admission  # type: ignore[method-assign]
+        healthy._admit_dispatch_messages = original_admission
 
         from planner.conversation.backends.contracts import NeedsRebind
         from planner.conversation.events import ConversationTurnEnding

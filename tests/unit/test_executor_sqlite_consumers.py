@@ -183,7 +183,7 @@ def test_replay_drains_captured_heads_and_quiescence_counts_without_full_invento
         monkeypatch.setattr(mac, "_request", request)
         try:
             assert mac.registry._quiescence_counts() == (0, 0, 0, 4)
-            assert not mac.registry.inventory(mac.identity, include_pending=False).queued_envelopes
+            assert mac.registry.inventory() == ()
             await asyncio.wait_for(mac._replay(), 2)
             assert visited == {"c_one": [1, 2], "c_two": [1, 2]}
             if produce:

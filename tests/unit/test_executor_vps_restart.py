@@ -45,7 +45,7 @@ from planner.executor.contracts import (
     CommandDisposition,
     CommandOutcome,
     ExecutorIdentity,
-    ReconciliationInventory,
+    ReconnectResult,
     WireMessage,
     WireMessageKind,
 )
@@ -159,22 +159,19 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             await restarted.send("c", text_message_content("Blocked"), sender_label="Test")
             assert len(commands) == before
             assert endpoint.writer is not None
-            await endpoint._handle_message(
-                WireMessage(
-                    WireMessageKind.reconcile_inventory,
-                    "inventory",
+            endpoint._request = AsyncMock(  # type: ignore[method-assign]
+                return_value=WireMessage(
+                    WireMessageKind.reconnect_result,
+                    "ask",
                     cast(
                         Any,
                         encode_value(
-                            ReconciliationInventory(
-                                identity, (ChildInventory(old, token, (ask,), ()),), (), ()
-                            )
+                            ReconnectResult(identity, (), (ChildInventory(old, token, (ask,), ()),))
                         ),
                     ),
-                ),
-                identity,
-                endpoint.writer,
+                )
             )
+            await endpoint._reconnect(identity, endpoint.writer)
             await asyncio.wait_for(stop_entered.wait(), 1)
             if stop_before_inventory:
                 assert state.child is stopping_child

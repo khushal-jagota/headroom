@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from planner.executor.configuration import PROTOCOL_VERSION, TRANSFER_CHUNK_BYTES
+from planner.executor.configuration import (
+    PROTOCOL_VERSION,
+    SPOOL_FORMAT_VERSION,
+    TRANSFER_CHUNK_BYTES,
+)
 from planner.executor.contracts import ExecutorIdentity, FileManifest, FileScope, FileSnapshot
 from planner.executor.files import copy_verified
 from planner.executor.transfers import GenerationTransfers
@@ -31,7 +35,9 @@ def _manifest(data: bytes) -> FileManifest:
 
 def _service(root: Path, valid: Callable[[], bool] = lambda: True) -> GenerationTransfers:
     return GenerationTransfers(
-        ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "executor", 1), root, valid
+        ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "executor", 1),
+        root,
+        valid,
     )
 
 

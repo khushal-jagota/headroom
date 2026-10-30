@@ -1567,7 +1567,6 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         ChildInventory,
         ChildReference,
         ExecutorIdentity,
-        ReconciliationInventory,
     )
     from planner.executor.store import ExecutorStore
 
@@ -1582,15 +1581,11 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     )
     for ask in asks:
         executor_store.publish_ask(ask, ("allow", "deny"), 100)
-    executor_store.reconcile(
-        ReconciliationInventory(
-            identity,
-            (
-                ChildInventory(asks[1].child, asks[1].turn, (), ()),
-                ChildInventory(asks[2].child, asks[2].turn, (asks[2],), ()),
-            ),
-            (),
-            (),
+    executor_store.observe_children(
+        identity,
+        (
+            ChildInventory(asks[1].child, asks[1].turn, (), ()),
+            ChildInventory(asks[2].child, asks[2].turn, (asks[2],), ()),
         ),
         101,
     )

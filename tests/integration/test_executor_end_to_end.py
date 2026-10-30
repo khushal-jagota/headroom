@@ -28,8 +28,6 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
-    ComposerCatalogEntry,
-    ComposerCatalogEntryKind,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
@@ -196,10 +194,6 @@ class CutReceiptEndpoint(ExecutorEndpoint):
             application: JsonValue = None
             if envelope.kind is EnvelopeKind.answer_application:
                 application = envelope.payload
-            elif envelope.kind is EnvelopeKind.command_outcome:
-                result = envelope.payload.get("result")
-                if isinstance(result, dict):
-                    application = result.get("answer_application")
             if isinstance(application, dict):
                 ask = application.get("ask")
                 if isinstance(ask, dict) and ask.get("kind") == "user_input":
@@ -343,7 +337,6 @@ def make_core(endpoint: ExecutorEndpoint) -> SqliteProcessConversationSystem:
         store=ConversationStore(endpoint.db_path),
         backend_child_factories={key: endpoint.factory for key in ConversationBackendKey},
         message_files=ConversationMessageFiles(endpoint.db_path),
-
     )
     # All transport fixtures are native. Local discovery is never called here.
     system._catalog_endpoint = endpoint
@@ -761,7 +754,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                     writes[0].arguments["sender_content"] == writes[1].arguments["sender_content"]
                 )
                 assert all(
-                    harness.endpoint.store.has_accepted_command_outcome(outcome)
+                    harness.mac.registry.ask((outcome.command_id,))[0].outcome == outcome
                     for outcome in (refused, accepted)
                 )
             assert sum(len(prompts(client)) for client in clients) == 3
@@ -804,9 +797,9 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
         async def write_prompt(
             self, turn_token: TurnToken, content: MessageContent, **arguments: object
         ) -> BackendPromptAccepted:
-            self.delivered_text.append("\n".join(
-                piece.text for piece in content if isinstance(piece, MessageText)
-            ))
+            self.delivered_text.append(
+                "\n".join(piece.text for piece in content if isinstance(piece, MessageText))
+            )
             return await super().write_prompt(turn_token, content, **arguments)
 
     async def run() -> None:
@@ -844,10 +837,17 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                 selection_kind="legacy_unclassified",
             )
             from planner.runtime.conversation_start import resolve_ticket_launch_selection
+
             _, binding = resolve_ticket_launch_selection(conn, ticket)
+            from tests.support.executor_catalog import ScriptedCatalogObserver
+
             observer = harness.mac._catalog_observer
+            assert isinstance(observer, ScriptedCatalogObserver)
             snapshots = await harness.system.destination_backend_snapshot(
-                ConversationBackendKey.codex, binding, "macos", refresh=True,
+                ConversationBackendKey.codex,
+                binding,
+                "macos",
+                refresh=True,
             )
             assert snapshots.available_models and observer.calls > 0
             observer.calls = 0
@@ -919,8 +919,10 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
             assert observer.calls == 0
             assert second.sink is not None and second.turn is not None
             await second.sink.turn_ended(
-                second.turn, ending=ConversationTurnEnding.completed,
-                error_summary=None, standard_error_tail=None,
+                second.turn,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
             )
             await eventually(
                 lambda: harness.system._conversations[conversation_id].phase.value == "idle",
@@ -928,23 +930,36 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
             )
             async with conversation_link_lock(f"ticket:{ticket.id}"):
                 changed = await send_to_ticket_conversation(
-                    harness.system, conn, ticket.id, text_message_content("Second exact choice"),
+                    harness.system,
+                    conn,
+                    ticket.id,
+                    text_message_content("Second exact choice"),
                     conversation_id=conversation_id,
-                    runs_under=ConversationStartOverrides(model="gpt-6.1-terra",
-                        reasoning_effort="future-effort", reasoning_effort_is_set=True),
-                    sender_label="Test", sender=CHIEF_PRINCIPAL,
-                    recipient=Principal(PrincipalKind.ticket, ticket.id), now=int(time.time()),
+                    runs_under=ConversationStartOverrides(
+                        model="gpt-6.1-terra",
+                        reasoning_effort="future-effort",
+                        reasoning_effort_is_set=True,
+                    ),
+                    sender_label="Test",
+                    sender=CHIEF_PRINCIPAL,
+                    recipient=Principal(PrincipalKind.ticket, ticket.id),
+                    now=int(time.time()),
                 )
             assert second.prompt_count == 2, changed
             assert "Second exact choice" in second.delivered_text[1]
             assert observer.calls == 0
-            writes = [command for command in harness.mac.registry._commands.values()
-                      if command.child.conversation_id == conversation_id
-                      and command.operation is ChildOperation.write_prompt]
+            writes = [
+                command
+                for command in harness.mac.registry._commands.values()
+                if command.child.conversation_id == conversation_id
+                and command.operation is ChildOperation.write_prompt
+            ]
             assert writes[-1].arguments["model_change"] == "gpt-6.1-terra"
             assert writes[-1].arguments["reasoning_effort_change"] == "future-effort"
-            print(f"synthetic native refresh-to-first-send: {first_delivery_at-refreshed_at:.3f}s; "
-                  f"change-to-second-send: {time.monotonic()-first_delivery_at:.3f}s")
+            print(
+                f"synthetic native refresh-to-first-send: {first_delivery_at - refreshed_at:.3f}s; "
+                f"change-to-second-send: {time.monotonic() - first_delivery_at:.3f}s"
+            )
             assert harness.mac.registry.children[first.reference.child_id] is first
             assert harness.native.stop_count == 0
             assert harness.native.sink is not None and harness.native.turn is not None
@@ -1098,410 +1113,6 @@ def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
     asyncio.run(run())
 
 
-def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Real receipts keep producing work until ready, without exhausting the queue."""
-    from planner.executor import mac as mac_module
-    from planner.tickets import data
-
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
-        first_inventory, release_inventory = asyncio.Event(), asyncio.Event()
-        try:
-            child = next(iter(harness.mac.registry.children.values()))
-            assert child.ticket_id is not None and harness.native.sink is not None
-            sink = harness.native.sink
-            generation = harness.mac.identity.connection_generation
-            pass_number = 0
-            producing = True
-            produced: dict[int, list[QueuedEnvelope]] = {0: [], 1: [], 2: []}
-            accepted: list[tuple[QueuedEnvelope, AcceptanceReceipt]] = []
-            pre_ready: dict[int, list[QueuedEnvelope]] = {1: [], 2: []}
-            retained_at_ready: list[QueuedEnvelope] = []
-            send = harness.endpoint._send
-            request = harness.mac._request
-            accept = harness.endpoint._accept_envelope
-
-            async def catalog() -> None:
-                number = sum(len(entries) for entries in produced.values())
-                # An old drain-until-empty implementation fails promptly, rather
-                # than running a background producer indefinitely after timeout.
-                assert number < 24, "pre-ready replay kept admitting newly produced heads"
-                await sink.composer_catalog_reported(
-                    (
-                        ComposerCatalogEntry(
-                            ComposerCatalogEntryKind.command,
-                            f"/catalog_{number}",
-                            f"/catalog_{number}",
-                            "Reconnect production",
-                        ),
-                    )
-                )
-                produced[pass_number].append(harness.mac.spool.pending()[-1])
-
-            async def observe_request(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-                nonlocal pass_number, producing
-                response = await request(kind, payload)
-                if kind is WireMessageKind.reconciliation_ready:
-                    # Observe the actual ACK before this session starts steady replay.
-                    retained_at_ready.extend(harness.mac.spool.pending())
-                    producing = False
-                if (
-                    harness.mac.identity.connection_generation > generation
-                    and kind is WireMessageKind.reconcile_inventory
-                    and not payload["children"]
-                    and not payload["retained_command_outcomes"]
-                    and pass_number < 2
-                ):
-                    pass_number += 1
-                    if pass_number == 1:
-                        first_inventory.set()
-                        await release_inventory.wait()
-                return response
-
-            async def observe_accept(
-                envelope: QueuedEnvelope, identity: ExecutorIdentity
-            ) -> AcceptanceReceipt:
-                receipt = await accept(envelope, identity)
-                accepted.append((envelope, receipt))
-                if producing:
-                    pre_ready[pass_number].append(envelope)
-                return receipt
-
-            async def producing_send(message: WireMessage) -> None:
-                if message.kind is WireMessageKind.receipt and producing:
-                    await catalog()
-                await send(message)
-
-            monkeypatch.setattr(harness.mac, "_request", observe_request)
-            monkeypatch.setattr(harness.endpoint, "_accept_envelope", observe_accept)
-            monkeypatch.setattr(harness.endpoint, "_send", producing_send)
-            assert harness.endpoint.writer is not None
-            harness.endpoint.writer.close()
-            await asyncio.wait_for(first_inventory.wait(), 5)
-            await catalog()
-            # Submit through the authenticated native Worker path while reconnect
-            # is paused at a real inventory response, before either replay pass.
-            from planner.executor import ipc_client
-
-            monkeypatch.setattr(mac_module, "CLI_RESULT_TIMEOUT_SECONDS", 0.2)
-            monkeypatch.setattr(ipc_client, "CLI_RESULT_TIMEOUT_SECONDS", 0.2)
-            monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(harness.mac.paths.root))
-            monkeypatch.setenv("PLAN_EXECUTOR_CHILD_ID", child.reference.child_id)
-            monkeypatch.setenv("PLAN_EXECUTOR_CAPABILITY", child.capability)
-            response = await asyncio.to_thread(
-                ipc_client.request,
-                IpcOperation.write,
-                {
-                    "operation": "ticket.edit",
-                    "arguments": {
-                        "ticket_id": child.ticket_id,
-                        "body": {"recap": "Durable reconnect result"},
-                    },
-                },
-            )
-            assert response.queued is not None and response.error is None
-            write = next(
-                entry
-                for entry in harness.mac.spool.pending()
-                if entry.submission_id == response.queued.submission_id
-            )
-            # Lookup-only retry cannot change the envelope or allocate a sequence.
-            retry = await asyncio.to_thread(
-                ipc_client.request, IpcOperation.retry, {"submission_id": write.submission_id}
-            )
-            assert retry.unconfirmed is not None and retry.unconfirmed.publication == "queued"
-            publication = harness.mac.spool.lookup_publication(write.submission_id)
-            assert publication is not None and publication.envelope == write
-            release_inventory.set()
-            await eventually(
-                lambda: harness.mac.state is ConnectionState.ready and bool(retained_at_ready),
-                "Continuous production prevented readiness with retained work",
-            )
-            assert pass_number == 2
-            assert produced[1] and produced[2]
-            assert {write.submission_id, produced[1][0].submission_id} <= {
-                entry.submission_id for entry in pre_ready[1]
-            }
-            assert {entry.submission_id for entry in produced[1][1:]} <= {
-                entry.submission_id for entry in pre_ready[2]
-            }
-            # First-pass additions join pass two; second-pass additions survive
-            # both passes and are still pending when the ready response arrives.
-            assert {entry.submission_id for entry in produced[2]} <= {
-                entry.submission_id for entry in retained_at_ready
-            }
-            await eventually(
-                lambda: not harness.mac.spool.pending(), "retained suffix did not drain after ready"
-            )
-            sequences = [entry.sequence for entry, _ in accepted]
-            assert sequences == sorted(set(sequences))
-            assert {entry.submission_id for entries in produced.values() for entry in entries} <= {
-                entry.submission_id for entry, _ in accepted
-            }
-            receipt = harness.endpoint.store.lookup_receipt(write.sender_id, write.submission_id)
-            assert receipt is not None and receipt.disposition is ReceiptDisposition.accepted
-            assert receipt.payload_sha256 == write.payload_sha256
-            assert sum(entry.submission_id == write.submission_id for entry, _ in accepted) == 1
-            retry = await asyncio.to_thread(
-                ipc_client.request, IpcOperation.retry, {"submission_id": write.submission_id}
-            )
-            assert retry.unconfirmed is not None
-            assert retry.unconfirmed.publication == "acknowledged"
-            connection = connect(harness.endpoint.db_path)
-            try:
-                ticket = data.read_ticket(connection, child.ticket_id)
-                assert ticket.recap == "Durable reconnect result"
-            finally:
-                connection.close()
-            # A repeated delivery returns the immutable first receipt rather than
-            # executing the canonical writer a second time.
-            from planner.executor import vps as vps_module
-
-            def duplicate_effect(*arguments: object, **keywords: object) -> JsonObject:
-                raise AssertionError("duplicate submission invoked the canonical writer")
-
-            monkeypatch.setattr(vps_module, "write_ticket_mutation", duplicate_effect)
-            assert await harness.endpoint.accept_envelope(write, harness.mac.identity) == receipt
-            assert harness.native.start_count == harness.native.prompt_count == 1
-            assert next(iter(harness.mac.registry.children.values())) is child
-        finally:
-            release_inventory.set()
-            await harness.close()
-
-    asyncio.run(run())
-
-
-def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Actual adapter admission feeds the ordinary sink, spool, and both replay passes.
-
-    Source parsing/order belongs to the client bench. This connected case replaces
-    only snapshot reads, so it isolates duplicate admission at the durable boundary.
-    """
-    from tests.support.conversation_codex_app_server_bench import (
-        _scripted_child,
-    )
-
-    from planner.conversation.backends.codex_app_server.adapter import _CatalogSnapshot
-    from planner.executor import mac as mac_module
-    from planner.tickets import data
-
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
-        first_inventory, release_inventory = asyncio.Event(), asyncio.Event()
-        try:
-            registered = next(iter(harness.mac.registry.children.values()))
-            assert registered.ticket_id is not None
-            assert harness.native.sink is not None and harness.native.turn is not None
-            sink, turn = harness.native.sink, harness.native.turn
-            generation = harness.mac.identity.connection_generation
-            snapshot = _CatalogSnapshot()
-            pass_number = 0
-            produced: dict[int, list[QueuedEnvelope]] = {0: [], 1: [], 2: []}
-            accepted: list[tuple[QueuedEnvelope, AcceptanceReceipt]] = []
-            retained_at_ready: list[QueuedEnvelope] = []
-            request = harness.mac._request
-            accept = harness.endpoint._accept_envelope
-            send = harness.endpoint._send
-
-            def read_snapshot(*_sources: object) -> _CatalogSnapshot:
-                return snapshot
-
-            # Reuse the bench constructor without starting another process. Its
-            # real adapter publishes into the registry's ordinary backend sink.
-            workspace = tmp_path / "catalog-producer"
-            workspace.mkdir()
-            async with _scripted_child(workspace, script={}) as bench:
-                adapter = bench.child
-                adapter._sink = sink
-                monkeypatch.setattr(
-                    "planner.conversation.backends.codex_app_server.adapter._catalog_snapshot",
-                    read_snapshot,
-                )
-
-                async def publish_change(token: str) -> None:
-                    nonlocal snapshot
-                    snapshot = _CatalogSnapshot(
-                        entries=(
-                            ComposerCatalogEntry(
-                                ComposerCatalogEntryKind.command, token, token, "Real change"
-                            ),
-                        )
-                    )
-                    await adapter._publish_catalog()
-                    produced[pass_number].append(harness.mac.spool.pending()[-1])
-                    await sink.agent_message_completed(
-                        turn, text_message_content(f"retained pass {pass_number}")
-                    )
-                    produced[pass_number].append(harness.mac.spool.pending()[-1])
-
-                async def observe_request(
-                    kind: WireMessageKind, payload: JsonObject
-                ) -> WireMessage:
-                    nonlocal pass_number
-                    response = await request(kind, payload)
-                    if kind is WireMessageKind.reconciliation_ready:
-                        # The session cannot drain its retained suffix before this returns.
-                        assert pass_number == 2
-                        retained_at_ready.extend(harness.mac.spool.pending())
-                    if (
-                        harness.mac.identity.connection_generation > generation
-                        and kind is WireMessageKind.reconcile_inventory
-                        and not payload["children"]
-                        and not payload["retained_command_outcomes"]
-                        and pass_number < 2
-                    ):
-                        pass_number += 1
-                        if pass_number == 1:
-                            first_inventory.set()
-                            await release_inventory.wait()
-                    return response
-
-                async def observe_accept(
-                    envelope: QueuedEnvelope, identity: ExecutorIdentity
-                ) -> AcceptanceReceipt:
-                    receipt = await accept(envelope, identity)
-                    accepted.append((envelope, receipt))
-                    return receipt
-
-                async def produce_during_replay(message: WireMessage) -> None:
-                    if (
-                        message.kind is WireMessageKind.receipt
-                        and pass_number in (1, 2)
-                        and not produced[pass_number]
-                    ):
-                        await publish_change(f"/changed_in_pass_{pass_number}")
-                    await send(message)
-
-                monkeypatch.setattr(harness.mac, "_request", observe_request)
-                monkeypatch.setattr(harness.endpoint, "_accept_envelope", observe_accept)
-                monkeypatch.setattr(harness.endpoint, "_send", produce_during_replay)
-                assert harness.endpoint.writer is not None
-                harness.endpoint.writer.close()
-                await asyncio.wait_for(first_inventory.wait(), 5)
-                assert not harness.endpoint.ready
-                assert not harness.mac.spool.pending()
-                await adapter._publish_catalog()  # Initial empty publication is real work.
-                initial = harness.mac.spool.pending()
-                assert len(initial) == 1
-                produced[0].extend(initial)
-                for _ in range(300):
-                    await adapter._publish_catalog()
-                # Equality creates no durable sequence ahead of the canonical write
-                # or the replay prefix. No queue reset/filter supplies this result.
-                assert harness.mac.spool.pending() == initial
-                monkeypatch.setattr(mac_module, "CLI_RESULT_TIMEOUT_SECONDS", 0.02)
-                write_request = IpcRequest(
-                    "equal_catalog_reconnect_recap",
-                    IpcOperation.write,
-                    registered.reference.child_id,
-                    registered.capability,
-                    {
-                        "operation": "ticket.edit",
-                        "arguments": {
-                            "ticket_id": registered.ticket_id,
-                            "body": {"recap": "Catalog duplicates do not precede this write"},
-                        },
-                    },
-                )
-                response = await harness.mac.handle_ipc(write_request)
-                if response.unconfirmed is not None:
-                    # The short observer budget can expire before durable publication.
-                    # Observe that original identity, then use lookup-only retry.
-                    assert response.error is None
-                    assert response.unconfirmed.publication == "preparing"
-                    assert response.unconfirmed.submission_id == write_request.request_id
-                    await eventually(
-                        lambda: any(
-                            row.submission_id == write_request.request_id
-                            for row in harness.mac.spool.pending()
-                        ),
-                        "Canonical write did not reach the durable spool",
-                    )
-                    response = await harness.mac.handle_ipc(
-                        IpcRequest(
-                            "equal_catalog_reconnect_recap_retry",
-                            IpcOperation.retry,
-                            registered.reference.child_id,
-                            registered.capability,
-                            {"submission_id": write_request.request_id},
-                        )
-                    )
-                    assert response.request_id == "equal_catalog_reconnect_recap_retry"
-                    assert response.error is None
-                    assert response.unconfirmed is not None
-                    assert response.unconfirmed.publication == "queued"
-                    assert response.unconfirmed.submission_id == write_request.request_id
-                    queued_submission_id = response.unconfirmed.submission_id
-                else:
-                    assert response.queued is not None and response.error is None
-                    queued_submission_id = response.queued.submission_id
-                write = harness.mac.spool.pending()[-1]
-                assert write.submission_id == queued_submission_id
-                assert write.sequence == initial[0].sequence + 1
-                assert len(harness.mac.spool.pending()) == 2
-                release_inventory.set()
-                await eventually(
-                    lambda: harness.mac.state is ConnectionState.ready and bool(retained_at_ready),
-                    "Catalog replay did not complete both phases",
-                )
-                assert produced[1] and produced[2]
-                assert {row.submission_id for row in produced[2]} <= {
-                    row.submission_id for row in retained_at_ready
-                }
-                await eventually(
-                    lambda: not harness.mac.spool.pending(), "Retained work did not drain"
-                )
-                sequences = [row.sequence for row, _ in accepted]
-                expected = [*produced[0], write, *produced[1], *produced[2]]
-                assert sequences == [row.sequence for row in expected]
-                assert len(sequences) == len(set(sequences))
-                assert all(
-                    receipt.disposition is ReceiptDisposition.accepted for _, receipt in accepted
-                )
-                receipt = harness.endpoint.store.lookup_receipt(
-                    write.sender_id, write.submission_id
-                )
-                assert receipt is not None and receipt.disposition is ReceiptDisposition.accepted
-                connection = connect(harness.endpoint.db_path)
-                try:
-                    assert data.read_ticket(connection, registered.ticket_id).recap == (
-                        "Catalog duplicates do not precede this write"
-                    )
-                finally:
-                    connection.close()
-                # The same producer retains its marker over the real relay reconnect.
-                before = len(accepted)
-                await adapter._publish_catalog()
-                assert not harness.mac.spool.pending() and len(accepted) == before
-                assert harness.native.start_count == harness.native.prompt_count == 1
-                assert next(iter(harness.mac.registry.children.values())) is registered
-                # A new adapter constructor starts unpublished even for equal entries.
-                new_workspace = tmp_path / "new-catalog-producer"
-                new_workspace.mkdir()
-                async with _scripted_child(new_workspace, script={}) as replacement:
-                    replacement.child._sink = sink
-                    monkeypatch.setattr(
-                        "planner.conversation.backends.codex_app_server.adapter._catalog_snapshot",
-                        read_snapshot,
-                    )
-                    await replacement.child._publish_catalog()
-                    assert len(harness.mac.spool.pending()) == 1
-                    await eventually(
-                        lambda: not harness.mac.spool.pending(),
-                        "New producer publication did not drain",
-                    )
-                assert len(accepted) == before + 1
-        finally:
-            release_inventory.set()
-            await harness.close()
-
-    asyncio.run(run())
-
-
 def test_permanent_refusals_receive_durable_receipts_and_release_conversation_queue(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1518,7 +1129,7 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
             async with harness.mac._replay_lock:
                 malformed = harness.mac.spool.mint_envelope(
                     conversation_id=child.conversation_id,
-                    kind=EnvelopeKind.command_outcome,
+                    kind=EnvelopeKind.child_stopped,
                     payload={"child": as_object(child), "disposition": "unsupported"},
                 )
                 unassigned = harness.mac.spool.mint_envelope(
@@ -1596,14 +1207,15 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                         close()
 
                     monkeypatch.setattr(writer, "close", restore_budget_and_close)
-            await harness.native.raise_ask()
-            pending = [
-                entry
-                for entry in harness.mac.spool.pending()
-                if entry.kind == EnvelopeKind.backend_event
-            ]
-            assert len(pending) == 1
-            harness.endpoint.cut_submission = pending[0].submission_id
+            async with harness.mac._replay_lock:
+                await harness.native.raise_ask()
+                pending = [
+                    entry
+                    for entry in harness.mac.spool.pending()
+                    if entry.kind == EnvelopeKind.backend_event
+                ]
+                assert len(pending) == 1
+                harness.endpoint.cut_submission = pending[0].submission_id
             await eventually(
                 lambda: harness.endpoint.cut_count == 1, "Receipt cut was not exercised"
             )
@@ -1697,7 +1309,9 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
             monkeypatch.setattr(harness.endpoint, "send_command", hold_command)
             late_delivery = asyncio.create_task(
                 harness.system.send(
-                    "c_scripted", text_message_content("Unknown"), sender_label="Test",
+                    "c_scripted",
+                    text_message_content("Unknown"),
+                    sender_label="Test",
                     mode=PromptDeliveryMode.steer,
                 )
             )
@@ -2179,11 +1793,11 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
                     await release_final_event.wait()
                 return await accept_envelope(envelope, identity)
 
-            async def observe_stop_hint(outcome: Any) -> None:
+            async def observe_stop_hint(outcome: Any, *, stop_proven: bool = False) -> None:
                 pending = harness.endpoint.pending_commands.get(outcome.command_id)
                 if pending is not None and pending[0].operation is ChildOperation.stop:
                     stop_hint_seen.set()
-                await resolve_command(outcome)
+                await resolve_command(outcome, stop_proven=stop_proven)
 
             monkeypatch.setattr(harness.native, "stop", stop_with_final_event)
             monkeypatch.setattr(harness.endpoint, "accept_envelope", withhold_final_event)
@@ -2820,184 +2434,6 @@ def test_input_receipt_must_validate_before_command_dispatch(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("operation", ["prompt", "user_input_answer"])
-def test_reconnect_acknowledges_settled_registry_outcomes_after_ack_loss(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
-) -> None:
-    from uuid import uuid4
-
-    from planner.conversation.admission.service import expectation_from_validation
-    from planner.conversation.model_resolution.contracts import (
-        CatalogWorkspaceBinding,
-        ValidationState,
-    )
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import ChildCommand, ChildOperation
-
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        try:
-            await eventually(
-                lambda: (
-                    not harness.mac.registry.inventory(
-                        harness.mac.identity
-                    ).retained_command_outcomes
-                ),
-                "Initial registry outcomes did not settle",
-            )
-            prompt_expectation = None
-            if operation == "prompt":
-                state = await harness.system._conversation_state("c_scripted")
-                assert state is not None and state.running_turn is not None
-                accepted = state.running_turn.launch_validation
-                assert accepted is not None and accepted.evidence is None
-                workspace = CatalogWorkspaceBinding(
-                    state.record.workspace_folder, state.record.workspace_path_policy, None
-                )
-                attempt_id = str(uuid4())
-                validation = await harness.system.validate_launch_selection(
-                    accepted.selection,
-                    workspace,
-                    attempt_id=attempt_id,
-                )
-                assert validation.state is ValidationState.compatible, validation
-                prompt_expectation = expectation_from_validation(
-                    validation,
-                    attempt_id=attempt_id,
-                    conversation_id="c_scripted",
-                    disabled_models_revision=harness.system.launch_policy_revision(
-                        accepted.selection.backend_key
-                    ),
-                    child=harness.ask.child,
-                    turn=harness.native.turn,
-                    executor_identity=harness.endpoint.identity,
-                    workspace=workspace,
-                )
-            if operation == "user_input_answer":
-                await harness.native.raise_user_input()
-                await harness.wait_input_reachable()
-            generation = harness.mac.identity.connection_generation
-            dropped: set[str] = set()
-            send = harness.endpoint._send
-            send_reconciliation = harness.endpoint._send_reconciliation
-
-            async def lose_old_generation_ack(message: WireMessage) -> None:
-                if (
-                    message.kind is WireMessageKind.command_outcome_ack
-                    and harness.mac.identity.connection_generation == generation
-                ):
-                    dropped.add(str(message.payload["command_id"]))
-                    return
-                await send(message)
-
-            async def lose_old_generation_reconciliation_ack(
-                message: WireMessage, identity: ExecutorIdentity, writer: Any
-            ) -> bool:
-                if (
-                    message.kind is WireMessageKind.command_outcome_ack
-                    and identity.connection_generation == generation
-                ):
-                    dropped.add(str(message.payload["command_id"]))
-                    return True
-                return await send_reconciliation(message, identity, writer)
-
-            monkeypatch.setattr(harness.endpoint, "_send", lose_old_generation_ack)
-            monkeypatch.setattr(
-                harness.endpoint,
-                "_send_reconciliation",
-                lose_old_generation_reconciliation_ack,
-            )
-            if operation == "prompt":
-                assert prompt_expectation is not None
-                outcome = await harness.endpoint.send_command(
-                    ChildCommand(
-                        "settled_prompt",
-                        harness.ask.child,
-                        ChildOperation.write_prompt,
-                        harness.native.turn,
-                        {
-                            "content": encode_value(text_message_content("One more prompt")),
-                            "sender_content": encode_value(text_message_content("One more prompt")),
-                            "sender_label": "Test",
-                            "mode": "queue",
-                            "admission_expectation": encode_value(prompt_expectation),
-                        },
-                    )
-                )
-                assert outcome.disposition is CommandDisposition.succeeded, outcome
-                assert harness.native.prompt_count == 2
-                assert harness.mac.identity.connection_generation == generation
-            else:
-                assert await harness.endpoint.answer_user_input(
-                    "c_scripted",
-                    public_ask_id(harness.input_ask),
-                    INPUT_ANSWERS,
-                    executor_ask=harness.input_ask,
-                )
-            await eventually(lambda: bool(dropped), "Command acknowledgment was not lost")
-            await eventually(
-                lambda: not harness.mac.spool.pending(), "Filesystem outcome spool did not drain"
-            )
-            # Drop both direct and periodic inventory ACKs for this generation.
-            # Durable receipts still drain the separate filesystem inventory.
-            retained = harness.mac.registry.inventory(
-                harness.mac.identity
-            ).retained_command_outcomes
-            assert dropped <= {outcome.command_id for outcome in retained}
-            assert len(retained) == (2 if operation == "user_input_answer" else 1)
-            assert all(outcome.disposition is CommandDisposition.succeeded for outcome in retained)
-            assert any("answer_application" in outcome.result for outcome in retained) == (
-                operation == "user_input_answer"
-            )
-            assert harness.endpoint.writer is not None
-            harness.endpoint.writer.close()
-            await eventually(
-                lambda: (
-                    harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.ready
-                ),
-                "Link did not reconnect after direct acknowledgment loss",
-            )
-            await eventually(
-                lambda: (
-                    not harness.mac.registry.inventory(
-                        harness.mac.identity
-                    ).retained_command_outcomes
-                ),
-                "Accepted outcomes remained in the in-memory registry inventory",
-            )
-            assert not harness.mac.spool.pending()
-            # Reconcile another generation to prove settled results stay absent.
-            generation = harness.mac.identity.connection_generation
-            assert harness.endpoint.writer is not None
-            harness.endpoint.writer.close()
-            await eventually(
-                lambda: (
-                    harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.ready
-                ),
-                "Second inventory did not reconcile",
-            )
-            assert not harness.mac.registry.inventory(
-                harness.mac.identity
-            ).retained_command_outcomes
-            assert not harness.mac.spool.pending()
-            assert harness.native.start_count == 1
-            assert harness.native.prompt_count == (2 if operation == "prompt" else 1)
-            assert harness.native.user_answers == (
-                [("request_input", ORDERED_INPUT_ANSWERS)]
-                if operation == "user_input_answer"
-                else []
-            )
-            assert harness.events("user_input_answered") == (
-                1 if operation == "user_input_answer" else 0
-            )
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
-
-
 async def hold_reconnection(
     harness: ExecutorHarness, monkeypatch: pytest.MonkeyPatch
 ) -> asyncio.Event:
@@ -3208,9 +2644,7 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
                 is None
             )
             state = harness.system._conversations["c_scripted"]
-            await eventually(
-                lambda: not state.child_is_quarantined, "restart stop did not settle"
-            )
+            await eventually(lambda: not state.child_is_quarantined, "restart stop did not settle")
             assert harness.native.stop_count == 1
             assert harness.endpoint.pending_commands == {}
             evidence = harness.endpoint.store.ask_evidence(ask)
@@ -3396,7 +2830,8 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
             # Stale generation is temporary. It must not cancel the shared result future.
             command, future = next(iter(harness.endpoint.pending_commands.values()))
             assert not future.done()
-            assert command.command_id.startswith("apply_")
+            answer = harness.endpoint.store.recorded_answer(harness.ask)
+            assert answer is not None and command.command_id == answer.answer_id
             replay_release.set()
             await eventually(
                 lambda: harness.events("permission_answered") == 1,
@@ -3420,13 +2855,8 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        release_outcome, release_application, release_event = (
-            asyncio.Event(),
-            asyncio.Event(),
-            asyncio.Event(),
-        )
-        outcome_waiting, application_waiting, event_waiting, stop_hint = (
-            asyncio.Event(),
+        release_application, release_event = asyncio.Event(), asyncio.Event()
+        application_waiting, event_waiting, stop_hint = (
             asyncio.Event(),
             asyncio.Event(),
             asyncio.Event(),
@@ -3439,7 +2869,6 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             await harness.wait_ask_reachable()
             reference = harness.ask.child
             stop_exact = harness.mac.registry._stop_exact_child
-            publish_outcome = harness.mac.registry._publish_outcome
             publish_application = harness.mac.registry._publish_application
             native_stop = harness.native.stop
             accept = harness.endpoint.accept_envelope
@@ -3448,12 +2877,6 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             async def observe_native_stop(command: Any) -> CommandOutcome:
                 stopping.set()
                 return await stop_exact(command)
-
-            async def late_outcome(outcome: CommandOutcome) -> None:
-                if "answer_application" in outcome.result:
-                    outcome_waiting.set()
-                    await release_outcome.wait()
-                await publish_outcome(outcome)
 
             async def late_application(application: Any) -> None:
                 application_waiting.set()
@@ -3478,29 +2901,26 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                     accepted.append(envelope)
                 return receipt
 
-            async def observed_hint(outcome: CommandOutcome) -> None:
+            async def observed_hint(outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
                 pending = harness.endpoint.pending_commands.get(outcome.command_id)
                 if pending is not None and pending[0].operation is ChildOperation.stop:
                     stop_hint.set()
-                await resolve(outcome)
+                await resolve(outcome, stop_proven=stop_proven)
 
             async def cancel_native() -> None:
                 pass
 
             monkeypatch.setattr(harness.mac.registry, "_stop_exact_child", observe_native_stop)
-            monkeypatch.setattr(harness.mac.registry, "_publish_outcome", late_outcome)
             monkeypatch.setattr(harness.mac.registry, "_publish_application", late_application)
             monkeypatch.setattr(harness.native, "cancel_running_turn", cancel_native, raising=False)
             monkeypatch.setattr(harness.native, "stop", final_native_event)
             monkeypatch.setattr(harness.endpoint, "accept_envelope", withheld_event)
             monkeypatch.setattr(harness.endpoint, "_resolve_command", observed_hint)
             assert await post_owner_answer(harness, harness.ask) == {"landed": True}
-            await asyncio.wait_for(outcome_waiting.wait(), 5)
+            await asyncio.wait_for(application_waiting.wait(), 5)
             killing = asyncio.create_task(harness.system.kill("c_scripted"))
             await asyncio.wait_for(stopping.wait(), 5)
             assert not event_waiting.is_set() and not stop_hint.is_set() and not killing.done()
-            release_outcome.set()
-            await asyncio.wait_for(application_waiting.wait(), 5)
             assert not stop_hint.is_set() and not killing.done()
             release_application.set()
             await asyncio.wait_for(event_waiting.wait(), 5)
@@ -3526,7 +2946,7 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                 stop = stops[0][0]
                 import hashlib
 
-                submission = "outcome_" + hashlib.sha256(stop.command_id.encode()).hexdigest()
+                submission = "stopped_" + hashlib.sha256(stop.command_id.encode()).hexdigest()
                 stop_sequence = connection.execute(
                     "SELECT sequence FROM executor_receipts WHERE submission_id=?", (submission,)
                 ).fetchone()[0]
@@ -3536,26 +2956,11 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                     if row.kind is EnvelopeKind.backend_event
                     and row.payload.get("arguments") == {"vendor_session_cursor": "cleanup-cursor"}
                 )
-                native_outcome = next(
-                    row
-                    for row in accepted
-                    if row.kind is EnvelopeKind.command_outcome
-                    and "answer_application" in cast(dict[str, Any], row.payload["result"])
-                )
                 application = next(
                     row for row in accepted if row.kind is EnvelopeKind.answer_application
                 )
-                outer_outcome = next(
-                    row
-                    for row in accepted
-                    if row.kind is EnvelopeKind.command_outcome
-                    and str(row.payload["command_id"]).startswith("apply_")
-                )
-                assert all(
-                    row.sequence < stop_sequence
-                    for row in (native_outcome, application, outer_outcome, final_event)
-                )
-                for row in (native_outcome, application, outer_outcome, final_event):
+                assert all(row.sequence < stop_sequence for row in (application, final_event))
+                for row in (application, final_event):
                     receipt = harness.endpoint.store.lookup_receipt(
                         row.sender_id, row.submission_id
                     )
@@ -3566,7 +2971,6 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             finally:
                 connection.close()
         finally:
-            release_outcome.set()
             release_application.set()
             release_event.set()
             if killing is not None and not killing.done():
@@ -3575,110 +2979,6 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             await harness.close()
 
     asyncio.run(run())
-
-
-def test_historical_inventory_confirmation_unblocks_real_mac_replay(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Old inventory cannot settle a waiter or block replay into a still-live VPS turn."""
-    import hashlib
-    import json
-
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import ChildCommand, ChildOperation, CommandOutcome
-    from planner.executor.journal import envelope_payload_digest
-
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        try:
-            await eventually(
-                lambda: not harness.mac.spool.pending(), "Initial outcomes did not drain"
-            )
-            old = ChildReference("historical", "old-child", "old-conversation")
-            command = ChildCommand("old-stop", old, ChildOperation.stop, None, {})
-            outcome = CommandOutcome(
-                command.command_id, old, CommandDisposition.refused, {"reason": "incarnation_gone"}
-            )
-            harness.endpoint.store.register_child(old, "ticket", "old-ticket", 1)
-            connection = connect(harness.endpoint.db_path)
-            try:
-                connection.execute(
-                    "INSERT INTO executor_core_turns VALUES (?,?,?,?)",
-                    (
-                        old.conversation_id,
-                        json.dumps(encode_value(old)),
-                        json.dumps(encode_value(TurnToken(old.conversation_id, 1))),
-                        json.dumps({
-                            "ended": True,
-                            "callbacks_revoked": True,
-                            "source_retired": False,
-                            "initial_commands": [encode_value(command)],
-                        }),
-                    ),
-                )
-            finally:
-                connection.close()
-            payload = encode_value(outcome)
-            assert isinstance(payload, dict)
-            submission = "outcome_" + hashlib.sha256(command.command_id.encode()).hexdigest()
-            digest = envelope_payload_digest(
-                payload, (), sender_id="historical-sender", conversation_id=old.conversation_id,
-                sequence=1, submission_id=submission, kind=EnvelopeKind.command_outcome,
-            )
-            evidence = QueuedEnvelope(
-                "historical-sender", old.conversation_id, 1, submission,
-                EnvelopeKind.command_outcome, payload, digest,
-            )
-            harness.endpoint.store.accept(
-                evidence,
-                lambda conn, row: (
-                    harness.endpoint.store.record_command_outcome_in_transaction(conn, outcome)
-                    or {}
-                ),
-                2,
-                identity=harness.mac.identity,
-            )
-            harness.mac.registry.outcomes[command.command_id] = outcome
-            harness.mac.registry._commands[command.command_id] = command
-            harness.mac.registry._outcomes_published.add(command.command_id)
-            waiter: asyncio.Future[CommandOutcome] = asyncio.get_running_loop().create_future()
-            harness.endpoint.pending_commands[command.command_id] = (command, waiter)
-            # The VPS process and turn stay alive. Only the transport reconnects.
-            generation = harness.mac.identity.connection_generation
-            await harness.endpoint.close()
-            assert await harness.system.is_running("c_scripted")
-            await harness.native.raise_ask()
-            pending = [
-                entry for entry in harness.mac.spool.pending()
-                if entry.kind is EnvelopeKind.backend_event
-            ]
-            assert len(pending) == 1
-            await eventually(
-                lambda: (
-                    harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.ready
-                    and not harness.mac.spool.pending()
-                    and command.command_id in harness.mac.registry._confirmed_command_ids
-                ),
-                "Historical inventory did not confirm and unblock current live replay",
-            )
-            first = harness.endpoint.store.lookup_receipt(
-                pending[0].sender_id, pending[0].submission_id
-            )
-            assert first is not None and first.result.get("applied") is True
-            assert harness.events("permission_asked") == 1
-            assert await harness.endpoint.accept_envelope(pending[0], harness.mac.identity) == first
-            assert harness.events("permission_asked") == 1
-            assert not waiter.done()
-            assert harness.native.start_count == harness.native.prompt_count == 1
-            assert await harness.system.is_running("c_scripted")
-        finally:
-            harness.endpoint.pending_commands.pop("old-stop", None)
-            await harness.close()
-
-    asyncio.run(run())
-
 
 
 def test_authenticated_catalog_exchange_timeout_preserves_active_child(
@@ -3778,6 +3078,161 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             assert journal_additions == [EnvelopeKind.backend_event]
             assert harness.endpoint.identity == identity and harness.endpoint.ready
             print(f"catalog TLS scenario elapsed: {time.monotonic() - started:.3f}s")
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("phase", ["unknown", "preparing", "invoking", "finished"])
+def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    """Real TLS reply loss and in-flight completion need both readers and native ownership."""
+    from planner.executor.contracts import ChildCommand, ChildOperation
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        observed, release = asyncio.Event(), asyncio.Event()
+        caller: asyncio.Task[Any] | None = None
+        locked = None
+        attempts = 0
+        sends: list[str] = []
+        asks: list[JsonObject] = []
+        try:
+            reference = harness.ask.child
+            command = ChildCommand(
+                "reconnect-proof", reference, ChildOperation.cancel_running_turn, None, {}
+            )
+            mac_send = harness.mac._send
+            # Commands use the shared send lock directly; observe at the writer boundary.
+            writer = harness.endpoint.writer
+            assert writer is not None
+            original_command = harness.mac._command
+            dropped = False
+
+            async def invoke() -> None:
+                nonlocal attempts
+                attempts += 1
+                if phase == "invoking":
+                    observed.set()
+                    await release.wait()
+
+            async def receive(message: WireMessage) -> None:
+                nonlocal dropped
+                if message.request_id == command.command_id:
+                    sends.append(message.request_id)
+                    if phase == "unknown" and not dropped:
+                        dropped = True
+                        observed.set()
+                        return
+                await original_command(message)
+
+            async def lose_result(message: WireMessage) -> None:
+                if message.kind is WireMessageKind.command_outcome and (
+                    message.request_id == command.command_id and phase == "finished"
+                ):
+                    observed.set()
+                    return
+                await mac_send(message)
+
+            request = harness.endpoint._request
+
+            async def ask(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+                if kind is WireMessageKind.reconnect_ask:
+                    asks.append(payload)
+                return await request(kind, payload)
+
+            monkeypatch.setattr(harness.native, "cancel_running_turn", invoke, raising=False)
+            monkeypatch.setattr(harness.mac, "_command", receive)
+            monkeypatch.setattr(harness.mac, "_send", lose_result)
+            monkeypatch.setattr(harness.endpoint, "_request", ask)
+            if phase == "preparing":
+                locked = harness.mac.registry.children[reference.child_id].lock
+                await locked.acquire()
+            caller = asyncio.create_task(harness.endpoint.send_command(command))
+            if phase == "preparing":
+                await eventually(
+                    lambda: harness.mac.registry.ask((command.command_id,))[0].phase == "preparing",
+                    "Command did not enter preparation",
+                )
+            else:
+                await asyncio.wait_for(observed.wait(), 2)
+            assert not caller.done()
+            generation = harness.mac.identity.connection_generation
+            writer.close()
+            await eventually(
+                lambda: (
+                    harness.mac.identity.connection_generation > generation
+                    and harness.endpoint.ready
+                ),
+                "Single reconnect ask did not admit the new link",
+            )
+            assert asks == [{"command_ids": [command.command_id]}]
+            if phase in ("preparing", "invoking"):
+                assert not caller.done() and sends == [command.command_id]
+            if locked is not None:
+                locked.release()
+                locked = None
+            release.set()
+            outcome = await asyncio.wait_for(caller, 2)
+            assert outcome.disposition is CommandDisposition.succeeded
+            assert attempts == 1
+            assert sends == [command.command_id] * (2 if phase == "unknown" else 1)
+            assert harness.mac.registry.ask((command.command_id,))[0].outcome == outcome
+            assert not harness.mac.spool.pending()
+            await asyncio.sleep(0.06)
+            assert len(asks) == 1
+            assert harness.native.start_count == harness.native.prompt_count == 1
+        finally:
+            release.set()
+            if locked is not None:
+                locked.release()
+            if caller is not None and not caller.done():
+                caller.cancel()
+                await asyncio.gather(caller, return_exceptions=True)
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_reconnect_ready_precedes_retained_output_drain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gap: a retained FIFO suffix cannot hold connection readiness hostage."""
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        try:
+            assert harness.native.sink is not None and harness.native.turn is not None
+            async with harness.mac._replay_lock:
+                await harness.native.raise_ask()
+                queued = harness.mac.spool.pending()
+                assert len(queued) == 1
+                generation = harness.mac.identity.connection_generation
+                assert harness.endpoint.writer is not None
+                harness.endpoint.writer.close()
+                await eventually(
+                    lambda: (
+                        harness.mac.identity.connection_generation > generation
+                        and harness.endpoint.ready
+                    ),
+                    "Ready waited for outbox replay",
+                )
+                assert harness.mac.spool.pending() == queued
+                assert harness.events("permission_asked") == 0
+            await harness.wait_ask_reachable()
+            await eventually(
+                lambda: not harness.mac.spool.pending(), "Retained output did not drain"
+            )
+            receipt = harness.endpoint.store.lookup_receipt(
+                queued[0].sender_id, queued[0].submission_id
+            )
+            assert receipt is not None and receipt.result.get("applied") is True
+            assert (
+                await harness.endpoint.accept_envelope(queued[0], harness.mac.identity) == receipt
+            )
+            assert harness.events("permission_asked") == 1
         finally:
             await harness.close()
 

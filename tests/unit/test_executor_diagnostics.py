@@ -171,11 +171,7 @@ def test_exception_tags_are_allowlisted(error: Exception, tag: str) -> None:
         "app_connect",
         "hello",
         "transport_open",
-        "reconcile1",
-        "replay1",
-        "reconcile2",
-        "replay2",
-        "ready_ack",
+        "reconnect_ask",
         "steady_state",
     ],
 )
@@ -239,21 +235,11 @@ def test_connection_reports_precise_session_phase_before_cleanup(
                     "reply",
                     {},
                 )
-            fail("ready_ack")
+            fail("reconnect_ask")
             return WireMessage(kind, "reply", {"ready": True})
 
-        reconciles = 0
-        replays = 0
-
-        async def reconcile() -> None:
-            nonlocal reconciles
-            reconciles += 1
-            fail(f"reconcile{reconciles}")
-
         async def replay() -> None:
-            nonlocal replays
-            replays += 1
-            fail(f"replay{replays}" if replays <= 2 else "steady_state")
+            fail("steady_state")
 
         monkeypatch.setattr(mac, "ExecutorAppClient", Mock(return_value=client))
 
@@ -263,7 +249,6 @@ def test_connection_reports_precise_session_phase_before_cleanup(
 
         monkeypatch.setattr(executor, "_read_loop", read_forever)
         monkeypatch.setattr(executor, "_request", request)
-        monkeypatch.setattr(executor, "_reconcile", reconcile)
         monkeypatch.setattr(executor, "_replay", replay)
         try:
             with pytest.raises(ValueError) as caught:

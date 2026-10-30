@@ -37,8 +37,8 @@ def test_policy_bounds_and_protocol_are_explicit() -> None:
     assert configuration.INPUT_PROGRESS_TIMEOUT_SECONDS == 30
     assert configuration.INPUT_FINALIZATION_TIMEOUT_SECONDS == 120
     assert configuration.INPUT_CANCEL_TIMEOUT_SECONDS == 5
-    assert configuration.PROTOCOL_VERSION == 14
-    assert configuration.SPOOL_FORMAT_VERSION == 2
+    assert configuration.PROTOCOL_VERSION == 15
+    assert configuration.SPOOL_FORMAT_VERSION == 3
 
 
 def test_only_positive_download_bytes_renew_inactivity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,7 +129,7 @@ def test_exchange_revokes_before_bounded_ack_wait_and_ignores_late_acceptance(
 
     from planner.executor import vps
     from planner.executor.codec import encode_value
-    from planner.executor.configuration import PROTOCOL_VERSION
+    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
     from planner.executor.contracts import (
         ExecutorIdentity,
         InputTransferCancelled,
@@ -143,7 +143,9 @@ def test_exchange_revokes_before_bounded_ack_wait_and_ignores_late_acceptance(
         monkeypatch.setattr(vps, "INPUT_PROGRESS_TIMEOUT_SECONDS", 0.02)
         monkeypatch.setattr(vps, "INPUT_CANCEL_TIMEOUT_SECONDS", 0.03)
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
-        endpoint.identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "native", 1)
+        endpoint.identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native", 1
+        )
         writer = Mock()
         endpoint.writer = writer
         endpoint._input_exchanges = {}
@@ -246,7 +248,7 @@ def test_failed_input_removes_only_commands_without_possible_native_admission(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
-    from planner.executor.configuration import PROTOCOL_VERSION
+    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
     from planner.executor.contracts import (
         ChildCommand,
         ChildOperation,
@@ -262,7 +264,9 @@ def test_failed_input_removes_only_commands_without_possible_native_admission(
 
     async def run() -> None:
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
-        endpoint.identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "native", 1)
+        endpoint.identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native", 1
+        )
         writer = Mock()
         writer.send = AsyncMock()
         endpoint.writer = writer
@@ -296,6 +300,7 @@ def test_failed_input_removes_only_commands_without_possible_native_admission(
         emit = AsyncMock()
         monkeypatch.setattr(endpoint, "_transfer_command_inputs", fail)
         monkeypatch.setattr(endpoint, "_emit_command", emit)
+        monkeypatch.setattr(endpoint, "_reconnect", AsyncMock(return_value={"command"}))
         caller = asyncio.create_task(endpoint.send_command(command))
         await asyncio.sleep(0)
         if replay:
@@ -329,7 +334,7 @@ def test_canceled_input_command_preserves_only_possible_native_outcome(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
-    from planner.executor.configuration import PROTOCOL_VERSION
+    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
     from planner.executor.contracts import (
         ChildCommand,
         ChildOperation,
@@ -342,7 +347,9 @@ def test_canceled_input_command_preserves_only_possible_native_outcome(
 
     async def run() -> None:
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
-        endpoint.identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "native", 1)
+        endpoint.identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native", 1
+        )
         writer = Mock()
         writer.send = AsyncMock()
         endpoint.writer = writer
@@ -378,6 +385,7 @@ def test_canceled_input_command_preserves_only_possible_native_outcome(
         emit = AsyncMock()
         monkeypatch.setattr(endpoint, "_transfer_command_inputs_locked", blocked)
         monkeypatch.setattr(endpoint, "_emit_command", emit)
+        monkeypatch.setattr(endpoint, "_reconnect", AsyncMock(return_value={"command"}))
         caller = asyncio.create_task(endpoint.send_command(command))
         await asyncio.wait_for(entered.wait(), 1)
         caller.cancel()
@@ -407,14 +415,14 @@ def test_expired_acceptance_cannot_beat_unscheduled_timer() -> None:
     from unittest.mock import Mock
 
     from planner.executor.codec import encode_value
-    from planner.executor.configuration import PROTOCOL_VERSION
+    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
     from planner.executor.contracts import ExecutorIdentity, WireMessage, WireMessageKind
     from planner.executor.input_transfers import InputTransferExchange
     from planner.executor.vps import ExecutorEndpoint
 
     async def run() -> None:
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
-        identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "native", 1)
+        identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native", 1)
         writer = Mock()
         state = InputTransferDeadline(request())
         state.phase = "finalization"

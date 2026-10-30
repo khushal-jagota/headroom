@@ -69,7 +69,6 @@ from planner.executor.contracts import (
     Quiescence,
     QuiesceRequest,
     ReceiptDisposition,
-    ReconciliationResult,
     WireMessage,
     WireMessageKind,
 )
@@ -296,55 +295,11 @@ def test_pre_dispatch_refusal_never_calls_native(
             # Closed admission did not install a new active turn.
             assert all(child.active_turn is None for child in registry.children.values())
         assert registry.outcomes[command.command_id] == outcome
-        assert spool.pending()[-1].payload == encode_value(outcome)
+        assert spool.pending() == ()
         blocked = await registry.quiesce()
         assert blocked.uncertain_operation_count == 0
-        assert blocked.unsent_entry_count > 0
-        assert not blocked.ready
-        acknowledge_pending(spool)
-        assert (await registry.quiesce()).ready
-
-    asyncio.run(run())
-
-
-def test_refusal_publication_and_receipts_block_exit_and_duplicates_keep_first_outcome(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def run() -> None:
-        registry, spool, native, start = native_registry
-        await registry.quiesce()
-        entered = asyncio.Event()
-        released = asyncio.Event()
-        publish = registry._publish_outcome
-
-        async def paused_publish(outcome: CommandOutcome) -> None:
-            entered.set()
-            await released.wait()
-            await publish(outcome)
-
-        monkeypatch.setattr(registry, "_publish_outcome", paused_publish)
-        task = asyncio.create_task(registry.execute_command(start))
-        await entered.wait()
-        assert registry.outcomes[start.command_id].disposition == CommandDisposition.refused
-        assert spool.pending_count() == 0
-        blocked = await registry.quiesce()
-        assert blocked.uncertain_operation_count > 0
-        assert not blocked.ready
-        released.set()
-        first = await task
-        entries = spool.pending()
-        assert await registry.execute_command(start) == first
-        assert spool.pending() == entries
-        with pytest.raises(ValueError, match="different content"):
-            await registry.execute_command(replace(start, arguments={}))
-        assert not (await registry.quiesce()).ready
-        registry.confirm_command(start.command_id)
-        acknowledge_pending(spool)
-        assert (await registry.quiesce()).ready
-        assert await registry.execute_command(start) == first
-        assert spool.pending_count() == 0
-        assert native.starts == 0 and native.sink is None
+        assert blocked.unsent_entry_count == 0
+        assert blocked.ready
 
     asyncio.run(run())
 
@@ -358,11 +313,13 @@ class _LocalSessionLoadRefused(SessionLoadFailed):
     [
         (_LocalSessionLoadRefused("no session"), ChildOperation.start, CommandDisposition.refused),
         (
-            PromptWriteRefused("not emitted"), ChildOperation.write_prompt,
+            PromptWriteRefused("not emitted"),
+            ChildOperation.write_prompt,
             CommandDisposition.refused,
         ),
         (
-            PromptWriteFailed("possibly emitted"), ChildOperation.write_prompt,
+            PromptWriteFailed("possibly emitted"),
+            ChildOperation.write_prompt,
             CommandDisposition.uncertain,
         ),
     ],
@@ -382,11 +339,15 @@ def test_native_typed_refusal_is_distinct_from_possible_emission(
                 await registry.execute_command(start)
             ).disposition is CommandDisposition.succeeded
             command = ChildCommand(
-                "typed-prompt", start.child, operation, TurnToken("c_one", 1),
+                "typed-prompt",
+                start.child,
+                operation,
+                TurnToken("c_one", 1),
                 {
                     "content": encode_value(text_message_content("once")),
                     "sender_content": encode_value(text_message_content("once")),
-                    "sender_label": "Owner", "mode": "queue",
+                    "sender_label": "Owner",
+                    "mode": "queue",
                 },
             )
         calls = 0
@@ -401,7 +362,8 @@ def test_native_typed_refusal_is_distinct_from_possible_emission(
         assert outcome.disposition is expected
         if isinstance(failure, _LocalSessionLoadRefused):
             assert outcome.result["error_type"] == "SessionLoadFailed"
-        assert spool.pending()[-1].payload == encode_value(outcome)
+        assert spool.pending() == ()
+        assert registry.ask((command.command_id,))[0].outcome == outcome
         assert await registry.execute_command(command) == outcome
         assert calls == 1
 
@@ -429,13 +391,10 @@ def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and
             "error_message": "executor is quiescing",
         }
         assert native.starts == 1
-        assert spool.pending()[-1].payload == encode_value(outcome)
-        registry.confirm_command(start.command_id)
+        assert spool.pending() == ()
+
         acknowledge_pending(spool)
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, start.child.executor_incarnation, 1
-        )
-        assert registry.inventory(identity).retained_command_outcomes == ()
+        assert registry.ask((start.command_id,))[0].outcome == outcome
         blocked = await registry.quiesce()
         assert blocked.active_turn_count == 0
         assert blocked.pending_callback_count == 0
@@ -489,14 +448,10 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
     async def run() -> None:
         registry, spool, native, start = native_registry
         command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
-        entry = spool.pending()[-1]
-        original_bytes = spool._db.execute(
-            "SELECT envelope_json FROM envelopes WHERE submission_id=?", (entry.submission_id,)
-        ).fetchone()[0]
         stop = ChildCommand("stop", start.child, ChildOperation.stop, None, {})
         assert (await registry.execute_command(stop)).disposition == CommandDisposition.succeeded
         assert start.child.child_id not in registry.children
-        registry.confirm_command(command.command_id)
+
         blocked = await registry.quiesce()
         assert blocked.uncertain_operation_count == 0
         assert blocked.unsent_entry_count > 0
@@ -509,10 +464,6 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
             await registry.execute_command(replace(command, arguments={}))
         assert (native.starts, native.prompts) == (1, 1)
         assert spool.pending_count() == 0
-        assert spool._db.execute(
-            "SELECT envelope_json,pending FROM envelopes WHERE submission_id=?",
-            (entry.submission_id,),
-        ).fetchone() == (original_bytes, 0)
 
     asyncio.run(run())
 
@@ -523,7 +474,6 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
         "no_stop",
         "absent_child",
         "failed_stop",
-        "unacknowledged",
         "live_child",
         "other_incarnation",
         "other_child",
@@ -553,7 +503,7 @@ def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_chi
                 ChildCommand("stop", start.child, ChildOperation.stop, None, {})
             )
             assert failed.disposition == CommandDisposition.uncertain
-            registry.confirm_command("stop")
+
         elif missing_evidence != "no_stop":
             stop = ChildCommand("stop", start.child, ChildOperation.stop, None, {})
             stopped = await registry.execute_command(stop)
@@ -575,8 +525,7 @@ def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_chi
                 )
             elif missing_evidence == "not_stop":
                 registry._commands["stop"] = replace(stop, operation=ChildOperation.start)
-        if missing_evidence != "unacknowledged":
-            registry.confirm_command(command.command_id)
+
         acknowledge_pending(spool)
         blocked = await registry.quiesce()
         assert blocked.uncertain_operation_count == (2 if missing_evidence == "failed_stop" else 1)
@@ -598,7 +547,7 @@ def test_historical_uncertainty_does_not_clear_another_child_active_turn(
         await registry.execute_command(
             ChildCommand("stop", start.child, ChildOperation.stop, None, {})
         )
-        registry.confirm_command(command.command_id)
+
         other = replace(
             start, command_id="other_start", child=replace(start.child, child_id=str(uuid4()))
         )
@@ -614,52 +563,7 @@ def test_historical_uncertainty_does_not_clear_another_child_active_turn(
     asyncio.run(run())
 
 
-def test_late_outcome_after_ready_requires_publication_acknowledgment_and_receipt(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def run() -> None:
-        registry, spool, native, start = native_registry
-        command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
-        await registry.execute_command(
-            ChildCommand("stop", start.child, ChildOperation.stop, None, {})
-        )
-        registry.confirm_command(command.command_id)
-        acknowledge_pending(spool)
-        assert (await registry.quiesce()).ready
-        entered = asyncio.Event()
-        release = asyncio.Event()
-        publish = registry._publish_outcome
-
-        async def paused_publish(outcome: CommandOutcome) -> None:
-            entered.set()
-            await release.wait()
-            await publish(outcome)
-
-        monkeypatch.setattr(registry, "_publish_outcome", paused_publish)
-        late = replace(command, command_id="late_compaction")
-        task = asyncio.create_task(registry.execute_command(late))
-        await entered.wait()
-        assert not task.done()
-        assert spool.pending_count() == 0
-        assert not (await registry.quiesce()).ready
-        release.set()
-        late_outcome = await task
-        assert late_outcome.disposition == CommandDisposition.refused
-        assert spool.pending_count() == 1
-        # The retired identity refuses native work, but still needs its receipt.
-        acknowledge_pending(spool)
-        assert (await registry.quiesce()).ready
-        registry.confirm_command(late.command_id)
-        assert (await registry.quiesce()).ready
-        assert await registry.execute_command(late) == late_outcome
-        assert registry.outcomes[command.command_id] == first
-        assert (native.starts, native.prompts) == (1, 1)
-
-    asyncio.run(run())
-
-
-def test_restart_preserves_uncertain_outcome_bytes_and_receipts_without_old_child_authority(
+def test_restart_keeps_stop_receipts_and_discards_command_memory_and_child_authority(
     native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -670,15 +574,16 @@ def test_restart_preserves_uncertain_outcome_bytes_and_receipts_without_old_chil
         await registry.execute_command(
             ChildCommand("stop", start.child, ChildOperation.stop, None, {})
         )
-        registry.confirm_command(command.command_id)
+
         acknowledge_pending(spool)
         assert (await registry.quiesce()).ready
         before = spool._db.execute(
             "SELECT submission_id,envelope_json,pending FROM envelopes ORDER BY submission_id"
         ).fetchall()
         assert before and all(row[2] == 0 for row in before)
-        assert any(
-            TypeAdapter(QueuedEnvelope).validate_json(row[1]).payload == encode_value(first)
+        assert registry.ask((command.command_id,))[0].outcome == first
+        assert all(
+            TypeAdapter(QueuedEnvelope).validate_json(row[1]).kind is EnvelopeKind.child_stopped
             for row in before
         )
         paths = ExecutorPaths(spool.root.parent)
@@ -825,10 +730,7 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
         await native.sink.permission_ask_raised(
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 2
-        )
-        ask = registry.inventory(identity).children[0].pending_asks[0]
+        ask = registry.inventory()[0].pending_asks[0]
         assert native.answers == []  # absence of an answer remains a wait
         assert (await registry.quiesce()).pending_callback_count == 1
         missing = replace(ask, child=replace(reference, child_id=str(uuid4())))
@@ -839,7 +741,7 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
         assert first is not None
         assert await registry.apply_answer(answer) == first
         assert native.answers == [("ask", "allow")]
-        assert registry.inventory(identity).children[0].pending_asks == ()
+        assert registry.inventory()[0].pending_asks == ()
         kinds = [entry.kind for entry in spool.pending()]
         assert EnvelopeKind.answer_application in kinds
         assert (
@@ -1011,7 +913,7 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
         from planner.executor.contracts import AcceptanceReceipt, ReceiptDisposition
 
         pending_before_stop = spool.pending()
-        assert pending_before_stop
+        assert pending_before_stop == ()
         registry.begin_source_work(reference)
         assert (await registry.quiesce()).uncertain_operation_count == 1
         assert native_stops == []
@@ -1093,10 +995,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         await native.sink.permission_ask_raised(
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
-        )
-        ask = registry.inventory(identity).children[0].pending_asks[0]
+        ask = registry.inventory()[0].pending_asks[0]
         answer = DurableAnswer("answer", ask, "allow", 1)
         original = spool.mint_envelope
         failed = False
@@ -1111,8 +1010,8 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         ) -> QueuedEnvelope:
             nonlocal failed
             if (
-                kind == EnvelopeKind.command_outcome
-                and payload.get("command_id") == "answer"
+                kind == EnvelopeKind.answer_application
+                and payload.get("answer_id") == "answer"
                 and not failed
             ):
                 failed = True
@@ -1127,7 +1026,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
 
         monkeypatch.setattr(spool, "mint_envelope", fail_outcome)
         outer = ChildCommand(
-            "outer",
+            answer.answer_id,
             reference,
             ChildOperation.answer_permission_ask,
             turn,
@@ -1139,13 +1038,14 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             else:
                 await registry.apply_answer(answer)
         monkeypatch.setattr(spool, "mint_envelope", original)
+        await registry.flush_command_output((answer.answer_id,))
         assert native.answers == [("ask", "allow")]
-        assert registry.inventory(identity).children[0].pending_asks == ()
+        assert registry.inventory()[0].pending_asks == ()
         assert not (await registry.quiesce()).ready
         if wrapper:
             outcome = await registry.execute_command(outer)
             assert outcome.disposition == CommandDisposition.succeeded
-            assert outcome.result == {"applied": True}
+            assert "answer_application" in outcome.result
             assert await registry.execute_command(outer) == outcome
         recovered = await registry.apply_answer(answer)
         assert recovered is not None
@@ -1557,7 +1457,7 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("failure", [None, "command_outcome", "answer_application"])
+@pytest.mark.parametrize("failure", [None, "answer_application"])
 def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1652,10 +1552,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
         await native.sink.permission_ask_raised(
             turn, BackendPermissionAsk("same", "Allow?", None, ())
         )
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 2
-        )
-        inventory = registry.inventory(identity).children[0]
+        inventory = registry.inventory()[0]
         assert inventory.active_turn == turn
         assert inventory.pending_user_input_ids == ("same",)
         ask = AskReference(reference, turn, "same", AskKind.user_input)
@@ -1666,7 +1563,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
         missing = replace(ask, child=replace(reference, child_id=str(uuid4())))
         assert await registry.apply_answer(replace(answer, ask=missing)) is None
         for invalid in (answers[:1], tuple(reversed(answers))):
-            with pytest.raises(ValueError, match="canonical"):
+            with pytest.raises(ValueError, match="incomplete"):
                 await registry.apply_answer(replace(answer, user_input_answers=invalid))
         assert maps == []
         original = spool.mint_envelope
@@ -1702,7 +1599,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
 
         monkeypatch.setattr(spool, "mint_envelope", failing)
         outer = ChildCommand(
-            "outer-map",
+            answer.answer_id,
             reference,
             ChildOperation.answer_user_input,
             turn,
@@ -1722,7 +1619,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
         assert outcome.disposition == CommandDisposition.succeeded
         assert await registry.execute_command(outer) == outcome
         assert maps == [("same", answers)]
-        inventory = registry.inventory(identity).children[0]
+        inventory = registry.inventory()[0]
         assert inventory.pending_user_input_ids == ()
         assert inventory.pending_asks[0].kind == AskKind.permission
         application = await registry.apply_answer(answer)
@@ -1811,9 +1708,6 @@ class ControlPeer:
         elif kind is WireMessageKind.transport_open:
             result = {}
             response = WireMessageKind.transport_opened
-        elif kind is WireMessageKind.reconcile_inventory:
-            result = as_object(ReconciliationResult(self.executor.identity, (), (), (), ()))
-            response = WireMessageKind.reconcile_result
         else:
             assert kind is WireMessageKind.reconciliation_ready
             result = {"ready": True}
@@ -2457,14 +2351,7 @@ def test_native_start_replay_does_not_repeat_skill_bootstrap(
         assert replay == first
         assert native.starts == 1
         assert installs == [canonical_snapshot()]
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION,
-            "a" * 40,
-            SPOOL_FORMAT_VERSION,
-            start.child.executor_incarnation,
-            1,
-        )
-        assert len(registry.inventory(identity).children) == 1
+        assert len(registry.inventory()) == 1
         assert installs == [canonical_snapshot()]
 
     asyncio.run(run())
@@ -2596,7 +2483,7 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
         )
         assert (await registry.execute_command(wrong)).disposition is CommandDisposition.refused
         acknowledge_pending(spool)
-        registry.confirm_command(old.command_id)
+
         retry = replace(stop, command_id="retry")
         # Conflicting rejected commands do not become evidence of another assignment.
         assert (await registry.execute_command(retry)).disposition is CommandDisposition.succeeded
@@ -2677,11 +2564,9 @@ def test_stop_fences_native_lock_waiter_keeps_final_event_and_refuses_second_own
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("boundary", ["outcome", "application", "command"])
-def test_stop_waits_for_admitted_answer_outer_publication(
+def test_stop_waits_for_admitted_answer_publication(
     native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
-    boundary: str,
 ) -> None:
     async def run() -> None:
         registry, spool, native, start = native_registry
@@ -2693,38 +2578,18 @@ def test_stop_waits_for_admitted_answer_outer_publication(
         )
         ask = registry.children[start.child.child_id].asks["ask"]
         entered, release, stop_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        original = (
-            registry._publish_application
-            if boundary == "application"
-            else registry._publish_outcome
-        )
+        original = registry._publish_application
 
         async def publish(value: object) -> None:
             entered.set()
             await release.wait()
             await original(value)  # type: ignore[arg-type]
 
-        publication_kind = "application" if boundary == "application" else "outcome"
-        monkeypatch.setattr(registry, "_publish_" + publication_kind, publish)
-        command = ChildCommand(
-            "answer",
-            start.child,
-            ChildOperation.steer,
-            turn,
-            {"content": encode_value(text_message_content("late"))},
+        monkeypatch.setattr(registry, "_publish_application", publish)
+        publication = asyncio.create_task(
+            registry.apply_answer(DurableAnswer("answer", ask, "allow", 1))
         )
-        publication: asyncio.Task[object]
-        if boundary == "command":
-            publication = asyncio.create_task(registry.execute_command(command))
-        else:
-            publication = asyncio.create_task(
-                registry.apply_answer(DurableAnswer("answer", ask, "allow", 1))
-            )
         await entered.wait()
-        registry.confirm_command("answer")
-        if boundary != "application":
-            assert "answer" in registry._tasks
-            assert not registry._tasks["answer"].done()
 
         async def stop_native() -> None:
             stop_entered.set()
@@ -2743,12 +2608,8 @@ def test_stop_waits_for_admitted_answer_outer_publication(
         assert (await asyncio.wait_for(stop, 2)).disposition is CommandDisposition.succeeded
         rows = spool.pending()
         assert rows[-1].payload["command_id"] == "stop"
-        if boundary == "command":
-            assert rows[-2].kind is EnvelopeKind.command_outcome
-            assert native.answers == []
-        else:
-            assert rows[-2].kind is EnvelopeKind.answer_application
-            assert native.answers == [("ask", "allow")]
+        assert rows[-2].kind is EnvelopeKind.answer_application
+        assert native.answers == [("ask", "allow")]
 
     asyncio.run(run())
 
@@ -2944,8 +2805,11 @@ def test_changed_capture_replay_reuses_receipts_after_lost_envelope_response(
 
         def mint() -> QueuedEnvelope:
             return executor.spool.mint_ticket_envelope(
-                paths=executor.paths, ticket_id="t_one", child=child,
-                kind=EnvelopeKind.cli_write, payload={"child": as_object(child)},
+                paths=executor.paths,
+                ticket_id="t_one",
+                child=child,
+                kind=EnvelopeKind.cli_write,
+                payload={"child": as_object(child)},
             )
 
         first, second = mint(), mint()
@@ -2965,10 +2829,15 @@ def test_changed_capture_replay_reuses_receipts_after_lost_envelope_response(
                 if kind is WireMessageKind.file_manifest:
                     manifests.append(manifest.publication_id)
                     if manifest.publication_id not in accepted:
-                        return WireMessage(WireMessageKind.file_slot, "slot", {
-                            "transfer_id": "upload", "direction": "upload",
-                            "manifest": payload["manifest"],
-                        })
+                        return WireMessage(
+                            WireMessageKind.file_slot,
+                            "slot",
+                            {
+                                "transfer_id": "upload",
+                                "direction": "upload",
+                                "manifest": payload["manifest"],
+                            },
+                        )
                 else:
                     assert uploads == [b"A"]
                     accepted.add(manifest.publication_id)
@@ -2979,10 +2848,20 @@ def test_changed_capture_replay_reuses_receipts_after_lost_envelope_response(
             if not lost:
                 lost = True
                 raise ConnectionError("lost envelope receipt")
-            return WireMessage(WireMessageKind.receipt, "receipt", as_object(AcceptanceReceipt(
-                row.sender_id, row.submission_id, row.payload_sha256,
-                ReceiptDisposition.accepted, {}, 1,
-            )))
+            return WireMessage(
+                WireMessageKind.receipt,
+                "receipt",
+                as_object(
+                    AcceptanceReceipt(
+                        row.sender_id,
+                        row.submission_id,
+                        row.payload_sha256,
+                        ReceiptDisposition.accepted,
+                        {},
+                        1,
+                    )
+                ),
+            )
 
         executor._app_client = cast(ExecutorAppClient, SimpleNamespace(upload=upload))
         monkeypatch.setattr(executor, "_request", transport)
@@ -2999,5 +2878,47 @@ def test_changed_capture_replay_reuses_receipts_after_lost_envelope_response(
             assert executor.spool.pending_count() == 1
         finally:
             executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_command_states_keep_one_provider_attempt_through_caller_loss(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gap: a reconnect must distinguish preparation from a possibly emitted command."""
+
+    async def run() -> None:
+        registry, spool, native, command = native_registry
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def invoke(
+            resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+        ) -> None:
+            native.starts += 1
+            entered.set()
+            await release.wait()
+            raise RuntimeError("provider response lost")
+
+        monkeypatch.setattr(native, "start", invoke)
+        assert registry.ask((command.command_id,))[0].phase == "unknown"
+        caller = asyncio.create_task(registry.execute_command(command))
+        await asyncio.sleep(0)
+        assert registry.ask((command.command_id,))[0].phase == "preparing"
+        await asyncio.wait_for(entered.wait(), 2)
+        assert registry.ask((command.command_id,))[0].phase == "invoking"
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        duplicate = asyncio.create_task(registry.execute_command(command))
+        release.set()
+        outcome = await asyncio.wait_for(duplicate, 2)
+        assert outcome.disposition is CommandDisposition.uncertain
+        assert registry.ask((command.command_id,))[0].phase == "finished"
+        assert registry.ask((command.command_id,))[0].outcome == outcome
+        assert await registry.execute_command(command) == outcome
+        with pytest.raises(ValueError, match="different content"):
+            await registry.execute_command(replace(command, arguments={}))
+        assert native.starts == 1 and spool.pending() == ()
 
     asyncio.run(run())

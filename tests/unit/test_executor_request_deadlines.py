@@ -10,7 +10,7 @@ import pytest
 from tests.support.executor_control import MessageReader
 
 from planner.executor import mac
-from planner.executor.configuration import PROTOCOL_VERSION
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import ExecutorIdentity, WireMessage, WireMessageKind
 from planner.executor.mac import MacExecutor
 from planner.executor.vps import ExecutorEndpoint
@@ -120,7 +120,9 @@ def test_unexpected_request_task_failure_closes_original_generation(failure: str
         endpoint._input_exchanges = {}
         endpoint._revoked_input_commands = set()
         original, replacement = peer(), peer()
-        identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "incarnation", 1)
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
+        )
         endpoint.identity = identity
         endpoint.writer = original
         endpoint._responses = {}
@@ -177,7 +179,9 @@ def test_request_task_cancellation_propagates() -> None:
         with pytest.raises(asyncio.CancelledError):
             await endpoint._handle(
                 WireMessage(WireMessageKind.health, "request", {}),
-                ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "incarnation", 1),
+                ExecutorIdentity(
+                    PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
+                ),
                 original,
             )
         original.close.assert_not_called()
@@ -214,7 +218,7 @@ def catalog_endpoint(writer: Any) -> ExecutorEndpoint:
     endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
     endpoint.writer = writer
     endpoint.identity = ExecutorIdentity(
-        PROTOCOL_VERSION, "a" * 40, 2, "12345678-1234-5678-1234-567812345678", 1
+        PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "12345678-1234-5678-1234-567812345678", 1
     )
     endpoint.ready = True
     endpoint._catalog_responses = {}
@@ -427,7 +431,7 @@ def catalog_native(writer: Any) -> MacExecutor:
 
     executor = requester(writer)
     executor.identity = ExecutorIdentity(
-        PROTOCOL_VERSION, "a" * 40, 2, "12345678-1234-5678-1234-567812345678", 1
+        PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "12345678-1234-5678-1234-567812345678", 1
     )
     executor.state = ConnectionState.ready
     executor._handshake_accepted = True

@@ -57,13 +57,12 @@ from planner.executor.contracts import (
     ChildReference,
     CommandDisposition,
     CommandOutcome,
+    CommandState,
     DurableAnswer,
     EnvelopeKind,
-    ExecutorIdentity,
     FileSnapshot,
     JsonObject,
     Quiescence,
-    ReconciliationInventory,
 )
 from planner.executor.files import safe_component
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
@@ -155,13 +154,14 @@ class NativeChildRegistry:
         self._tasks: dict[str, asyncio.Task[CommandOutcome]] = {}
         self._applications: dict[str, AnswerApplication] = {}
         self._answers: dict[str, DurableAnswer] = {}
-        self._outcomes_published: set[str] = set()
+        self._invoking_commands: set[str] = set()
+        self._stop_proofs_published: set[str] = set()
         self._applications_published: set[str] = set()
-        self._confirmed_command_ids: set[str] = set()
         self.admission_stopped = False
         self._retired_children: set[str] = set()
         self._retiring_children: set[str] = set()
         self._source_work: dict[ChildReference, int] = {}
+        self._source_idle: dict[ChildReference, asyncio.Event] = {}
         self._source_tasks: dict[ChildReference, set[asyncio.Task[object]]] = {}
         self._failed_source_work: set[ChildReference] = set()
 
@@ -178,12 +178,13 @@ class NativeChildRegistry:
         return child
 
     def begin_source_work(self, child: ChildReference, *, final_event: bool = False) -> None:
-        if (
-            child.child_id in self._retired_children
-            or (child.child_id in self._retiring_children and not final_event)
+        if child.child_id in self._retired_children or (
+            child.child_id in self._retiring_children and not final_event
         ):
             raise PermissionError("source child is retired or retiring")
         key = child
+        if key not in self._source_work:
+            self._source_idle[key] = asyncio.Event()
         self._source_work[key] = self._source_work.get(key, 0) + 1
 
     async def source_work[T](
@@ -232,6 +233,7 @@ class NativeChildRegistry:
         self._source_work[key] -= 1
         if not self._source_work[key]:
             del self._source_work[key]
+            self._source_idle.pop(key).set()
 
     async def execute_command(self, command: ChildCommand) -> CommandOutcome:
         previous = self._commands.get(command.command_id)
@@ -239,20 +241,9 @@ class NativeChildRegistry:
             raise ValueError("command id reused with different content")
         if command.command_id in self.outcomes:
             outcome = self.outcomes[command.command_id]
-            if command.command_id not in self._outcomes_published:
-                await self._publish_outcome(outcome)
+            await self._publish_required_output(command, outcome)
             return outcome
         task = self._tasks.get(command.command_id)
-        if (
-            task is not None
-            and task.done()
-            and not task.cancelled()
-            and task.exception() is not None
-            and self._can_resume_answer_wrapper(command)
-        ):
-            # Only reconstruct the durable-answer wrapper around a retained native
-            # result/application. An unknown native operation is never redispatched.
-            task = None
         if task is None:
             self._commands[command.command_id] = command
             task = asyncio.create_task(self._execute(command))
@@ -260,31 +251,38 @@ class NativeChildRegistry:
         # Socket cancellation must not cancel a native operation whose fate is unknown.
         return await asyncio.shield(task)
 
-    def _can_resume_answer_wrapper(self, command: ChildCommand) -> bool:
-        if (
-            command.operation
-            not in (ChildOperation.answer_permission_ask, ChildOperation.answer_user_input)
-            or "answer" not in command.arguments
-        ):
-            return False
-        answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
-        expected = self._native_answer_command(answer)
-        if (
-            answer.ask.child != command.child
-            or answer.ask.turn != command.turn
-            or command.operation != expected.operation
-        ):
-            return False
-        application = self._applications.get(answer.answer_id)
-        if application is not None:
-            return application.ask == answer.ask
-        native = self._commands.get(answer.answer_id)
-        return (
-            native is not None
-            and answer.answer_id in self.outcomes
-            and native.child == answer.ask.child
-            and native.turn == answer.ask.turn
-            and native == expected
+    async def flush_command_output(self, command_ids: tuple[str, ...]) -> None:
+        """Retry required output after a failed disk write, never the native operation."""
+        for command_id in command_ids:
+            outcome = self.outcomes.get(command_id)
+            if outcome is not None:
+                await self._publish_required_output(self._commands[command_id], outcome)
+
+    def ask(self, command_ids: tuple[str, ...]) -> tuple[CommandState, ...]:
+        return tuple(
+            CommandState(
+                command_id,
+                "finished"
+                if command_id in self.outcomes
+                else "invoking"
+                if command_id in self._invoking_commands
+                else "preparing"
+                if command_id in self._commands
+                else "unknown",
+                self.outcomes.get(command_id),
+            )
+            for command_id in command_ids
+        )
+
+    def inventory(self) -> tuple[ChildInventory, ...]:
+        return tuple(
+            ChildInventory(
+                child.reference,
+                child.active_turn,
+                tuple(child.asks.values()),
+                tuple(sorted(child.user_inputs)),
+            )
+            for child in self.children.values()
         )
 
     def _localize_start(
@@ -397,10 +395,6 @@ class NativeChildRegistry:
                 or bool(self._source_work.get(reference, 0))
                 or reference in self._failed_source_work
                 or any(
-                    other.child == reference and key not in self._outcomes_published
-                    for key, other in self.outcomes.items()
-                )
-                or any(
                     application.ask.child == reference and key not in self._applications_published
                     for key, application in self._applications.items()
                 )
@@ -416,19 +410,12 @@ class NativeChildRegistry:
                     await asyncio.gather(*(asyncio.shield(task) for task in commands))
                 await self._finish_source_work(reference)
                 async with child.lock:
+                    self._invoking_commands.add(command.command_id)
                     await child.native.stop()
                 await self._finish_source_work(reference)
-                if (
-                    reference in self._failed_source_work
-                    or any(
-                        other.child == reference and key not in self._outcomes_published
-                        for key, other in self.outcomes.items()
-                    )
-                    or any(
-                        application.ask.child == reference
-                        and key not in self._applications_published
-                        for key, application in self._applications.items()
-                    )
+                if reference in self._failed_source_work or any(
+                    application.ask.child == reference and key not in self._applications_published
+                    for key, application in self._applications.items()
                 ):
                     raise RuntimeError("required source publication failed")
             except Exception as error:
@@ -445,18 +432,20 @@ class NativeChildRegistry:
         return CommandOutcome(command.command_id, reference, CommandDisposition.succeeded, {})
 
     async def _finish_source_work(self, reference: ChildReference) -> None:
-        while tasks := tuple(self._source_tasks.get(reference, ())):
-            await asyncio.gather(*(asyncio.shield(task) for task in tasks))
-        # The source_work owner removes its count in its finally block. Its task
-        # result can wake this waiter first, so let that owner finish accounting.
-        while self._source_work.get(reference, 0):
-            await asyncio.sleep(0)
+        while idle := self._source_idle.get(reference):
+            tasks = tuple(self._source_tasks.get(reference, ()))
+            if tasks:
+                await asyncio.gather(*(asyncio.shield(task) for task in tasks))
+            # A finished inner task does not release its outer owner's count.
+            # Await accounting instead of spinning on already finished tasks.
+            await idle.wait()
 
     async def _invoke_admitted(self, child: _Child, command: ChildCommand) -> JsonObject:
         previous_turn = child.active_turn
         if command.operation is ChildOperation.write_prompt:
             child.active_turn = command.turn
         try:
+            self._invoking_commands.add(command.command_id)
             return await invoke_child(child.native, command)
         except (AdmissionRefused, BackendPromptRejected):
             # A proved non-admission owns no new active provider turn.
@@ -493,30 +482,23 @@ class NativeChildRegistry:
                     "error_message": "source child identity was retired",
                 },
             )
-        elif (
-            command.operation
-            in (ChildOperation.answer_permission_ask, ChildOperation.answer_user_input)
-            and "answer" in command.arguments
-        ):
-            answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
-            if (
-                answer.ask.child != command.child
-                or answer.ask.turn != command.turn
-                or command.operation != self._native_answer_command(answer).operation
-            ):
-                raise ValueError("durable answer target conflicts with command")
-            application = await self.apply_answer(answer)
-            outcome = CommandOutcome(
-                command.command_id,
-                command.child,
-                CommandDisposition.succeeded
-                if application is not None
-                else CommandDisposition.uncertain,
-                {"applied": application is not None},
-            )
         else:
             try:
                 native_command = command
+                if "answer" in command.arguments:
+                    answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
+                    native_command = self._native_answer_command(answer)
+                    if (
+                        native_command.command_id != command.command_id
+                        or native_command.child != command.child
+                        or native_command.turn != command.turn
+                        or native_command.operation != command.operation
+                    ):
+                        raise ValueError("durable answer conflicts with command")
+                    previous = self._answers.get(answer.answer_id)
+                    if previous is not None and previous != answer:
+                        raise ValueError("answer id reused with different recorded answer")
+                    self._answers[answer.answer_id] = answer
                 expectation = None
                 if command.operation in (
                     ChildOperation.start,
@@ -632,6 +614,7 @@ class NativeChildRegistry:
                         arguments={**command.arguments, "resolved_start": encode_value(resolved)},
                     )
                     sink = JournalEventSink(self, command.child)
+                    self._invoking_commands.add(command.command_id)
                     native = self.factory(resolved, capability, command.child)(
                         resolved_start=resolved,
                         event_sink=cast(BackendEventSink, sink),
@@ -675,6 +658,22 @@ class NativeChildRegistry:
                         if command.operation in (ChildOperation.write_prompt, ChildOperation.steer):
                             if self.admission_stopped:
                                 raise _CommandAdmissionRefused("executor is quiescing")
+                        if "answer" in command.arguments:
+                            ask = answer.ask
+                            if child.active_turn is not None and child.active_turn != ask.turn:
+                                raise _CommandAdmissionRefused("answer turn is no longer active")
+                            if ask.kind is AskKind.permission:
+                                if child.asks.get(ask.ask_id) != ask:
+                                    raise _CommandAdmissionRefused("permission callback is gone")
+                            else:
+                                pending = child.user_inputs.get(ask.ask_id)
+                                if pending is None or pending[0] != ask:
+                                    raise _CommandAdmissionRefused("user input callback is gone")
+                                normalized = ordered_user_input_answers(
+                                    pending[1].questions, answer.user_input_answers or ()
+                                )
+                                if normalized is None or normalized != answer.user_input_answers:
+                                    raise ValueError("recorded user input map is incomplete")
                         if command.operation in (
                             ChildOperation.start,
                             ChildOperation.write_prompt,
@@ -774,21 +773,25 @@ class NativeChildRegistry:
                         else:
                             result = await self._invoke_admitted(child, native_command)
                         if command.operation == ChildOperation.answer_permission_ask:
-                            ask = child.asks.get(str(command.arguments["ask_id"]))
-                            if ask is not None:
-                                application = AnswerApplication(command.command_id, ask, now_ms())
+                            applied_ask = child.asks.get(str(native_command.arguments["ask_id"]))
+                            if applied_ask is not None:
+                                application = AnswerApplication(
+                                    command.command_id, applied_ask, now_ms()
+                                )
                                 self._applications[command.command_id] = application
                                 result = {**result, "answer_application": encode_value(application)}
-                            child.asks.pop(str(command.arguments["ask_id"]), None)
+                            child.asks.pop(str(native_command.arguments["ask_id"]), None)
                         elif command.operation == ChildOperation.answer_user_input:
-                            pending = child.user_inputs.get(str(command.arguments["request_id"]))
+                            pending = child.user_inputs.get(
+                                str(native_command.arguments["request_id"])
+                            )
                             if pending is not None:
                                 application = AnswerApplication(
                                     command.command_id, pending[0], now_ms()
                                 )
                                 self._applications[command.command_id] = application
                                 result = {**result, "answer_application": encode_value(application)}
-                            child.user_inputs.pop(str(command.arguments["request_id"]), None)
+                            child.user_inputs.pop(str(native_command.arguments["request_id"]), None)
                         outcome = CommandOutcome(
                             command.command_id,
                             command.child,
@@ -861,18 +864,28 @@ class NativeChildRegistry:
                     {"error_type": type(error).__name__, "error_message": str(error)},
                 )
         self.outcomes[command.command_id] = outcome
-        await self._publish_outcome(outcome)
+        await self._publish_required_output(command, outcome)
         return outcome
 
-    async def _publish_outcome(self, outcome: CommandOutcome) -> None:
-        submission_id = "outcome_" + hashlib.sha256(outcome.command_id.encode()).hexdigest()
-        await self._emit(
-            outcome.child.conversation_id,
-            EnvelopeKind.command_outcome,
-            outcome,
-            submission_id=submission_id,
-        )
-        self._outcomes_published.add(outcome.command_id)
+    async def _publish_required_output(
+        self, command: ChildCommand, outcome: CommandOutcome
+    ) -> None:
+        application = self._applications.get(command.command_id)
+        if application is not None:
+            await self._publish_application(application)
+        if (
+            command.operation is ChildOperation.stop
+            and outcome.disposition is CommandDisposition.succeeded
+            and command.command_id not in self._stop_proofs_published
+        ):
+            # Last in this child's FIFO: accepting this item proves prior output arrived.
+            await self._emit(
+                outcome.child.conversation_id,
+                EnvelopeKind.child_stopped,
+                outcome,
+                submission_id="stopped_" + hashlib.sha256(outcome.command_id.encode()).hexdigest(),
+            )
+            self._stop_proofs_published.add(command.command_id)
 
     async def _emit(
         self,
@@ -952,10 +965,13 @@ class NativeChildRegistry:
         ):
             await asyncio.to_thread(
                 self.spool.mint_ticket_envelope,
-                paths=self.paths, ticket_id=child.ticket_id, child=reference,
+                paths=self.paths,
+                ticket_id=child.ticket_id,
+                child=reference,
                 kind=EnvelopeKind.backend_event,
                 payload=cast(JsonObject, encode_value(event)),
             )
+            self.outbound_ready.set()
             return
         await self._emit(reference.conversation_id, EnvelopeKind.backend_event, event, snapshots)
 
@@ -981,39 +997,40 @@ class NativeChildRegistry:
         return await self.source_work(answer.ask.child, lambda: self._apply_answer(answer))
 
     async def _apply_answer(self, answer: DurableAnswer) -> AnswerApplication | None:
-        command = self._native_answer_command(answer)
-        previous_answer = self._answers.get(answer.answer_id)
-        if previous_answer is not None and previous_answer != answer:
+        command = ChildCommand(
+            answer.answer_id,
+            answer.ask.child,
+            ChildOperation.answer_user_input
+            if answer.ask.kind is AskKind.user_input
+            else ChildOperation.answer_permission_ask,
+            answer.ask.turn,
+            {"answer": encode_value(answer)},
+        )
+        previous = self._answers.get(answer.answer_id)
+        if previous is not None and previous != answer:
             raise ValueError("answer id reused with different recorded answer")
-        if answer.answer_id in self._applications:
-            application = self._applications[answer.answer_id]
-            if application.ask != answer.ask or self._commands.get(answer.answer_id) != command:
-                raise ValueError("answer id reused with another callback or map")
-            await self._publish_application(application)
-            return application
         child = self.children.get(answer.ask.child.child_id)
-        if child is None or child.reference != answer.ask.child:
-            return None
-        if answer.ask.kind == AskKind.permission:
-            if child.asks.get(answer.ask.ask_id) != answer.ask:
+        if answer.answer_id not in self._commands:
+            if child is None or child.reference != answer.ask.child:
                 return None
-        else:
-            pending = child.user_inputs.get(answer.ask.ask_id)
-            if pending is None or pending[0] != answer.ask:
-                return None
-            assert answer.user_input_answers is not None  # shape checked above
-            normalized = ordered_user_input_answers(pending[1].questions, answer.user_input_answers)
-            if normalized is None or normalized != answer.user_input_answers:
-                raise ValueError("recorded user input map is incomplete or not canonical")
-        self._answers[answer.answer_id] = answer
+            if answer.ask.kind is AskKind.permission:
+                if child.asks.get(answer.ask.ask_id) != answer.ask:
+                    return None
+            else:
+                pending = child.user_inputs.get(answer.ask.ask_id)
+                if pending is None or pending[0] != answer.ask:
+                    return None
+                normalized = ordered_user_input_answers(
+                    pending[1].questions, answer.user_input_answers or ()
+                )
+                if normalized is None or normalized != answer.user_input_answers:
+                    raise ValueError("recorded user input map is incomplete")
         outcome = await self.execute_command(command)
-        if outcome.disposition != CommandDisposition.succeeded:
-            return None
-        retained_application = self._applications.get(answer.answer_id)
-        if retained_application is None:
-            raise ValueError("successful answer lacks retained application evidence")
-        await self._publish_application(retained_application)
-        return retained_application
+        return (
+            self._applications.get(answer.answer_id)
+            if (outcome.disposition is CommandDisposition.succeeded)
+            else None
+        )
 
     async def _publish_application(self, application: AnswerApplication) -> None:
         if application.answer_id in self._applications_published:
@@ -1026,47 +1043,6 @@ class NativeChildRegistry:
             submission_id=submission_id,
         )
         self._applications_published.add(application.answer_id)
-
-    def inventory(
-        self, identity: ExecutorIdentity, *, include_pending: bool = True
-    ) -> ReconciliationInventory:
-        return ReconciliationInventory(
-            identity,
-            tuple(
-                ChildInventory(
-                    child.reference,
-                    child.active_turn,
-                    tuple(child.asks.values()),
-                    tuple(sorted(child.user_inputs)),
-                )
-                for child in self.children.values()
-            ),
-            self.spool.pending() if include_pending else (),
-            tuple(
-                outcome
-                for command_id, outcome in self.outcomes.items()
-                if command_id not in self._confirmed_command_ids
-            ),
-        )
-
-    def confirm_command(self, command_id: str) -> None:
-        # Retain only ID->command identity so duplicate IDs cannot cause another native write.
-        # The VPS is authoritative for accepted results; commands are not auto-replayed.
-        self._confirmed_command_ids.add(command_id)
-        task = self._tasks.get(command_id)
-        if task is None:
-            return
-
-        def release_finished_wrapper(finished: asyncio.Task[CommandOutcome]) -> None:
-            # ACKs can arrive from inventory before the local publication returns.
-            # Keep that wrapper visible to stop and quiescence until it finishes.
-            if self._tasks.get(command_id) is finished:
-                self._tasks.pop(command_id)
-
-        if task.done():
-            release_finished_wrapper(task)
-        else:
-            task.add_done_callback(release_finished_wrapper)
 
     def _quiescence_counts(self) -> tuple[int, int, int, int]:
         active = sum(child.active_turn is not None for child in self.children.values())
@@ -1088,15 +1064,15 @@ class NativeChildRegistry:
         # start before its child has a turn, and outcome publication still in progress.
         unresolved = sum(not task.done() for task in self._tasks.values()) + sum(
             outcome.disposition == CommandDisposition.uncertain
-            and not (
-                command_id in self._confirmed_command_ids
-                and outcome.child in stopped_references
-                and outcome.child not in live_references
-            )
+            and not (outcome.child in stopped_references and outcome.child not in live_references)
             for command_id, outcome in self.outcomes.items()
         )
         unresolved += sum(
-            command_id not in self._outcomes_published for command_id in self.outcomes
+            command.operation is ChildOperation.stop
+            and outcome.disposition is CommandDisposition.succeeded
+            and command_id not in self._stop_proofs_published
+            for command_id, command in self._commands.items()
+            if (outcome := self.outcomes.get(command_id)) is not None
         )
         unresolved += sum(
             answer_id not in self._applications_published for answer_id in self._applications

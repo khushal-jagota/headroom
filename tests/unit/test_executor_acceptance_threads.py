@@ -64,7 +64,7 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
         outcome = CommandOutcome("accepted-command", CHILD, CommandDisposition.succeeded, {})
         payload = encode_value(outcome)
         assert isinstance(payload, dict)
-        queued = replace(envelope(), kind=EnvelopeKind.command_outcome, payload=payload)
+        queued = replace(envelope(), kind=EnvelopeKind.child_stopped, payload=payload)
         queued = replace(
             queued,
             payload_sha256=envelope_payload_digest(

@@ -53,7 +53,6 @@ from planner.executor.contracts import (
     ChildReference,
     CommandDisposition,
     CommandOutcome,
-    EnvelopeKind,
     ReceiptDisposition,
 )
 from planner.executor.journal import FilesystemSpool
@@ -145,8 +144,6 @@ def test_claude_stop_result_controls_canonical_retirement(
                 receipt = await remote.accept_envelope(envelope, IDENTITY)
                 assert receipt.disposition is ReceiptDisposition.accepted
                 registry.spool.acknowledge(receipt)
-                if envelope.kind is EnvelopeKind.command_outcome:
-                    registry.confirm_command(str(envelope.payload["command_id"]))
             return outcome
 
         remote.factory.send_command = send
@@ -220,11 +217,7 @@ def test_claude_stop_result_controls_canonical_retirement(
                 fresh = replace(stop, command_id="explicit-cleanup-proof")
                 assert (await send(fresh)).disposition is CommandDisposition.succeeded
                 assert await registry.execute_command(stop) == first
-                stored = tmp_db.execute(
-                    "SELECT outcome_json FROM executor_command_outcomes WHERE command_id=?",
-                    (stop.command_id,),
-                ).fetchone()
-                assert stored is not None and json.loads(stored[0])["disposition"] == "uncertain"
+                assert registry.ask((stop.command_id,))[0].outcome == first
             else:
                 assert client.disconnected and native._client is None
                 assert reference.child_id not in registry.children
@@ -277,8 +270,6 @@ def test_claude_disconnect_failure_cannot_confirm_quiescence(
         original_disconnect = client.disconnect
         monkeypatch.setattr(client, "disconnect", disconnect_failure)
         acknowledge_pending(cast(FilesystemSpool, registry.spool))
-        for command_id in tuple(registry.outcomes):
-            registry.confirm_command(command_id)
         try:
             with pytest.raises(RuntimeError, match="before native termination"):
                 await registry.quiesce()
