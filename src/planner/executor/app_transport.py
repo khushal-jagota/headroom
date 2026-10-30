@@ -260,6 +260,8 @@ class ExecutorAppClient:
             compress=False,
         ) as response:
             if response.status != 204:
+                if 400 <= response.status < 500:
+                    raise ValueError("executor upload refused")
                 raise ConnectionError("executor upload refused")
 
     async def download(

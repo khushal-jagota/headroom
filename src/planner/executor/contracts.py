@@ -265,6 +265,14 @@ class QueuedEnvelope:
     file_dependencies: tuple[FileManifest, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class EnvelopeRefusal:
+    """A sender's permanent preparation failure, recorded as the item's receipt."""
+
+    envelope: QueuedEnvelope
+    error_message: str
+
+
 class ReceiptDisposition(StrEnum):
     accepted = "accepted"
     refused = "refused"
@@ -648,7 +656,7 @@ class WireMessage:
     """Frame body: {kind, request_id, payload}; kind selects the validated codec.
 
     request_id correlates one exchange only. Domain retry identity always remains
-    submission_id, command_id or publication_id in the payload. Never redispatch a
+    submission_id or command_id in the payload. Never redispatch a
     native command merely because a request_id response was lost.
     """
 
@@ -777,13 +785,11 @@ class ControlMessageWriter(Protocol):
     def is_closing(self) -> bool: ...
 
 
-class RemoteInputTransferFailed(RuntimeError):
-    """Local input failure before any native command emission."""
-
-
 class OutboxLink(Protocol):
     async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage: ...
 
-    async def put_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
-        """Store this immutable file in the VPS private staging folder."""
+    async def put_file(
+        self, envelope: QueuedEnvelope, snapshot: FileSnapshot
+    ) -> AcceptanceReceipt | None:
+        """Stage immutable bytes, or return the item's permanent refusal receipt."""
         ...

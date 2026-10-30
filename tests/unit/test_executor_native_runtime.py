@@ -2019,57 +2019,10 @@ def test_cleanup_failure_still_revokes_generation_drains_tasks_and_closes_client
             assert peer.closed and exited.is_set()
             assert executor._writer is None and executor._app_client is None
             assert executor.health().connection_state is ConnectionState.disconnected
-            assert not executor._pending and not executor._transfer_tasks
+            assert not executor._pending and not executor._transfers
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            executor.spool.close()
-
-    asyncio.run(run())
-
-
-def test_disconnect_closes_network_before_waiting_for_canceled_http_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An HTTP transfer can wait for connection closure during canceled cleanup."""
-
-    async def run() -> None:
-        executor = make_executor(tmp_path)
-        peer = install_control_peer(executor, monkeypatch)
-        closed, canceled, entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
-
-        async def close(connection: object) -> None:
-            peer.closed = True
-            peer.reader.feed_eof()
-            closed.set()
-
-        async def transfer() -> None:
-            try:
-                entered.set()
-                await asyncio.Event().wait()
-            finally:
-                canceled.set()
-                # Models an HTTP response context that waits for transport closure.
-                await closed.wait()
-
-        connection = asyncio.create_task(executor._connected())
-        try:
-            while executor.state is not ConnectionState.ready:
-                await asyncio.sleep(0)
-            assert executor._app_client is not None
-            monkeypatch.setattr(executor._app_client, "close", lambda: close(None))
-            blocked = asyncio.create_task(transfer())
-            executor._transfer_tasks.add(blocked)
-            blocked.add_done_callback(executor._transfer_tasks.discard)
-            await entered.wait()
-            executor._stop.set()
-            await asyncio.wait_for(connection, 2)
-            assert closed.is_set() and canceled.is_set()
-            assert not executor._transfer_tasks
-        finally:
-            closed.set()
-            connection.cancel()
-            await asyncio.gather(connection, return_exceptions=True)
             executor.spool.close()
 
     asyncio.run(run())

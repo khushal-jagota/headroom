@@ -926,10 +926,10 @@ class NativeChildRegistry:
 
     def withdraw(self, command_id: str) -> bool:
         """True proves this command has not called, and now cannot call, its provider."""
-        if command_id in self._invoking_commands or command_id in self.outcomes:
-            return False
         if command_id in self._withdrawn_commands:
             return True
+        if command_id in self._invoking_commands or command_id in self.outcomes:
+            return False
         self._withdrawn_commands.add(command_id)
         task = self._preparations.get(command_id)
         if task is not None:
@@ -962,7 +962,22 @@ class NativeChildRegistry:
                     command.command_id,
                     command.child,
                     CommandDisposition.refused,
-                    {"reason": "input_unavailable", "error_message": str(error)},
+                    {
+                        "error_type": "AdmissionRefused"
+                        if isinstance(error, AdmissionRefused)
+                        else "BackendSpawnFailed"
+                        if command.operation is ChildOperation.start
+                        else "PromptWriteRefused",
+                        "error_message": str(error),
+                        "reason": error.reason
+                        if isinstance(error, AdmissionRefused)
+                        else "input_unavailable",
+                        **(
+                            {"corrective_action": error.corrective_action}
+                            if isinstance(error, AdmissionRefused)
+                            else {}
+                        ),
+                    },
                 )
                 self.outcomes[command.command_id] = outcome
                 return outcome

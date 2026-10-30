@@ -71,6 +71,7 @@ from planner.executor.contracts import (
     ControlMessageWriter,
     DurableAnswer,
     EnvelopeKind,
+    EnvelopeRefusal,
     ExecutorHealth,
     ExecutorHealthRead,
     ExecutorIdentity,
@@ -158,7 +159,9 @@ class ExecutorEndpoint:
         self.lost_at_ms: int | None = None
         self._transports: dict[ExecutorIdentity, GenerationTransfers] = {}
         self._transport_roots: dict[ExecutorIdentity, tempfile.TemporaryDirectory[str]] = {}
-        self._upload_transfers: dict[tuple[ExecutorIdentity, str], FileUploadRequest] = {}
+        self._upload_transfers: dict[
+            tuple[ExecutorIdentity, str], tuple[str, FileUploadRequest]
+        ] = {}
         self._transport_lock = asyncio.Lock()
         self._receiver_work: dict[ExecutorIdentity, set[asyncio.Task[Any]]] = {}
 
@@ -980,7 +983,11 @@ class ExecutorEndpoint:
             refusal = error
         except (ValueError, KeyError, TypeError) as error:
             refusal = PlannerError(ErrorCode.validation, str(error))
+        return await self._record_refusal(envelope, identity, refusal)
 
+    async def _record_refusal(
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, refusal: PlannerError
+    ) -> AcceptanceReceipt:
         def refuse(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
             raise refusal
 
@@ -1709,6 +1716,9 @@ class ExecutorEndpoint:
                 except MissingFiles as missing:
                     result = {"files": encode_value(missing.manifests)}
                     response_kind = WireMessageKind.missing_files
+            elif message.kind is WireMessageKind.error:
+                result = _object(await self._refuse_upload_item(message, identity))
+                response_kind = WireMessageKind.receipt
             elif message.kind is WireMessageKind.command_outcome:
                 outcome = TypeAdapter(CommandOutcome).validate_python(message.payload)
                 if message.request_id != outcome.command_id:
@@ -1782,6 +1792,42 @@ class ExecutorEndpoint:
         if principal.kind is not PrincipalKind.ticket or upload.manifest.owner_id != principal.id:
             raise PlannerError(ErrorCode.agent_forbidden, "artifact belongs to another Ticket", {})
 
+    async def _refuse_upload_item(
+        self, message: WireMessage, identity: ExecutorIdentity
+    ) -> AcceptanceReceipt:
+        rejected = TypeAdapter(EnvelopeRefusal).validate_python(message.payload)
+        envelope = rejected.envelope
+        raw = envelope.payload.get("child")
+        if not isinstance(raw, dict):
+            ask = envelope.payload.get("ask")
+            raw = ask.get("child") if isinstance(ask, dict) else None
+        child = TypeAdapter(ChildReference).validate_python(raw)
+        if child.executor_incarnation != identity.executor_incarnation or (
+            child.conversation_id != envelope.conversation_id
+        ):
+            raise ValueError("upload refusal belongs to another child")
+
+        def authorize() -> None:
+            principal = self._assignment(child)
+            for manifest in envelope.file_dependencies:
+                self.store.file_target(manifest)
+                if principal.kind is not PrincipalKind.ticket or principal.id != manifest.owner_id:
+                    raise ValueError("upload refusal belongs to another Ticket")
+
+        await settled_io(authorize)
+        # The request ID identifies only this reservation, not another conversation's bytes.
+        for key, (request_id, upload) in tuple(self._upload_transfers.items()):
+            if key[0] == identity and request_id == message.request_id:
+                if upload.child != child or upload.manifest not in envelope.file_dependencies:
+                    raise ValueError("upload refusal does not belong to this item")
+                self._upload_transfers.pop(key)
+                self._transports[identity].release(key[1])
+        lock = self._conversation_locks.setdefault(envelope.conversation_id, asyncio.Lock())
+        async with lock:
+            return await self._record_refusal(
+                envelope, identity, PlannerError(ErrorCode.validation, rejected.error_message)
+            )
+
     async def _file(
         self, message: WireMessage, identity: ExecutorIdentity
     ) -> tuple[JsonObject, WireMessageKind]:
@@ -1793,7 +1839,7 @@ class ExecutorEndpoint:
             await settled_io(self._authorize_file, upload)
             await settled_io(self.store.verify_connection, identity)
             slot = service.create_upload(upload.manifest)
-            self._upload_transfers[identity, slot.transfer_id] = upload
+            self._upload_transfers[identity, slot.transfer_id] = message.request_id, upload
             return _object(slot), WireMessageKind.file_transfer
         request = TypeAdapter(FileDownloadRequest).validate_python(message.payload)
         pending = self.pending_commands.get(request.command_id)
@@ -1821,27 +1867,33 @@ class ExecutorEndpoint:
             command.child.conversation_id,
             request.stored_file_id,
         )
-        snapshot = await settled_io(
-            partial(
-                snapshot_file,
-                root=path.parent,
-                relative_path=path.name,
-                scope=FileScope.conversation,
-                owner_id=command.child.conversation_id,
+        preparation = asyncio.create_task(
+            asyncio.to_thread(
+                partial(
+                    snapshot_file,
+                    root=path.parent,
+                    relative_path=path.name,
+                    scope=FileScope.conversation,
+                    owner_id=command.child.conversation_id,
+                )
             )
         )
         try:
+            snapshot = await asyncio.shield(preparation)
             slot = await service.create_download_async(snapshot)
             await settled_io(self.store.verify_connection, identity)
             return _object(slot), WireMessageKind.file_transfer
         finally:
-            snapshot.local_path.unlink(missing_ok=True)
+            await wait_for_settlement(preparation)
+            if not preparation.cancelled() and preparation.exception() is None:
+                preparation.result().local_path.unlink(missing_ok=True)
 
     async def store_upload(self, identity: ExecutorIdentity, transfer_id: str) -> None:
         service = self._transports.get(identity)
-        upload = self._upload_transfers.pop((identity, transfer_id), None)
-        if service is None or upload is None:
+        pending = self._upload_transfers.pop((identity, transfer_id), None)
+        if service is None or pending is None:
             raise ValueError("unknown file upload")
+        _, upload = pending
         try:
             await settled_io(self.store.verify_connection, identity)
             await settled_io(self._authorize_file, upload)

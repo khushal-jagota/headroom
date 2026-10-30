@@ -43,6 +43,7 @@ from planner.executor.contracts import (
     ExecutorIdentity,
     FileManifest,
     FileScope,
+    FileUploadRequest,
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
@@ -415,7 +416,10 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
         async def setup_generation(*_: object) -> None:
             endpoint._transports[identity] = cast(GenerationTransfers, service)
             endpoint._transport_roots[identity] = root
-            endpoint._upload_transfers[(identity, "publication")] = "token"
+            endpoint._upload_transfers[(identity, "transfer")] = (
+                "request",
+                FileUploadRequest(manifest(b"bytes"), CHILD),
+            )
 
         writer = Mock()
         writer.send = AsyncMock(side_effect=setup_generation)
@@ -433,6 +437,81 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
             for task in tuple(endpoint._tasks):
                 task.cancel()
             await asyncio.gather(*endpoint._tasks, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+def test_cancelled_input_snapshot_is_removed_after_copy_settles(
+    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancellation before a descriptor exists must still reclaim the completed snapshot."""
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+
+    from planner.conversation.contracts import PromptDeliveryMode
+    from planner.conversation.message_content import MessageFile
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import WritePrompt
+    from planner.executor.files import snapshot_file
+    from planner.executor.transfers import GenerationTransfers
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        store.register_child(CHILD, "ticket", "test-ticket", 1)
+        endpoint = ExecutorEndpoint(store.db_path, RealClock())
+        source = tmp_path / "inputs" / "file"
+        source.parent.mkdir()
+        source.write_bytes(b"input")
+        endpoint.runtime = SimpleNamespace(
+            message_files=SimpleNamespace(path_of=lambda *args: source)
+        )
+        service = GenerationTransfers(IDENTITY, tmp_path / "transfers", lambda: True)
+        endpoint._transports[IDENTITY] = service
+        command = ChildCommand(
+            "prompt",
+            CHILD,
+            ChildOperation.write_prompt,
+            ASK.turn,
+            WritePrompt(
+                content=(MessageFile("file", "text/plain", "file", 5),),
+                sender_content=(),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+            ),
+        )
+        endpoint.pending_commands["prompt"] = command, asyncio.get_running_loop().create_future()
+        entered, release = threading.Event(), threading.Event()
+
+        def held(**kwargs: Any) -> Any:
+            entered.set()
+            assert release.wait(5)
+            return snapshot_file(**kwargs)
+
+        monkeypatch.setattr("planner.executor.vps.snapshot_file", held)
+        copying = asyncio.create_task(
+            endpoint._file(
+                WireMessage(
+                    WireMessageKind.get_file,
+                    "input",
+                    {
+                        "command_id": "prompt",
+                        "stored_file_id": "file",
+                    },
+                ),
+                IDENTITY,
+            )
+        )
+        assert await asyncio.to_thread(entered.wait, 2)
+        copying.cancel()
+        await asyncio.sleep(0)
+        assert not copying.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await copying
+        assert list((tmp_path / ".executor-snapshots").iterdir()) == []
+        assert not service.transfers
+        await service.close()
 
     asyncio.run(run())
 
@@ -990,7 +1069,7 @@ def test_ready_ack_includes_stop_registered_after_reconnect_ask(
 def file_envelope(sequence: int, file: FileManifest) -> QueuedEnvelope:
     from planner.executor.codec import encode_value
 
-    payload: JsonObject = {"child": encode_value(CHILD)}  # type: ignore[dict-item]
+    payload: JsonObject = {"child": encode_value(CHILD)}
     row = replace(
         envelope(sequence),
         kind=EnvelopeKind.backend_event,
@@ -1080,3 +1159,59 @@ def test_upload_checks_bytes_path_and_assignment(store: ExecutorStore, tmp_path:
     refused = store.accept(file_envelope(1, outside), effect, 1, identity=IDENTITY)
     assert refused.disposition is ReceiptDisposition.refused
     assert not store.file_target(outside).exists()
+
+
+def test_upload_cancellation_keeps_transfer_until_private_copy_settles(
+    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The replaced completion exchange must still own an admitted copy on cancellation."""
+    import asyncio
+    import threading
+    from collections.abc import AsyncIterator
+
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import FileUploadRequest
+    from planner.executor.transfers import GenerationTransfers
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        endpoint = ExecutorEndpoint(store.db_path, RealClock())
+        service = GenerationTransfers(IDENTITY, tmp_path / "transfers", lambda: True)
+        endpoint._transports[IDENTITY] = service
+        file = manifest(b"complete")
+        slot = service.create_upload(file)
+        endpoint._upload_transfers[IDENTITY, slot.transfer_id] = (
+            "request",
+            FileUploadRequest(file, CHILD),
+        )
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield b"complete"
+
+        await service.upload(slot.transfer_id, chunks())
+        entered, release = threading.Event(), threading.Event()
+        original = endpoint.store.store_upload
+
+        def held(manifest: FileManifest, source: Path) -> None:
+            entered.set()
+            assert release.wait(5)
+            assert source.exists()
+            original(manifest, source)
+
+        monkeypatch.setattr(endpoint.store, "store_upload", held)
+        copying = asyncio.create_task(endpoint.store_upload(IDENTITY, slot.transfer_id))
+        assert await asyncio.to_thread(entered.wait, 2)
+        copying.cancel()
+        await asyncio.sleep(0)
+        assert not copying.done() and slot.transfer_id in service.transfers
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await copying
+        assert slot.transfer_id not in service.transfers
+        assert not endpoint._receiver_work
+        assert not endpoint.store.file_target(file).exists()
+        endpoint.store.install_files((file,))
+        assert endpoint.store.file_target(file).read_bytes() == b"complete"
+        await service.close()
+
+    asyncio.run(run())

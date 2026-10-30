@@ -435,7 +435,9 @@ def test_ticket_index_skips_unchanged_sources_and_rechecks_racy_same_size_change
     assert len(first.file_dependencies) == 200
     outbox.acknowledge(receipt(first))
     opened: list[Path] = []
-    original = module.regular_descriptor
+    from planner.executor.files import regular_descriptor
+
+    original = regular_descriptor
 
     @contextmanager
     def observe(path: Path):  # type: ignore[no-untyped-def]
@@ -483,3 +485,102 @@ def test_capture_index_rolls_back_with_item_and_file_rows(tmp_path: Path) -> Non
     reopened = MacOutbox(tmp_path / "spool")
     assert list((reopened.root / "blobs").iterdir()) == []
     reopened.close()
+
+
+def test_later_write_retains_unchanged_bytes_when_earlier_capture_is_refused(
+    tmp_path: Path,
+) -> None:
+    import os
+    import time
+
+    root = tmp_path / "artifacts/tickets/t_one"
+    root.mkdir(parents=True)
+    source = root / "file"
+    source.write_bytes(b"shared bytes")
+    old = time.time_ns() - 10_000_000_000
+    os.utime(source, ns=(old, old))
+    box = MacOutbox(tmp_path / "spool")
+    first = box.add(entry("first"), ticket_id="t_one")
+    later = box.add(entry("later"), ticket_id="t_one")
+    assert later.file_dependencies == first.file_dependencies
+    blob = box.snapshots("later")[0].local_path
+    box.acknowledge(receipt(first, ReceiptDisposition.refused))
+    assert blob.read_bytes() == b"shared bytes"
+    assert box._db.execute("SELECT COUNT(*) FROM ticket_files").fetchone() == (0,)
+    box.acknowledge(receipt(later))
+    assert not blob.exists()
+    # A future write captures again after the refused index was removed.
+    future = box.add(entry("future"), ticket_id="t_one")
+    assert future.file_dependencies == first.file_dependencies
+    box.close()
+
+
+def test_confirmation_during_capture_sweeps_after_capture_settles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent capture may defer cleanup, but must not leave acknowledged blobs."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    root = tmp_path / "artifacts/tickets/t_one"
+    root.mkdir(parents=True)
+    (root / "file").write_bytes(b"original")
+    box = MacOutbox(tmp_path / "spool")
+    first = box.add(entry("first"), ticket_id="t_one")
+    blob = box.snapshots("first")[0].local_path
+    entered, release = Event(), Event()
+    capture = box._capture
+
+    def held(ticket_id: str) -> tuple[tuple[FileSnapshot, ...], list[tuple[object, ...]]]:
+        entered.set()
+        assert release.wait(5)
+        return capture(ticket_id)
+
+    monkeypatch.setattr(box, "_capture", held)
+    with ThreadPoolExecutor() as pool:
+        later = pool.submit(box.add, entry("later"), ticket_id="t_empty")
+        assert entered.wait(2)
+        box.acknowledge(receipt(first))
+        assert blob.exists()
+        release.set()
+        assert later.result().file_dependencies == ()
+    assert not blob.exists()
+    box.close()
+
+
+def test_refusal_during_recent_file_recheck_keeps_later_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same bytes rehashed during a refusal still belong to the later pending item."""
+    from collections.abc import Iterator
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    from threading import Event
+
+    from planner.executor.files import regular_descriptor
+
+    root = tmp_path / "artifacts/tickets/t_one"
+    root.mkdir(parents=True)
+    source = root / "file"
+    source.write_bytes(b"same bytes")
+    box = MacOutbox(tmp_path / "spool")
+    first = box.add(entry("first"), ticket_id="t_one")
+    entered, release = Event(), Event()
+
+    @contextmanager
+    def held(path: Path) -> Iterator[int]:
+        with regular_descriptor(path) as descriptor:
+            if path == source:
+                entered.set()
+                assert release.wait(5)
+            yield descriptor
+
+    monkeypatch.setattr("planner.executor.mac_outbox.regular_descriptor", held)
+    with ThreadPoolExecutor() as pool:
+        later = pool.submit(box.add, entry("later"), ticket_id="t_one")
+        assert entered.wait(2)
+        box.acknowledge(receipt(first, ReceiptDisposition.refused))
+        release.set()
+        assert later.result().file_dependencies == first.file_dependencies
+    assert box.snapshots("later")[0].local_path.read_bytes() == b"same bytes"
+    box.close()

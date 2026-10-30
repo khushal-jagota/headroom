@@ -20,7 +20,7 @@ from pydantic import TypeAdapter
 
 from planner.conversation.backends.claude_agent_sdk import ClaudeAgentSdkBackendChildFactory
 from planner.conversation.backends.codex_app_server import CodexAppServerBackendChildFactory
-from planner.conversation.backends.contracts import BackendChildFactory
+from planner.conversation.backends.contracts import AdmissionRefused, BackendChildFactory
 from planner.conversation.backends.hermes_acp import HermesAcpBackendChildFactory
 from planner.conversation.contracts import (
     ConversationBackendKey,
@@ -70,6 +70,7 @@ from planner.executor.contracts import (
     ControlMessageReader,
     ControlMessageWriter,
     EnvelopeKind,
+    EnvelopeRefusal,
     ExecutorHealth,
     ExecutorIdentity,
     FileDownloadRequest,
@@ -171,7 +172,6 @@ class MacExecutor:
         self.exit_committed = False
         self._ipc_stopping = False
         self._command_tasks: set[asyncio.Task[None]] = set()
-        self._transfer_tasks: set[asyncio.Task[None]] = set()
         self._quiesce_lock = asyncio.Lock()
         self._catalog_observer = catalog_observer
         self._catalog_tasks: dict[
@@ -184,8 +184,6 @@ class MacExecutor:
             factory=self._factory(panels_server_url),
             message_files=ConversationMessageFiles(paths.root / "artifacts" / "unused-db-path"),
         )
-
-        self.registry.prepare_inputs = self._prepare_inputs
 
     def _factory(
         self, server_url: str
@@ -264,8 +262,10 @@ class MacExecutor:
                         )
                     )
 
-    async def _request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-        request_id = uuid4().hex
+    async def _request(
+        self, kind: WireMessageKind, payload: JsonObject, *, request_id: str | None = None
+    ) -> WireMessage:
+        request_id = request_id or uuid4().hex
         future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
         writer = self._writer
@@ -297,6 +297,7 @@ class MacExecutor:
             if not self._handshake_accepted and message.kind in (
                 WireMessageKind.command,
                 WireMessageKind.reconnect_ask,
+                WireMessageKind.withdraw,
             ):
                 raise ProtocolRefused("peer sent work before validated handshake")
             if message.kind == WireMessageKind.health and "clock_probe" in message.payload:
@@ -569,6 +570,8 @@ class MacExecutor:
                             staged.unlink(missing_ok=True)
 
                 await settled_io(install)
+        except (ConnectionError, aiohttp.ClientError) as error:
+            raise AdmissionRefused("input connection changed before provider invocation") from error
         finally:
             temporary.unlink(missing_ok=True)
             self._transfers -= 1
@@ -576,7 +579,9 @@ class MacExecutor:
     async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
         return await self._request(kind, payload)
 
-    async def put_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
+    async def put_file(
+        self, envelope: QueuedEnvelope, snapshot: FileSnapshot
+    ) -> AcceptanceReceipt | None:
         identity, client = self.identity, self._app_client
         child = envelope.payload.get("child")
         if child is None:
@@ -587,24 +592,41 @@ class MacExecutor:
         self._transfers += 1
         try:
             async with self._transfer_capacity:
-                response = await self._request(
-                    WireMessageKind.put_file,
-                    {
-                        "manifest": as_object(snapshot.manifest),
-                        "child": child,
-                    },
-                )
-                slot = TypeAdapter(FileTransfer).validate_python(response.payload)
-                if (
-                    response.kind is not WireMessageKind.file_transfer
-                    or slot.direction != "upload"
-                    or slot.manifest != snapshot.manifest
-                    or client is None
-                ):
-                    raise ValueError("invalid upload transfer")
-                await client.upload(slot, snapshot.local_path)
+                request_id = uuid4().hex
+                try:
+                    response = await self._request(
+                        WireMessageKind.put_file,
+                        {
+                            "manifest": as_object(snapshot.manifest),
+                            "child": child,
+                        },
+                        request_id=request_id,
+                    )
+                    slot = TypeAdapter(FileTransfer).validate_python(response.payload)
+                    if (
+                        response.kind is not WireMessageKind.file_transfer
+                        or slot.direction != "upload"
+                        or slot.manifest != snapshot.manifest
+                        or client is None
+                    ):
+                        raise ValueError("invalid upload transfer")
+                    await client.upload(slot, snapshot.local_path)
+                except ValueError as error:
+                    if identity != self.identity or not self._handshake_accepted:
+                        raise ConnectionError("file generation changed") from error
+                    # This item cannot use the descriptor. Answer its request and
+                    # obtain a durable refusal without disturbing other conversations.
+                    refused = await self._request(
+                        WireMessageKind.error,
+                        as_object(EnvelopeRefusal(envelope, str(error))),
+                        request_id=request_id,
+                    )
+                    if refused.kind is not WireMessageKind.receipt:
+                        raise ValueError("expected upload refusal receipt") from error
+                    return TypeAdapter(AcceptanceReceipt).validate_python(refused.payload)
                 if identity != self.identity or not self._handshake_accepted:
                     raise ConnectionError("file generation changed")
+                return None
         finally:
             self._transfers -= 1
 
@@ -691,11 +713,7 @@ class MacExecutor:
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(ConnectionError("executor link lost"))
-            tasks = [
-                task
-                for task in (reader_task, session_task, stop_task, *self._transfer_tasks)
-                if task is not None
-            ]
+            tasks = [task for task in (reader_task, session_task, stop_task) if task is not None]
             await self._settle_catalogs()
             for cleanup_task in tasks:
                 cleanup_task.cancel()
@@ -722,7 +740,7 @@ class MacExecutor:
                     self._transport_admission_stopped = True
                     await self._settle_catalogs()
                     quiescence = await self.registry.quiesce()
-                    pending_transfers = max(self._transfers, len(self._transfer_tasks))
+                    pending_transfers = self._transfers
                     if pending_transfers:
                         quiescence = replace(
                             quiescence,
@@ -983,6 +1001,7 @@ class MacExecutor:
                 await writer.wait_closed()
 
     async def run(self) -> None:
+        self.registry.prepare_inputs = self._prepare_inputs
         self.registry.send_live_event = self._send_live_event
         self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.paths.ipc_socket.unlink(missing_ok=True)

@@ -176,4 +176,3 @@ def file_digest(path: Path) -> tuple[str, int]:
             digest.update(block)
             count += len(block)
     return digest.hexdigest(), count
-

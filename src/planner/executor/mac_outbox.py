@@ -168,6 +168,7 @@ class MacOutbox:
             finally:
                 with self._lock:
                     self._capturing -= 1
+                    self._sweep_blobs()
 
     def _capture(self, ticket_id: str) -> tuple[tuple[FileSnapshot, ...], list[tuple[object, ...]]]:
         root = ExecutorPaths(self.root.parent).artifacts / safe_component(ticket_id)
@@ -194,21 +195,23 @@ class MacOutbox:
                             "WHERE ticket_id=? AND relative_path=?",
                             (ticket_id, relative),
                         ).fetchone()
-                    if previous is not None and previous[:2] == (info.st_size, info.st_mtime_ns):
-                        # Until confirmed, later references must retain the same bytes
-                        # even if an earlier item is permanently refused.
-                        with self._lock:
+                        if previous is not None and previous[:2] == (
+                            info.st_size,
+                            info.st_mtime_ns,
+                        ):
+                            # Read both facts under one lock: a refusal invalidates the
+                            # index and must not slip between these two reads.
                             waiting = self._db.execute(
                                 "SELECT 1 FROM item_files JOIN items USING(sequence) "
                                 "WHERE sha256=? AND receipt_json IS NULL LIMIT 1",
                                 (previous[2],),
                             ).fetchone()
-                        if waiting:
-                            manifest = FileManifest(
-                                FileScope.ticket, ticket_id, relative, previous[2], info.st_size
-                            )
-                            snapshots.append(FileSnapshot(manifest, self._blobs / previous[2]))
-                        continue
+                            if waiting:
+                                manifest = FileManifest(
+                                    FileScope.ticket, ticket_id, relative, previous[2], info.st_size
+                                )
+                                snapshots.append(FileSnapshot(manifest, self._blobs / previous[2]))
+                            continue
                     temporary = self._blobs / (".tmp-" + uuid4().hex)
                     digest = hashlib.sha256()
                     count = 0
@@ -249,14 +252,7 @@ class MacOutbox:
                             else after.st_mtime_ns
                         )
                         updates.append((ticket_id, relative, count, modified_ns, sha256))
-                        with self._lock:
-                            waiting = self._db.execute(
-                                "SELECT 1 FROM item_files JOIN items USING(sequence) "
-                                "WHERE sha256=? AND receipt_json IS NULL LIMIT 1",
-                                (sha256,),
-                            ).fetchone()
-                        if previous is None or previous[2] != sha256 or waiting:
-                            snapshots.append(FileSnapshot(manifest, target))
+                        snapshots.append(FileSnapshot(manifest, target))
                     finally:
                         temporary.unlink(missing_ok=True)
 
@@ -539,7 +535,10 @@ class MacOutbox:
                     for manifest in missing:
                         if manifest not in snapshots:
                             raise ValueError("VPS requested a file outside this item")
-                        await link.put_file(envelope, snapshots[manifest])
+                        refusal = await link.put_file(envelope, snapshots[manifest])
+                        if refusal is not None:
+                            await asyncio.to_thread(self.acknowledge, refusal)
+                            return
                     continue
                 if response.kind is not WireMessageKind.receipt:
                     raise ValueError("expected outbox receipt")

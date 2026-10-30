@@ -199,6 +199,9 @@ matching target bytes allow the same item to finish without another upload.
 Sequence and receipt checks prevent an older retry from replacing newer bytes.
 A file linked by an accepted agent write is therefore durable on the VPS first,
 without separate link parsing. Pending items retain their exact original bytes.
+If an upload descriptor is malformed or its upload is refused, the Mac replies
+with an error for that request. The VPS records a refused receipt for the item.
+The queue advances and the shared connection stays open for other conversations.
 
 Confirmation releases blobs no waiting item references. Temporary and unreferenced
 blobs are swept when the outbox opens. The size-and-time index does not retain
@@ -215,7 +218,7 @@ waits. The outbox retains blobs until its item has a confirmed receipt.
 The outbox holds no transaction across network I/O.
 
 Files and database rows have different commit boundaries. Complete orphan bytes
-after a crash can finish their original publication. Partial bytes stay outside
+after a crash can finish their original item. Partial bytes stay outside
 served paths. For inputs the Mac runner pulls with `get_file` during its
 `preparing` phase. Only files named in that exact pending command can be fetched.
 The provider is called after verification and installation. Withdrawing a preparing

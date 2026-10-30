@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from pydantic import TypeAdapter
 from tests.support.executor_control import paused_outbox
 from tests.support.executor_https import HttpsProxy, serve_executor_app
 
@@ -36,6 +37,7 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryFate,
+    PromptDeliveryMode,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
@@ -234,6 +236,7 @@ class CutReceiptEndpoint(ExecutorEndpoint):
             return
         if (
             message.kind == WireMessageKind.receipt
+            and self.cut_submission is not None
             and message.payload.get("submission_id") == self.cut_submission
         ):
             self.cut_submission = None
@@ -1872,7 +1875,7 @@ def test_concurrent_identical_inputs_keep_independent_downloads(
                         ),
                         sender_content=(),
                         sender_label="Owner",
-                        mode="queue",
+                        mode=PromptDeliveryMode.queue,
                     ),
                 )
                 commands.append(command)
@@ -2217,8 +2220,9 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
         try:
             reject = True
             rejected = asyncio.Event()
+            refusals: list[AcceptanceReceipt] = []
+            generation, writer = harness.mac.identity, harness.endpoint.writer
             send = harness.endpoint._send
-            replay = harness.mac.spool._send_one
 
             async def corrupt_ack(message: WireMessage) -> None:
                 if reject and message.kind is WireMessageKind.file_transfer:
@@ -2226,7 +2230,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                     if invalid_ack == "mismatched":
                         payload["direction"] = "download"
                     elif invalid_ack == "unknown_slot":
-                        payload["transfer_id"] = "x" * 32
+                        payload["transfer_id"] = "f" * 32
                     elif invalid_ack == "traversal":
                         payload["transfer_id"] = "../escape"
                     elif invalid_ack == "manifest":
@@ -2237,16 +2241,14 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                         payload,
                     )
                 await send(message)
-
-            async def observe_rejection(link: Any, envelope: QueuedEnvelope) -> None:
-                try:
-                    await replay(link, envelope)
-                except ValueError:
+                if (
+                    message.kind is WireMessageKind.receipt
+                    and message.payload.get("disposition") == ReceiptDisposition.refused
+                ):
+                    refusals.append(TypeAdapter(AcceptanceReceipt).validate_python(message.payload))
                     rejected.set()
-                    raise
 
             monkeypatch.setattr(harness.endpoint, "_send", corrupt_ack)
-            monkeypatch.setattr(harness.mac.spool, "_send_one", observe_rejection)
             ticket_id = next(iter(harness.mac.registry.children.values())).ticket_id
             assert ticket_id is not None
             artifact = harness.mac.paths.artifacts / ticket_id / "typed-ack.bin"
@@ -2264,11 +2266,28 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             target = tmp_path / "vps/files/tickets" / ticket_id / "typed-ack.bin"
             assert not target.exists()
             assert harness.events("tool_call_finished") == 0
-            assert any(
-                row.kind is EnvelopeKind.backend_event for row in harness.mac.spool.pending()
+            assert len(refusals) == 1
+            assert (
+                harness.endpoint.store.lookup_receipt(
+                    refusals[0].sender_id, refusals[0].submission_id
+                )
+                == refusals[0]
             )
+            await eventually(lambda: not harness.mac.spool.pending(), "Refused item did not drain")
+            assert not harness.endpoint._upload_transfers
             assert artifact.read_bytes() == contents
+            assert harness.mac.identity == generation and harness.endpoint.writer is writer
+            control = await harness.endpoint._request(
+                WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
+            )
+            assert control.kind is WireMessageKind.health
             reject = False
+            await harness.native.sink.tool_call_finished(
+                harness.native.turn,
+                tool_call_id="corrected_descriptor",
+                tool_call_status=ToolCallStatus.completed,
+                detail="The next item uses a valid descriptor.",
+            )
             await eventually(
                 lambda: harness.events("tool_call_finished") == 1,
                 "Corrected artifact acknowledgment did not allow the dependent event",
@@ -2288,11 +2307,19 @@ def test_input_descriptor_must_validate_before_provider_invocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
     from planner.conversation.message_content import MessageFile
-    from planner.executor.contracts import ChildCommand, ChildOperation, CommandDisposition
+    from planner.executor.contracts import ChildCommand, CommandDisposition, CommandOutcome
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         try:
+            assert harness.native.sink is not None and harness.native.turn is not None
+            await harness.native.sink.turn_ended(
+                harness.native.turn,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+            await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
             send = harness.endpoint._send
 
             async def corrupt(message: WireMessage) -> None:
@@ -2314,26 +2341,31 @@ def test_input_descriptor_must_validate_before_provider_invocation(
             kept = await harness.endpoint.runtime.message_files.keep(
                 "c_scripted", b"input bytes", media_type="application/octet-stream"
             )
-            command = ChildCommand(
-                "bad_input",
-                harness.ask.child,
-                ChildOperation.write_prompt,
-                harness.native.turn,
-                WritePrompt(
-                    content=(
+            outcomes: list[CommandOutcome] = []
+            send_command = harness.endpoint.send_command
+
+            async def observe(command: ChildCommand) -> CommandOutcome:
+                outcome = await send_command(command)
+                outcomes.append(outcome)
+                return outcome
+
+            monkeypatch.setattr(harness.endpoint, "send_command", observe)
+            result = await asyncio.wait_for(
+                harness.system.send(
+                    "c_scripted",
+                    (
                         MessageFile(
                             kept.stored_file_id, "application/octet-stream", "input.bin", 11
                         ),
                     ),
-                    sender_content=(),
                     sender_label="Owner",
-                    mode="queue",
                 ),
+                5,
             )
-            result = await asyncio.wait_for(harness.endpoint.send_command(command), 5)
-            assert result.disposition is CommandDisposition.refused
+            assert isinstance(result, PromptDeliveryRefused)
+            assert len(outcomes) == 1 and outcomes[0].disposition is CommandDisposition.refused
             assert harness.native.prompt_count == 1
-            assert command.command_id not in harness.mac.registry._invoking_commands
+            assert outcomes[0].command_id not in harness.mac.registry._invoking_commands
             target = (
                 harness.mac.paths.root
                 / "artifacts/files/conversations/c_scripted"
