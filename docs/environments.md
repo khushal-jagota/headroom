@@ -211,6 +211,21 @@ Runs that need containment opt in explicitly through the runner:
   --evidence /tmp/panels-unit-evidence -- tests/unit/test_synthetic_homes.py
 ```
 
+The three operating-system containment probes live in `tests/containment/` and run
+only when explicitly opted in. Ordinary test discovery omits that directory, and
+publication selects only the default unit, integration, and E2E suites. The probes
+remain active coverage of descendant writes, original inventory, and evidence
+export. Run them explicitly inside admitted containment:
+
+```sh
+.venv/bin/python scripts/run_contained_pytest.py \
+  --evidence /tmp/panels-containment-probes -- tests/containment/test_contained_pytest.py
+```
+
+An explicit request for that directory or file without admitted containment refuses
+before importing the probes. The probes do not skip. Ruff and strict mypy still
+check the directory as part of `tests/`.
+
 The evidence destination must not exist. The runner sets
 `PANELS_REQUIRE_TEST_CONTAINMENT=1` inside its boundary. Direct `pytest`,
 `python -m pytest`, and `pytest.main` calls with that opt-in require the same

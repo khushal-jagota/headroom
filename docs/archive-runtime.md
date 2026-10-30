@@ -3,6 +3,8 @@
 New releases carry a private CPython 3.12 runtime. The archive contains its standard
 library, extension modules, and the non-glibc libraries that its native files require.
 Adoption does not install dependencies or repair the archive.
+The application builds this runtime for real deployment releases. A resolver error
+is a latent release defect, so packaging must model the actual interpreter loader.
 
 The supported application platforms are Debian 13 with glibc 2.41 or newer, and
 Ubuntu 24.04 with glibc 2.39 or newer. Both use Linux x86-64 and Node 22.
@@ -23,8 +25,23 @@ The manifest embeds one versioned runtime contract. The same contract exists in
 the digest-covered payload at `runtime/contract.json`. It binds the full native
 inventory at `runtime/inventory.json`. The inventory records file identities,
 providers, copied component origins, licenses, CPU notes, and exclusions.
+The resolver retains each library path's declaring file for relative expansion.
+It separates inherited RPATH from direct-only RUNPATH and follows the interpreter's
+ancestry for extension loads. Conflicting providers and required missing libraries
+refuse packaging. A separate audit checks final files without the builder's library cache.
 Static dependency analysis does not prove dynamic loads. Target execution supplies
 the separate evidence for those operations.
+
+The archive explicitly omits the unused Tk extension and Tk standard-library packages.
+This named omission does not permit other unresolved native dependencies.
+Packaging removes precisely matched stale destination files before inventory and traversal.
+The dependency audit checks the exact candidate before omission. The relocated archive
+must contain neither the Tk extension nor Tcl/Tk libraries and must pass normal checks.
+
+An import path to Tk exists in a dependency which nothing currently takes. After the omission, if a future code path takes one, it fails at runtime rather than at packaging time, which is a worse place to find out.
+The Chief accepts this residual trade. The absence proof plus startup, admission and
+publication checks bounds it. A future use of those lazy aliases requires a new
+packaging decision before that code path ships.
 
 Publication builds once and seals once. The existing smoke and replacement checks
 consume that archive. An additional proof extracts the same archive into a minimal
@@ -48,3 +65,5 @@ Pending legacy requests remain readable for inspection and cancellation.
 
 The existing full source suites, replacement checks, and recovery checks remain
 publication requirements. This correction introduces no deliberate rollback exercise.
+
+_Last verified: 2026-10-30._
