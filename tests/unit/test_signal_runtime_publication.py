@@ -336,8 +336,12 @@ def test_rejected_request_restores_actual_slot_fields_before_gate_release(
             coordinator._participant = original
             runtime.store.resume_recording("c")
             await asyncio.wait_for(task, 5)
-            assert running.pending_permission_ask_ids == {"1:permission:provider-ask"}
-            assert running.permission_provider_ids == {"1:permission:provider-ask": "provider-ask"}
+            recovered = state.running_turn
+            assert recovered is not None and recovered.token == running.token
+            assert recovered.pending_permission_ask_ids == {"1:permission:provider-ask"}
+            assert recovered.permission_provider_ids == {
+                "1:permission:provider-ask": "provider-ask"
+            }
 
         loop.run(asyncio.wait_for(exercise(), 8))
 
@@ -385,7 +389,8 @@ def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
             release.set()
             assert not await answer
             assert state.running_turn is None
-            assert not running.pending_permission_ask_ids and not running.permission_provider_ids
+            assert not await runtime.system.has_pending_permission_ask("c")
+            assert await runtime.system.pending_permission_ask_ids("c") == frozenset()
             assert not _latest_attention(batches).awaiting_answer
 
         loop.run(asyncio.wait_for(exercise(), 8))
