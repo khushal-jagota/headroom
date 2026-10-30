@@ -200,11 +200,78 @@ A persistent difference fails the session without repair. Without a refusal rece
 the source is unknown. An unaudited child or a legitimate owner change can cause the
 difference. The suite reports evidence without accusation or automatic repair.
 
-This is interpreter protection and persistent-change detection, not containment.
-Native code, separate processes, existing descriptors, writable memory maps, and
-concurrent path changes can bypass the hook. A restored transient change escapes
-the manifest. An abrupt process exit can prevent the final comparison. New external
-link targets are recorded but are not traversed into unrelated account files.
+The audit hook remains interpreter protection. Ordinary pytest runs retain the
+existing private homes, audit receipts, and before/after manifests. They do not
+claim operating-system containment. Existing publication commands remain unchanged.
+
+Runs that need containment opt in explicitly through the runner:
+
+```sh
+.venv/bin/python scripts/run_contained_pytest.py \
+  --evidence /tmp/panels-unit-evidence -- tests/unit/test_synthetic_homes.py
+```
+
+The evidence destination must not exist. The runner sets
+`PANELS_REQUIRE_TEST_CONTAINMENT=1` inside its boundary. Direct `pytest`,
+`python -m pytest`, and `pytest.main` calls with that opt-in require the same
+actual boundary before repository test modules import. The variable selects the
+check. It never grants admission. An inherited marker or contract file cannot
+replace kernel evidence. An opted-in host invocation refuses before collection.
+Unset or `0` retains ordinary behavior. Other values refuse configuration errors.
+
+The runner requires Linux, Bubblewrap, usable user and PID namespaces, and readable
+kernel mount evidence. It refuses missing requirements and unsupported platforms.
+There is no unprotected fallback for an opted-in run. Unit, integration, and E2E
+selections still require separate pytest processes.
+
+The curated filesystem exposes system code and the source worktree read-only.
+Real homes and managed sources remain outside the test view. Private storage
+supplies writable homes, data, and caches. Private PID/proc and network namespaces
+exclude host process roots and control sockets. Children inherit the boundary.
+The process has no capabilities and cannot create another user namespace.
+
+Admission proves non-aliasing through canonical paths, device/inode identity,
+mount backing, and destructive-ancestor checks. It does not claim tmpfs freshness.
+The unproved case is a bind of an entire existing tmpfs in a deliberately forged
+namespace. That adversary is outside the threat model of our own tests writing to
+the wrong place. On this VPS, protected managed homes, managed sources, and external
+skill targets reside on ext4 (`/dev/vda4`). An entire existing tmpfs cannot alias
+those ext4 trees. The demonstrated host-subtree refusal remains required.
+
+The runner retains the original frozen inventory and compares it after child
+teardown. The inner audit guard, receipts, and manifest comparison remain active.
+Full inner and outer manifests, raw link targets, command, source revision, exit
+status, and timing enter the evidence package. A difference fails without repair.
+An unexpected difference does not identify its writer. Missing historical manifests
+remain unavailable.
+
+Provider mode refuses before credential exposure. This is the terminal behavior
+for this Ticket. The experimental egress broker is removed. The disposable
+profile-only fixture proves canonical identity, atomic refresh, refresh-lock
+contention, session writes, and skill denial. Label its result a profile-only pass,
+not a real-provider route pass. A real-provider route requires a separate Ticket
+and the owner's authorization.
+
+Hosted admission is required before any held run executes on a hosted runner.
+It is not a landing prerequisite because publication does not opt in. The new
+standalone workflow uses `workflow_dispatch` only. It runs the startup probe and
+focused integration probe with disposable homes and synthetic credentials. Existing
+workflows, publication, deployment, and their test selections remain untouched.
+A hosted refusal is a blocker and never becomes a skip.
+
+The measured local median added startup cost is **2.642 seconds per process**.
+This startup-only cost is accepted. It is not a measure of full suite overhead or
+hosted performance. Repository collection repeats admission and retains dependency
+checks. The measurement includes five paired strict/plain pytest startup samples.
+
+Host-manager lifecycle cases in opted-in runs need contained infrastructure or
+an unsupported refusal. Ordinary publication behavior remains unchanged. A required
+skip never counts as successful containment evidence. Retention cleanup still
+refuses while a protected link reaches the temporary tree.
+
+A restored transient change still escapes the manifest. An abrupt exit can prevent
+the inner comparison. The runner attempts the original-inventory comparison after
+child exit. No general production installation authority belongs to this boundary.
 
 ## Host status and maintenance
 
