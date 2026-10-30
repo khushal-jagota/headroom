@@ -3,12 +3,19 @@ import type { LineChartDatum } from './components/line-chart-integrated';
 
 export type ChartRangeSelection = 'week' | 'month' | 'all' | string;
 
+/** Explicit suffixes are literal; word units supply their own separator. */
+export function readingSuffix(block: ChartBlock): string {
+  if (block.format?.suffix !== undefined) return block.format.suffix;
+  const unit = block.unit ?? '';
+  return /^\p{L}/u.test(unit) ? ` ${unit}` : unit;
+}
+
 export function formatReading(block: ChartBlock, value: number): string {
   if (!Number.isFinite(value)) return 'No reading';
   return `${block.format?.prefix ?? ''}${value.toLocaleString('en-US', {
     maximumFractionDigits: block.format?.decimals ?? 0,
     minimumFractionDigits: block.format?.decimals ?? 0,
-  })}${block.format?.suffix ?? block.unit ?? ''}`;
+  })}${readingSuffix(block)}`;
 }
 
 /** Compact readings keep fractional precision without padding whole numbers. */
@@ -16,13 +23,13 @@ export function formatTrimmedReading(block: ChartBlock, value: number): string {
   if (!Number.isFinite(value)) return 'No reading';
   return `${block.format?.prefix ?? ''}${value.toLocaleString('en-US', {
     maximumFractionDigits: block.format?.decimals ?? 0,
-  })}${block.format?.suffix ?? block.unit ?? ''}`;
+  })}${readingSuffix(block)}`;
 }
 
 /** Axis labels use the approved abbreviated scale; readings retain full precision. */
 export function formatAxisTick(block: ChartBlock, value: number): string {
   const prefix = block.format?.prefix ?? '';
-  const suffix = block.format?.suffix ?? block.unit ?? '';
+  const suffix = readingSuffix(block);
   if (prefix && Math.abs(value) >= 1000) return `${prefix}${Number((value / 1000).toPrecision(12)).toLocaleString('en-US', { maximumSignificantDigits: 12 })}k${suffix}`;
   const number = Number(value.toPrecision(12)).toLocaleString('en-US', { maximumSignificantDigits: 12, useGrouping: !!prefix });
   return prefix ? `${prefix}${number}${suffix}` : suffix === '%' ? `${number}%` : number;

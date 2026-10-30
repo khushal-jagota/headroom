@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {chartData,chartHeadline,chartTone,comparisonText,missingReadingText,formatReading,inspectedReading} from '../src/lib/charts/presentation';
+import {chartData,chartHeadline,chartTone,comparisonText,missingReadingText,readingSuffix,formatReading,formatTrimmedReading,formatAxisTick,inspectedReading} from '../src/lib/charts/presentation';
 import {updatePageBlock} from '../src/lib/goals/presentation';
 import type {ChartBlock,MeasureValue,Block} from '../src/lib/goals/contracts';
 const chart:ChartBlock={type:'chart',id:'balance',kind:'line',placement:'primary',measure_id:'balance',target:0,direction:'atleast',format:{prefix:'€',decimals:2}};
@@ -203,4 +203,27 @@ it('renders coverage qualifications and raw details across supporting, progress,
  expect(supporting).toContain('Coverage unavailable');
  expect(supporting).toContain('Difference (coverage unavailable):');
  expect(supporting).toContain('<summary>Observation details</summary>');
+});
+
+
+it('separates word units while preserving authored suffixes and numeric formatting',()=>{
+ const units:ChartBlock={...chart,format:{decimals:2},unit:'exception events'};
+ expect(formatReading(units,1234.5)).toBe('1,234.50 exception events');
+ expect(formatTrimmedReading(units,1234)).toBe('1,234 exception events');
+ expect(formatTrimmedReading(units,-1.25)).toBe('-1.25 exception events');
+ expect(readingSuffix({...units,unit:'小时'})).toBe(' 小时');
+ expect(readingSuffix({...units,unit:'\t hours'})).toBe('\t hours');
+ expect(readingSuffix({...units,unit:' hours'})).toBe(' hours');
+ expect(formatReading({...units,unit:'%'},2)).toBe('2.00%');
+ expect(readingSuffix({...units,unit:''})).toBe('');
+ expect(readingSuffix({...units,unit:undefined})).toBe('');
+ for(const suffix of ['', 'h', 'k']) {
+  const literal={...units,format:{decimals:1,suffix}};
+  expect(formatReading(literal,2)).toBe(`2.0${suffix}`);
+  expect(formatTrimmedReading(literal,2)).toBe(`2${suffix}`);
+ }
+ expect(formatAxisTick(units,1000)).toBe('1000');
+ expect(formatAxisTick({...units,format:{prefix:'€',decimals:2}},2500)).toBe('€2.5k exception events');
+ expect(formatAxisTick({...units,format:{prefix:'€',suffix:''}},2500)).toBe('€2.5k');
+ expect(formatReading({...units,format:{prefix:'€',decimals:2}},-2.5)).toBe('€-2.50 exception events');
 });

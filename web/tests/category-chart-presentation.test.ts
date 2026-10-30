@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { CategoryChartProjection, CategoryChartRange, CategoryChartSummary, CategoryChartValue, ChartBlock } from '../src/lib/goals/contracts';
 import { allocationData, categoryDetails, chartData, chartHeadline, chartTone, comparisonText, formatAxisTick, hasCountAxis, selectedSeries } from '../src/lib/charts/presentation';
-import { ProgressCard, TimeBudgetCard } from '../src/lib/charts/components/goal-indicators';
+import { AllocationCard, ProgressCard, TimeBudgetCard } from '../src/lib/charts/components/goal-indicators';
 import { GoalChart } from '../src/lib/charts/GoalChart';
 
 const chart: ChartBlock = {
@@ -214,4 +214,51 @@ it('keeps unknown scalar category comparisons distinct from partial totals in al
     expect(markup).not.toContain('var(--accent-done)');
     expect(markup).not.toContain('On target');
   }
+});
+
+
+it('passes the resolved suffix to headline counters, supporting counters, and the gauge unit span', () => {
+  const block: ChartBlock = {
+    ...chart, binding: undefined, unit: 'exception events', format: { decimals: 0 }, target: 10,
+    series: [{ name: 'Current', points: [{ label: 'Today', value: 7 }] }],
+  };
+  for (const placement of ['primary', 'supporting'] as const) {
+    const markup = renderToStaticMarkup(createElement(GoalChart, {
+      block: { ...block, placement }, values: [], narrow: true, preferenceKey: `unit-${placement}`,
+    }));
+    // Counter accessibility text and the separate visible suffix receive the same separator.
+    expect(markup).toMatch(/<span[^>]*>7 exception events<\/span>/);
+    expect(markup).toMatch(/<span[^>]*> exception events<\/span>/);
+  }
+  const gauge = renderToStaticMarkup(createElement(GoalChart, {
+    block: { ...block, kind: 'gauge' }, values: [], narrow: false, preferenceKey: 'unit-gauge',
+  }));
+  expect(gauge).toContain('aria-valuetext="7 exception events');
+  expect(gauge).toMatch(/<span class="[^"]*unit[^"]*"> exception events<\/span>/);
+});
+
+it('keeps indicator counters, legends, and accessible readings consistent without changing percentage allocations', () => {
+  const block: ChartBlock = { ...chart, binding: undefined, unit: 'hours', format: { decimals: 1 }, target: 10 };
+  const progress = renderToStaticMarkup(createElement(ProgressCard, { block: { ...block, kind: 'progress' }, value: 7 }));
+  expect(progress).toContain('aria-valuetext="7.0 hours of 10.0 hours"');
+  const budget = renderToStaticMarkup(createElement(TimeBudgetCard, { block: { ...block, kind: 'time-budget' }, value: 7 }));
+  expect(budget).toMatch(/<span[^>]*>7.0 hours<\/span>/);
+  expect(budget).toContain('aria-label="7.0 hours spent of 10.0 hours planned. 3.0 hours remaining."');
+  expect(budget).toContain('aria-label="Remaining, 3.0 hours"');
+  const allocation: ChartBlock = { ...block, kind: 'allocation' };
+  const data = [{ key: 'Today', label: 'Today', values: { actual: 7 } }];
+  const series = [{ key: 'actual', name: 'Current', points: [] }];
+  const absolute = renderToStaticMarkup(createElement(AllocationCard, { block: allocation, data, series }));
+  expect(absolute).toMatch(/<span[^>]*>7.0 hours<\/span>/);
+  expect(absolute).toContain('aria-label="Current, 7.0 hours, 100 percent"');
+  const percentage = renderToStaticMarkup(createElement(AllocationCard, {
+    block: { ...allocation, allocation_mode: 'percentage', format: { prefix: '€', suffix: 'ignored' } }, data, series,
+  }));
+  expect(percentage).toMatch(/<span[^>]*>100%<\/span>/);
+  expect(percentage).toContain('aria-label="Current, 100%"');
+  expect(percentage).not.toContain('ignored');
+  const literal = renderToStaticMarkup(createElement(TimeBudgetCard, {
+    block: { ...block, kind: 'time-budget', format: { suffix: 'h' } }, value: 7,
+  }));
+  expect(literal).toMatch(/<span[^>]*>7h<\/span>/);
 });

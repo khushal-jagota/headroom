@@ -6,9 +6,11 @@ failure timing deterministic without a second backend or a second preview owner.
 
 import copy
 import json
+import os
 import re
 import runpy
 import time
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -32,6 +34,7 @@ class GoalFixture:
         self.observations = {}
         self.manual_revisions = {}
         self.goals = {}
+        self.reading_overrides = {}
         for index, model in enumerate(("daily_quota", "cumulative_target", "individual_readings")):
             goal = self.goal(model, model.replace("_", " ").title(), index)
             goal["kind"] = "quantitative"
@@ -149,6 +152,8 @@ class GoalFixture:
         }
 
     def readings(self, identity):
+        if identity in self.reading_overrides:
+            return self.reading_overrides[identity]
         values = []
         if identity in self.observations:
             for date, value in self.observations[identity].items():
@@ -269,6 +274,10 @@ class GoalFixture:
                 "status_date": TODAY,
                 "next_refresh_at": int(time.time()) + 86400,
             }
+        elif key.endswith("/conversation/start-values"):
+            result = {"backend_key": "codex", "model": None, "reasoning_effort": None}
+        elif key.startswith("/api/artifact-catalog/"):
+            result = {"items": [], "total": 0, "has_more": False, "next_offset": None}
         elif key.startswith("/api/goals/"):
             identity = key.split("/")[3]
             result = self.readings(identity) if key.endswith("/readings") else self.goals[identity]
@@ -594,6 +603,183 @@ def touch_overlap(browser, url):
     context.close()
 
 
+def agent_chart_fixture():
+    fixture = GoalFixture()
+    # Retained native-authored primary chart and daily counts from discovery-integrated/
+    # {goal,readings}-goal_z0g497zt.json in ticket t_waf8g2v3. Keep the ordinary unit
+    # verbatim: this proof must not repair a saved chart with prefixed whitespace.
+    goal = fixture.goal("goal_z0g497zt", "Reduce captured exception events in Vylo Dev", 6)
+    goal["kind"] = "quantitative"
+    goal["primary_chart"] = {
+        "type": "chart", "kind": "line",
+        "title": "Vylo Dev — captured exception events per UTC date",
+        "measure_id": "measure_q2v1r9mf", "unit": "captured exception events",
+        "period": "2026-09-29–2026-10-29 (UTC)",
+        "caption": "UTC dates, 2026-09-29 through 2026-10-29. September 29 starts at "
+        "06:11:26 UTC (partial). October 29 ends at 2026-10-29 22:06:17 UTC (partial). "
+        "Captured counts only. Provider completeness is unverified. No full-day compliance claim.",
+        "format": {"decimals": 0}, "id": "chart_zpvw2fud", "placement": "primary",
+    }
+    # Derived fixture blocks exercise disclosure and the gauge's split unit span.
+    # They do not change the retained primary definition or any persisted data.
+    goal["page"]["blocks"] = [
+        {**goal["primary_chart"], "id": "supporting-events", "placement": "supporting",
+         "title": "Supporting captured events"},
+        {"type": "chart", "kind": "gauge", "id": "gauge-events",
+         "placement": "supporting", "title": "Captured event gauge",
+         "measure_id": "measure_q2v1r9mf", "unit": "events", "format": {"decimals": 0}},
+    ]
+    limitation = (
+        "Captured events only; provider ingestion completeness is not established. "
+        "No full-day compliance claim."
+    )
+    values = []
+    for index in range(31):
+        day = str(date(2026, 9, 29) + timedelta(days=index))
+        partial = index in (0, 30)
+        reason = "Partial UTC date. " + limitation if partial else limitation
+        values.append({
+            "measure_id": "measure_q2v1r9mf", "date": day,
+            "definition_revision": 1, "status": "value", "value": 2 if day == "2026-10-25" else 0,
+            "inputs": [], "missing_inputs": [],
+            "query_start_at": 1790662286 if index == 0 else 1790640000 + index * 86400,
+            "query_end_at": 1793311577 if index == 30 else 1790640000 + (index + 1) * 86400,
+            "limitation": reason, "coverage_status": "partial",
+            "coverage_reasons": [reason] + ([
+                "The query interval does not match the complete local period."
+            ] if partial else []),
+        })
+    fixture.reading_overrides[goal["id"]] = {
+        "goal_id": goal["id"], "values": values, "charts": {}, "sources": [],
+        "status_date": TODAY, "next_refresh_at": int(time.time()) + 86400,
+    }
+    return fixture
+
+
+def rendered_counter(counter, value):
+    reading = f"{value} captured exception events"
+    expect(counter.locator(":scope > span").first).to_have_text(reading)
+    assert reading in counter.aria_snapshot()
+    visual = counter.locator(':scope > [aria-hidden="true"]')
+    expect(visual.locator(f'[data-digit="{value}"]')).to_have_css("opacity", "1")
+    suffix = visual.locator(":scope > span").last
+    expect(suffix).to_have_text(" captured exception events", use_inner_text=False)
+    return rendered_separator(suffix)
+
+
+def rendered_separator(suffix):
+    # textContent alone passes when CSS collapses a flex item's leading space.
+    geometry = suffix.evaluate("""node => {
+        const range = document.createRange();
+        range.setStart(node.firstChild, 0); range.setEnd(node.firstChild, 1);
+        return {spaceWidth: range.getBoundingClientRect().width,
+                whiteSpace: getComputedStyle(node).whiteSpace};
+    }""")
+    assert geometry["whiteSpace"] in ("pre", "pre-wrap", "break-spaces"), geometry
+    assert geometry["spaceWidth"] > 0, geometry
+    return geometry
+
+
+def agent_unit_spacing(browser, url):
+    started = time.monotonic()
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root) / "goal-unit-spacing" if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    receipts = []
+    for phone in (False, True):
+        mode = "phone" if phone else "desktop"
+        context = browser.new_context(
+            viewport={"width": 390 if phone else 1280, "height": 844 if phone else 900},
+            has_touch=phone, is_mobile=phone, reduced_motion="reduce",
+        )
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        errors = []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        fixture = agent_chart_fixture()
+        page.route("**/api/**", fixture.respond)
+        try:
+            page.goto(url + "#/workspace/goal/goal_z0g497zt", wait_until="domcontentloaded")
+            primary = page.locator('[data-chart-id="chart_zpvw2fud"]')
+            primary.get_by_role("button", name="All time", exact=True).click()
+            plot = primary.get_by_role("slider")
+            expect(plot).to_have_attribute("aria-valuemax", "31")
+            counter = primary.locator(".metric-value > span")
+            zero = rendered_counter(counter, 0)
+            session = context.new_cdp_session(page) if phone else None
+            if not phone:
+                plot.focus()
+            for index, value, day in ((30, 0, "2026-10-29"), (26, 2, "2026-10-25")):
+                if phone:
+                    plot.scroll_into_view_if_needed()
+                    box = plot.bounding_box()
+                    assert box
+                    point = {"x": box["x"] + min(box["width"] - 1, box["width"] * index / 30),
+                             "y": box["y"] + box["height"] / 2}
+                    session.send("Input.dispatchTouchEvent", {
+                        "type": "touchStart", "touchPoints": [point],
+                    })
+                else:
+                    plot.press("End")
+                    for _ in range(30 - index):
+                        plot.press("ArrowLeft")
+                expect(plot).to_have_attribute(
+                    "aria-valuetext", f"{day}: Current {value} captured exception events"
+                )
+                expect(primary.locator('[data-tooltip-series="actual"] > span').last).to_have_text(
+                    f"{value} captured exception events"
+                )
+                rendered_counter(counter, value)
+                if output:
+                    primary.screenshot(path=str(output / f"{mode}-{value}-events.png"))
+                if phone:
+                    session.send("Input.dispatchTouchEvent", {
+                        "type": "touchEnd", "touchPoints": [],
+                    })
+            supporting = page.locator('[data-chart-id="supporting-events"]')
+            if phone:
+                summary = supporting.get_by_role(
+                    "button", name=re.compile("Supporting captured events")
+                )
+                expect(summary).to_have_attribute("aria-expanded", "false")
+                rendered_counter(supporting.locator(".support-reading > span"), 0)
+                summary.tap()
+                expect(summary).to_have_attribute("aria-expanded", "true")
+                expect(supporting.get_by_role("slider")).to_be_visible()
+                if output:
+                    supporting.screenshot(path=str(output / "phone-supporting-expanded.png"))
+                summary.tap()
+                expect(summary).to_have_attribute("aria-expanded", "false")
+            else:
+                rendered_counter(supporting.locator(".metric-value > span"), 0)
+            gauge = page.locator('[data-chart-id="gauge-events"]')
+            if phone:
+                gauge.get_by_role("button", name=re.compile("Captured event gauge")).tap()
+            meter = gauge.get_by_role("meter")
+            meter.scroll_into_view_if_needed()
+            expect(meter).to_have_attribute("aria-valuetext", "0 events")
+            unit = gauge.locator('[aria-hidden="true"] span').filter(
+                has_text=re.compile(r"^ events$")
+            )
+            expect(unit).to_have_count(1)
+            gauge_space = rendered_separator(unit)
+            if output:
+                gauge.screenshot(path=str(output / f"{mode}-gauge.png"))
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            assert fixture.writes == [], fixture.writes
+            assert errors == [], errors
+            receipts.append({"mode": mode, "counter": zero, "gauge": gauge_space, "errors": errors})
+        finally:
+            context.close()
+    elapsed = time.monotonic() - started
+    if output:
+        (output / "receipt.json").write_text(
+            json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
+        )
+    print(f"goal chart unit spacing desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
+
+
 def run(browser, urls):
     started = time.monotonic()
     fixture = GoalFixture()
@@ -620,3 +806,4 @@ def run(browser, urls):
         f"goal preview native DOM/HTTP controls: passed ({time.monotonic() - started:.2f}s)",
         flush=True,
     )
+    agent_unit_spacing(browser, urls[0])
