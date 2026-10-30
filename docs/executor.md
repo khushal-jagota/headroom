@@ -51,7 +51,8 @@ A failed bootstrap refuses the backend start.
 
 A new start, including a resumed provider session, reads current database rows.
 Transport retries keep the snapshot that belongs to the original start command.
-Adoption of a surviving child does not repeat bootstrap or restart that child.
+A short link outage keeps the existing child and does not repeat bootstrap.
+A VPS restart closes the old run and requires an exact-child stop before a fresh start.
 Later starts can update the account's shared skill paths.
 
 Each composed native Worker delivery directs the Worker to read `panels/SKILL.md` from
@@ -221,11 +222,17 @@ Code paths: `src/planner/executor/files.py`, `publication.py`, `vps.py`.
 
 ## A lost connection supplies no answer
 
-The Mac service owns its children independently of the socket. On reconnect,
-Panels establishes the exact surviving children, turns, and callbacks before it
-replays queued events. It also reconciles accepted submissions and recorded
-answers. A VPS restart restores the authoritative turn information
-needed to interpret those events.
+The Mac service owns its children independently of the socket. A short link loss
+within the same VPS process keeps the current run. Reconnect checks the exact
+children, turns, and callbacks before replaying queued events and saved answers.
+
+A VPS restart interrupts every old Mac run and closes its callbacks. It does not
+reattach the turn. Child assignment and retained turn identity commit together
+before the first command can be emitted, so startup always knows which child to
+stop. Reconnect inventory triggers an exact-child stop and records its outcome.
+Until termination is proved, that conversation remains fenced against fresh work.
+The next send then starts a fresh run. Unresolved delivery stays unknown and is
+never resent. An absent child in inventory alone does not prove termination.
 
 Each replay pass drains only the pending sequence prefix captured at its start,
 with one in-flight submission per conversation. New events stay durable for a
@@ -276,7 +283,8 @@ Ordinary domain refusals do not affect cleanup evidence.
 
 Confirmed retirement closes the exact assignment and preserves its retirement fact in one transaction.
 Later metadata and delayed inventory cannot revive that identity.
-Live idle and active children still qualify for adoption through their open assignments.
+A surviving VPS process keeps its existing idle and active child proxies across link loss.
+A restarted VPS uses open assignments only to stop the old children.
 The next explicit prompt starts a fresh child with the retained provider session cursor.
 An explicit new stop can confirm an absent exact child only after all earlier work and journal receipts settle.
 An old uncertain command always retains its first outcome. A failed cleanup keeps quarantine and blocks replacement.
@@ -303,8 +311,9 @@ pending snapshot as `executor_ask`. For remote submissions, `{landed: true}` mea
 durable acceptance on VPS. The UI says "Answer saved on VPS; delivery to Mac is
 pending." Only matching application evidence says "Answer applied on Mac."
 Delivery waits for fresh evidence of the original callback on a ready connection.
-A restart restores the pending identity before the Mac reconnects. Cancellation,
-a completed turn, or a replaced child/turn prevents new acceptance and delivery.
+A VPS restart closes the original callback before the Mac reconnects. The saved
+choice remains recorded but cannot be delivered to that closed callback. Cancellation,
+a completed turn, or a replaced child/turn also prevents new acceptance and delivery.
 Cancellation persists that closure before waiting for the Mac. Saved answers to
 closed callbacks remain unresolved; reconnect cannot reopen them. An application
 acknowledgment for an answer transmitted before closure can still record its effect.
@@ -421,7 +430,9 @@ Auxiliary routes also check the current incarnation, generation, and reserved tr
 Domain writes still require the original assigned child's authority. Native authentication grants no Worker owner authority.
 
 Mac and VPS packages must use the current protocol before replay.
-The Mac retains its native children during app restarts and reconnects through inventory, reconciliation, replay, and readiness.
+The Mac retains its native children during app restarts and short link outages,
+and reconnects through inventory, reconciliation, replay, and readiness. After a
+VPS restart, inventory instead causes each old child to be stopped before fresh work.
 There is no fallback transport. Lost replies leave native effects unconfirmed rather than repeating them.
 
 Connection diagnostics omit credentials, addresses, paths, exception messages, and remote payloads.

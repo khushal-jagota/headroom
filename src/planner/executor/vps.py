@@ -148,6 +148,7 @@ class ExecutorEndpoint:
             self._read_skill_snapshot,
             self.cancel_initial_delivery,
             self.retire_child,
+            self.principal_for_start,
         )
         self.file_receiver: Any = None
         self._input_exchanges: dict[str, InputTransferExchange] = {}
@@ -210,6 +211,13 @@ class ExecutorEndpoint:
         child = ChildReference(
             self.identity.executor_incarnation, str(uuid4()), start.conversation_id
         )
+        self.sinks[child.child_id] = sink
+        proxy = self.recover_child(child, initial_history_complete=True)
+        self.children[child.child_id] = proxy
+        return child
+
+    @staticmethod
+    def principal_for_start(start: ResolvedConversationStart) -> Principal:
         env = (
             {}
             if start.role_materials is None
@@ -231,11 +239,7 @@ class ExecutorEndpoint:
             principal = Principal(PrincipalKind.manager, manager_id)
         else:
             raise BackendSpawnFailed("remote children need a server-assigned Worker identity")
-        self.store.register_child(child, principal.kind.value, principal.id, now_ms())
-        self.sinks[child.child_id] = sink
-        proxy = self.recover_child(child, initial_history_complete=True)
-        self.children[child.child_id] = proxy
-        return child
+        return principal
 
     def recover_child(
         self, child: ChildReference, *, initial_history_complete: bool = False
@@ -1826,15 +1830,14 @@ class ExecutorEndpoint:
                             ),
                         )
                     self._inventory[item.child.child_id] = item
-                    proxy = self.children.get(item.child.child_id)
-                    if proxy is None:
+                    if item.child.child_id not in self.children:
+                        # No proxy means this VPS process did not launch this child.
+                        # Its retained identity authorizes only exact-child retirement.
                         proxy = self.recover_child(item.child)
                         self.children[item.child.child_id] = proxy
-                    await self.runtime.system.adopt_remote_child(item, proxy)
+                        await self.runtime.system.stop_interrupted_remote_child(item.child, proxy)
                     if not await self._reconciliation_current(identity, writer):
                         return
-                    # Adoption can wait behind shutdown. Its earlier assignment
-                    # precheck grants no authority after that await.
                     closed = await settled_io(
                         self._closed_reconciliation_child, item.child, identity
                     )

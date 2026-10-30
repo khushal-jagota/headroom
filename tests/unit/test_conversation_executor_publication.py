@@ -239,10 +239,10 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
     asyncio.run(exercise())
 
 
-def test_restart_restores_native_request_before_initial_signal_snapshot(
+def test_restart_closes_native_request_before_initial_signal_snapshot(
     tmp_db: sqlite3.Connection,
 ) -> None:
-    """A VPS restart cannot erase offline answerability or manufacture local recovery."""
+    """A VPS restart closes callbacks before the first attention snapshot."""
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
     from planner.conversation.contracts import SignalSnapshot
@@ -287,12 +287,12 @@ def test_restart_restores_native_request_before_initial_signal_snapshot(
                 unavailable=lambda reason: None,
             )
             cleanup.callback(attachment.close)
-            assert next(
+            assert not next(
                 v for v in snapshots[0].values if v.conversation_id == "c"
             ).attention.awaiting_answer
-            assert await restored.system.pending_permission_ask_ids("c") == frozenset({public_id})
+            assert await restored.system.pending_permission_ask_ids("c") == frozenset()
             assert any(
-                f.identity == public_id and f.status is LifecycleStatus.pending
+                f.identity == public_id and f.status is LifecycleStatus.unavailable
                 for f in await restored.store.lifecycle_facts("c")
             )
             assert await restored.store.select_deployment_recoveries() == {}

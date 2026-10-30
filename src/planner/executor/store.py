@@ -379,30 +379,41 @@ class ExecutorStore:
         self, child: ChildReference, principal_kind: str, principal_id: str, now_ms: int
     ) -> None:
         with self._transaction() as connection:
-            existing = connection.execute(
-                "SELECT * FROM executor_child_assignments "
-                "WHERE executor_incarnation=? AND child_id=?",
-                (child.executor_incarnation, child.child_id),
-            ).fetchone()
-            if existing:
-                if (
-                    existing["conversation_id"],
-                    existing["principal_kind"],
-                    existing["principal_id"],
-                ) != (child.conversation_id, principal_kind, principal_id):
-                    raise _invalid("Child assignment identity conflicts")
-                return
-            connection.execute(
-                "INSERT INTO executor_child_assignments VALUES (?,?,?,?,?,?,NULL)",
-                (
-                    child.executor_incarnation,
-                    child.child_id,
-                    child.conversation_id,
-                    principal_kind,
-                    principal_id,
-                    now_ms,
-                ),
+            self.register_child_in_transaction(
+                connection, child, principal_kind, principal_id, now_ms
             )
+
+    @staticmethod
+    def register_child_in_transaction(
+        connection: sqlite3.Connection,
+        child: ChildReference,
+        principal_kind: str,
+        principal_id: str,
+        now_ms: int,
+    ) -> None:
+        existing = connection.execute(
+            "SELECT * FROM executor_child_assignments WHERE executor_incarnation=? AND child_id=?",
+            (child.executor_incarnation, child.child_id),
+        ).fetchone()
+        if existing:
+            if (
+                existing["conversation_id"],
+                existing["principal_kind"],
+                existing["principal_id"],
+            ) != (child.conversation_id, principal_kind, principal_id):
+                raise _invalid("Child assignment identity conflicts")
+            return
+        connection.execute(
+            "INSERT INTO executor_child_assignments VALUES (?,?,?,?,?,?,NULL)",
+            (
+                child.executor_incarnation,
+                child.child_id,
+                child.conversation_id,
+                principal_kind,
+                principal_id,
+                now_ms,
+            ),
+        )
 
     def assigned_ticket_children(
         self, ticket_id: str, incarnation: str
@@ -486,21 +497,6 @@ class ExecutorStore:
                 child.child_id,
             ),
         )
-
-    def open_conversation_children(self, conversation_id: str) -> tuple[ChildReference, ...]:
-        """Original assignment evidence for explicit shutdown of pre-metadata state."""
-        connection = connect(self.db_path)
-        try:
-            return tuple(
-                ChildReference(str(row[0]), str(row[1]), conversation_id)
-                for row in connection.execute(
-                    "SELECT executor_incarnation,child_id FROM executor_child_assignments "
-                    "WHERE conversation_id=? AND closed_at_ms IS NULL",
-                    (conversation_id,),
-                )
-            )
-        finally:
-            connection.close()
 
     def has_retained_command(self, outcome: CommandOutcome) -> bool:
         """Historical evidence grants no child execution or mutation authority."""
@@ -862,7 +858,6 @@ class ExecutorStore:
             (application.applied_at_mac_ms, _ask_key(application.ask)),
         )
 
-
     def ask_evidence(self, ask: AskReference) -> AskEvidence | None:
         connection = connect(self.db_path)
         try:
@@ -881,7 +876,6 @@ class ExecutorStore:
             )
         finally:
             connection.close()
-
 
     @staticmethod
     def _publication_matches(connection: sqlite3.Connection, manifest: FileManifest) -> bool:
