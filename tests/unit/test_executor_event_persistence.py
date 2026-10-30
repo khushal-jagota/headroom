@@ -32,13 +32,13 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     TransactionalWriter,
 )
-from planner.executor.store import ExecutorStore
+from planner.executor.vps_inbox import InboxStore
 
 
 @asynccontextmanager
 async def _case(
     root: Path, signal: bool
-) -> AsyncIterator[tuple[_Harness, ExecutorStore, ExecutorIdentity, BackendEvent, QueuedEnvelope]]:
+) -> AsyncIterator[tuple[_Harness, InboxStore, ExecutorIdentity, BackendEvent, QueuedEnvelope]]:
     async with AsyncExitStack() as cleanup:
         path = root / "event.db"
         composition = SignalRuntimeComposition(str(path), 1000) if signal else None
@@ -65,10 +65,10 @@ async def _case(
         assert state.running_turn is not None
         child = ChildReference("proof", "child", "c")
         state.executor_child_reference = child
-        store = ExecutorStore(str(path))
+        store = InboxStore(str(path))
         identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "proof", 1)
-        store.begin_connection(identity, 1000)
-        store.register_child(child, "chief", "chief", 1000)
+        store.runs.begin_connection(identity, 1000)
+        store.runs.register_child(child, "chief", "chief", 1000)
         event = BackendEvent(
             child,
             BackendEventMethod.tool_call_started,

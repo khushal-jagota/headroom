@@ -641,6 +641,9 @@ class NativeMessageOperation:
     sender_id: str
     submission_id: str
     composed_confirmed: bool = False
+    in_commit: (
+        Callable[[sqlite3.Connection, str, object, NativeMessageAdmission | None], None] | None
+    ) = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -733,7 +736,6 @@ class ConversationSystem(Protocol):
         counts as idle; callers serialize its association when creating or unlinking it.
         """
         ...
-
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation named by the request's conversation id.

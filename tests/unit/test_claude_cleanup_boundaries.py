@@ -7,8 +7,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import cast
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
@@ -108,9 +107,9 @@ def test_claude_stop_result_controls_canonical_retirement(
 
     async def run() -> None:
         remote = endpoint(tmp_db)
-        remote.identity = IDENTITY
-        remote.store.begin_connection(IDENTITY, 1)
-        remote.store.mark_ready(IDENTITY, 2)
+        remote.runs.identity = IDENTITY
+        remote.runs.store.begin_connection(IDENTITY, 1)
+        remote.runs.store.mark_ready(IDENTITY, 2)
         registry, clients = claude_registry(tmp_path, monkeypatch)
         observer = ScriptedCatalogObserver(lambda: IDENTITY)
         observer.model = "test"
@@ -137,27 +136,27 @@ def test_claude_stop_result_controls_canonical_retirement(
                 deadline=30,
             )
 
-        monkeypatch.setattr(remote, "observe_catalog", observe)
+        monkeypatch.setattr(remote.catalog, "observe_catalog", observe)
         commands: list[ChildCommand] = []
 
         async def send(command: ChildCommand) -> CommandOutcome:
             commands.append(command)
             outcome = await registry.run(command)
             for envelope in cast(MacOutbox, registry.spool).pending():
-                receipt = await remote.accept_envelope(envelope, IDENTITY)
+                receipt = await remote.inbox.accept(envelope, IDENTITY)
                 assert receipt.disposition is ReceiptDisposition.accepted
                 cast(MacOutbox, registry.spool).acknowledge(receipt)
             return outcome
 
-        remote.factory.send_command = send
-        remote.factory.skill_snapshot_supplier = lambda _: canonical_snapshot()
+        remote.runs.send_command = send  # type: ignore[method-assign]
+        remote.runs._read_skill_snapshot = lambda start: canonical_snapshot()  # type: ignore[method-assign]
         system = SqliteProcessConversationSystem(
             store=ConversationStore(remote.db_path),
-            backend_child_factories=dict.fromkeys(ConversationBackendKey, remote.factory),
+            backend_child_factories=dict.fromkeys(ConversationBackendKey, remote.runs),
             message_files=ConversationMessageFiles(remote.db_path),
         )
-        system.configure_destination_validation(observer, endpoint=remote)
-        remote.runtime = cast(Any, SimpleNamespace(system=system))
+        system.configure_destination_validation(observer, endpoint=remote.catalog)
+        remote.bind_conversations(system)
         native: ClaudeAgentSdkBackendChild | None = None
         original_disconnect = None
         try:
@@ -207,7 +206,7 @@ def test_claude_stop_result_controls_canonical_retirement(
                 assert registry._children[reference.child_id] is child
                 assert child.native is native and native._client is client
                 assert state.child_is_quarantined and state.executor_child_reference == reference
-                assert remote.store.child_assignment(reference) == ("ticket", ticket.id)
+                assert remote.runs.store.child_assignment(reference) == ("ticket", ticket.id)
                 with pytest.raises(PermissionError):
                     registry.authenticate(reference.child_id, child.capability)
                 before = list(client.prompts), list(client.streamed_messages)
@@ -225,7 +224,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             else:
                 assert client.disconnected and native._client is None
                 assert reference.child_id not in registry._children
-                assert remote.store.child_assignment(reference) is None
+                assert remote.runs.store.child_assignment(reference) is None
                 assert not state.child_is_quarantined and state.executor_child_reference is None
         finally:
             if clients and original_disconnect is not None:

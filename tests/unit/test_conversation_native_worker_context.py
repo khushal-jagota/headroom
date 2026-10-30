@@ -70,8 +70,8 @@ from planner.executor.protocol import (
     WritePrompt,
     encode_value,
 )
-from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
-from planner.executor.vps import ExecutorEndpoint
+from planner.executor.vps_remote_child import MacRemoteChild, MacRemoteChildFactory
+from planner.executor.vps_transport import VpsExecutor
 from planner.projects.data import create_project
 from planner.tickets import data as tickets
 from planner.tickets.contracts import TicketLocale
@@ -199,23 +199,21 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             commands.append((command, outcome))
             return outcome
 
-        remote = RemoteBackendChildFactory(
-            lambda start, sink: reference, send, lambda start: snapshot
-        )
+        remote = MacRemoteChildFactory(lambda start, sink: reference, send, lambda start: snapshot)
         system = SqliteProcessConversationSystem(
             store=store,
             message_files=ConversationMessageFiles(db_path),
             backend_child_factories={key: remote for key in ConversationBackendKey},
         )
-        endpoint = ExecutorEndpoint(db_path, RealClock())
+        endpoint = VpsExecutor(db_path, RealClock())
         executor_identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
         )
-        endpoint.identity = executor_identity
-        endpoint.ready = True
-        endpoint.children[reference.child_id] = remote.recover(reference)
+        endpoint.runs.identity = executor_identity
+        endpoint.runs.ready = True
+        endpoint.runs.children[reference.child_id] = remote.recover(reference)
         observer = ScriptedCatalogObserver(lambda: executor_identity)
-        system.configure_destination_validation(observer, endpoint=endpoint)
+        system.configure_destination_validation(observer, endpoint=endpoint.catalog)
         recipient = Principal(PrincipalKind.ticket, ticket.id)
 
         async def deliver(text: str, **options: Any) -> Any:
@@ -389,7 +387,7 @@ def test_native_context_scope_and_rebind_do_not_duplicate_composed_content(
                 {"composed_content_delivered": True},
             )
 
-        remote = RemoteBackendChildFactory(
+        remote = MacRemoteChildFactory(
             lambda start, sink: ChildReference("test-incarnation", str(uuid4()), "c"),
             dispatch,
             lambda start: snapshot,
@@ -483,7 +481,7 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
         PromptDeliveryUncertain,
     )
     from planner.executor.protocol import CommandDisposition
-    from planner.executor.store import ExecutorStore
+    from planner.executor.vps_inbox import InboxStore
 
     async def exercise() -> None:
         db_path = str(tmp_path / "panels.sqlite")
@@ -497,7 +495,7 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
         release_cleanup = asyncio.Event()
         replacement_start_entered = asyncio.Event()
         release_start = asyncio.Event()
-        executor_store = ExecutorStore(db_path)
+        executor_store = InboxStore(db_path)
         snapshot = CanonicalSkillSnapshot(
             tuple(
                 CanonicalSkillSource(name, f"---\nname: {name}\ndescription: test\n---\ntext")
@@ -522,7 +520,7 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
                 state = system._conversations["c"]
                 assert state.reserved_turn is not None
                 assert not state.reserved_turn.resolved.is_set()
-                assert isinstance(state.child, RemoteBackendChild)
+                assert isinstance(state.child, MacRemoteChild)
                 assert state.child.reference == command.child
                 assert state.child_is_quarantined
                 cleanup_entered.set()
@@ -537,10 +535,10 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
 
         def reference(start: ResolvedConversationStart, sink: Any) -> ChildReference:
             child = ChildReference("test-incarnation", str(uuid4()), "c")
-            executor_store.register_child(child, "ticket", "t_native", 1)
+            executor_store.runs.register_child(child, "ticket", "t_native", 1)
             return child
 
-        remote = RemoteBackendChildFactory(
+        remote = MacRemoteChildFactory(
             reference,
             dispatch,
             lambda start: snapshot,

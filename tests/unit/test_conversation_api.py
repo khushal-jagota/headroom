@@ -1069,22 +1069,22 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
     from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
     from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
     from planner.executor.protocol import encode_value
-    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.vps_transport import VpsExecutor
 
     async def exercise() -> None:
         async with harness.client() as client:
             await _start(client, "c")
-            endpoint = ExecutorEndpoint(str(harness.db_path), RealClock())
-            harness.runtime = replace(harness.runtime, executor_endpoint=endpoint)
+            endpoint = VpsExecutor(str(harness.db_path), RealClock())
+            harness.runtime = replace(harness.runtime, executor_endpoint=endpoint.runs)
             harness.app.state.conversation = harness.runtime
             identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
-            endpoint.store.begin_connection(identity, 100)
+            endpoint.inbox.store.runs.begin_connection(identity, 100)
             ask = AskReference(
                 ChildReference("inc", "child", "c"), TurnToken("c", 1), "ask", AskKind(kind)
             )
             public_id = f"1:{kind}:ask"
             persist_pending_turn(
-                endpoint.store,
+                endpoint.runs.store,
                 ask,
                 runtime_overrides={
                     "pending_permission_ask_ids": [public_id] if kind == "permission" else [],
@@ -1093,13 +1093,13 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
                 },
             )
             if kind == "permission":
-                endpoint.store.publish_ask(ask, ("allow", "deny"), 100)
+                endpoint.inbox.store.runs.publish_ask(ask, ("allow", "deny"), 100)
                 route = "permission-answers"
                 body: dict[str, Any] = {"ask_id": "1:permission:ask", "option_id": "allow"}
             else:
                 questions = (UserInputQuestion("q", "Question", "Choose", (), False, True),)
                 persist_pending_turn(
-                    endpoint.store,
+                    endpoint.runs.store,
                     ask,
                     runtime_overrides={
                         "pending_user_input_questions": {public_id: encode_value(questions)},
@@ -1107,10 +1107,10 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
                         "user_input_provider_ids": {public_id: "ask"},
                     },
                 )
-                endpoint.store.publish_user_input_request(ask, questions, 100)
+                endpoint.inbox.store.runs.publish_user_input_request(ask, questions, 100)
                 route = "user-input-answers"
                 body = {"request_id": "1:user_input:ask", "answers": {"q": {"answers": ["answer"]}}}
-            endpoint.store.mark_lost(identity, 101)
+            endpoint.inbox.store.runs.mark_lost(identity, 101)
             path = f"/api/conversation/conversations/c/{route}"
             # Neither an ID nor an identity partly copied from another ask grants admission.
             assert (await client.post(path, json=body)).json() == {"landed": False}
@@ -1134,7 +1134,7 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
                 )
                 assert response.status_code == 200, response.text
                 assert response.json() == {"landed": False}
-            assert endpoint.store.recorded_answer(ask) is None
+            assert endpoint.inbox.store.runs.recorded_answer(ask) is None
             malformed = encode_value(ask)
             assert isinstance(malformed, dict)
             malformed["unexpected"] = True
@@ -1152,18 +1152,18 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
                 headers = {"X-Plan-Actor": actor, "X-Plan-Ticket-ID": "test-ticket"}
                 with pytest.raises(PlannerError, match="only to the owner"):
                     await client.post(path, json=exact, headers=headers)
-            assert endpoint.store.recorded_answer(ask) is None
+            assert endpoint.inbox.store.runs.recorded_answer(ask) is None
             response = await client.post(path, json=exact)
             assert response.status_code == 200 and response.json() == {"landed": True}
-            answer = endpoint.store.recorded_answer(ask)
+            answer = endpoint.inbox.store.runs.recorded_answer(ask)
             assert answer is not None
-            evidence = endpoint.store.ask_evidence(ask)
+            evidence = endpoint.inbox.store.runs.ask_evidence(ask)
             assert evidence is not None and evidence.applied_at_mac_ms is None
-            endpoint.store.close_child(ask.child, 102)
+            endpoint.inbox.store.runs.close_child(ask.child, 102)
             metadata = await harness.store.read_executor_turn("c")
             assert metadata is not None
             await harness.store.save_executor_turn("c", metadata)
-            assert not endpoint.owns_conversation("c")
+            assert not endpoint.runs.owns_conversation("c")
             assert (await client.post(path, json=exact)).json() == {"landed": True}
             changed = (
                 {**exact, "option_id": "deny"}
@@ -1180,8 +1180,8 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
                     },
                 )
             ).json() == {"landed": False}
-            assert not endpoint.pending_commands
-            assert endpoint.store.recorded_answer(ask) == answer
+            assert not endpoint.runs.pending_commands
+            assert endpoint.inbox.store.runs.recorded_answer(ask) == answer
 
     _run(exercise)
 
@@ -1571,11 +1571,11 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
     from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
     from planner.executor.protocol import AskReachability, ChildInventory
-    from planner.executor.store import ExecutorStore
+    from planner.executor.vps_inbox import InboxStore
 
-    executor_store = ExecutorStore(str(db_path))
+    executor_store = InboxStore(str(db_path))
     identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
-    executor_store.begin_connection(identity, 100)
+    executor_store.runs.begin_connection(identity, 100)
     asks = tuple(
         AskReference(
             ChildReference("inc", name, name), TurnToken(name, 1), "ask", AskKind.permission
@@ -1583,8 +1583,8 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         for name in ("child-gone", "callback-gone", "live")
     )
     for ask in asks:
-        executor_store.publish_ask(ask, ("allow", "deny"), 100)
-    executor_store.observe_children(
+        executor_store.runs.publish_ask(ask, ("allow", "deny"), 100)
+    executor_store.runs.observe_children(
         identity,
         (
             ChildInventory(asks[1].child, asks[1].turn, (), ()),
@@ -1605,7 +1605,7 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
             ),
             strict=True,
         ):
-            evidence = executor_store.ask_evidence(ask)
+            evidence = executor_store.runs.ask_evidence(ask)
             assert evidence is not None and evidence.reachability == expected
         assert client.get("/api/conversation/conversations/nobody").status_code == 404
 

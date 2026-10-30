@@ -1,16 +1,13 @@
-"""One authoritative VPS store; no outbound answer queue or Mac state replica."""
+"""VPS run, connection and answer persistence, with shared transaction mechanics."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import os
-import re
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
@@ -23,20 +20,12 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
-from planner.executor.files import (
-    contained_path,
-    copy_verified,
-    directory_descriptor,
-    file_digest,
-    safe_component,
-)
 from planner.executor.logic.reconciliation import (
     answer_target_is_open,
     callback_reachability,
     preserved_reachability,
 )
 from planner.executor.protocol import (
-    AcceptanceReceipt,
     AnswerAdmission,
     AnswerApplication,
     AskEvidence,
@@ -49,12 +38,7 @@ from planner.executor.protocol import (
     DurableAnswer,
     EnvelopeKind,
     ExecutorTurnContext,
-    FileManifest,
-    FileScope,
-    JsonObject,
     QueuedEnvelope,
-    ReceiptDisposition,
-    TransactionalWriter,
 )
 
 
@@ -78,15 +62,7 @@ def _invalid(message: str) -> PlannerError:
     return PlannerError(ErrorCode.validation, message)
 
 
-class MissingFiles(Exception):
-    """The sender must upload these immutable bytes, then retry the same item."""
-
-    def __init__(self, manifests: tuple[FileManifest, ...]) -> None:
-        self.manifests = manifests
-        super().__init__("File dependencies are not durably published")
-
-
-class ExecutorStore:
+class VpsDatabase:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
 
@@ -111,137 +87,8 @@ class ExecutorStore:
         finally:
             connection.close()
 
-    def lookup_receipt(self, sender_id: str, submission_id: str) -> AcceptanceReceipt | None:
-        connection = connect(self.db_path)
-        try:
-            row = connection.execute(
-                "SELECT * FROM mac_inbox_positions WHERE sender_id=? AND submission_id=?",
-                (sender_id, submission_id),
-            ).fetchone()
-            return self._receipt(row) if row else None
-        finally:
-            connection.close()
 
-    @staticmethod
-    def _receipt(row: sqlite3.Row) -> AcceptanceReceipt:
-        return TypeAdapter(AcceptanceReceipt).validate_json(row["result_json"])
-
-    def accept(
-        self,
-        envelope: QueuedEnvelope,
-        writer: TransactionalWriter,
-        now_ms: int,
-        *,
-        identity: ExecutorIdentity,
-        check_files: bool = True,
-        transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
-        | None = None,
-        before_commit: Callable[[sqlite3.Connection], None] | None = None,
-        before_outcome_commit: Callable[[sqlite3.Connection, AcceptanceReceipt, bool], None]
-        | None = None,
-    ) -> AcceptanceReceipt:
-        effect_accepted = False
-        selected: AcceptanceReceipt | None = None
-
-        def publish_effect(connection: sqlite3.Connection) -> None:
-            if effect_accepted and before_commit is not None:
-                before_commit(connection)
-            if selected is not None and before_outcome_commit is not None:
-                before_outcome_commit(connection, selected, effect_accepted)
-
-        with self._transaction(transaction_context, publish_effect) as connection:
-            previous = self._prior_receipt(connection, envelope, identity)
-            if previous is not None:
-                selected = previous
-                return previous
-            disposition = ReceiptDisposition.accepted
-            connection.execute("SAVEPOINT domain_write")
-            try:
-                self._validate_envelope(connection, envelope, check_files=check_files)
-                if check_files:
-                    self.install_files(envelope.file_dependencies)
-                result = writer(connection, envelope)
-                if not connection.in_transaction:
-                    raise RuntimeError("Executor domain writer committed its transaction")
-                connection.execute("RELEASE SAVEPOINT domain_write")
-                effect_accepted = True
-            except (PlannerError, ValueError, KeyError, TypeError) as error:
-                connection.execute("ROLLBACK TO SAVEPOINT domain_write")
-                connection.execute("RELEASE SAVEPOINT domain_write")
-                disposition = ReceiptDisposition.refused
-                refusal = error if isinstance(error, PlannerError) else _invalid(str(error))
-                result = cast(JsonObject, refusal.to_payload())
-                self._mark_refused_cleanup_evidence(connection, envelope, identity)
-            if disposition is ReceiptDisposition.accepted and result.get("fate") == "uncertain":
-                disposition = ReceiptDisposition.uncertain
-            if (
-                disposition is ReceiptDisposition.refused
-                and envelope.kind is EnvelopeKind.cli_write
-            ):
-                from planner.executor.refusals import record_refused_write
-
-                record_refused_write(connection, self.db_path, envelope, result)
-            selected = AcceptanceReceipt(
-                envelope.sender_id,
-                envelope.submission_id,
-                envelope.payload_sha256,
-                disposition,
-                result,
-                now_ms,
-            )
-            connection.execute(
-                "INSERT INTO mac_inbox_positions VALUES(?,?,?,?,?,?) "
-                "ON CONFLICT(sender_id,conversation_id) DO UPDATE SET "
-                "sequence=excluded.sequence,submission_id=excluded.submission_id,"
-                "disposition=excluded.disposition,result_json=excluded.result_json",
-                (
-                    envelope.sender_id,
-                    envelope.conversation_id,
-                    envelope.sequence,
-                    envelope.submission_id,
-                    disposition.value,
-                    _record(selected),
-                ),
-            )
-            return selected
-
-    @staticmethod
-    def _mark_refused_cleanup_evidence(
-        connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
-    ) -> None:
-        # A refused domain command is an ordinary answer. Only a required native
-        # publication can invalidate evidence that cleanup waits for.
-        if envelope.kind in (EnvelopeKind.backend_event, EnvelopeKind.child_stopped):
-            child_payload = envelope.payload.get("child")
-        elif envelope.kind is EnvelopeKind.answer_application:
-            ask = envelope.payload.get("ask")
-            child_payload = ask.get("child") if isinstance(ask, dict) else None
-        else:
-            return
-        # A malformed publication still needs a refusal receipt. Its child alone
-        # is enough to fence cleanup, even when the rest cannot be decoded.
-        try:
-            child = TypeAdapter(ChildReference).validate_python(child_payload)
-        except ValueError:
-            return
-        if (
-            child.executor_incarnation != identity.executor_incarnation
-            or child.conversation_id != envelope.conversation_id
-        ):
-            return
-        row = connection.execute(
-            "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
-            (child.conversation_id,),
-        ).fetchone()
-        if row is None or _parse(ChildReference, row[0]) != child:
-            return
-        runtime = json.loads(row[1])
-        runtime["cleanup_evidence_uncertain"] = True
-        connection.execute(
-            "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
-            (_json(runtime), child.conversation_id),
-        )
-
+class ExecutorStore(VpsDatabase):
     def cleanup_evidence_uncertain(self, child: ChildReference) -> bool:
         connection = connect(self.db_path)
         try:
@@ -827,54 +674,6 @@ class ExecutorStore:
         finally:
             connection.close()
 
-    def file_target(self, manifest: FileManifest) -> Path:
-        safe_component(manifest.owner_id)
-        if manifest.byte_count < 0 or not re.fullmatch(r"[0-9a-f]{64}", manifest.sha256):
-            raise ValueError("invalid file length or digest")
-        if manifest.scope is not FileScope.ticket:
-            raise ValueError("Mac uploads must belong to a Ticket")
-        root = Path(self.db_path).resolve().parent / "files" / "tickets"
-        return contained_path(root, f"{manifest.owner_id}/{manifest.relative_path}")
-
-    def _staged_file(self, manifest: FileManifest) -> Path:
-        self.file_target(manifest)
-        key = hashlib.sha256(_record(manifest).encode()).hexdigest()
-        return Path(self.db_path).resolve().parent / "executor-uploads" / key
-
-    @staticmethod
-    def _matches(path: Path, manifest: FileManifest) -> bool:
-        try:
-            return file_digest(path) == (manifest.sha256, manifest.byte_count)
-        except FileNotFoundError:
-            return False
-
-    def store_upload(self, manifest: FileManifest, source: Path) -> None:
-        """Verify and flush into private staging, never into the served file tree."""
-        target = self._staged_file(manifest)
-        with directory_descriptor(target.parent, create=True) as parent:
-            temporary = target.parent / (".tmp-" + uuid4().hex)
-            try:
-                copy_verified(source, temporary, manifest)
-                os.replace(temporary.name, target.name, src_dir_fd=parent, dst_dir_fd=parent)
-                os.fsync(parent)
-            finally:
-                temporary.unlink(missing_ok=True)
-
-    def install_files(self, manifests: tuple[FileManifest, ...]) -> None:
-        """Called under the receipt transaction, before any referenced effect."""
-        for manifest in manifests:
-            target = self.file_target(manifest)
-            if self._matches(target, manifest):
-                continue  # Rename survived a crash before the receipt committed.
-            source = self._staged_file(manifest)
-            if not self._matches(source, manifest):
-                raise MissingFiles((manifest,))
-            with directory_descriptor(target.parent, create=True) as parent:
-                with directory_descriptor(source.parent) as staging:
-                    os.replace(source.name, target.name, src_dir_fd=staging, dst_dir_fd=parent)
-                    os.fsync(staging)
-                os.fsync(parent)
-
     def evidence_for_conversation(self, conversation_id: str) -> tuple[AskEvidence, ...]:
         connection = connect(self.db_path)
         try:
@@ -980,102 +779,6 @@ class ExecutorStore:
         with self._transaction() as connection:
             self._connected(connection, identity)
 
-    def preflight(
-        self, envelope: QueuedEnvelope, *, identity: ExecutorIdentity, check_files: bool = True
-    ) -> AcceptanceReceipt | None:
-        """Validate prior result/order/files before a separately serialized native act.
-
-        This grants no accepted receipt. The endpoint retains the per-conversation
-        lock through native outcome recording and must preserve sender dedup IDs.
-        """
-        with self._transaction() as connection:
-            return self._preflight(connection, envelope, identity, check_files=check_files)
-
-    def _prior_receipt(
-        self, connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
-    ) -> AcceptanceReceipt | None:
-        self._connected(connection, identity)
-        previous = connection.execute(
-            "SELECT * FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?",
-            (envelope.sender_id, envelope.conversation_id),
-        ).fetchone()
-        if previous is None or envelope.sequence > previous["sequence"]:
-            return None
-        stored = self._receipt(previous)
-        if envelope.sequence == previous["sequence"]:
-            if (stored.submission_id, stored.payload_sha256) != (
-                envelope.submission_id,
-                envelope.payload_sha256,
-            ):
-                raise _invalid("Submission identity conflicts with its first receipt")
-            return stored
-        # Old sequences are acknowledged without rerunning effects or regressing position.
-        return AcceptanceReceipt(
-            envelope.sender_id,
-            envelope.submission_id,
-            envelope.payload_sha256,
-            ReceiptDisposition.accepted,
-            {},
-            stored.accepted_at_vps_ms,
-        )
-
-    def _preflight(
-        self,
-        connection: sqlite3.Connection,
-        envelope: QueuedEnvelope,
-        identity: ExecutorIdentity,
-        *,
-        check_files: bool = True,
-    ) -> AcceptanceReceipt | None:
-        previous = self._prior_receipt(connection, envelope, identity)
-        if previous is None:
-            self._validate_envelope(connection, envelope, check_files=check_files)
-        return previous
-
-    def _validate_envelope(
-        self, connection: sqlite3.Connection, envelope: QueuedEnvelope, *, check_files: bool = True
-    ) -> None:
-        from planner.executor.protocol import envelope_payload_digest
-
-        if envelope.payload_sha256 != envelope_payload_digest(
-            envelope.payload,
-            envelope.file_dependencies,
-            sender_id=envelope.sender_id,
-            conversation_id=envelope.conversation_id,
-            sequence=envelope.sequence,
-            submission_id=envelope.submission_id,
-            kind=envelope.kind,
-        ):
-            raise _invalid("Envelope digest does not match content")
-        if check_files and envelope.file_dependencies:
-            child = envelope.payload.get("child")
-            if not isinstance(child, dict):
-                ask = envelope.payload.get("ask")
-                child = ask.get("child") if isinstance(ask, dict) else None
-            reference = TypeAdapter(ChildReference).validate_python(child)
-            assignment = connection.execute(
-                "SELECT principal_kind,principal_id FROM executor_child_assignments "
-                "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
-                "AND closed_at_ms IS NULL",
-                (reference.executor_incarnation, reference.child_id, reference.conversation_id),
-            ).fetchone()
-            for manifest in envelope.file_dependencies:
-                self.file_target(manifest)
-                if (
-                    reference.conversation_id != envelope.conversation_id
-                    or assignment is None
-                    or tuple(assignment) != ("ticket", manifest.owner_id)
-                ):
-                    raise _invalid("artifact belongs to another Ticket")
-            missing = tuple(
-                m
-                for m in envelope.file_dependencies
-                if not self._matches(self.file_target(m), m)
-                and not self._matches(self._staged_file(m), m)
-            )
-            if missing:
-                raise MissingFiles(missing)
-
     @classmethod
     def revoke_turn_callbacks_in_transaction(
         cls,
@@ -1180,3 +883,40 @@ class ExecutorStore:
                 (answer.answer_id, answer_json, now_ms, _ask_key(ask)),
             )
             return answer
+
+    @staticmethod
+    def _mark_refused_cleanup_evidence(
+        connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
+    ) -> None:
+        # A refused domain command is an ordinary answer. Only a required native
+        # publication can invalidate evidence that cleanup waits for.
+        if envelope.kind in (EnvelopeKind.backend_event, EnvelopeKind.child_stopped):
+            child_payload = envelope.payload.get("child")
+        elif envelope.kind is EnvelopeKind.answer_application:
+            ask = envelope.payload.get("ask")
+            child_payload = ask.get("child") if isinstance(ask, dict) else None
+        else:
+            return
+        # A malformed publication still needs a refusal receipt. Its child alone
+        # is enough to fence cleanup, even when the rest cannot be decoded.
+        try:
+            child = TypeAdapter(ChildReference).validate_python(child_payload)
+        except ValueError:
+            return
+        if (
+            child.executor_incarnation != identity.executor_incarnation
+            or child.conversation_id != envelope.conversation_id
+        ):
+            return
+        row = connection.execute(
+            "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
+            (child.conversation_id,),
+        ).fetchone()
+        if row is None or _parse(ChildReference, row[0]) != child:
+            return
+        runtime = json.loads(row[1])
+        runtime["cleanup_evidence_uncertain"] = True
+        connection.execute(
+            "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+            (_json(runtime), child.conversation_id),
+        )

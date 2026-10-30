@@ -307,9 +307,6 @@ class ConversationStore:
 
     def _reconcile_runtime(self, conn: sqlite3.Connection) -> None:
         conn.execute("BEGIN IMMEDIATE")
-        from planner.executor.native_messages import interrupt_native_messages_in_transaction
-
-        interrupt_native_messages_in_transaction(conn)
         interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
         # Native processes survive this runtime; their callbacks do not. Keep the
         # exact child until inventory permits a proved stop, never a reattachment.
@@ -914,14 +911,6 @@ class ConversationStore:
                                 json.loads(str(previous["payload"])).get("suppression_reason")
                                 or reason
                             )
-                    if reason is None:
-                        from planner.executor.native_messages import (
-                            record_native_message_admission_in_transaction,
-                        )
-
-                        record_native_message_admission_in_transaction(
-                            conn, conversation_id, message
-                        )
                     decisions.append(
                         PromptDispatchDecision(message.sender_message_id, reason, notice)
                     )
@@ -962,26 +951,6 @@ class ConversationStore:
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
                 raise
-
-    async def record_sender_message_returned_to_queue(
-        self, conversation_id: str, message: PromptDiscardedEventPayload
-    ) -> None:
-        """Retain proven non-delivery for operation reporting without retaining text."""
-        def write() -> None:
-            from planner.executor.native_messages import (
-                record_native_message_admission_in_transaction,
-            )
-
-            conn = self._connect()
-            try:
-                with conn:
-                    record_native_message_admission_in_transaction(
-                        conn, conversation_id, message, queued=True
-                    )
-            finally:
-                conn.close()
-
-        await self._write(write)
 
     async def mark_held_sender_messages_leaving_queue(
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
@@ -1108,6 +1077,7 @@ class ConversationStore:
         original_ticket_selection: ModelSelection | None = None,
         requested_ticket_validation: CanonicalModelValidation | None = None,
         native_message_operation: NativeMessageOperation | None = None,
+        extra_native_message_operations: tuple[NativeMessageOperation, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -1142,6 +1112,7 @@ class ConversationStore:
             original_ticket_selection,
             requested_ticket_validation,
             native_message_operation=native_message_operation,
+            extra_native_message_operations=extra_native_message_operations,
         )
 
     async def read_events_after(
@@ -1499,6 +1470,7 @@ class ConversationStore:
         requested_ticket_validation: CanonicalModelValidation | None = None,
         *,
         native_message_operation: NativeMessageOperation | None = None,
+        extra_native_message_operations: tuple[NativeMessageOperation, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -1514,6 +1486,7 @@ class ConversationStore:
                     payloads,
                     lifecycle,
                     native_message_operation=native_message_operation,
+                    extra_native_message_operations=extra_native_message_operations,
                     native_message_admission=NativeMessageAdmission(
                         PromptDeliveryStarted(), composed_content_delivered
                     ),
@@ -1729,6 +1702,7 @@ class ConversationStore:
         lifecycle: tuple[LifecycleFact, ...] = (),
         *,
         native_message_operation: NativeMessageOperation | None = None,
+        extra_native_message_operations: tuple[NativeMessageOperation, ...] = (),
         native_message_admission: NativeMessageAdmission | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Add rows to the end of a conversation's record. A transaction must be open.
@@ -1775,15 +1749,15 @@ class ConversationStore:
                     created_at,
                 ),
             )
-            from planner.executor.native_messages import record_native_message_event_in_transaction
-
-            record_native_message_event_in_transaction(
-                conn,
-                conversation_id,
-                payload,
-                native_message_operation=native_message_operation,
-                native_message_admission=native_message_admission,
-            )
+            for operation in (
+                *((native_message_operation,) if native_message_operation else ()),
+                *extra_native_message_operations,
+            ):
+                if (
+                    getattr(payload, "sender_message_id", None) == operation.submission_id
+                    and operation.in_commit is not None
+                ):
+                    operation.in_commit(conn, conversation_id, payload, native_message_admission)
             written.append(
                 StoredConversationEvent(
                     conversation_id=conversation_id,

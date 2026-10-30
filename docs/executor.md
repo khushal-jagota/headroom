@@ -51,6 +51,27 @@ bytes. `catalog_relay.py` owns read-only model observations and their cancellati
 only changing value is the connection identity. Mac modules do not import VPS
 modules.
 
+## VPS module responsibilities
+
+`vps_runs.py` owns retained Mac runs, command results, reconnection, stop proof,
+and saved answers. Its `MacRuns` object is the Mac backend factory; only Ticket
+Workers can use it. `vps_remote_child.py` implements the conversation's backend
+child interface and keeps the existing admission checks at command emission.
+
+`vps_inbox.py` owns receipt order, duplicate replies, file reception, and applying
+recorded events. `vps_agent_writes.py` handles agent writes through the canonical
+writers. Before sending an agent-authored message, it saves `dispatching` in the
+inbox position. A repeat returns uncertainty without sending again. A recorded
+conversation outcome and its receipt commit together. Queued messages keep their
+first receipt; their later delivery and reply credit belong to the conversation.
+There is no separate native-message ledger.
+
+`vps_transport.py` composes these modules and owns connection admission, app read
+relays and generation-scoped file slots. `app_transport.py` exposes the app routes.
+`catalog_relay.py` owns the read-only catalog relay. Run control and inbox saving
+do not own sockets. These VPS modules import no Mac implementation modules.
+Conversation event and answer callbacks remain until the conversation refactor.
+
 ## Native skills and artifact paths
 
 Each new Mac Worker start receives the current canonical skills from the VPS database.
@@ -84,8 +105,8 @@ The complete encoded start command must fit the existing one-megabyte frame limi
 Oversized or invalid snapshots refuse startup without truncation or another transport.
 Both peers require this bootstrap.
 
-Code paths: `src/planner/executor/skills.py`, `src/planner/executor/remote.py`,
-`src/planner/executor/mac_runner.py`, `src/planner/executor/vps.py`.
+Code paths: `src/planner/executor/skills.py`, `src/planner/executor/vps_remote_child.py`,
+`src/planner/executor/mac_runner.py`, `src/planner/executor/vps_runs.py`.
 
 ## The outbox keeps authored work until confirmation
 
@@ -244,7 +265,7 @@ The Mac resolves a checkout below the VPS account home relative to its own accou
 home. The directory must exist. Workers receive local artifact paths and executor
 capabilities after host-specific role values are replaced.
 
-Code paths: `src/planner/executor/mac_outbox.py`, `files.py`, `store.py`, `vps.py`.
+Code paths: `src/planner/executor/mac_outbox.py`, `files.py`, `vps_inbox.py`, `vps_agent_writes.py`.
 
 ## A lost connection supplies no answer
 

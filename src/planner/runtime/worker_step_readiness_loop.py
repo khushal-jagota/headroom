@@ -560,13 +560,9 @@ class WorkerStepReadinessLoop:
                 return repr(("legacy_unscoped", ticket.id, ticket.employee_backend, ticket.locale))
             selection = read_launch_selection(conn, ticket_id)
             values = conversation_start.worker_resolve(conn, ticket)
-            native = tuple(
-                tuple(row)
-                for row in conn.execute(
-                    "SELECT identity_json,connection_state FROM executor_connections "
-                    "WHERE active=1",
-                )
-            )
+            from planner.executor.vps_runs import MacRuns
+
+            native = MacRuns.status(conn)
             return repr(
                 (
                     selection,

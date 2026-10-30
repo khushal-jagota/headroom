@@ -29,7 +29,7 @@ from planner.executor.protocol import (
     as_object,
     decode_command_arguments,
 )
-from planner.executor.vps import ExecutorEndpoint
+from planner.executor.vps_transport import VpsExecutor
 from planner.tickets import data
 from planner.tickets.contracts import Ticket
 
@@ -60,14 +60,14 @@ def ticket(conn: Connection) -> Ticket:
     )
 
 
-def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> ExecutorEndpoint:
+def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> VpsExecutor:
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
-    result = ExecutorEndpoint(path, cast(Clock, SimpleNamespace()))
-    result.identity = identity
-    result.link = message_link(Writer(), identity)
-    result.ready = True
-    result.store.begin_connection(identity, 1)
-    result.store.mark_ready(identity, 2)
+    result = VpsExecutor(path, cast(Clock, SimpleNamespace()))
+    result.runs.identity = identity
+    result.runs.link = message_link(Writer(), identity)
+    result.runs.ready = True
+    result.runs.store.begin_connection(identity, 1)
+    result.runs.store.mark_ready(identity, 2)
     return result
 
 
@@ -92,7 +92,7 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
         registry, spool, native, start = native_registry
         identity = replace(IDENTITY, executor_incarnation=registry.incarnation)
         remote = endpoint(tmp_db, identity=identity)
-        remote.store.register_child(start.child, "ticket", t.id, 3)
+        remote.runs.store.register_child(start.child, "ticket", t.id, 3)
         stop = ChildCommand(
             "stop",
             start.child,
@@ -102,8 +102,8 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
         )
         assert (await registry.run(stop)).disposition is CommandDisposition.succeeded
         (stopped,) = spool.pending()
-        spool.acknowledge(await remote.accept_envelope(stopped, identity))
-        remote.store.close_child(start.child, 4)
+        spool.acknowledge(await remote.inbox.accept(stopped, identity))
+        remote.runs.store.close_child(start.child, 4)
         outcome = await registry.run(start)
         assert outcome.disposition is CommandDisposition.refused
         assert native.starts == 0
@@ -137,8 +137,8 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
                 conversation_id=start.child.conversation_id, kind=kind, payload=as_object(payload)
             )
         )
-        receipt = await remote.accept_envelope(row, identity)
+        receipt = await remote.inbox.accept(row, identity)
         assert receipt.disposition is ReceiptDisposition.refused
-        assert remote.store.child_assignment(start.child) is None
+        assert remote.runs.store.child_assignment(start.child) is None
 
     asyncio.run(run())

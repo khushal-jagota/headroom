@@ -21,7 +21,7 @@ from planner.executor.protocol import (
     ChildInventory,
     encode_value,
 )
-from planner.executor.store import ExecutorStore
+from planner.executor.vps_inbox import InboxStore
 
 IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "process", 1)
 CHILD = ChildReference("process", "child", "conversation")
@@ -56,7 +56,7 @@ ANSWERS = (UserInputAnswer("first", ("A",)), UserInputAnswer("second", ("X", "cu
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> ExecutorStore:
+def store(tmp_path: Path) -> InboxStore:
     path = str(tmp_path / "vps.sqlite")
     connection = connect(path)
     try:
@@ -64,10 +64,10 @@ def store(tmp_path: Path) -> ExecutorStore:
             connection.execute(statement)
     finally:
         connection.close()
-    result = ExecutorStore(path)
-    result.begin_connection(IDENTITY, 1000)
+    result = InboxStore(path)
+    result.runs.begin_connection(IDENTITY, 1000)
     persist_pending_turn(
-        result,
+        result.runs,
         PERMISSION,
         REQUEST,
         runtime_overrides={
@@ -77,29 +77,29 @@ def store(tmp_path: Path) -> ExecutorStore:
     return result
 
 
-def ready(store: ExecutorStore) -> None:
-    store.observe_children(
+def ready(store: InboxStore) -> None:
+    store.runs.observe_children(
         IDENTITY, (ChildInventory(CHILD, TURN, (PERMISSION,), (REQUEST.ask_id,)),), 1001
     )
-    store.mark_ready(IDENTITY, 1002)
+    store.runs.mark_ready(IDENTITY, 1002)
 
 
 def test_permission_and_input_same_native_id_are_separate_first_choices(
-    store: ExecutorStore,
+    store: InboxStore,
 ) -> None:
-    store.publish_ask(PERMISSION, ("allow", "deny"), 1000)
-    store.publish_user_input_request(REQUEST, QUESTIONS, 1000)
+    store.runs.publish_ask(PERMISSION, ("allow", "deny"), 1000)
+    store.runs.publish_user_input_request(REQUEST, QUESTIONS, 1000)
     ready(store)
-    permission = store.choose_answer(PERMISSION, "allow", 1, 1010)
-    answers = store.choose_user_input_answer(REQUEST, tuple(reversed(ANSWERS)), 1, 1011)
+    permission = store.runs.choose_answer(PERMISSION, "allow", 1, 1010)
+    answers = store.runs.choose_user_input_answer(REQUEST, tuple(reversed(ANSWERS)), 1, 1011)
     assert answers.option_id is None and answers.user_input_answers == ANSWERS
     assert permission.user_input_answers is None and permission.option_id == "allow"
     assert answers.answer_id != permission.answer_id
-    assert store.recorded_answer(REQUEST) == answers
-    assert store.recorded_answer(PERMISSION) == permission
-    assert store.choose_user_input_answer(REQUEST, ANSWERS, 1, 9999) == answers
+    assert store.runs.recorded_answer(REQUEST) == answers
+    assert store.runs.recorded_answer(PERMISSION) == permission
+    assert store.runs.choose_user_input_answer(REQUEST, ANSWERS, 1, 9999) == answers
     with pytest.raises(PlannerError, match="already recorded"):
-        store.choose_user_input_answer(
+        store.runs.choose_user_input_answer(
             REQUEST,
             (
                 UserInputAnswer("first", ("B",)),
@@ -109,9 +109,9 @@ def test_permission_and_input_same_native_id_are_separate_first_choices(
             10000,
         )
     with pytest.raises(PlannerError, match="permission ask"):
-        store.choose_answer(REQUEST, "allow", 1, 10000)
+        store.runs.choose_answer(REQUEST, "allow", 1, 10000)
     with pytest.raises(PlannerError, match="question request"):
-        store.choose_user_input_answer(PERMISSION, ANSWERS, 1, 10000)
+        store.runs.choose_user_input_answer(PERMISSION, ANSWERS, 1, 10000)
 
 
 @pytest.mark.parametrize(
@@ -127,24 +127,24 @@ def test_permission_and_input_same_native_id_are_separate_first_choices(
     ],
 )
 def test_input_rejects_invalid_complete_maps_without_selecting(
-    store: ExecutorStore,
+    store: InboxStore,
     answers: tuple[UserInputAnswer, ...],
 ) -> None:
-    store.publish_user_input_request(REQUEST, QUESTIONS, 1000)
+    store.runs.publish_user_input_request(REQUEST, QUESTIONS, 1000)
     ready(store)
     with pytest.raises(PlannerError, match="complete answer map"):
-        store.choose_user_input_answer(REQUEST, answers, 1, 1010)
-    assert store.recorded_answer(REQUEST) is None
+        store.runs.choose_user_input_answer(REQUEST, answers, 1, 1010)
+    assert store.runs.recorded_answer(REQUEST) is None
 
 
-def test_original_questions_are_immutable_nonempty_unique(store: ExecutorStore) -> None:
+def test_original_questions_are_immutable_nonempty_unique(store: InboxStore) -> None:
     for invalid in ((), (QUESTIONS[0], QUESTIONS[0]), (replace(QUESTIONS[0], question_id=" "),)):
         with pytest.raises(PlannerError, match="original questions"):
-            store.publish_user_input_request(REQUEST, invalid, 1000)
-    store.publish_user_input_request(REQUEST, QUESTIONS, 1000)
-    store.publish_user_input_request(REQUEST, QUESTIONS, 1001)
+            store.runs.publish_user_input_request(REQUEST, invalid, 1000)
+    store.runs.publish_user_input_request(REQUEST, QUESTIONS, 1000)
+    store.runs.publish_user_input_request(REQUEST, QUESTIONS, 1001)
     with pytest.raises(PlannerError, match="original request"):
-        store.publish_user_input_request(
+        store.runs.publish_user_input_request(
             REQUEST,
             (
                 replace(QUESTIONS[0], question="Different question"),
@@ -155,55 +155,58 @@ def test_original_questions_are_immutable_nonempty_unique(store: ExecutorStore) 
 
 
 def test_input_callback_liveness_is_exact_and_terminal(
-    store: ExecutorStore,
+    store: InboxStore,
 ) -> None:
-    store.publish_user_input_request(REQUEST, QUESTIONS, 1000)
+    store.runs.publish_user_input_request(REQUEST, QUESTIONS, 1000)
     # A process and same-id permission callback do not prove this question callback.
-    store.observe_children(IDENTITY, (ChildInventory(CHILD, TURN, (PERMISSION,), ()),), 1001)
-    store.mark_ready(IDENTITY, 1002)
-    evidence = store.ask_evidence(REQUEST)
+    store.runs.observe_children(IDENTITY, (ChildInventory(CHILD, TURN, (PERMISSION,), ()),), 1001)
+    store.runs.mark_ready(IDENTITY, 1002)
+    evidence = store.runs.ask_evidence(REQUEST)
     assert evidence is not None and evidence.reachability == AskReachability.callback_gone
     with pytest.raises(PlannerError, match="closed or unknown"):
-        store.choose_user_input_answer(REQUEST, ANSWERS, 1, 1003)
+        store.runs.choose_user_input_answer(REQUEST, ANSWERS, 1, 1003)
     # A terminal callback cannot be revived by a later inventory.
     ready(store)
-    evidence = store.ask_evidence(REQUEST)
+    evidence = store.runs.ask_evidence(REQUEST)
     assert evidence is not None and evidence.reachability == AskReachability.callback_gone
-    assert store.recorded_answer(REQUEST) is None
+    assert store.runs.recorded_answer(REQUEST) is None
 
 
 def test_complete_map_first_selection_after_loss_survives_restart_and_closure(
-    store: ExecutorStore,
+    store: InboxStore,
 ) -> None:
-    store.publish_user_input_request(REQUEST, QUESTIONS, 1000)
+    store.runs.publish_user_input_request(REQUEST, QUESTIONS, 1000)
     ready(store)
-    store.mark_lost(IDENTITY, 1003)
-    answer = store.choose_user_input_answer(REQUEST, tuple(reversed(ANSWERS)), 999, 1010)
+    store.runs.mark_lost(IDENTITY, 1003)
+    answer = store.runs.choose_user_input_answer(REQUEST, tuple(reversed(ANSWERS)), 999, 1010)
     assert answer.user_input_answers == ANSWERS
-    store.mark_lost(IDENTITY, 1011)
+    store.runs.mark_lost(IDENTITY, 1011)
     replacement = replace(IDENTITY, connection_generation=2)
-    store.begin_connection(replacement, 9999999)
-    store.observe_children(replacement, (), 10000000)
-    assert not store.answer_is_deliverable(answer, replacement)
-    assert store.recorded_answer(REQUEST) == answer
-    evidence = store.ask_evidence(REQUEST)
+    store.runs.begin_connection(replacement, 9999999)
+    store.runs.observe_children(replacement, (), 10000000)
+    assert not store.runs.answer_is_deliverable(answer, replacement)
+    assert store.runs.recorded_answer(REQUEST) == answer
+    evidence = store.runs.ask_evidence(REQUEST)
     assert evidence is not None and evidence.reachability == AskReachability.child_gone
     assert evidence.applied_at_mac_ms is None
     # An identical first choice is readable while offline; it is never replaced.
-    assert store.choose_user_input_answer(REQUEST, tuple(reversed(ANSWERS)), 1, 10000001) == answer
-    restored = ExecutorStore(store.db_path)
-    restored.observe_children(
+    assert (
+        store.runs.choose_user_input_answer(REQUEST, tuple(reversed(ANSWERS)), 1, 10000001)
+        == answer
+    )
+    restored = InboxStore(store.db_path)
+    restored.runs.observe_children(
         replacement, (ChildInventory(CHILD, TURN, (), (REQUEST.ask_id,)),), 10000002
     )
-    assert not store.answer_is_deliverable(answer, replacement)
-    evidence = restored.ask_evidence(REQUEST)
+    assert not store.runs.answer_is_deliverable(answer, replacement)
+    evidence = restored.runs.ask_evidence(REQUEST)
     assert evidence is not None and evidence.reachability == AskReachability.child_gone
     application = AnswerApplication(answer.answer_id, REQUEST, 10000003)
-    restored.record_application(application, identity=replacement)
-    restored.record_application(application, identity=replacement)
+    restored.runs.record_application(application, identity=replacement)
+    restored.runs.record_application(application, identity=replacement)
     with pytest.raises(PlannerError, match="recorded answer"):
-        restored.record_application(replace(application, ask=PERMISSION), identity=replacement)
-    restored.observe_children(
+        restored.runs.record_application(replace(application, ask=PERMISSION), identity=replacement)
+    restored.runs.observe_children(
         replacement, (ChildInventory(CHILD, TURN, (), (REQUEST.ask_id,)),), 10000004
     )
-    assert not restored.answer_is_deliverable(answer, replacement)
+    assert not restored.runs.answer_is_deliverable(answer, replacement)

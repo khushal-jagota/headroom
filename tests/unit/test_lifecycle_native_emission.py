@@ -647,7 +647,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     from planner.executor.mac_outbox import MacOutbox
     from planner.executor.mac_runner import MacRunner
     from planner.executor.protocol import ChildCommand, CommandDisposition
-    from planner.executor.remote import RemoteBackendChild
+    from planner.executor.vps_remote_child import MacRemoteChild
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "provider-home"))
 
@@ -693,7 +693,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
             commands.append(command)
             return await registry.run(command)
 
-        remote = RemoteBackendChild(reference, send, lambda _: canonical_snapshot())
+        remote = MacRemoteChild(reference, send, lambda _: canonical_snapshot())
         exact = replace(expectation(tmp_path), context=None, evidence=None, resolved_model_id=None)
         resolved = ResolvedConversationStart(
             "conversation",

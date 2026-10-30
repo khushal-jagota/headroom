@@ -24,7 +24,7 @@ from planner.core.errors import PlannerError
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor import link as link_module
-from planner.executor import vps
+from planner.executor import vps_transport as vps
 from planner.executor.protocol import (
     AskEvidence,
     AskReachability,
@@ -36,7 +36,7 @@ from planner.executor.protocol import (
     encode_message,
     encode_value,
 )
-from planner.executor.remote import RemoteBackendChild
+from planner.executor.vps_remote_child import MacRemoteChild
 from planner.managers import data as managers
 from planner.projects import data as projects
 from planner.tickets import data, locale_configuration
@@ -68,8 +68,8 @@ class Writer:
         self.closed = True
 
 
-def _endpoint(tmp_db: Connection, clock: ClockForTest) -> vps.ExecutorEndpoint:
-    return vps.ExecutorEndpoint(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]), clock)
+def _endpoint(tmp_db: Connection, clock: ClockForTest) -> vps.VpsExecutor:
+    return vps.VpsExecutor(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]), clock)
 
 
 def _hello() -> WireMessage:
@@ -97,17 +97,17 @@ def test_contact_is_receipt_not_handshake_and_retains_history_after_loss(
 
     async def handle(message: WireMessage, identity: ExecutorIdentity, writer: object) -> None:
         assert endpoint.last_contact_at_ms == 200
-        await vps.ExecutorEndpoint._handle(endpoint, message, identity, cast(Any, writer))
+        await vps.VpsExecutor._handle(endpoint, message, identity, cast(Any, writer))
         handled.set()
 
-    monkeypatch.setattr(endpoint, "_measure_clock", probe)
+    monkeypatch.setattr(endpoint.catalog, "_measure_clock", probe)
     monkeypatch.setattr(endpoint, "_handle", handle)
 
     async def run() -> None:
         reader = MessageReader()
         reader.feed_data(encode_message(_hello()))
         task = asyncio.create_task(endpoint._session(reader, cast(Any, Writer())))
-        while endpoint.link is None:
+        while endpoint.runs.link is None:
             await asyncio.sleep(0)
         assert endpoint.observed_at_ms == endpoint.last_contact_at_ms == 100
         tick[0] = 200
@@ -138,7 +138,7 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
     async def run() -> None:
         for superseded in (False, True):
             endpoint = _endpoint(tmp_db, fake_clock)
-            monkeypatch.setattr(endpoint, "_measure_clock", probe)
+            monkeypatch.setattr(endpoint.catalog, "_measure_clock", probe)
             tick = [100]
             monkeypatch.setattr(vps, "now_ms", lambda tick=tick: tick[0])
             monkeypatch.setattr(link_module, "now_ms", lambda tick=tick: tick[0])
@@ -146,15 +146,17 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
             reader.feed_data(encode_message(_hello()))
             writer = Writer()
             task = asyncio.create_task(endpoint._session(reader, cast(Any, writer)))
-            while endpoint.link is None:
+            while endpoint.runs.link is None:
                 await asyncio.sleep(0)
             tick[0] = 200
             if superseded:
-                assert endpoint.link is not None
-                endpoint.link.close()
-                endpoint.link = message_link(Writer(), cast(ExecutorIdentity, endpoint.identity))
-                endpoint.identity = replace(
-                    cast(ExecutorIdentity, endpoint.identity), connection_generation=2
+                assert endpoint.runs.link is not None
+                endpoint.runs.link.close()
+                endpoint.runs.link = message_link(
+                    Writer(), cast(ExecutorIdentity, endpoint.runs.identity)
+                )
+                endpoint.runs.identity = replace(
+                    cast(ExecutorIdentity, endpoint.runs.identity), connection_generation=2
                 )
                 reader.feed_data(encode_message(WireMessage(WireMessageKind.error, "old", {})))
             else:
@@ -177,10 +179,10 @@ def test_durable_context_matches_exact_child_after_restart_and_allows_offline_an
     actual = ChildReference("inc", "actual", "conversation")
     ask = AskReference(actual, TurnToken("conversation", 1), "ask", AskKind.permission)
     identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
-    endpoint.store.begin_connection(identity, 100)
+    endpoint.runs.store.begin_connection(identity, 100)
     # This fixture represents a new combined-release ask with an explicit public/provider map.
     persist_pending_turn(
-        endpoint.store,
+        endpoint.runs.store,
         ask,
         runtime_overrides={
             "pending_permission_ask_ids": ["1:permission:ask"],
@@ -189,27 +191,27 @@ def test_durable_context_matches_exact_child_after_restart_and_allows_offline_an
         },
     )
     old = replace(ask, child=replace(actual, child_id="old"))
-    endpoint.store.publish_ask(old, ("allow", "deny"), 100)
-    assert endpoint._current_ask_evidence("conversation", "1:permission:ask") is None
-    endpoint.store.publish_ask(ask, ("allow", "deny"), 101)
+    endpoint.runs.store.publish_ask(old, ("allow", "deny"), 100)
+    assert endpoint.runs._current_ask_evidence("conversation", "1:permission:ask") is None
+    endpoint.runs.store.publish_ask(ask, ("allow", "deny"), 101)
     # A new endpoint has no live children, runtime state, connection or inventory.
     restored = _endpoint(tmp_db, fake_clock)
-    assert restored.children == {} and restored.identity is None
-    assert restored.owns_conversation("conversation")
-    assert restored.conversation_context("conversation") == {
+    assert restored.runs.children == {} and restored.runs.identity is None
+    assert restored.runs.owns_conversation("conversation")
+    assert restored.runs.conversation_context("conversation") == {
         "child": encode_value(actual),
         "turn": encode_value(ask.turn),
     }
-    status = restored.ask_status("conversation", "1:permission:ask")
+    status = restored.runs.ask_status("conversation", "1:permission:ask")
     assert status["answer_available"] is True
-    assert restored.ask_status("conversation", "other")["answer_available"] is False
-    answer = restored.store.choose_answer(ask, "allow", 999, 200)
-    assert restored.ask_status("conversation", "1:permission:ask")["answer_available"] is False
-    assert restored.conversation_asks("conversation")[-1]["answer"] == encode_value(answer)
-    restored.store.close_child(actual, 201)
+    assert restored.runs.ask_status("conversation", "other")["answer_available"] is False
+    answer = restored.runs.store.choose_answer(ask, "allow", 999, 200)
+    assert restored.runs.ask_status("conversation", "1:permission:ask")["answer_available"] is False
+    assert restored.runs.conversation_asks("conversation")[-1]["answer"] == encode_value(answer)
+    restored.runs.store.close_child(actual, 201)
     final = _endpoint(tmp_db, fake_clock)
-    assert final.ask_status("conversation", "1:permission:ask")["answer_available"] is False
-    evidence = final._current_ask_evidence("conversation", "1:permission:ask")
+    assert final.runs.ask_status("conversation", "1:permission:ask")["answer_available"] is False
+    evidence = final.runs._current_ask_evidence("conversation", "1:permission:ask")
     assert evidence is not None and evidence.reachability == AskReachability.child_gone
 
 
@@ -343,28 +345,29 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
     async def handle(message: WireMessage, identity: ExecutorIdentity, writer: Any) -> None:
         assert endpoint.last_contact_at_ms == 200
         assert endpoint.observed_at_ms == 100
-        assert endpoint.ask_status("conversation", "1:permission:ask")["answer_available"] is False
+        assert (
+            endpoint.runs.ask_status("conversation", "1:permission:ask")["answer_available"]
+            is False
+        )
         await original_handle(message, identity, writer)
         received.set()
 
-    monkeypatch.setattr(endpoint, "_measure_clock", probe)
+    monkeypatch.setattr(endpoint.catalog, "_measure_clock", probe)
     monkeypatch.setattr(endpoint, "_handle", handle)
 
     async def run() -> None:
         reader = MessageReader()
         reader.feed_data(encode_message(_hello()))
         task = asyncio.create_task(endpoint._session(reader, cast(Any, Writer())))
-        while endpoint.link is None:
+        while endpoint.runs.link is None:
             await asyncio.sleep(0)
-        identity = cast(ExecutorIdentity, endpoint.identity)
+        identity = cast(ExecutorIdentity, endpoint.runs.identity)
         child_reference = ChildReference(identity.executor_incarnation, "child", "conversation")
         turn = TurnToken("turn", 1)
-        child = RemoteBackendChild(
-            child_reference, cast(Any, None), lambda start: canonical_snapshot()
-        )
+        child = MacRemoteChild(child_reference, cast(Any, None), lambda start: canonical_snapshot())
         state = SimpleNamespace(child=child, running_turn=SimpleNamespace(token=turn))
-        endpoint.runtime = SimpleNamespace(
-            system=SimpleNamespace(_conversations={"conversation": state})
+        endpoint.bind_conversations(
+            cast(Any, SimpleNamespace(_conversations={"conversation": state}))
         )
         evidence = AskEvidence(
             AskReference(child_reference, turn, "ask", AskKind.permission),
@@ -372,21 +375,24 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
             AskReachability.uncertain,
             100,
         )
-        monkeypatch.setattr(endpoint.store, "evidence_for_conversation", lambda _: (evidence,))
+        monkeypatch.setattr(endpoint.runs.store, "evidence_for_conversation", lambda _: (evidence,))
         # A control receipt shows contact, but this ask still lacks liveness.
-        endpoint.ready = True
+        endpoint.runs.ready = True
         tick[0] = 200
         request_id = str(uuid4())
         response: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
-        assert endpoint.link is not None
-        endpoint.link._pending[request_id] = response
+        assert endpoint.runs.link is not None
+        endpoint.runs.link._pending[request_id] = response
         reader.feed_data(
             encode_message(WireMessage(WireMessageKind.transport_opened, request_id, {}))
         )
         await asyncio.wait_for(response, 1)
         assert response.done()
         assert response.result().kind is WireMessageKind.transport_opened
-        assert endpoint.ask_status("conversation", "1:permission:ask")["answer_available"] is False
+        assert (
+            endpoint.runs.ask_status("conversation", "1:permission:ask")["answer_available"]
+            is False
+        )
         assert endpoint.health()["last_contact_at_ms"] == 200
         await endpoint.close()
         reader.feed_eof()

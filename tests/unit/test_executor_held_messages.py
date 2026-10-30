@@ -38,7 +38,6 @@ from planner.core.db import connect
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.mac_outbox import MacOutbox
-from planner.executor.native_messages import deliver_native_message
 from planner.executor.protocol import (
     AcceptanceReceipt,
     ChildCommand,
@@ -52,8 +51,10 @@ from planner.executor.protocol import (
     QueuedEnvelope,
     encode_value,
 )
-from planner.executor.remote import RemoteBackendChild
 from planner.executor.store import ExecutorStore
+from planner.executor.vps_agent_writes import deliver_native_message
+from planner.executor.vps_inbox import InboxStore
+from planner.executor.vps_remote_child import MacRemoteChild
 from planner.tickets import data
 from planner.tickets.contracts import TicketLocale
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
@@ -153,7 +154,7 @@ class HeldCatalogObserver(ScriptedCatalogObserver):
 class HeldFixture:
     connection: Connection
     path: str
-    store: ExecutorStore
+    store: InboxStore
     spool: MacOutbox
     native: ScriptedNative
     system: SqliteProcessConversationSystem = field(init=False)
@@ -179,9 +180,9 @@ class HeldFixture:
                 conn.close()
             return outcome
 
-        def factory(**kwargs: Any) -> RemoteBackendChild:
+        def factory(**kwargs: Any) -> MacRemoteChild:
             start = kwargs["resolved_start"]
-            return RemoteBackendChild(
+            return MacRemoteChild(
                 ChildReference(
                     "11111111-1111-1111-1111-111111111111",
                     "child_" + start.conversation_id,
@@ -279,9 +280,9 @@ class HeldFixture:
 
 async def boot(connection: Connection, root: Path) -> HeldFixture:
     path = str(connection.execute("PRAGMA database_list").fetchone()[2])
-    store = ExecutorStore(path)
-    store.begin_connection(IDENTITY, 1000)
-    store.mark_ready(IDENTITY, 1001)
+    store = InboxStore(path)
+    store.runs.begin_connection(IDENTITY, 1000)
+    store.runs.mark_ready(IDENTITY, 1001)
     ticket = data.create_ticket(
         connection,
         title="Held source",
@@ -356,11 +357,21 @@ async def boot(connection: Connection, root: Path) -> HeldFixture:
 
 
 def operation_result(fixture: HeldFixture, submission_id: str) -> dict[str, Any]:
+    """Delivery outcomes are conversation facts, independent of the first receipt."""
     row = fixture.connection.execute(
-        "SELECT result_json FROM executor_native_messages WHERE submission_id=?",
+        "SELECT kind,payload FROM conversation_events "
+        "WHERE json_extract(payload,'$.sender_message_id')=? "
+        "ORDER BY sequence DESC LIMIT 1",
         (submission_id,),
     ).fetchone()
-    return json.loads(row[0])  # type: ignore[no-any-return]
+    assert row is not None
+    return {
+        "fate": {
+            "prompt": "started",
+            "prompt_discarded": "discarded",
+            "prompt_delivery_uncertain": "uncertain",
+        }[row["kind"]]
+    }
 
 
 def replay_result(fixture: HeldFixture, envelope: QueuedEnvelope) -> JsonObject:
@@ -392,11 +403,6 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
             fresh = await fixture.new_core()
             assert await fresh.held_prompts("c_target") == ()
             for (envelope, write), _receipt in zip(entries, receipts, strict=True):
-                assert operation_result(fixture, envelope.submission_id) == {
-                    "target": {"kind": "chief", "id": "chief"},
-                    "conversation_id": "c_target",
-                    "fate": "interrupted",
-                }
                 assert (
                     await fixture.deliver(envelope, write, system=fresh)
                 ).result == replay_result(fixture, envelope)
@@ -489,7 +495,8 @@ def test_unknown_native_dispatch_quarantines_live_line_and_is_not_retried_after_
             pending = await fixture.system.held_prompts("c_target")
             assert len(pending) == 1 and pending[0].delivery_uncertain
             assert pending[0].content == held.content
-            assert operation_result(fixture, "uncertain")["fate"] == "uncertain"
+            if action == "drain":
+                assert operation_result(fixture, "uncertain")["fate"] == "uncertain"
             later_envelope, later_write = fixture.entry("later", "Wait behind unknown")
             assert (await fixture.deliver(later_envelope, later_write)).result["fate"] == "queued"
             later = (await fixture.system.held_prompts("c_target"))[1]
@@ -507,7 +514,8 @@ def test_unknown_native_dispatch_quarantines_live_line_and_is_not_retried_after_
             assert not await fixture.source_reply_credited()
             fresh = await fixture.new_core()
             assert await fresh.held_prompts("c_target") == ()
-            assert operation_result(fixture, "uncertain")["fate"] == "uncertain"
+            if action == "drain":
+                assert operation_result(fixture, "uncertain")["fate"] == "uncertain"
             assert (await fixture.deliver(envelope, write, system=fresh)).result == replay_result(
                 fixture, envelope
             )
@@ -545,8 +553,6 @@ def test_known_safe_steer_requeue_keeps_live_order_but_loses_waiting_text_on_res
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
             assert await fresh.held_prompts("c_target") == ()
-            assert operation_result(fixture, "command")["fate"] == "interrupted"
-            assert operation_result(fixture, "other")["fate"] == "interrupted"
             assert (
                 await fixture.deliver(first, first_write, system=fresh)
             ).result == replay_result(fixture, first)
@@ -564,21 +570,24 @@ def test_lost_first_receipt_keeps_operation_binding_and_never_repeats_held_send(
         fixture = await boot(tmp_db, tmp_path)
         try:
             envelope, write = fixture.entry("lost_receipt", "Waiting before receipt")
-            accept = fixture.store.accept
+            from planner.message_delivery import service
 
-            def crash(*args: Any, **kwargs: Any) -> AcceptanceReceipt:
+            send = service.send_message
+
+            async def crash(*args: Any, **kwargs: Any) -> Any:
+                await send(*args, **kwargs)
                 raise InjectedCrash("first receipt interrupted")
 
-            monkeypatch.setattr(fixture.store, "accept", crash)
+            monkeypatch.setattr(service, "send_message", crash)
             with pytest.raises(InjectedCrash, match="first receipt interrupted"):
                 await fixture.deliver(envelope, write)
-            assert fixture.store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
-            assert operation_result(fixture, "lost_receipt")["fate"] == "queued"
+            saved = fixture.store.lookup_receipt(envelope.sender_id, envelope.submission_id)
+            assert saved is not None and saved.result["fate"] == "uncertain"
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
-            monkeypatch.setattr(fixture.store, "accept", accept)
+            monkeypatch.setattr(service, "send_message", send)
             receipt = await fixture.deliver(envelope, write, system=fresh)
-            assert receipt.result["fate"] == "interrupted"
+            assert receipt.result["fate"] == "uncertain"
             assert (await fixture.deliver(envelope, write, system=fresh)).result == replay_result(
                 fixture, envelope
             )

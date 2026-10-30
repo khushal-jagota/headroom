@@ -11,9 +11,15 @@ if TYPE_CHECKING:
     from planner.conversation.admission.contracts import AdmissionExpectation
 from uuid import uuid4
 
+from pydantic import TypeAdapter
+
 from planner.conversation.admission.service import bind_command
 from planner.conversation.backends import contracts as backend
-from planner.conversation.backends.contracts import DeliveryCancelled, RemoteCommandUncertain
+from planner.conversation.backends.contracts import (
+    AdmissionRefused,
+    DeliveryCancelled,
+    RemoteCommandUncertain,
+)
 from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
@@ -24,7 +30,8 @@ from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.contracts import Principal
-from planner.execution_identity import ChildReference, ProtocolRefused
+from planner.core.db import connect
+from planner.execution_identity import ChildReference, ExecutorIdentity, ProtocolRefused
 from planner.executor.protocol import (
     AnswerPermission,
     AnswerUserInput,
@@ -48,6 +55,7 @@ from planner.executor.protocol import (
     encode_value,
 )
 from planner.executor.skills import validate_skill_snapshot
+from planner.executor.store import ExecutorStore
 
 type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
 type SendCommand = Callable[[ChildCommand], Awaitable[CommandOutcome]]
@@ -56,16 +64,15 @@ type CancelInitialDelivery = Callable[[ChildReference, tuple[str, ...]], Awaitab
 
 
 @dataclass(slots=True)
-class RemoteBackendChildFactory:
+class MacRemoteChildFactory:
     assign_child: AssignChild
     send_command: SendCommand
     skill_snapshot_supplier: SkillSnapshotSupplier
     cancel_initial_delivery: CancelInitialDelivery | None = None
     retire_reference: Callable[[ChildReference], None] | None = None
-    principal_for_start: Callable[[ResolvedConversationStart], Principal] | None = None
 
-    def recover(self, reference: ChildReference) -> RemoteBackendChild:
-        return RemoteBackendChild(
+    def recover(self, reference: ChildReference) -> MacRemoteChild:
+        return MacRemoteChild(
             reference,
             self.send_command,
             self.skill_snapshot_supplier,
@@ -80,24 +87,18 @@ class RemoteBackendChildFactory:
         resolved_start: ResolvedConversationStart,
         event_sink: backend.BackendEventSink,
         message_files: ConversationMessageFiles,
-    ) -> RemoteBackendChild:
+    ) -> MacRemoteChild:
         del message_files
-        principal = (
-            self.principal_for_start(resolved_start)
-            if self.principal_for_start is not None
-            else None
-        )
-        return RemoteBackendChild(
+        return MacRemoteChild(
             self.assign_child(resolved_start, event_sink),
             self.send_command,
             self.skill_snapshot_supplier,
             self.cancel_initial_delivery,
             retire_reference=self.retire_reference,
-            assignment_principal=principal,
         )
 
 
-class RemoteBackendChild:
+class MacRemoteChild:
     """A disconnect leaves command futures pending; it never fabricates a refusal."""
 
     def __init__(
@@ -344,3 +345,111 @@ class RemoteBackendChild:
 
     async def stop(self) -> None:
         await self._call(StopRun())
+
+
+def command_emission_decision(
+    db_path: str, command: ChildCommand, identity: ExecutorIdentity | None, may_refuse: bool
+) -> bool | CommandOutcome | AdmissionRefused:
+    """Use original policy facts; never turn uncertain delivery into an unsent refusal."""
+    if command.operation not in (ChildOperation.start, ChildOperation.write_prompt):
+        return True
+    from planner.conversation.admission.policy import check_expectation_policy
+
+    conn = connect(db_path)
+    try:
+        args = command.arguments
+        expected = (
+            args.admission_expectation if isinstance(args, (StartRun, WritePrompt, Steer)) else None
+        )
+        if expected is None:
+            original = conn.execute(
+                "SELECT a.principal_kind,c.backend_key FROM executor_child_assignments a "
+                "LEFT JOIN conversations c ON c.conversation_id=a.conversation_id "
+                "WHERE a.executor_incarnation=? AND a.child_id=? AND a.conversation_id=?",
+                (
+                    command.child.executor_incarnation,
+                    command.child.child_id,
+                    command.child.conversation_id,
+                ),
+            ).fetchone()
+            scoped_ticket = (
+                original is not None and original[0] == "ticket" and original[1] != "hermes"
+            )
+            if original is None:
+                retained = conn.execute(
+                    "SELECT e.child_json,c.backend_key FROM executor_core_turns e "
+                    "JOIN conversations c ON c.conversation_id=e.conversation_id "
+                    "JOIN tickets t ON t.conversation_id=e.conversation_id "
+                    "WHERE e.conversation_id=?",
+                    (command.child.conversation_id,),
+                ).fetchone()
+                scoped_ticket = (
+                    retained is not None
+                    and retained[1] in ("codex", "claude")
+                    and TypeAdapter(ChildReference).validate_json(retained[0]) == command.child
+                )
+            if not scoped_ticket:
+                return True
+        known = conn.execute(
+            "SELECT outcome_json FROM executor_command_outcomes "
+            "WHERE executor_incarnation=? AND command_id=?",
+            (command.child.executor_incarnation, command.command_id),
+        ).fetchone()
+        if known is not None:
+            outcome = TypeAdapter(CommandOutcome).validate_json(known[0])
+            if outcome.child != command.child:
+                raise ValueError("recorded outcome conflicts with command child")
+            return outcome
+        try:
+            if expected is None:
+                raise AdmissionRefused(
+                    "model verification legacy_unscoped",
+                    reason="legacy_unscoped",
+                    corrective_action="classify_selection",
+                )
+            check_expectation_policy(conn, expected)
+            if expected.executor_identity != identity:
+                raise AdmissionRefused(
+                    "The destination connection changed before submission",
+                    reason="context_changed",
+                    corrective_action="verify_launch_context",
+                )
+        except (AdmissionRefused, ValueError, TypeError) as failure:
+            error = (
+                failure
+                if isinstance(failure, AdmissionRefused)
+                else AdmissionRefused(
+                    "recorded launch expectation is unproved",
+                    reason="identity_unproved",
+                    corrective_action="verify_launch_context",
+                )
+            )
+            if not may_refuse:
+                return error
+            outcome = CommandOutcome(
+                command.command_id,
+                command.child,
+                CommandDisposition.refused,
+                {
+                    "error_type": "AdmissionRefused",
+                    "error_message": str(error),
+                    "reason": error.reason,
+                    "corrective_action": error.corrective_action,
+                },
+            )
+            # This is a parent pre-transport refusal, not a native FIFO receipt.
+            # The existing canonical outcome transaction settles its exact lease.
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if identity is None:
+                    raise ConnectionError("executor link unavailable")
+                ExecutorStore._connected(conn, identity)
+                ExecutorStore.record_command_outcome_in_transaction(conn, outcome)
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+            return outcome
+        return True
+    finally:
+        conn.close()

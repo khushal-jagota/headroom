@@ -29,7 +29,6 @@ from planner.core.db import connect
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.mac_outbox import MacOutbox
-from planner.executor.native_messages import bound_native_principal, deliver_native_message
 from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
@@ -42,8 +41,9 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     encode_value,
 )
-from planner.executor.remote import RemoteBackendChild
-from planner.executor.store import ExecutorStore
+from planner.executor.vps_agent_writes import deliver_native_message
+from planner.executor.vps_inbox import InboxStore
+from planner.executor.vps_remote_child import MacRemoteChild
 from planner.tickets import data
 
 
@@ -122,12 +122,12 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
 ) -> None:
     async def run() -> None:
         path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-        store = ExecutorStore(path)
+        store = InboxStore(path)
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
         )
-        store.begin_connection(identity, 1000)
-        store.mark_ready(identity, 1001)
+        store.runs.begin_connection(identity, 1000)
+        store.runs.mark_ready(identity, 1001)
         ticket = data.create_ticket(
             tmp_db,
             title="Native message source",
@@ -158,14 +158,14 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             outcome_conn = connect(path)
             try:
                 outcome_conn.execute("BEGIN IMMEDIATE")
-                store.record_command_outcome_in_transaction(outcome_conn, outcome)
+                store.runs.record_command_outcome_in_transaction(outcome_conn, outcome)
                 outcome_conn.commit()
             finally:
                 outcome_conn.close()
             return outcome
 
-        def factory(**kwargs: Any) -> RemoteBackendChild:
-            return RemoteBackendChild(reference, native, lambda start: canonical_snapshot())
+        def factory(**kwargs: Any) -> MacRemoteChild:
+            return MacRemoteChild(reference, native, lambda start: canonical_snapshot())
 
         system = CrashAfterCanonicalOwnerMessage(
             store=ConversationStore(path),
@@ -245,13 +245,15 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
 
             with pytest.raises(SimulatedCrash):
                 await deliver()
-            assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+            saved = store.lookup_receipt(envelope.sender_id, envelope.submission_id)
+            assert saved is not None
+            assert saved.result["fate"] == ("recorded" if committed else "uncertain")
             connection = connect(path)
             try:
                 assert connection.execute(
-                    "SELECT state FROM executor_native_messages WHERE submission_id=?",
+                    "SELECT disposition FROM mac_inbox_positions WHERE submission_id=?",
                     (envelope.submission_id,),
-                ).fetchone()[0] == ("completed" if committed else "dispatching")
+                ).fetchone()[0] == ("accepted" if committed else "dispatching")
             finally:
                 connection.close()
             domain = await system._store.sender_message_outcome("c_source", "native_help")
@@ -275,12 +277,11 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 next_holder=Principal(PrincipalKind.chief, "chief"),
             )
             assert changed.ceiling_holder != OWNER_PRINCIPAL
-            assert bound_native_principal(store, envelope) == sender
             system.crash = False
             system.crash_before_owner_record = False
             native_before = list(native_calls)
             recovered = await deliver_native_message(
-                store=ExecutorStore(path),
+                store=InboxStore(path),
                 envelope=envelope,
                 write=write,
                 principal=sender,
@@ -342,12 +343,12 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
 
     async def run() -> None:
         path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-        store = ExecutorStore(path)
+        store = InboxStore(path)
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
         )
-        store.begin_connection(identity, 1000)
-        store.mark_ready(identity, 1001)
+        store.runs.begin_connection(identity, 1000)
+        store.runs.mark_ready(identity, 1001)
         target = data.create_ticket(
             tmp_db,
             title="Idle target",
@@ -378,14 +379,14 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
             outcome_conn = connect(path)
             try:
                 outcome_conn.execute("BEGIN IMMEDIATE")
-                store.record_command_outcome_in_transaction(outcome_conn, outcome)
+                store.runs.record_command_outcome_in_transaction(outcome_conn, outcome)
                 outcome_conn.commit()
             finally:
                 outcome_conn.close()
             return outcome
 
-        def factory(**kwargs: Any) -> RemoteBackendChild:
-            return RemoteBackendChild(reference, native, lambda start: canonical_snapshot())
+        def factory(**kwargs: Any) -> MacRemoteChild:
+            return MacRemoteChild(reference, native, lambda start: canonical_snapshot())
 
         system = CrashAfterPrompt(
             store=ConversationStore(path),
@@ -412,7 +413,7 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
                     "body": {
                         "target": {"kind": "ticket", "id": target.id},
                         "message": "Begin this idle turn",
-                        "mode": "steer",
+                        # Omitted mode must retain the ordinary steer default.
                     }
                 },
                 ChildReference("incarnation", "sender_child", "c_source"),
@@ -447,11 +448,13 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
                 )
             assert len(system.observed) == 1
             assert isinstance(system.observed[0].fate, PromptDeliveryStarted)
-            assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+            saved = store.lookup_receipt(envelope.sender_id, envelope.submission_id)
+            assert saved is not None
+            assert saved.result["fate"] == "started"
             before_replay = list(native_calls)
             events_before_replay = await system._store.read_events_after("c_idle", 0)
             receipt = await deliver_native_message(
-                store=ExecutorStore(path),
+                store=InboxStore(path),
                 envelope=envelope,
                 write=write,
                 principal=sender,

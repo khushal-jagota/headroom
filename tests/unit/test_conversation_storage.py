@@ -14,6 +14,8 @@ from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
+    NativeMessageAdmission,
+    NativeMessageOperation,
     PromptDeliveryMode,
     ResolvedConversationStart,
     WorkspacePathPolicy,
@@ -341,5 +343,61 @@ def test_workspace_policy_round_trip(store: ConversationStore, policy: Workspace
         assert read.workspace_path_policy is policy
         assert read.resolved_start().workspace_path_policy is policy
         assert read.workspace_folder == resolved.workspace_folder
+
+    asyncio.run(exercise())
+
+
+def test_grouped_messages_keep_their_own_commit_participants(store: ConversationStore) -> None:
+    """One sender's receipt or reply credit must not be used for another grouped sender."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        conn = connect(store._db_path)
+        conn.execute("CREATE TABLE sender_effects (submission_id TEXT PRIMARY KEY)")
+        conn.close()
+        fail_second = True
+
+        def participant(submission_id: str) -> NativeMessageOperation:
+            def record(
+                conn: sqlite3.Connection,
+                conversation_id: str,
+                payload: object,
+                admission: NativeMessageAdmission | None,
+            ) -> None:
+                assert conversation_id == "c" and isinstance(payload, PromptEventPayload)
+                assert payload.sender_message_id == submission_id
+                assert admission is not None and admission.composed_content_delivered
+                conn.execute("INSERT INTO sender_effects VALUES (?)", (submission_id,))
+                if submission_id == "second" and fail_second:
+                    raise RuntimeError("second sender failed")
+
+            return NativeMessageOperation("sender", submission_id, in_commit=record)
+
+        first, second = participant("first"), participant("second")
+
+        async def deliver() -> None:
+            await store.append_delivered_prompt(
+                "c",
+                prompt=replace(A_PROMPT, sender_message_id="first"),
+                extra_prompts=(replace(A_PROMPT, sender_message_id="second"),),
+                model_change=ModelChangedEventPayload("new-model", None),
+                native_message_operation=first,
+                extra_native_message_operations=(second,),
+            )
+
+        with pytest.raises(RuntimeError, match="second sender failed"):
+            await deliver()
+        assert await store.read_events_after("c", 0) == ()
+        conn = connect(store._db_path)
+        assert conn.execute("SELECT * FROM sender_effects").fetchall() == []
+        conn.close()
+        fail_second = False
+        await deliver()
+        conn = connect(store._db_path)
+        assert [row[0] for row in conn.execute("SELECT * FROM sender_effects")] == [
+            "first",
+            "second",
+        ]
+        conn.close()
 
     asyncio.run(exercise())

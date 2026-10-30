@@ -1206,7 +1206,8 @@ async def _thinking_pulses_now(watching: ConversationTailSubscription) -> int:
 
 
 def test_local_possible_emission_stays_uncertain_and_duplicate_never_writes_again(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A local failure after possible emission cannot use the prewrite-refusal fallback."""
     from planner.conversation.backends.contracts import PromptWriteFailed
@@ -1225,10 +1226,15 @@ def test_local_possible_emission_stays_uncertain_and_duplicate_never_writes_agai
     async def exercise() -> None:
         await _start(harness, "c")
         for _ in range(2):
-            assert await harness.system.send(
-                "c", text_message_content("send once"), sender_label="owner",
-                sender_message_id="one-uncertain-message",
-            ) == PromptDeliveryUncertain()
+            assert (
+                await harness.system.send(
+                    "c",
+                    text_message_content("send once"),
+                    sender_label="owner",
+                    sender_message_id="one-uncertain-message",
+                )
+                == PromptDeliveryUncertain()
+            )
         assert calls == 1
         assert any(
             fact.status is LifecycleStatus.unknown
@@ -1592,7 +1598,7 @@ def test_remote_kill_cannot_retire_or_end_a_successor_after_cancel(
         CommandDisposition,
         CommandOutcome,
     )
-    from planner.executor.remote import RemoteBackendChild
+    from planner.executor.vps_remote_child import MacRemoteChild
 
     async def exercise() -> None:
         await _start(harness, "c")
@@ -1620,8 +1626,8 @@ def test_remote_kill_cannot_retire_or_end_a_successor_after_cancel(
                 command.command_id, command.child, CommandDisposition.succeeded, {}
             )
 
-        def proxy(child_reference: ChildReference) -> RemoteBackendChild:
-            return RemoteBackendChild(child_reference, send, lambda resolved: canonical_snapshot())
+        def proxy(child_reference: ChildReference) -> MacRemoteChild:
+            return MacRemoteChild(child_reference, send, lambda resolved: canonical_snapshot())
 
         state.child = proxy(reference)
         state.executor_child_reference = reference
@@ -1688,7 +1694,7 @@ def test_remote_kill_retires_same_child_without_ending_its_completed_copy_twice(
 
     from planner.execution_identity import ChildReference
     from planner.executor.protocol import ChildCommand, CommandDisposition, CommandOutcome
-    from planner.executor.remote import RemoteBackendChild
+    from planner.executor.vps_remote_child import MacRemoteChild
 
     async def exercise() -> None:
         await _start(harness, "c")
@@ -1712,8 +1718,8 @@ def test_remote_kill_retires_same_child_without_ending_its_completed_copy_twice(
             retired.append(child)
 
         monkeypatch.setattr(harness.system, "_discard_child", discard)
-        original = RemoteBackendChild(reference, send, lambda resolved: canonical_snapshot())
-        current = RemoteBackendChild(reference, send, lambda resolved: canonical_snapshot())
+        original = MacRemoteChild(reference, send, lambda resolved: canonical_snapshot())
+        current = MacRemoteChild(reference, send, lambda resolved: canonical_snapshot())
         state.child = original
         state.executor_child_reference = reference
         killing = asyncio.create_task(harness.system.kill("c"))
@@ -2663,8 +2669,6 @@ def test_idle_write_refuses_a_send_reserved_before_backend_write(harness: _Harne
         await sending
 
     _run(exercise)
-
-
 
 
 # These cases exercise the real durable queue and admission transaction. The fake only

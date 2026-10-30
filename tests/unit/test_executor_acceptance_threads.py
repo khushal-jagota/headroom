@@ -33,28 +33,28 @@ from planner.executor.protocol import (
     encode_value,
     envelope_payload_digest,
 )
-from planner.executor.store import ExecutorStore
-from planner.executor.vps import ExecutorEndpoint
+from planner.executor.vps_inbox import InboxStore
+from planner.executor.vps_transport import VpsExecutor
 
 
 @pytest.mark.parametrize("blocked_unit", ["preflight", "accept"])
 def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_cancel_settles(
-    store: ExecutorStore, monkeypatch: pytest.MonkeyPatch, blocked_unit: str
+    store: InboxStore, monkeypatch: pytest.MonkeyPatch, blocked_unit: str
 ) -> None:
     async def exercise() -> None:
-        endpoint = ExecutorEndpoint(store.db_path, RealClock())
-        endpoint.store = store
-        endpoint.identity = IDENTITY
+        endpoint = VpsExecutor(store.db_path, RealClock())
+        endpoint.inbox.store = store
+        endpoint.runs.identity = IDENTITY
         writer = peer()
         writer.wait_closed = AsyncMock()
-        endpoint.link = message_link(writer, IDENTITY)
+        endpoint.runs.link = message_link(writer, IDENTITY)
         sibling = replace(CHILD, child_id="sibling", conversation_id="other-conversation")
-        store.register_child(sibling, "ticket", "other-ticket", 1000)
+        store.runs.register_child(sibling, "ticket", "other-ticket", 1000)
         app = FastAPI()
 
         @app.get("/api/tickets/other-ticket")
         def read_sibling() -> JsonObject:
-            assert store.child_assignment(sibling) == ("ticket", "other-ticket")
+            assert store.runs.child_assignment(sibling) == ("ticket", "other-ticket")
             return {"conversation_id": sibling.conversation_id}
 
         endpoint.app = app
@@ -114,7 +114,7 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
 
         holder = threading.Thread(target=hold_write_lock)
         holder.start()
-        accepting = asyncio.create_task(endpoint.accept_envelope(queued, IDENTITY))
+        accepting = asyncio.create_task(endpoint.inbox.accept(queued, IDENTITY))
         replay: asyncio.Task[AcceptanceReceipt] | None = None
         try:
             assert await asyncio.to_thread(waiting.wait, 2)
@@ -124,12 +124,12 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
                 endpoint._read(LiveReadRequest(sibling, "/api/tickets/other-ticket", {})), 1
             )
             assert read == {"conversation_id": sibling.conversation_id}
-            heartbeat = asyncio.create_task(endpoint._measure_clock())
-            while not endpoint.link._pending:
+            heartbeat = asyncio.create_task(endpoint.catalog._measure_clock())
+            while not endpoint.runs.link._pending:
                 await asyncio.sleep(0)
-            request_id = next(iter(endpoint.link._pending))
+            request_id = next(iter(endpoint.runs.link._pending))
             await deliver(
-                endpoint.link,
+                endpoint.runs.link,
                 WireMessage(
                     WireMessageKind.health,
                     request_id,
@@ -137,16 +137,16 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
                 ),
             )
             await asyncio.wait_for(heartbeat, 1)
-            assert endpoint.clock_sample is not None
+            assert endpoint.catalog.clock_sample is not None
             writer.send.assert_awaited()
             assert not release.is_set() and not accepting.done()
             accepting.cancel()
             await asyncio.sleep(0)
             accepting.cancel()
-            replay = asyncio.create_task(endpoint.accept_envelope(queued, IDENTITY))
+            replay = asyncio.create_task(endpoint.inbox.accept(queued, IDENTITY))
             await asyncio.sleep(0)
             assert not accepting.done() and not replay.done()
-            assert endpoint._conversation_locks[CHILD.conversation_id].locked()
+            assert endpoint.inbox._conversation_locks[CHILD.conversation_id].locked()
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(accepting, 2)

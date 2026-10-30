@@ -377,3 +377,23 @@ class ProviderCatalogObserver(Protocol):
         attempt_id: str,
         deadline: float,
     ) -> CatalogResult: ...
+
+
+class RemoteCatalogSource(Protocol):
+    """The connected destination's catalog and existing conversation ownership."""
+
+    @property
+    def identity(self) -> ExecutorIdentity | None: ...
+
+    @property
+    def ready(self) -> bool: ...
+
+    def owns_conversation(self, conversation_id: str) -> bool: ...
+
+    async def observe_catalog(
+        self,
+        request: CatalogRequest,
+        *,
+        attempt_id: str,
+        deadline: float | None = None,
+    ) -> CatalogResult: ...

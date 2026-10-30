@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
+from starlette.requests import HTTPConnection
 from starlette.responses import StreamingResponse
 
+from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import EXECUTOR_GENERATION_HEADER, EXECUTOR_INCARNATION_HEADER
 from planner.executor.link import ControlWebSocket, ServerWebSocketPeer
+from planner.executor.vps_transport import VpsExecutor
 
 
 def build_executor_router() -> APIRouter:
@@ -17,7 +19,7 @@ def build_executor_router() -> APIRouter:
 
     router = APIRouter()
 
-    def endpoint_for(connection: Any) -> Any:
+    def endpoint_for(connection: HTTPConnection) -> VpsExecutor:
         try:
             require_executor_ingress(connection.scope, connection.app.state.executor_id)
         except ValueError as error:
@@ -25,16 +27,18 @@ def build_executor_router() -> APIRouter:
         endpoint = getattr(connection.app.state, "executor_endpoint", None)
         if endpoint is None:
             raise HTTPException(503, "executor endpoint unavailable")
+        if not isinstance(endpoint, VpsExecutor):
+            raise HTTPException(503, "executor endpoint unavailable")
         return endpoint
 
-    def generation_for(connection: Any, endpoint: Any) -> Any:
+    def generation_for(connection: HTTPConnection, endpoint: VpsExecutor) -> ExecutorIdentity:
         incarnation = connection.headers.get(EXECUTOR_INCARNATION_HEADER, "")
         generation = connection.headers.get(EXECUTOR_GENERATION_HEADER, "")
-        identity = endpoint.identity
+        identity = endpoint.runs.identity
         if (
             identity is None
-            or endpoint.link is None
-            or endpoint.link.is_closing()
+            or endpoint.runs.link is None
+            or endpoint.runs.link.is_closing()
             or identity.executor_incarnation != incarnation
             or not re.fullmatch(r"[1-9][0-9]*", generation)
             or str(identity.connection_generation) != generation

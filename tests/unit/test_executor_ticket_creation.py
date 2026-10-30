@@ -11,8 +11,7 @@ import asyncio
 import json
 import sqlite3
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -31,7 +30,7 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     encode_value,
 )
-from planner.executor.vps import ExecutorEndpoint
+from planner.executor.vps_transport import VpsExecutor
 
 
 class ScriptedPreparation:
@@ -51,7 +50,7 @@ def _setup(
     *,
     refuse: bool = False,
     child_actor: tuple[str, str] = ("chief", "chief"),
-) -> tuple[ExecutorEndpoint, ScriptedPreparation, QueuedEnvelope, ExecutorIdentity]:
+) -> tuple[VpsExecutor, ScriptedPreparation, QueuedEnvelope, ExecutorIdentity]:
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
 
     conn.execute("DELETE FROM model_variant_resolutions")
@@ -61,14 +60,14 @@ def _setup(
         "'codex','gpt-6-sol',1,1)"
     )
     conn.commit()
-    endpoint = ExecutorEndpoint(path, RealClock())
+    endpoint = VpsExecutor(path, RealClock())
     identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
-    endpoint.store.begin_connection(identity, 1000)
-    endpoint.store.mark_ready(identity, 1001)
+    endpoint.runs.store.begin_connection(identity, 1000)
+    endpoint.runs.store.mark_ready(identity, 1001)
     child = ChildReference("incarnation", "child", "source-conversation")
-    endpoint.store.register_child(child, *child_actor, 1002)
+    endpoint.runs.store.register_child(child, *child_actor, 1002)
     resolver = ScriptedPreparation()
-    endpoint.runtime = SimpleNamespace(system=resolver)
+    endpoint.bind_conversations(cast(Any, resolver))
     if refuse:
         BackendStateStore(path).write_model_enablement(
             ConversationBackendKey.codex, "gpt-6-sol", False
@@ -110,7 +109,7 @@ def test_creation_preparation_receipt_and_replay_share_canonical_semantics(
     tmp_db: sqlite3.Connection, tmp_path: Path, refuse: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint, resolver, envelope, identity = _setup(tmp_db, tmp_path, monkeypatch, refuse=refuse)
-    receipt = asyncio.run(endpoint.accept_envelope(envelope, identity))
+    receipt = asyncio.run(endpoint.inbox.accept(envelope, identity))
     assert resolver.calls == 0
     assert receipt.disposition is (
         ReceiptDisposition.refused if refuse else ReceiptDisposition.accepted
@@ -143,7 +142,7 @@ def test_creation_preparation_receipt_and_replay_share_canonical_semantics(
     )
     tmp_db.execute("UPDATE executor_child_assignments SET closed_at_ms=2000")
     tmp_db.commit()
-    assert asyncio.run(endpoint.accept_envelope(envelope, identity)) == receipt
+    assert asyncio.run(endpoint.inbox.accept(envelope, identity)) == receipt
     assert resolver.calls == 0
 
 
@@ -157,10 +156,10 @@ def test_receipt_insert_failure_rolls_back_the_real_creation_writer(
     )
     tmp_db.commit()
     with pytest.raises(sqlite3.IntegrityError, match="receipt fault"):
-        asyncio.run(endpoint.accept_envelope(envelope, identity))
+        asyncio.run(endpoint.inbox.accept(envelope, identity))
     assert resolver.calls == 0
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
-    assert endpoint.store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+    assert endpoint.inbox.store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
 
 
 def test_native_creation_unauthorized_child_refuses_before_metadata_and_replays(
@@ -180,7 +179,7 @@ def test_native_creation_unauthorized_child_refuses_before_metadata_and_replays(
         monkeypatch,
         child_actor=("manager", "outside"),
     )
-    receipt = asyncio.run(endpoint.accept_envelope(envelope, identity))
+    receipt = asyncio.run(endpoint.inbox.accept(envelope, identity))
     assert receipt.disposition is ReceiptDisposition.refused
     error = receipt.result["error"]
     assert isinstance(error, dict) and error["code"] == "agent_forbidden"
@@ -188,7 +187,7 @@ def test_native_creation_unauthorized_child_refuses_before_metadata_and_replays(
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
     tmp_db.execute("UPDATE executor_child_assignments SET closed_at_ms=2000")
     tmp_db.commit()
-    assert asyncio.run(endpoint.accept_envelope(envelope, identity)) == receipt
+    assert asyncio.run(endpoint.inbox.accept(envelope, identity)) == receipt
     assert preparation.calls == 0
 
 
@@ -199,17 +198,17 @@ def test_native_creation_source_closure_before_commit_is_a_durable_refusal(
 ) -> None:
     endpoint, preparation, envelope, identity = _setup(tmp_db, tmp_path, monkeypatch)
     original = ChildReference("incarnation", "child", "source-conversation")
-    original_accept = endpoint.store.accept
+    original_accept = endpoint.inbox.store.accept
 
     def close_before_accept(*args: Any, **kwargs: Any) -> Any:
-        endpoint.store.close_child(original, 2000)
+        endpoint.runs.store.close_child(original, 2000)
         return original_accept(*args, **kwargs)
 
-    monkeypatch.setattr(endpoint.store, "accept", close_before_accept)
-    receipt = asyncio.run(endpoint.accept_envelope(envelope, identity))
+    monkeypatch.setattr(endpoint.inbox.store, "accept", close_before_accept)
+    receipt = asyncio.run(endpoint.inbox.accept(envelope, identity))
     assert receipt.disposition is ReceiptDisposition.refused
     assert "child assignment changed" in str(receipt.result)
     assert preparation.calls == 0
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
-    assert asyncio.run(endpoint.accept_envelope(envelope, identity)) == receipt
+    assert asyncio.run(endpoint.inbox.accept(envelope, identity)) == receipt
     assert preparation.calls == 0

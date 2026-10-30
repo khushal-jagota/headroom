@@ -48,7 +48,7 @@ from planner.executor.protocol import (
     WireMessageKind,
     encode_value,
 )
-from planner.executor.vps import ExecutorEndpoint
+from planner.executor.vps_transport import VpsExecutor
 
 
 @pytest.mark.parametrize("stop_before_inventory", [False, True])
@@ -76,7 +76,10 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             ).fetchone()
             assert retained is not None
             assert json.loads(retained[0]) == encode_value(command.child)
-            assert endpoint.store.child_assignment(command.child) == ("chief", "chief")
+            assert endpoint.runs.store.child_assignment(command.child) == (
+                "ticket",
+                "restart-ticket",
+            )
             commands.append(command)
             if command.operation is ChildOperation.stop:
                 stop_entered.set()
@@ -88,17 +91,17 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                 {"composed_content_delivered": True},
             )
 
-        def core() -> tuple[ExecutorEndpoint, SqliteProcessConversationSystem]:
-            endpoint = ExecutorEndpoint(path, RealClock())
-            endpoint.identity, endpoint.ready = identity, True
-            endpoint.store.begin_connection(identity, 1)
-            endpoint.store.mark_ready(identity, 1)
-            endpoint.factory.send_command = native
-            endpoint.factory.skill_snapshot_supplier = lambda start: canonical_snapshot()
-            endpoint.send_new_command = native  # type: ignore[method-assign]
+        def core() -> tuple[VpsExecutor, SqliteProcessConversationSystem]:
+            endpoint = VpsExecutor(path, RealClock())
+            endpoint.runs.identity, endpoint.runs.ready = identity, True
+            endpoint.runs.store.begin_connection(identity, 1)
+            endpoint.runs.store.mark_ready(identity, 1)
+            endpoint.runs.send_command = native  # type: ignore[method-assign]
+            endpoint.runs._read_skill_snapshot = lambda start: canonical_snapshot()  # type: ignore[method-assign]
+            endpoint.runs.send_new_command = native  # type: ignore[method-assign]
             system = SqliteProcessConversationSystem(
                 store=ConversationStore(path),
-                backend_child_factories={key: endpoint.factory for key in ConversationBackendKey},
+                backend_child_factories={key: endpoint.runs for key in ConversationBackendKey},
                 message_files=ConversationMessageFiles(path),
             )
             # Like the existing held-message fixture, this synthetic conversation
@@ -107,8 +110,8 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                 Any,
                 SimpleNamespace(identity=identity, ready=True, owns_conversation=lambda _: True),
             )
-            endpoint.runtime = SimpleNamespace(system=system)
-            endpoint.link = message_link(peer(), identity)
+            endpoint.bind_conversations(system)
+            endpoint.runs.link = message_link(peer(), identity)
             return endpoint, system
 
         endpoint, first = core()
@@ -117,7 +120,9 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                 "c",
                 "scripted",
                 workspace_folder=tmp_path,
-                role_materials=ConversationRoleMaterials("Chief", (("PLAN_ACTOR", "chief"),)),
+                role_materials=ConversationRoleMaterials(
+                    "Worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "restart-ticket"))
+                ),
             )
         )
         assert isinstance(
@@ -139,8 +144,8 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
         assert metadata is not None
         await first._store.save_executor_turn("c", metadata)
         ask = AskReference(old, token, "allow", AskKind.permission)
-        endpoint.store.publish_ask(ask, ("yes",), 1)
-        saved = endpoint.store.choose_answer(ask, "yes", 1, 2)
+        endpoint.runs.store.publish_ask(ask, ("yes",), 1)
+        saved = endpoint.runs.store.choose_answer(ask, "yes", 1, 2)
         await first.shutdown()
         identity = replace(identity, connection_generation=2)
         endpoint, restarted = core()
@@ -154,8 +159,8 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                 f.kind is LifecycleKind.turn and f.status is LifecycleStatus.unavailable
                 for f in facts
             )
-            assert not endpoint.store.answer_target_is_open(ask)
-            assert not endpoint.store.answer_is_deliverable(saved, identity)
+            assert not endpoint.runs.store.answer_target_is_open(ask)
+            assert not endpoint.runs.store.answer_is_deliverable(saved, identity)
             if stop_before_inventory:
                 await restarted.kill("c")
                 await asyncio.wait_for(stop_entered.wait(), 1)
@@ -163,8 +168,8 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             before = len(commands)
             await restarted.send("c", text_message_content("Blocked"), sender_label="Test")
             assert len(commands) == before
-            assert endpoint.link is not None
-            endpoint.link.request = AsyncMock(  # type: ignore[method-assign]
+            assert endpoint.runs.link is not None
+            endpoint.runs.link.request = AsyncMock(  # type: ignore[method-assign]
                 return_value=WireMessage(
                     WireMessageKind.reconnect_result,
                     "ask",
@@ -176,7 +181,7 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                     ),
                 )
             )
-            await endpoint._reconnect(identity, endpoint.link)
+            await endpoint.runs._reconnect(identity, endpoint.runs.link)
             await asyncio.wait_for(stop_entered.wait(), 1)
             if stop_before_inventory:
                 assert state.child is stopping_child
@@ -185,8 +190,8 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             assert state.initial_shutdown_task is not None
             release_stop.set()
             assert await state.initial_shutdown_task
-            assert endpoint.store.has_closed_child_assignment(old)
-            assert endpoint.store.recorded_answer(ask) == saved
+            assert endpoint.runs.store.has_closed_child_assignment(old)
+            assert endpoint.runs.store.recorded_answer(ask) == saved
             assert not state.child_is_quarantined
             await restarted.wait_until_quiescent()
             assert await restarted.is_running("c")

@@ -30,7 +30,7 @@ from planner.conversation.system import (
 from planner.core.contracts import CHIEF_PRINCIPAL
 from planner.execution_identity import ChildReference
 from planner.executor.protocol import ChildCommand, CommandOutcome
-from planner.executor.remote import RemoteBackendChild
+from planner.executor.vps_remote_child import MacRemoteChild
 
 
 def test_committed_reply_credit_survives_stale_metadata_and_turn_end(
@@ -56,7 +56,7 @@ def test_committed_reply_credit_survives_stale_metadata_and_turn_end(
 
         state = _ConversationState(
             record=record,
-            child=RemoteBackendChild(
+            child=MacRemoteChild(
                 ChildReference("process", "child", "c_source"),
                 never_native,
                 lambda start: canonical_snapshot(),

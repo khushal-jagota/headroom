@@ -15,7 +15,7 @@ from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.store import ExecutorStore
+from planner.executor.vps_inbox import InboxStore
 from planner.runtime.conversation_start import send_to_ticket_conversation
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data, locale_configuration
@@ -61,8 +61,8 @@ def mac_ticket(connection: Connection, backend: str = "codex") -> Ticket:
     )
 
 
-def executor_store(connection: Connection) -> ExecutorStore:
-    return ExecutorStore(str(connection.execute("PRAGMA database_list").fetchone()[2]))
+def executor_store(connection: Connection) -> InboxStore:
+    return InboxStore(str(connection.execute("PRAGMA database_list").fetchone()[2]))
 
 
 @pytest.mark.parametrize(
@@ -86,18 +86,18 @@ def test_both_runtime_guards_use_current_reconciled_connection(
     ticket = mac_ticket(tmp_db)
     store = executor_store(tmp_db)
     if state != "absent":
-        store.begin_connection(IDENTITY, 100)
+        store.runs.begin_connection(IDENTITY, 100)
     if state not in ("absent", "reconciling"):
-        store.mark_ready(IDENTITY, 101)
+        store.runs.mark_ready(IDENTITY, 101)
     if state == "lost":
-        store.mark_lost(IDENTITY, 102)
+        store.runs.mark_lost(IDENTITY, 102)
     if state.startswith("replacement") or state == "old_socket_lost":
         replacement = replace(IDENTITY, connection_generation=2)
-        store.begin_connection(replacement, 102)
+        store.runs.begin_connection(replacement, 102)
         if state != "replacement_reconciling":
-            store.mark_ready(replacement, 103)
+            store.runs.mark_ready(replacement, 103)
         if state == "old_socket_lost":
-            store.mark_lost(IDENTITY, 104)
+            store.runs.mark_lost(IDENTITY, 104)
     if state == "inactive_ready_history":
         # A superseded process's persisted ready row is historical evidence.
         tmp_db.execute("UPDATE executor_connections SET active=0")
@@ -138,8 +138,8 @@ def test_both_runtime_guards_use_current_reconciled_connection(
 def test_local_locale_does_not_depend_on_remote_connection(tmp_db: Connection) -> None:
     assert locale_configuration.can_execute_locale(tmp_db, TicketLocale.vps)
     store = executor_store(tmp_db)
-    store.begin_connection(IDENTITY, 100)
-    store.mark_lost(IDENTITY, 101)
+    store.runs.begin_connection(IDENTITY, 100)
+    store.runs.mark_lost(IDENTITY, 101)
     assert locale_configuration.can_execute_locale(tmp_db, TicketLocale.vps)
 
 
@@ -170,8 +170,8 @@ def test_mac_backend_picker_resolves_each_implemented_provider(
 
     ticket = mac_ticket(tmp_db)
     store = executor_store(tmp_db)
-    store.begin_connection(IDENTITY, 100)
-    store.mark_ready(IDENTITY, 101)
+    store.runs.begin_connection(IDENTITY, 100)
+    store.runs.mark_ready(IDENTITY, 101)
     write_model_enablement(tmp_db, backend, "scripted-model", True)
     system = StartObservingSystem()
 
