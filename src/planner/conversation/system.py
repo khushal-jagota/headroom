@@ -6025,6 +6025,74 @@ class SqliteProcessConversationSystem:
         state.last_ended_turn_was_automatic_compaction = runtime.get("automatic_compaction", False)
         state.child_is_quarantined = True
 
+    async def interrupt_replaced_executor_runs(self, current_incarnation: str) -> None:
+        """A new service process proves that children of the old service are gone.
+
+        launchd's default process-group cleanup is the termination evidence here,
+        not an empty inventory or a refusal to stop an obsolete child identity.
+        """
+        references = tuple(
+            state.executor_child_reference
+            for state in self._conversations.values()
+            if state.executor_child_reference is not None
+            and state.executor_child_reference.executor_incarnation != current_incarnation
+        )
+        for reference in references:
+            state = self._conversations[reference.conversation_id]
+            await self._own_settlement(
+                state, self._interrupt_replaced_executor_child(state, reference)
+            )
+
+    async def _interrupt_replaced_executor_child(
+        self, state: _ConversationState, reference: ChildReference
+    ) -> None:
+        from pydantic import TypeAdapter
+
+        from planner.executor.remote import RemoteBackendChild
+
+        # Pending command futures have already become uncertain. Let their normal
+        # delivery writers finish; replacing the process cannot prove non-delivery.
+        await self._acquire_settled(state)
+        try:
+            if state.executor_child_reference != reference:
+                return
+            if state.running_turn is not None:
+                await self._end_turn(
+                    state, state.running_turn, ConversationTurnEnding.interrupted, None
+                )
+            metadata = await self._store.read_executor_turn(reference.conversation_id)
+            if (
+                metadata is None
+                or TypeAdapter(ChildReference).validate_json(metadata[0]) != reference
+            ):
+                raise ValueError("Replaced executor lacks exact retained child metadata")
+            runtime = json.loads(metadata[2])
+            runtime.update(source_retired=True, ended=True, callbacks_revoked=True)
+            retired = await self._persist(
+                state,
+                partial(
+                    self._store.transition_lifecycle,
+                    reference.conversation_id,
+                    (),
+                    executor_turn=(metadata[0], metadata[1], json.dumps(runtime)),
+                    retired_child=reference,
+                ),
+            )
+            if not retired:
+                raise ValueError("Replaced executor child retirement was not committed")
+            if isinstance(state.child, RemoteBackendChild):
+                state.child.retire_local_reference()
+            state.child = None
+            state.executor_child_reference = None
+            state.child_is_quarantined = False
+            if state.reserved_turn is not None:
+                state.last_ended_turn_token = state.reserved_turn.token
+                state.reserved_turn.resolved.set()
+                state.reserved_turn = None
+            self._settle_phase(state)
+        finally:
+            state.lock.release()
+
     async def stop_interrupted_remote_child(
         self, reference: ChildReference, child: BackendChild
     ) -> None:

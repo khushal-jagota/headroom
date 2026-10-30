@@ -580,6 +580,14 @@ class ConversationStore:
             claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
             retained_commands: tuple[ChildCommand, ...] = ()
             if retired_child is not None:
+                executor = conn.execute(
+                    "SELECT executor_incarnation FROM executor_connections WHERE active=1"
+                ).fetchone()
+                # Process death proves termination even when an old publication
+                # was uncertain. Its historical delivery/effect stays unknown.
+                process_replaced = (
+                    executor is not None and executor[0] != retired_child.executor_incarnation
+                )
                 retained = conn.execute(
                     "SELECT child_json,runtime_json FROM executor_core_turns "
                     "WHERE conversation_id=?",
@@ -592,7 +600,10 @@ class ConversationStore:
                         "child_id": retired_child.child_id,
                         "conversation_id": retired_child.conversation_id,
                     }
-                    or json.loads(retained[1]).get("cleanup_evidence_uncertain")
+                    or (
+                        json.loads(retained[1]).get("cleanup_evidence_uncertain")
+                        and not process_replaced
+                    )
                 ):
                     conn.rollback()
                     return False
