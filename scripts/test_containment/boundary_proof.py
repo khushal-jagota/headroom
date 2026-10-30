@@ -192,8 +192,11 @@ def entrypoint_admission_proof(storage: Path, output: Path) -> list[dict[str, An
             "--collect-only", "-q", case,
         ],
         "dev-pytest": [str(ROOT / "scripts/dev"), "pytest", "--collect-only", "-q", case],
-        "optional-probes": [
-            sys.executable, "-m", "pytest", "-q", "tests/integration/test_contained_pytest.py",
+        "default-discovery": [
+            sys.executable, "-m", "pytest", "--collect-only", "-q", "tests",
+        ],
+        "explicit-probes": [
+            sys.executable, "-m", "pytest", "-q", "tests/containment/test_contained_pytest.py",
         ],
         "explicit-plugin": [
             sys.executable, "-m", "pytest", "-p",
@@ -220,11 +223,13 @@ def entrypoint_admission_proof(storage: Path, output: Path) -> list[dict[str, An
             (output / (label + "-stderr.txt")).write_bytes(result.stderr)
             diagnosed = b"Test containment refused" in result.stderr
             guard_active = b"Skill-tree guard receipts" in result.stdout
-            passed = (result.returncode != 0 and diagnosed) if selected else (
-                result.returncode == 0 and guard_active
-            )
-            if route == "optional-probes" and not selected:
-                passed = passed and b"sss" in result.stdout
+            if selected or route == "explicit-probes":
+                passed = result.returncode != 0 and diagnosed
+            else:
+                passed = result.returncode == 0 and guard_active
+            if route == "default-discovery" and not selected:
+                passed = passed and b"tests/containment/" not in result.stdout
+                passed = passed and case.encode() in result.stdout
             records.append({
                 "route": route, "opt_in": selected, "status": result.returncode,
                 "guard_active": guard_active, "refused": diagnosed,

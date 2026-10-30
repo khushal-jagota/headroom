@@ -11,15 +11,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
-
-# These destructive probes run only after tests/conftest.py admits the kernel
-# boundary. Ordinary CI retains its pre-existing behavior without these probes.
-pytestmark = pytest.mark.skipif(
-    os.environ.get("PANELS_REQUIRE_TEST_CONTAINMENT") != "1",
-    reason="containment probes require explicit OS boundary admission",
-)
-
 
 def test_python_and_native_children_cannot_write_account_skill_paths() -> None:
     """The OS boundary covers descendants that never load the Python audit hook."""

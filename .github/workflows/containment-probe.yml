@@ -85,7 +85,7 @@ jobs:
           set +e
           .venv/bin/python scripts/test_containment/verification.py \
             --evidence /tmp/panels-hosted-integration-proof --tool pytest -- \
-            tests/integration/test_contained_pytest.py \
+            tests/containment/test_contained_pytest.py \
             2>&1 | tee "$RUNNER_TEMP/containment-evidence/integration-probe.log"
           probe_status=("${PIPESTATUS[@]}")
           printf '%s\n' "${probe_status[0]}" > "$RUNNER_TEMP/containment-evidence/integration-probe.exit-status"
