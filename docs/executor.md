@@ -373,41 +373,21 @@ reader or converter for earlier draft formats.
 
 ## Browser previews
 
-A preview uses `/dev/tickets/<ticket-id>/<port>/` on either locale. The server reads
-that Ticket's current locale before each request. VPS previews use VPS loopback.
-Mac previews use a temporary VPS loopback listener. Its byte streams cross the
-app service through separate Mac-initiated WebSockets and reach only `127.0.0.1` on the Mac.
-The URL carries no host name and accepts no host parameter.
+VPS application previews use `/dev/tickets/<ticket-id>/<port>/` and connect to VPS
+loopback. The server reads the Ticket's current locale before each request.
+For a Mac Ticket, the link shows "Previews are unavailable for Mac runs." with a
+503 response. It does not connect to the Mac or fall back to a VPS application on
+the same port, whether or not the Mac executor is connected.
 
-Concurrent requests for one Ticket and port share a leased listener. The final
-lease closes it. Link loss, replacement, cancellation, and shutdown close its
-streams. A new request can acquire a new listener after the connection is ready.
-If a stream fails, concurrent requests on the same leased listener can also return
-unavailable. The final request releases that listener.
-Preview traffic stays outside the journal, replay, and conversation commands.
-A failed request never moves to a VPS service at the same requested port.
-
-The remote open and local connect deadlines are one second. Idle streams expire after 30 seconds.
-Each peer admits at most 32 streams. The VPS admits at most 32 listeners. Pending stream connections count against capacity before tasks start.
-Server-issued lease and stream IDs bind each connection to the current executor generation and fixed Mac loopback port.
-Each binary message carries at most 64 KiB. Awaited sends and bounded receive buffers supply backpressure.
-Separate connections keep stalled preview bytes away from control receipts. The final lease closes pending and active streams.
-These limits live in `src/planner/previews/configuration.py`.
-
-The proxy preserves the requested port in `Host` and preview-local redirects.
-It strips Panels credentials and hop-by-hop headers before the preview receives a
-request. Hosted access still passes through the existing trusted ingress. Lease,
-remote connection, and stream failures return the existing unavailable response.
-The handshake requires the current protocol before replay.
-
-Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
-a real browser. That proves the software boundary and does not prove physical Mac
-access, installed routes, provider credentials, or deployed behavior.
+The VPS proxy preserves the requested port in `Host` and preview-local redirects.
+It strips Panels credentials and hop-by-hop headers before the application receives
+a request. Hosted access passes through the existing trusted ingress. HTTP connect
+and idle deadlines live in `src/planner/previews/configuration.py`.
 
 ## App service prerequisites and boundaries
 
 The native launcher requires the application revision, an HTTPS app origin, and a logical executor ID.
-The Mac uses one WebSocket for commands and receipts, HTTP for files, and separate WebSockets for preview streams.
+The Mac uses one WebSocket for commands and receipts, and HTTP for files.
 No open browser, SSH login, relay process, or SFTP subsystem participates.
 
 ```sh

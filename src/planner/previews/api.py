@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import HTMLResponse
 
 from planner.core.errors import ErrorCode, PlannerError
 from planner.previews.configuration import HTTP_CONNECT_TIMEOUT_SECONDS, HTTP_IDLE_TIMEOUT_SECONDS
@@ -177,16 +178,16 @@ def build_preview_router(*, transport: httpx.AsyncBaseTransport | None = None) -
                 {"ticket_id": ticket_id, "port": port},
             )
 
+        if ticket.locale == TicketLocale.macos:
+            return HTMLResponse(
+                "<!doctype html><title>Application preview unavailable</title>"
+                "<h1>Application preview unavailable</h1>"
+                "<p>Previews are unavailable for Mac runs.</p>",
+                status_code=503,
+            )
+
         try:
             async with AsyncExitStack() as stack:
-                transport_port = port_number
-                if ticket.locale == TicketLocale.macos:
-                    endpoint = getattr(request.app.state, "executor_endpoint", None)
-                    if endpoint is None:
-                        raise ConnectionError("Mac executor is unavailable")
-                    transport_port = await stack.enter_async_context(
-                        endpoint.preview_forward(port=port_number, ticket_id=ticket_id)
-                    )
                 client = await stack.enter_async_context(
                     httpx.AsyncClient(
                         transport=transport,
@@ -201,13 +202,13 @@ def build_preview_router(*, transport: httpx.AsyncBaseTransport | None = None) -
                 upstream_response = await stack.enter_async_context(
                     client.stream(
                         request.method,
-                        _upstream_url(request, transport_port),
+                        _upstream_url(request, port_number),
                         headers=headers,
                         content=await request.body(),
                     )
                 )
                 # Finish the upstream body before committing browser response headers.
-                # A tunnel loss, including after headers, must produce gateway_offline.
+                # A read failure, including after headers, must produce gateway_offline.
                 body = (
                     upstream_response.content
                     if upstream_response.is_stream_consumed

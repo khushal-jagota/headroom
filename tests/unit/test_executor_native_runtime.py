@@ -72,7 +72,6 @@ from planner.executor.contracts import (
 from planner.executor.journal import FilesystemSpool
 from planner.executor.mac import MacExecutor, as_object
 from planner.executor.runtime import NativeChildRegistry
-from planner.previews.forward import MacPreviewForwards
 from planner.tickets.contracts import TicketLocale
 
 
@@ -2104,12 +2103,9 @@ def test_quiesce_counts_admitted_input_task_before_it_starts_and_refuses_new_inp
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("failure", ["preview", "http"])
 def test_cleanup_failure_still_revokes_generation_drains_tasks_and_closes_client(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from types import SimpleNamespace
-
     async def run() -> None:
         executor = make_executor(tmp_path)
         peer = install_control_peer(executor, monkeypatch)
@@ -2124,16 +2120,10 @@ def test_cleanup_failure_still_revokes_generation_drains_tasks_and_closes_client
             async def broken_close() -> None:
                 assert executor._writer is None and not executor._handshake_accepted
                 exited.set()
-                if failure == "http":
-                    await peer.aclose()
+                await peer.aclose()
                 raise TimeoutError("transport cleanup failed")
 
-            if failure == "preview":
-                executor._preview_streams = cast(
-                    MacPreviewForwards, SimpleNamespace(close=broken_close)
-                )
-            else:
-                monkeypatch.setattr(client, "close", broken_close)
+            monkeypatch.setattr(client, "close", broken_close)
             executor._stop.set()
             with pytest.raises(TimeoutError, match="cleanup failed"):
                 await asyncio.wait_for(task, 2)

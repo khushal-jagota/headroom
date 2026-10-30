@@ -8,8 +8,6 @@ import logging
 import sqlite3
 import tempfile
 import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -105,7 +103,6 @@ from planner.executor.wire import (
     read_frame,
     write_frame,
 )
-from planner.previews.forward import PreviewForwards
 from planner.tickets.contracts import TicketLocale
 
 
@@ -131,7 +128,6 @@ class ExecutorEndpoint:
         self.identity: ExecutorIdentity | None = None
         self.writer: FrameWriter | None = None
         self.ready = False
-        self._preview_forwards: PreviewForwards | None = None
         self.children: dict[str, RemoteBackendChild] = {}
         self.sinks: dict[str, BackendEventSink] = {}
         self.pending_commands: dict[str, tuple[ChildCommand, asyncio.Future[CommandOutcome]]] = {}
@@ -174,16 +170,8 @@ class ExecutorEndpoint:
         self._transport_lock = asyncio.Lock()
         self._receiver_work: dict[ExecutorIdentity, set[asyncio.Task[Any]]] = {}
 
-    @asynccontextmanager
-    async def preview_forward(self, port: int, ticket_id: str) -> AsyncIterator[int]:
-        forwards = self._preview_forwards
-        if not self.ready or forwards is None:
-            raise ConnectionError("Mac executor is unavailable")
-        async with forwards.lease(port, ticket_id) as local_port:
-            yield local_port
-
     async def close(self) -> None:
-        # Revoke admission synchronously before any preview or file cleanup yields.
+        # Revoke admission synchronously before file cleanup yields.
         self.ready = False
         writer, self.writer = self.writer, None
         if writer is not None:
@@ -195,9 +183,6 @@ class ExecutorEndpoint:
         for future in self._responses.values():
             if not future.done():
                 future.set_exception(ConnectionError("executor app stopped"))
-        previews, self._preview_forwards = self._preview_forwards, None
-        if previews is not None:
-            await previews.close()
         for task in tuple(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -1594,7 +1579,6 @@ class ExecutorEndpoint:
 
     async def _session(self, reader: FrameReader, writer: FrameWriter) -> None:
         identity = None
-        forwards: PreviewForwards | None = None
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
                 hello = await read_frame(reader)
@@ -1615,21 +1599,15 @@ class ExecutorEndpoint:
             self.process_id = health.process_id
             self.observed_at_ms = now_ms()
             self.lost_at_ms = None
-            old_previews = self._preview_forwards
             self._fail_catalogs(old_writer)
             self.clock_sample = None
             self.identity, self.writer, self.ready = identity, writer, False
             self.last_contact_at_ms = now_ms()
 
-            self._preview_forwards = None
             if old_writer is not None and old_writer is not writer:
                 old_writer.close()
-            try:
-                if old_previews is not None:
-                    await old_previews.close()
-            finally:
-                if old_identity is not None:
-                    await self._close_transport(old_identity)
+            if old_identity is not None:
+                await self._close_transport(old_identity)
             if self.writer is not writer or self.identity != identity:
                 return
             self._inventory = {}
@@ -1693,8 +1671,6 @@ class ExecutorEndpoint:
             if identity is not None and self.writer is writer and self.identity == identity:
                 # Detach this generation before cleanup yields to a replacement hello.
                 self.ready = False
-                forwards = self._preview_forwards
-                self._preview_forwards = None
                 self.writer = None
                 self.lost_at_ms = now_ms()
                 self.store.mark_lost(identity, now_ms())
@@ -1706,17 +1682,8 @@ class ExecutorEndpoint:
                     if not response_future.done():
                         response_future.set_exception(ConnectionError("executor link lost"))
             writer.close()
-            current_forwards = self._preview_forwards if self.identity == identity else None
-            try:
-                if forwards is not None:
-                    await forwards.close()
-            finally:
-                try:
-                    if current_forwards is not None:
-                        await current_forwards.close()
-                finally:
-                    if identity is not None:
-                        await self._close_transport(identity)
+            if identity is not None:
+                await self._close_transport(identity)
 
     async def _measure_clock(self) -> None:
         identity, writer = self.identity, self.writer
@@ -1798,17 +1765,6 @@ class ExecutorEndpoint:
                     self._transports[identity] = service
                     self._transport_roots[identity] = root
 
-                    async def preview_request(
-                        kind: WireMessageKind, payload: JsonObject
-                    ) -> WireMessage:
-                        if self.identity != identity or self.writer is not writer:
-                            raise ConnectionError("preview generation changed")
-                        return await self._request(kind, payload)
-
-                    self._preview_forwards = PreviewForwards(
-                        preview_request,
-                        lambda: self.identity == identity and self.writer is writer and self.ready,
-                    )
                     result, response_kind = (
                         {},
                         WireMessageKind.transport_opened,
@@ -1911,8 +1867,7 @@ class ExecutorEndpoint:
                     result = _object(ReconciliationResult(identity, (), (), (), ()))
                 response_kind = WireMessageKind.reconcile_result
             elif message.kind is WireMessageKind.reconciliation_ready:
-                # FIFO puts the ready ACK before any newly admitted preview or
-                # command. The Mac rejects previews until it receives this ACK.
+                # FIFO puts the ready ACK before any newly admitted command.
                 async with self._send_lock:
                     if self.writer is not writer or self.identity != identity:
                         return
