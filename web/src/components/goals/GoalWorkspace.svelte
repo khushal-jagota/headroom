@@ -3,9 +3,11 @@
  import {createQuery} from '@tanstack/svelte-query';
  import {workspaceAddress} from '../../lib/workspaceAddress';
  import {goalQueries} from '../../lib/goals/queries';
- import {refreshAtBoundary,updatePageBlock} from '../../lib/goals/presentation';
+ import {createGoalEditor} from '../../lib/goals/editing';
+ import {createGoalRequestSessions} from '../../lib/goals/requestSessions';
+ import {refreshAtBoundary} from '../../lib/goals/presentation';
  import {selectedChecklist,pageWithoutSelectedChecklistForRender} from '../../lib/goals/checklistCompletion';
- import type {GoalResponse,Block,ChartBlock,MeasureValue} from '../../lib/goals/contracts';
+ import type {GoalResponse,GoalEditBody,ChartBlock} from '../../lib/goals/contracts';
  import {PAGE_CONTEXT,type PageContext} from '../../lib/pageKit/context';
  import ConversationSignalMark from '../ConversationSignalMark.svelte';
  import {navigationConversationSignal} from '../../lib/navigation/presentation';
@@ -35,17 +37,12 @@
  $effect(()=>{if(content){const observer=new ResizeObserver(([entry])=>narrow=entry.contentRect.width<=640);observer.observe(content);return()=>observer.disconnect();}});
  $effect(()=>{if(goal)return refreshAtBoundary(Math.min(goal.next_refresh_at,readings.data?.next_refresh_at??Infinity),()=>{void detail.refetch();void readings.refetch();});});
  $effect(()=>{void readBackends().then(value=>backends=value).catch(()=>undefined);});
- async function save(patch:Partial<GoalResponse>,revision?:number){
-  if(!goal)throw new Error('Goal is not loaded');
-  const accepted=await mutateJson<GoalResponse>(`/api/goals/${encodeURIComponent(id)}`,{method:'PATCH',body:{expected_revision:revision??goal.revision,...patch}});
-  await detail.refetch();return accepted;
- }
- let editQueue:Promise<unknown>=Promise.resolve();
- function updateBlock(blockId:string,update:(block:Block)=>Block,revision?:number):Promise<unknown>{
-  const operation=editQueue.catch(()=>undefined).then(()=>{if(!goal)throw new Error('Goal is not loaded');return save({page:{...goal.page,blocks:updatePageBlock(goal.page.blocks,blockId,update)}},revision);});editQueue=operation;return operation;
- }
- setContext<PageContext>(PAGE_CONTEXT,{get goalId(){return id},get revision(){return goal?.revision??0},get narrow(){return narrow},get values(){return readings.data?.values??[]},get charts(){return readings.data?.charts},get completed(){return goal?.completed??false},get status(){return goal?.status??'neutral'},updateBlock});
- async function change(patch:Partial<GoalResponse>){try{await save(patch);error=null;}catch(e){error=e;}}
+ const sessions=createGoalRequestSessions();
+ let editor=$derived(createGoalEditor(id));
+ function save(patch:Omit<GoalEditBody,'expected_revision'>,revision?:number){return editor.write(patch,revision);}
+ function updateBlock(blockId:string,update:Parameters<typeof editor.updateBlock>[1],revision?:number){return editor.updateBlock(blockId,update,revision);}
+ setContext<PageContext>(PAGE_CONTEXT,{get goalId(){return id},get revision(){return goal?.revision??0},get narrow(){return narrow},get values(){return readings.data?.values??[]},get charts(){return readings.data?.charts},get completed(){return goal?.completed??false},get status(){return goal?.status??'neutral'},checklistSession:(blockId,itemId)=>sessions.checklist(id,blockId,itemId),manualSession:measureId=>sessions.manual(id,measureId),updateBlock});
+ async function change(patch:Omit<GoalEditBody,'expected_revision'>){try{await save(patch);error=null;}catch(e){error=e;}}
  async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson<DeliveredMessage>(`/api/goals/${encodeURIComponent(id)}/conversation/send`,{method:'POST',body,responseMetadata});const view=navigation?.state.effective;const delivered=navigation?await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'send goal message'):await operation();await detail.refetch();return delivered;}
  async function reset(){const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson(`/api/goals/${encodeURIComponent(id)}/conversation/reset`,{method:'POST',responseMetadata});const view=navigation?.state.effective;if(navigation)await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'reset goal conversation');else await operation();selectedPastConversationId=null;await detail.refetch();}
  let checklist=$derived(goal?.kind==='binary'?selectedChecklist(goal.page,goal.primary_checklist_block_id):null);

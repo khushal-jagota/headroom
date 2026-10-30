@@ -14,8 +14,9 @@
   import WorkerRow from "./WorkerRow.svelte";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
   import chiefProfile from "../assets/chief-of-staff-profile.webp";
-  let { beforeGroups, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+  let { beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
     beforeGroups?: Snippet;
+    suppressBackgroundPreview?: boolean;
     scrollCoordinator?:ScrollWindowCoordinator;scrollPublicationId?:number|null;
     navigationWindow?:ViewWindow;onWindow?:(anchor:string,direction:'before'|'after')=>void;onVisibility?:(id:string,visible:boolean)=>void;
     id: string; title: string; project?: string | null; chief?: boolean; signal?: Partial<ConversationSignal>; conversationId?: string | null; selected: boolean;
@@ -43,7 +44,7 @@
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
 <div class="manager-card-slot">
-<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button, a")) onSelect(); }} data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-manager={chief ? undefined : id}>
+<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button, a, [data-goal-preview]")) onSelect(); }} data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected onpointerenter={(event) => {if (!suppressBackgroundPreview && !(event.target as HTMLElement).closest('[data-goal-id], [data-goal-preview]')) input().pointerEnter(event);}} onpointerleave={onLeave} data-manager={chief ? undefined : id}>
   <div class="identity">
     {#if !chief}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
     <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={onLeave}>

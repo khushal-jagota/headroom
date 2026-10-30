@@ -1,10 +1,71 @@
 """Browser-only proof of immediate ready content, wait cancellation and layout ownership."""
 import json
 import os
+import re
 import time
 from pathlib import Path
 
 from playwright.sync_api import expect
+
+
+def checklist_saved_mount_and_motion(page):
+    # The existing native host catches transient outro DOM, which settled-state
+    # component tests cannot see. Both first mount and remount use accepted data.
+    for reduced in ("no-preference", "reduce"):
+        page.emulate_media(reduced_motion=reduced)
+        for complete in (False, True):
+            page.evaluate("window.__checklistSaved(" + str(complete).lower() + ")")
+            for _ in range(2):
+                frames = page.evaluate(
+                    """async complete => {
+                  const frames=[];
+                  const sample=()=>frames.push([...document.querySelectorAll(
+                    '[data-checklist-fixture] [aria-label="Open items"] [data-step]')]
+                    .map(node=>node.dataset.step));
+                  window.__checklist(true); sample();
+                  for(let n=0;n<5;n++){await new Promise(requestAnimationFrame);sample();}
+                  return frames;
+                }""",
+                    complete,
+                )
+                expected = [] if complete else ["publish"]
+                assert all(frame == expected for frame in frames), (reduced, complete, frames)
+                page.evaluate("window.__checklist(false)")
+
+    page.emulate_media(reduced_motion="no-preference")
+    page.evaluate("window.__checklistSaved(false);window.__checklist(true)")
+    checklist = page.locator("[data-checklist-fixture]")
+    publish = checklist.locator('[data-step="publish"]')
+    publish.get_by_role("checkbox").click()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    # A real edit retains the struck row before the normal delayed disclosure.
+    expect(publish).to_have_class(re.compile(".*struck.*"))
+    expect(publish).to_be_visible()
+    assert (
+        publish.locator(".title-text").evaluate("node => getComputedStyle(node).transitionDuration")
+        != "0s"
+    )
+    expect(checklist.get_by_role("button", name="2 completed", exact=True)).to_be_visible()
+    expect(publish).to_have_count(0)
+    checklist.get_by_role("button", name="2 completed", exact=True).click()
+    checklist.get_by_role("list", name="Completed items").get_by_role(
+        "checkbox", name="Publish", exact=True
+    ).click()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(publish.get_by_role("checkbox")).to_have_attribute("aria-checked", "false")
+    page.emulate_media(reduced_motion="reduce")
+    page.wait_for_function("document.querySelector('[data-checklist-fixture] .reduced')")
+    assert (
+        publish.locator(".title-text").evaluate("node => getComputedStyle(node).transitionDuration")
+        == "0s"
+    )
+    publish.get_by_role("checkbox").click()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(publish).to_have_count(0)
+    page.evaluate("window.__checklist(false);window.__checklistSaved(false)")
 
 
 def checklist_save_feedback(page):
@@ -85,6 +146,8 @@ def run(browser, urls):
     assert page.evaluate("!window.__status.closest('[aria-busy=true]')")
     page.emulate_media(reduced_motion="reduce")
     checklist_started = time.monotonic()
+    checklist_saved_mount_and_motion(page)
+    page.emulate_media(reduced_motion="reduce")
     checklist_save_feedback(page)
     print(
         f"checklist save feedback: passed ({time.monotonic() - checklist_started:.2f}s)",

@@ -1,11 +1,26 @@
 import { fetchJson, PlannerFetchError } from '../api';
 import { queryClient } from '../queryClient';
 import type { ManualMeasureState, ManualWriteBody, ManualWriteResult } from './contracts';
+import type { ManualWriteCommand, RequestSession } from './requestSessions';
 
 /** The production editor and the explicitly local development samples share this boundary. */
 export interface ManualMeasurementAdapter {
   read(date?: string): Promise<ManualMeasureState>;
   write(body: ManualWriteBody): Promise<ManualWriteResult>;
+}
+
+/** Own the intent before the cumulative date read, then retain the exact HTTP body. */
+export function submitManualWrite(session: RequestSession<ManualWriteCommand>, command: ManualWriteCommand, adapter: ManualMeasurementAdapter): Promise<ManualWriteResult> {
+  return session.run(command, async prepared => {
+    let body: ManualWriteBody = command;
+    if (command.preflight) {
+      const current = await adapter.read();
+      const { preflight: _preflight, ...intent } = command;
+      body = { ...intent, date: current.current_date };
+      prepared(body);
+    }
+    return adapter.write(body);
+  });
 }
 
 export function manualMeasurementHttp(measureId: string): ManualMeasurementAdapter {
@@ -31,13 +46,17 @@ export function manualAcceptedValue(state: ManualMeasureState, cumulative: boole
   return (cumulative ? state.latest_observation : state.observation)?.value;
 }
 
+export function isManualWriteConflict(error: unknown): error is PlannerFetchError {
+  return error instanceof PlannerFetchError && error.status === 409;
+}
+
 export function manualErrorMessage(error: unknown): string {
-  if (error instanceof PlannerFetchError && error.status === 409) return 'This reading changed. Press Escape to use the accepted value, or edit again.';
+  if (isManualWriteConflict(error)) return 'This reading changed. Press Escape to use the accepted value, or edit again.';
   return error instanceof Error ? error.message : 'Could not save this reading.';
 }
 
 export function manualConflictState(error: unknown): ManualMeasureState | undefined {
-  if (!(error instanceof PlannerFetchError) || error.status !== 409 || !error.detail || typeof error.detail !== 'object') return undefined;
+  if (!isManualWriteConflict(error) || !error.detail || typeof error.detail !== 'object') return undefined;
   const detail = error.detail as { state?: ManualMeasureState; current_state?: ManualMeasureState };
   return detail.state ?? detail.current_state;
 }

@@ -33,6 +33,9 @@ export async function prepare({scratchRoot}) {
       }
     });
     (window as any).__checklist = (shown: boolean) => flushSync(() => checklistShown = shown);
+    (window as any).__checklistSaved = (complete: boolean) => flushSync(() => {
+      checklist = {...checklist, items:checklist.items.map(item => ({...item,state:item.id === 'draft' || complete ? 'done' : 'open'}))};
+    });
     import FileDocument from "../src/components/FileDocument.svelte";
     import FilePreview from "../src/components/FilePreview.svelte";
     let htmlMode = $state("");
