@@ -2,7 +2,7 @@
   import type { PageDocument } from "../../lib/pageKit";
   import PageBlocks from "./PageBlocks.svelte";
 
-  let { document, showHeader = true }: { document: PageDocument; showHeader?: boolean } = $props();
+  let { document, showHeader = true, supplementary = false }: { document: PageDocument; showHeader?: boolean; supplementary?: boolean } = $props();
 </script>
 
 <article class="page-kit" data-page-title={document.title}>
@@ -11,7 +11,7 @@
     <p class="summary">{document.summary}</p>
   </header>{/if}
   <div class="page-body" class:with-header={showHeader}>
-    <PageBlocks blocks={document.blocks} />
+    <PageBlocks blocks={document.blocks} {supplementary} />
   </div>
 </article>
 

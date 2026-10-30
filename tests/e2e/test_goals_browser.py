@@ -171,6 +171,8 @@ def test_formula_expectation_projection_and_correction_reach_mounted_chart(
     expect(chart.locator('[data-line="target"]')).to_have_attribute(
         "d", re.compile(r"M.*M.*M"), timeout=WAIT_MS
     )
+    # Keep keyboard inspection independent of pointer exits during focus scroll.
+    page.mouse.move(0, 0)
     plot.focus(timeout=WAIT_MS)
     plot.press("End", timeout=WAIT_MS)
     expect(plot).to_have_attribute(
@@ -514,6 +516,42 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     # The list response supplies the same saved item counts to cards and the table.
     page.locator("button[data-chief-destination]").click(timeout=WAIT_MS)
     card = page.locator(f'[data-goal-card="{goal["id"]}"]')
+    expect(card.get_by_role("progressbar")).to_have_attribute(
+        "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
+    )
+    # The newly interactive overview must use the real revision-checked writer.
+    # Reuse this connected scenario: component tests cannot prove persisted API
+    # acceptance, effective completion, or reload reads from a card-originated edit.
+    overview_revision = api.get(server, path)["revision"]
+    with page.expect_response(
+        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as overview_saved:
+        card.get_by_role("checkbox", name="Review the updated draft", exact=True).click(
+            timeout=WAIT_MS
+        )
+    assert overview_saved.value.ok
+    overview_body = overview_saved.value.request.post_data_json
+    assert isinstance(overview_body, dict)
+    assert overview_body["expected_revision"] == overview_revision
+    overview_accepted = api.get(server, path)
+    assert overview_accepted["revision"] == overview_revision + 1
+    assert overview_accepted["page"]["blocks"][0]["items"][1]["state"] == "done"
+    assert overview_accepted["completed"] is True
+    page.reload()
+    expect(card.get_by_role("progressbar")).to_have_attribute(
+        "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
+    )
+    card.get_by_role("button", name="2 completed", exact=True).click(timeout=WAIT_MS)
+    with page.expect_response(
+        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as overview_reopened:
+        card.get_by_role("checkbox", name="Review the updated draft", exact=True).click(
+            timeout=WAIT_MS
+        )
+    assert overview_reopened.value.ok
+    assert api.get(server, path)["completed"] is False
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )

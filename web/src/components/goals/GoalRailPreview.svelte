@@ -72,7 +72,7 @@
 <section bind:this={element} data-goal-preview={goalId} data-goal-preview-panel id={`goal-preview-${goalId}`} class="goal-preview" class:instant style:left={`${left}px`} style:top={`${top}px`} style:--preview-width={`${GOAL_PREVIEW_WIDTH}px`} style:--preview-gutters={`${GOAL_PREVIEW_GUTTER*2}px`} style:--preview-bottom={availableBottom===null?'100dvh':`${availableBottom}px`} aria-label={`Goal preview: ${goal?.title??'Goal'}`} onclick={event=>event.stopPropagation()} onpointerenter={onKeepOpen} onpointerleave={event=>{if(event.pointerType!=='touch'&&anchor)onLeave(anchor);}} onfocusin={onKeepOpen} onfocusout={event=>{if(event.relatedTarget&&!element?.contains(event.relatedTarget as Node)&&event.relatedTarget!==anchor&&anchor)onLeave(anchor);}}>
  {#if goal}
   <header class="preview-header"><div class="preview-date">{#if project}<span class="preview-project">{project.name}</span><span aria-hidden="true">·</span>{/if}<span class:attention={goal.status==='attention'}>{goal.deadline?`By ${goalDateText(goal.deadline)}`:'No deadline'}</span></div><h1>{goal.title}</h1></header>
-  {#if checklist}<PageChecklist block={checklist}/>
+  {#if checklist}<PageChecklist block={checklist} presentation="small"/>
   {:else if chart}<div class="primary-chart"><PageChart block={chart} compact integrated/>
    {#if goal.kind==='binary'}<div class="panel-actions"><button class="completion-action" disabled={binaryReceipt?.status==='pending'} onclick={()=>complete(!goal!.completed)}>{binaryReceipt?.status==='pending'?'Saving…':goal.completed?'Mark not done':'Mark done'}</button></div>{/if}
   </div>{/if}

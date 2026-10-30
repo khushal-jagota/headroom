@@ -2,9 +2,8 @@
   import { tick, untrack, getContext } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fly } from "svelte/transition";
-  import type { Block, ChecklistBlock } from "../../lib/pageKit";
+  import type { ChecklistBlock } from "../../lib/pageKit";
   import ChecklistSummary from "./ChecklistSummary.svelte";
-  import PageText from "./PageText.svelte";
 
   import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
   const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
@@ -61,7 +60,11 @@
       failed = { ...failed, [id]: { state, error } };
     } finally { if (localRequests.get(id) === request) localRequests.delete(id); }
   }
-  let { block }: { block: ChecklistBlock } = $props();
+  let { block, presentation = "normal", supplementary = false }: {
+    block: ChecklistBlock;
+    presentation?: "normal" | "small";
+    supplementary?: boolean;
+  } = $props();
 
   type Step = {
     id: string;
@@ -76,6 +79,21 @@
   const uid = `cl-${Math.random().toString(36).slice(2, 8)}`;
   let reduced = $state(false);
   let hidden = $state(false);
+  let mobileOpen = $state(false);
+  let foldable = $derived(supplementary && (context?.narrow ?? false));
+  let bodyOpen = $derived(foldable ? mobileOpen : !hidden);
+  let size = $derived(supplementary ? "small" : presentation);
+  let headerToggle = $state<HTMLButtonElement | null>(null);
+  let body = $state<HTMLDivElement | null>(null);
+
+  $effect.pre(() => {
+    if (!bodyOpen && body?.contains(document.activeElement)) headerToggle?.focus();
+  });
+
+  function toggleChecklist(): void {
+    if (foldable) mobileOpen = !mobileOpen;
+    else hidden = !hidden;
+  }
   let groupOpen = $state(false);
   let message = $state("");
   let root = $state<HTMLElement | null>(null);
@@ -204,11 +222,6 @@
     root?.querySelector<HTMLElement>(`[data-step="${id}"] [data-check]`)?.focus();
   }
 
-  function itemText(id: string, field: "label" | "detail" | "action", raw: string, old: Block): Block {
-    if (old.type !== "checklist" || !old.items.some(item => item.id === id)) throw new Error("This checklist item no longer exists.");
-    return { ...old, items: old.items.map(item => item.id === id ? { ...item, [field]: raw } : item) };
-  }
-
   function toggleStep(id: string): void {
     expanded = expanded === id ? null : id;
   }
@@ -231,20 +244,23 @@
   }
 </script>
 
-<section class="card" class:reduced bind:this={root} data-block="checklist" data-complete={allDone ? "true" : undefined} aria-labelledby="{uid}-title">
-  <ChecklistSummary {block} checked={doneCount} {total} {title} {doneTitle} {reduced} headingId={`${uid}-title`}>
-    {#snippet actions()}
-      <button type="button" class="hide" aria-expanded={!hidden} aria-controls="{uid}-body" onclick={() => { hidden = !hidden; }}>
-        <span class="hide-label">{hidden ? "Show" : "Hide"}</span>
-        <span class="sr">{hidden ? "Show" : "Hide"} checklist</span>
-        <svg class="chevron" class:turned={hidden} viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 10.5 8 6l4.5 4.5" /></svg>
-      </button>
-    {/snippet}
-  </ChecklistSummary>
+<section class="card" class:small={size === "small"} class:reduced bind:this={root} data-block="checklist" data-presentation={foldable && !bodyOpen ? "smallest" : size} data-supplementary={supplementary || undefined} data-complete={allDone ? "true" : undefined} aria-labelledby="{uid}-title">
+  <div class="checklist-header">
+    <ChecklistSummary checked={doneCount} {total} {title} {doneTitle} {reduced} presentation={size} headingId={`${uid}-title`}>
+      {#snippet actions()}
+        <span class="header-action" aria-hidden="true">
+          <span class="hide-label">{bodyOpen ? "Hide" : "Show"}</span>
+          <svg class="chevron" class:turned={!bodyOpen} viewBox="0 0 16 16"><path d="M3.5 10.5 8 6l4.5 4.5" /></svg>
+        </span>
+      {/snippet}
+    </ChecklistSummary>
+    <button bind:this={headerToggle} type="button" class="header-toggle" data-checklist-toggle aria-label={bodyOpen ? "Hide checklist" : "Show checklist"} aria-expanded={bodyOpen} aria-controls="{uid}-body" onclick={toggleChecklist}></button>
+  </div>
   {#if saving}<p class="save-feedback" role="status">Saving checklist…</p>{/if}
   {#if Object.keys(failed).length}<p class="save-feedback" role="alert">Checklist change was not saved. {String(saveError)} <button type="button" onclick={() => { for (const [id, { state }] of Object.entries(failed)) void persist(id, state); }}>Retry save</button></p>{/if}
-  {#if !hidden}
-    <div id="{uid}-body" class="body" transition:grow>
+  <div id="{uid}-body" data-checklist-body bind:this={body} inert={!bodyOpen} aria-hidden={!bodyOpen}>
+  {#if bodyOpen}
+    <div class="body" transition:grow>
       <div class="body-inner">
         <ul class="list" aria-label="Open items" use:keys>
           {#each openSteps as step (step.id)}
@@ -257,36 +273,20 @@
                   </span>
                 </button>
                 <div class="step-main">
-                  {#if context?.authorText}
-                    <div class="step-heading">
-                      <div id="{uid}-{step.id}-title" class="step-title authored-title"><div class="title-text"><PageText blockId={block.id} field={`items.${step.id}.label`} value={step.title} label="Checklist item label" update={(old, raw) => itemText(step.id, "label", raw, old)} /></div></div>
-                      <button type="button" class="disclosure" data-title aria-label={`Details for ${step.title}`} aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
-                        <svg class="chevron" class:turned={expanded === step.id} viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6" /></svg>
-                      </button>
-                    </div>
-                  {:else}
-                    <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
-                      <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
-                    </button>
-                  {/if}
+                  <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
+                    <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
+                  </button>
                   {#if expanded === step.id}
                     <div id="{uid}-{step.id}-panel" class="step-panel" role="region" aria-labelledby="{uid}-{step.id}-title" transition:grow={{ duration: 260 }}>
                       {#if step.detail?.trim() || (step.blocked && !done.includes(step.id)) || step.action?.trim()}
                         <div class="step-panel-inner">
-                          {#if step.detail?.trim()}<div class="detail"><PageText blockId={block.id} field={`items.${step.id}.detail`} value={step.detail} label={`Details for ${step.title}`} multiline update={(old, raw) => itemText(step.id, "detail", raw, old)} /></div>{/if}
+                          {#if step.detail?.trim()}<div class="detail">{step.detail}</div>{/if}
                           {#if step.blocked && !done.includes(step.id)}<p class="blocked">Blocked</p>{/if}
                           {#if step.action?.trim()}
-                            {#if context?.authorText}
-                              <div class="authored-action">
-                                <PageText blockId={block.id} field={`items.${step.id}.action`} value={step.action} label={`Action label for ${step.title}`} update={(old, raw) => itemText(step.id, "action", raw, old)} />
-                                <button type="button" class="action" data-action aria-label={step.action} onclick={() => check(step.id)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg></button>
-                              </div>
-                            {:else}
                               <button type="button" class="action" data-action onclick={() => check(step.id)}>
                                 {step.action}
                                 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg>
                               </button>
-                            {/if}
                           {/if}
                         </div>
                       {/if}
@@ -315,7 +315,7 @@
                           <svg class="check-mark" viewBox="0 0 22 22"><path d="M6.75 11.25 9.75 14.25 15.25 8.25" pathLength="1" /></svg>
                         </span>
                       </button>
-                      <div class="completed-title"><div id="{uid}-{step.id}-done" class="title-text"><PageText blockId={block.id} field={`items.${step.id}.label`} value={step.title} label="Completed checklist item label" update={(old, raw) => itemText(step.id, "label", raw, old)} /></div></div>
+                      <div class="completed-title"><div id="{uid}-{step.id}-done" class="title-text">{step.title}</div></div>
                     </div>
                   </li>
                 {/each}
@@ -326,6 +326,7 @@
       </div>
     </div>
   {/if}
+  </div>
   <span class="sr" role="status">{message}</span>
 </section>
 
@@ -341,26 +342,17 @@
   .roll { position: relative; display: inline-grid; vertical-align: top; }
   .roll > span { grid-area: 1 / 1; }
   .save-feedback { margin: 0; padding: 0 var(--space-5) var(--space-3); color: var(--text-faint); font-size: var(--type-sm); }
-  .hide {
-    display: inline-flex;
-    min-height: var(--space-6);
-    align-items: center;
-    gap: var(--space-1);
-    padding: 0 var(--space-2) 0 var(--space-3);
-    border: 0;
-    border-radius: var(--radius-md);
-    background: transparent;
-    color: var(--text-faint);
-    font: inherit;
-    font-size: var(--type-sm);
-    font-weight: 500;
-    cursor: pointer;
-  }
-  .hide:hover { background: var(--surface-2); color: var(--text-strong); }
-  .hide:focus-visible, .check:focus-visible, .step-title:focus-visible, .action:focus-visible, .group-toggle:focus-visible {
+  .checklist-header { position: relative; border-radius: inherit; transition: background var(--motion-fast) var(--motion-ease); }
+  .checklist-header:hover { background: var(--surface-2); }
+  .header-action { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-faint); font-size: var(--type-sm); font-weight: 500; }
+  .header-toggle { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .header-toggle:focus-visible, .check:focus-visible, .step-title:focus-visible, .action:focus-visible, .group-toggle:focus-visible {
     outline: var(--border-strong) solid var(--accent-bright);
     outline-offset: 2px;
   }
+  .small .body-inner { padding: var(--space-1); }
+  .small .step-inner { column-gap: var(--space-2); padding-inline: var(--space-2); }
+  .small .group-toggle { padding-left: calc(40px + var(--space-2) * 2); }
   .chevron { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-ease); }
   .chevron.turned { transform: rotate(180deg); }
   .body { overflow: hidden; }
@@ -440,13 +432,6 @@
     line-height: 1.4;
     text-align: left;
   }
-  .step-heading { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-  .step-heading .authored-title { min-width: 0; flex: 1; cursor: text; }
-  .disclosure { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-faint); cursor: pointer; }
-  .disclosure:hover { background: var(--surface-recessed); color: var(--text-strong); }
-  .disclosure:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: 2px; }
-  .authored-action { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); color: var(--text-strong); font-size: var(--type-sm); font-weight: 500; }
-  .authored-action .action { flex: none; margin-top: 0; padding: 0 var(--space-3); }
   .step-title { cursor: pointer; border-radius: var(--radius-md); }
   .title-text {
     background-image: linear-gradient(currentColor, currentColor);
@@ -459,7 +444,7 @@
   /* Named for this disclosure, so the application-wide .panel card cannot style it. */
   .step-panel { overflow: hidden; }
   .step-panel-inner { padding: 0 0 var(--space-3); }
-  .detail { max-width: 46ch; margin: 0; color: var(--text-faint); font-size: var(--type-sm); font-weight: 400; line-height: 1.45; }
+  .detail { white-space: pre-wrap; max-width: 46ch; margin: 0; color: var(--text-faint); font-size: var(--type-sm); font-weight: 400; line-height: 1.45; }
   .blocked { margin: var(--space-2) 0 0; color: var(--accent-error); font-size: var(--type-sm); }
   .action {
     display: inline-flex;
@@ -510,9 +495,9 @@
     border: 0;
   }
   @container (max-width: 380px) {
-    .hide { width: var(--space-6); padding: 0; }
     .hide-label { display: none; }
   }
+  .reduced .checklist-header,
   .reduced .check-fill,
   .reduced .check-mark path,
   .reduced .title-text,

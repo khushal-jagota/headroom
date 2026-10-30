@@ -8,6 +8,69 @@ from pathlib import Path
 from playwright.sync_api import expect
 
 
+def checklist_header_and_presentations(page):
+    # One existing component host isolates header hits and recursive presentation.
+    # Opposite edge midpoints test whitespace inside the rounded header target.
+    checklist = page.locator('[data-checklist-fixture] [data-block="checklist"]')
+    page.emulate_media(reduced_motion="no-preference")
+    for variant in ("empty", "partial", "complete"):
+        page.evaluate("window.__checklist(false);window.__checklistVariant(" + json.dumps(variant) + ");window.__checklist(true)")
+        toggle = checklist.locator('[data-checklist-toggle]')
+        expect(toggle).to_have_count(1)
+        expect(toggle).to_have_accessible_name('Hide checklist')
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        expect(checklist.get_by_role('progressbar')).to_have_count(1)
+        assert toggle.locator('button,input,[contenteditable],h1,h2,h3,[role=progressbar]').count() == 0
+        target = toggle.get_attribute('aria-controls')
+        assert target and checklist.locator('[id="' + target + '"]').count() == 1
+        box = toggle.bounding_box()
+        assert box and box['width'] > 200 and box['height'] >= 40, box
+        toggle.click(position={'x': 2, 'y': box['height'] / 2})
+        expect(toggle).to_have_accessible_name('Show checklist')
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        expect(checklist.locator('[data-checklist-body]')).to_have_attribute('aria-hidden', 'true')
+        expect(checklist.get_by_role('checkbox')).to_have_count(0)
+        toggle.click(position={'x': box['width'] - 2, 'y': box['height'] / 2})
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        toggle.focus()
+        toggle.press('Space')
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        expect(toggle).to_be_focused()
+        toggle.press('Enter')
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        if variant == 'complete':
+            checklist.get_by_role('button', name='2 completed', exact=True).click()
+            expect(checklist.get_by_role('list', name='Completed items').get_by_role('checkbox')).to_have_count(2)
+    page.evaluate("window.__checklist(false);window.__checklistVariant('partial');window.__checklistOptions(true);window.__checklist(true)")
+    expect(checklist).to_have_attribute('data-presentation', 'normal')
+    expect(checklist.get_by_role('checkbox', name='Publish', exact=True)).to_be_visible()
+    page.evaluate("window.__checklistOptions(true,false,'small')")
+    expect(checklist).to_have_attribute('data-presentation', 'small')
+    expect(checklist.get_by_role('checkbox', name='Publish', exact=True)).to_be_visible()
+    page.evaluate("window.__checklist(false);window.__checklistOptions(false,true);window.__checklist(true)")
+    expect(checklist).to_have_attribute('data-presentation', 'small')
+    publish = checklist.get_by_role('checkbox', name='Publish', exact=True)
+    publish.focus()
+    # A responsive collapse must not strand focus in an inert body.
+    page.evaluate("window.__checklistOptions(true,true)")
+    expect(checklist).to_have_attribute('data-presentation', 'smallest')
+    expect(checklist.locator('[data-checklist-toggle]')).to_be_focused()
+    checklist.locator('[data-checklist-toggle]').click()
+    expect(checklist).to_have_attribute('data-presentation', 'small')
+    expect(publish).to_be_visible()
+    page.evaluate("window.__checklist(false);window.__nestedChecklists(true)")
+    nested = page.locator('[data-nested-checklists] [data-block="checklist"]')
+    expect(nested).to_have_count(4)
+    for item in nested.all():
+        expect(item).to_have_attribute('data-presentation', 'smallest')
+        expect(item.get_by_role('checkbox')).to_have_count(0)
+        item.locator('[data-checklist-toggle]').click()
+        expect(item).to_have_attribute('data-presentation', 'small')
+        expect(item.get_by_role('checkbox')).to_be_visible()
+        expect(item.get_by_role('textbox')).to_have_count(0)
+    page.evaluate("window.__nestedChecklists(false);window.__checklistOptions(false)")
+
+
 def checklist_saved_mount_and_motion(page):
     # The existing native host catches transient outro DOM, which settled-state
     # component tests cannot see. Both first mount and remount use accepted data.
@@ -146,6 +209,7 @@ def run(browser, urls):
     assert page.evaluate("!window.__status.closest('[aria-busy=true]')")
     page.emulate_media(reduced_motion="reduce")
     checklist_started = time.monotonic()
+    checklist_header_and_presentations(page)
     checklist_saved_mount_and_motion(page)
     page.emulate_media(reduced_motion="reduce")
     checklist_save_feedback(page)

@@ -8,15 +8,17 @@
   import PageTable from "./PageTable.svelte";
   import PageSegmented from "./PageSegmented.svelte";
 
-  let { blocks, inset = false }: { blocks: Block[]; inset?: boolean } = $props();
+  let { blocks, inset = false, supplementary = false, checklistInset = false }: {
+    blocks: Block[]; inset?: boolean; supplementary?: boolean; checklistInset?: boolean;
+  } = $props();
 </script>
 
 {#snippet view(items: Block[])}
-  <PageBlocks blocks={items} />
+  <PageBlocks blocks={items} {supplementary} checklistInset={inset || checklistInset} />
 {/snippet}
 
 {#snippet insetView(items: Block[])}
-  <PageBlocks blocks={items} inset />
+  <PageBlocks blocks={items} inset {supplementary} checklistInset />
 {/snippet}
 
 <div class="blocks" data-page-blocks>
@@ -59,7 +61,7 @@
     {:else if block.type === "status"}
       <div class="status" data-block="status" data-tone={block.tone}><PageText blockId={block.id} field="label" value={block.label} label="Status label" update={(current, raw) => current.type === "status" ? {...current, label: raw} : current} /></div>
     {:else if block.type === "checklist"}
-      <PageChecklist {block} />
+      <PageChecklist {block} {supplementary} presentation={inset || checklistInset || supplementary ? "small" : "normal"} />
     {:else if block.type === "grid"}
       <div
         class="grid"

@@ -12,14 +12,25 @@ export async function prepare({scratchRoot}) {
     import MarkdownBlock from "../src/components/MarkdownBlock.svelte";
     import {flushSync, setContext} from "svelte";
     import PageChecklist from "../src/components/pageKit/PageChecklist.svelte";
+    import PageDocument from "../src/components/pageKit/PageDocument.svelte";
     import {PAGE_CONTEXT, type PageContext} from "../src/lib/pageKit/context";
     import type {ChecklistBlock} from "../src/lib/pageKit";
     let checklistShown = $state(false);
+    let checklistNarrow = $state(false), checklistSupplementary = $state(false);
+    let checklistPresentation = $state<'normal'|'small'>('normal');
+    let nestedShown = $state(false);
+    const nestedChecklist = (id: string): ChecklistBlock => ({type:'checklist',id,title:id,items:[{id:id+'-step',label:id+' item',state:'open',detail:'Saved detail'}]});
+    const nestedDocument = {kind:'headroom.page' as const,version:1 as const,title:'Nested checklists',summary:'',blocks:[
+      nestedChecklist('direct'),
+      {type:'section' as const,id:'section',title:'Section',blocks:[nestedChecklist('section-list')]},
+      {type:'grid' as const,id:'grid',blocks:[nestedChecklist('grid-list')]},
+      {type:'segmented' as const,id:'views',views:[{id:'first',label:'First',blocks:[{type:'grid' as const,id:'nested-grid',blocks:[{type:'section' as const,id:'nested-section',title:'Nested',blocks:[nestedChecklist('segmented-list')]}]}]}]}
+    ]};
     let checklist = $state<ChecklistBlock>({type:'checklist',id:'delivery',title:'Delivery',doneTitle:'Delivery complete',items:[
       {id:'draft',label:'Draft',state:'done'},{id:'publish',label:'Publish',state:'open'}
     ]});
     let editQueue: Promise<unknown> = Promise.resolve();
-    setContext<PageContext>(PAGE_CONTEXT, {goalId:'fixture',revision:0,narrow:false,values:[],completed:false,status:'neutral',
+    setContext<PageContext>(PAGE_CONTEXT, {goalId:'fixture',revision:0,get narrow(){return checklistNarrow;},values:[],completed:false,status:'neutral',
       updateBlock(_id, update) {
         const operation = editQueue.catch(() => undefined).then(() => new Promise<void>((resolve, reject) => {
           (window as any).__checklistReply = (accept: boolean) => {
@@ -33,6 +44,13 @@ export async function prepare({scratchRoot}) {
       }
     });
     (window as any).__checklist = (shown: boolean) => flushSync(() => checklistShown = shown);
+    (window as any).__checklistOptions = (narrow: boolean, supplementary = false, presentation: 'normal'|'small' = 'normal') => flushSync(() => {
+      checklistNarrow = narrow; checklistSupplementary = supplementary; checklistPresentation = presentation;
+    });
+    (window as any).__checklistVariant = (variant: 'empty'|'partial'|'complete') => flushSync(() => {
+      checklist = {...checklist,items:variant === 'empty' ? [] : [{id:'draft',label:'Draft',state:'done'}, {id:'publish',label:'Publish',state:variant === 'complete' ? 'done' : 'open'}]};
+    });
+    (window as any).__nestedChecklists = (shown: boolean) => flushSync(() => nestedShown = shown);
     (window as any).__checklistSaved = (complete: boolean) => flushSync(() => {
       checklist = {...checklist, items:checklist.items.map(item => ({...item,state:item.id === 'draft' || complete ? 'done' : 'open'}))};
     });
@@ -56,7 +74,8 @@ export async function prepare({scratchRoot}) {
     (window as any).__flat = (value: boolean) => flushSync(() => flat = value);
     (window as any).__idle = (value: boolean) => flushSync(() => idle = value);
   </script>
-  {#if checklistShown}<section data-checklist-fixture><PageChecklist block={checklist}/></section>{/if}
+  {#if checklistShown}<section data-checklist-fixture><PageChecklist block={checklist} presentation={checklistPresentation} supplementary={checklistSupplementary}/></section>{/if}
+  {#if nestedShown}<section data-nested-checklists style="width:360px"><PageDocument document={nestedDocument} supplementary showHeader={false}/></section>{/if}
   {#if htmlMode}<section data-html-fixture style="height:500px">
     {#if htmlMode === 'full'}<FileDocument target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />
     {:else}<FilePreview target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />{/if}
