@@ -1041,6 +1041,7 @@ def authored_goal_presentation(browser, url):
             )).to_be_visible()
             expect(goal.locator("[data-artifacts-band]")).to_have_count(0)
 
+            prose_geometry = None
             if not reduced:
                 text = goal.locator('[data-block="text"]')
                 expect(text.locator("strong")).to_have_text("intake")
@@ -1048,7 +1049,7 @@ def authored_goal_presentation(browser, url):
                 expect(text.get_by_role(
                     "link", name="App Store guidance", exact=True
                 )).to_have_attribute("href", "https://example.org/app-store")
-                download = text.get_by_role("link", name="Download Build bundle", exact=True)
+                download = text.get_by_role("link", name="Download build.wrenbundle", exact=True)
                 expect(download).to_have_attribute("download", "")
                 expect(download).to_have_attribute(
                     "href", "/files/goals/goal_wrenfixture/artifacts/build.wrenbundle"
@@ -1062,8 +1063,25 @@ def authored_goal_presentation(browser, url):
                         "heading", name="Wren intake", exact=True
                     )).to_be_visible()
                     expect(card).to_contain_text("The release identity is Wren iOS.")
+                    expect(card.locator(".file-preview-document-body p")).to_have_css(
+                        "white-space", "normal"
+                    )
+                    prose_geometry = text.locator(".markdown-block > p").first.evaluate("""p => {
+                        const source = p.querySelector('strong').nextSibling;
+                        const top = phrase => {
+                            const range = document.createRange();
+                            const offset = source.textContent.indexOf(phrase);
+                            range.setStart(source, offset);
+                            range.setEnd(source, offset + 1);
+                            return range.getBoundingClientRect().y;
+                        };
+                        return {firstLine:top('checklist.'), secondLine:top('Keep this'),
+                                lineHeight:parseFloat(getComputedStyle(p).lineHeight)};
+                    }""")
+                    assert abs(prose_geometry["secondLine"] - prose_geometry["firstLine"]
+                               - prose_geometry["lineHeight"]) <= 1, prose_geometry
                 link = card.locator("a.file-preview-link:visible")
-                expect(link).to_have_text("Open Wren intake")
+                expect(link).to_have_text("Open intake.md")
                 original = page.url
                 link.click()
                 viewer = page.locator("[data-ticket-artifact]")
@@ -1106,6 +1124,7 @@ def authored_goal_presentation(browser, url):
             assert fixture.writes == [], fixture.writes
             assert errors == [], errors
             receipts.append({"mode": mode, "geometry": geometry, "disclosure": motion,
+                             "prose_geometry": prose_geometry,
                              "rail_geometry": rail_geometry, "writes": writes, "errors": errors})
         finally:
             context.close()
