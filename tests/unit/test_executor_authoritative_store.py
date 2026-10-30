@@ -725,9 +725,9 @@ def test_closed_original_child_reconciles_outcomes_without_restoring_authority(
         endpoint.identity = IDENTITY
         writer = Mock()
         endpoint.writer = writer
-        adopt = AsyncMock()
+        stop_interrupted = AsyncMock()
         endpoint.runtime = SimpleNamespace(
-            system=SimpleNamespace(stop_interrupted_remote_child=adopt)
+            system=SimpleNamespace(stop_interrupted_remote_child=stop_interrupted)
         )
         send = AsyncMock()
         monkeypatch.setattr(endpoint, "_send", send)
@@ -752,7 +752,7 @@ def test_closed_original_child_reconciles_outcomes_without_restoring_authority(
                 IDENTITY,
                 writer,
             )
-        adopt.assert_not_awaited()
+        stop_interrupted.assert_not_awaited()
         assert len(observed) == 1 and observed[0].children == ()
         assert observed[0].retained_command_outcomes == (outcome,)
         replies = [call.args[0] for call in send.await_args_list]
@@ -808,9 +808,9 @@ def test_reconciliation_closed_child_exception_requires_exact_original_identity(
         endpoint.identity = IDENTITY
         writer = Mock()
         endpoint.writer = writer
-        adopt = AsyncMock()
+        stop_interrupted = AsyncMock()
         endpoint.runtime = SimpleNamespace(
-            system=SimpleNamespace(stop_interrupted_remote_child=adopt)
+            system=SimpleNamespace(stop_interrupted_remote_child=stop_interrupted)
         )
         send = AsyncMock()
         monkeypatch.setattr(endpoint, "_send", send)
@@ -828,7 +828,7 @@ def test_reconciliation_closed_child_exception_requires_exact_original_identity(
             IDENTITY,
             writer,
         )
-        adopt.assert_not_awaited()
+        stop_interrupted.assert_not_awaited()
         assert send.await_count == 1
         assert send.await_args is not None
         assert send.await_args.args[0].kind is WireMessageKind.error
@@ -1558,7 +1558,7 @@ def test_inventory_chunks_preserve_first_outcome_before_rejecting_conflicts(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("phase", ["adopt", "lock", "drain", "response"])
+@pytest.mark.parametrize("phase", ["stop", "lock", "drain", "response"])
 @pytest.mark.parametrize("replacement", ["writer", "durable"])
 def test_historical_inventory_stops_stale_handlers_without_touching_replacement_aggregate(
     store: ExecutorStore,
@@ -1578,7 +1578,7 @@ def test_historical_inventory_stops_stale_handlers_without_touching_replacement_
             entered.set()
             await release.wait()
 
-        if phase == "adopt":
+        if phase == "stop":
             current = replace(
                 CHILD, executor_incarnation=identity.executor_incarnation, child_id="live"
             )

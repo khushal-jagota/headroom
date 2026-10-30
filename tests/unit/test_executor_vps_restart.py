@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
-from planner.conversation.backends.contracts import BackendPermissionAsk
+from planner.conversation.backends.contracts import BackendEventSink, BackendPermissionAsk
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -122,7 +122,7 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
         assert state.running_turn is not None and state.child_event_sink is not None
         old = state.executor_child_reference
         token = state.running_turn.token
-        await state.child_event_sink.permission_ask_raised(
+        await cast(BackendEventSink, state.child_event_sink).permission_ask_raised(
             token,
             BackendPermissionAsk(
                 "allow", "Allow?", None, (PermissionAskOption("yes", "Yes", "allow_once"),)
@@ -153,6 +153,7 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             before = len(commands)
             await restarted.send("c", text_message_content("Blocked"), sender_label="Test")
             assert len(commands) == before
+            assert endpoint.writer is not None
             await endpoint._handle_message(
                 WireMessage(
                     WireMessageKind.reconcile_inventory,

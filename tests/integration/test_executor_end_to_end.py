@@ -2862,19 +2862,16 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
                 )
                 is None
             )
+            state = harness.system._conversations["c_scripted"]
+            await eventually(
+                lambda: not state.child_is_quarantined, "restart stop did not settle"
+            )
+            assert harness.native.stop_count == 1
             assert harness.endpoint.pending_commands == {}
             evidence = harness.endpoint.store.ask_evidence(ask)
-            assert evidence is not None and evidence.reachability is AskReachability.callback_gone
+            assert evidence is not None and evidence.reachability is AskReachability.child_gone
             assert evidence.applied_at_mac_ms is None
-            # With no surviving local cancellation task, a native ending can still finish it.
-            assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
-                harness.native.turn,
-                ending=ConversationTurnEnding.interrupted,
-                error_summary=None,
-                standard_error_tail=None,
-            )
-            await eventually(lambda: harness.events("turn_ended") == 1, "native ending was lost")
+            assert not await harness.system.is_running("c_scripted")
         finally:
             native_cancel.set()
             if interrupt is not None and not interrupt.done():

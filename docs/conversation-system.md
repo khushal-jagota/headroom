@@ -1077,8 +1077,7 @@ VPS acceptance; the UI says "Answer saved on VPS; delivery to Mac is pending."
 Only matching application evidence says "Answer applied on Mac." Fresh evidence
 of the original callback gates delivery after a short link outage in the same VPS process.
 A VPS restart closes that callback; a saved answer remains recorded but is not sent.
-Cancellation persists
-closure before waiting for the Mac; an ended or replaced turn cannot receive the
+Cancellation persists closure before waiting for the Mac; an ended or replaced turn cannot receive the
 saved answer. Such an answer stays saved and unresolved. A prior transmission
 can still receive its application acknowledgment after closure. See
 [the Mac executor](executor.md) for this boundary and its timing limitations.
