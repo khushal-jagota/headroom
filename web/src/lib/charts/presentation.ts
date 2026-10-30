@@ -52,17 +52,13 @@ export function categoryNumber(value: CategoryChartValue | null | undefined): nu
   return value?.status === 'value' && value.value !== null && Number.isFinite(value.value) ? value.value : undefined;
 }
 
-/** Coverage qualifies comparisons without changing retained quantities. */
+/** Coverage records source facts independently from numerical comparisons. */
 export function combinedCoverage(statuses: Array<MeasureValue['coverage_status'] | undefined>): MeasureValue['coverage_status'] {
   return statuses.includes('partial') ? 'partial' : statuses.includes('unknown') ? 'unknown' : statuses.includes('complete') ? 'complete' : 'not_applicable';
 }
 
 export function categoryCoverage(summary?: CategoryChartSummary): MeasureValue['coverage_status'] {
   return combinedCoverage([summary?.actual.partial ? 'partial' : summary?.actual.coverage_status, summary?.comparison?.partial ? 'partial' : summary?.comparison?.coverage_status]);
-}
-
-export function coverageLabel(status?: MeasureValue['coverage_status']): string {
-  return status === 'partial' ? 'Partial reading' : status === 'unknown' ? 'Coverage unavailable' : '';
 }
 
 export function seriesKey(series: ChartSeries, index: number): string {
@@ -125,7 +121,7 @@ export function chartData(block: ChartBlock, values: MeasureValue[], range: Char
       ...(last > first ? { position: (Date.parse(point.date) - first) / (last - first) } : {}),
       values: { actual: point.actual.status === 'value' ? point.actual.value ?? undefined : undefined, target: point.expected.status === 'value' ? point.expected.value ?? undefined : undefined },
       breakBefore: { target: point.break_before },
-      comparisons: { actual: coverageLabel(combinedCoverage([point.actual.coverage_status, point.expected.coverage_status])) ? null : point.meets_expectation },
+      comparisons: { actual: point.meets_expectation },
       observation: point.actual, coverage_status: combinedCoverage([point.actual.coverage_status, point.expected.coverage_status]),
       coverage_reasons: [...point.actual.coverage_reasons, ...point.expected.coverage_reasons],
     }));
@@ -161,13 +157,13 @@ export function chartData(block: ChartBlock, values: MeasureValue[], range: Char
       ...d,
       ...(Number.isFinite(first) && last > first ? { position: (Date.parse(d.key) - first) / (last - first) } : {}),
       values: { ...missingCategories, ...d.values, ...(comparison === undefined ? {} : { target: comparison }) },
-      ...(block.measure_id ? { comparisons: { actual: coverageLabel(d.coverage_status) || actual === undefined || comparison === undefined
+      ...(block.measure_id ? { comparisons: { actual: actual === undefined || comparison === undefined
         ? null : direction === 'atmost' ? actual <= comparison : actual >= comparison } } : {}),
     };
   });
 }
 
-function referenceAt(block: ChartBlock, date: string): number | undefined {
+export function referenceAt(block: ChartBlock, date: string): number | undefined {
   const refs = [...(block.reference ?? [])].sort((a, b) => a.date.localeCompare(b.date));
   const exact = refs.find(r => r.date === date);
   if (exact) return exact.value;
@@ -244,18 +240,16 @@ export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeK
   return { value: (block.kind === 'progress' || block.kind === 'time-budget') && value !== undefined && value < 0 ? undefined : value, target: reading?.values.target, label: reading?.label, missingCount, coverage_status: reading?.coverage_status, coverage_reasons: reading?.coverage_reasons, observations: reading?.observation ? [reading.observation] : [] };
 }
 
-export function chartTone(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary, coverage_status?: MeasureValue['coverage_status']): GoalResponse['status'] {
-  if (coverageLabel(combinedCoverage([coverage_status, point?.actual.coverage_status, point?.expected.coverage_status, categoryCoverage(categorySummary)]))) return 'neutral';
-  if (block.binding) return categorySummary?.meets_expectation == null || categorySummary.actual.partial || categorySummary.comparison?.partial ? 'neutral' : categorySummary.meets_expectation ? 'good' : block.below_target_tone ?? 'bad';
+export function chartTone(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary, _coverage_status?: MeasureValue['coverage_status']): GoalResponse['status'] {
+  if (block.binding) return categorySummary?.meets_expectation == null ? 'neutral' : categorySummary.meets_expectation ? 'good' : block.below_target_tone ?? 'bad';
   if (block.expectation) return point?.meets_expectation == null ? 'neutral' : point.meets_expectation ? 'good' : block.below_target_tone ?? 'bad';
   if (value === undefined || target === undefined) return 'neutral';
   const good = (block.direction ?? (block.kind === 'time-budget' ? 'atmost' : 'atleast')) === 'atmost' ? value <= target : value >= target;
   return good ? 'good' : block.below_target_tone ?? 'bad';
 }
 
-export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary, coverage_status?: MeasureValue['coverage_status']): string {
-  const coverage = combinedCoverage([coverage_status, point?.actual.coverage_status, point?.expected.coverage_status, categoryCoverage(categorySummary)]);
-  if (block.binding && categorySummary?.difference == null) return coverage === 'unknown' ? 'Coverage unavailable' : categorySummary?.actual.partial || categorySummary?.comparison?.partial ? 'Partial total' : coverageLabel(coverage);
+export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary, _coverage_status?: MeasureValue['coverage_status']): string {
+  if (block.binding && categorySummary?.difference == null) return '';
   if (block.expectation && point?.difference == null) return '';
   if (value === undefined || target === undefined) return '';
   const signedDifference = block.binding ? categorySummary!.difference! : block.expectation ? point!.difference! : value - target;
@@ -264,8 +258,7 @@ export function comparisonText(block: ChartBlock, value: number | undefined, tar
   const formatDifference = (quantity: number) => block.difference_unit === 'pp'
     ? `${quantity.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })} pp`
     : formatReading({ ...block, format: { ...block.format, decimals } }, quantity);
-  if (coverageLabel(coverage) || block.binding && categorySummary!.meets_expectation == null) return `${coverage === 'unknown' ? 'Difference (coverage unavailable)' : 'Partial difference'}: ${formatDifference(signedDifference)}`;
-  if (block.expectation && point?.meets_expectation == null) return '';
+  if (block.expectation && point?.meets_expectation == null || block.binding && categorySummary?.meets_expectation == null) return '';
   const amount = formatDifference(difference);
   if (block.kind === 'progress') return signedDifference === 0 ? 'Target reached' : amount + (signedDifference < 0 ? ' remaining' : ' beyond target');
   if (block.kind === 'time-budget') return signedDifference === 0 ? 'Budget used' : amount + (signedDifference < 0 ? ' remaining' : ' over budget');
@@ -296,7 +289,7 @@ export function categoryDetails(summary?: CategoryChartSummary, projection?: Cha
   if (!summary) return [];
   const values = [summary.actual, ...(summary.comparison ? [summary.comparison] : [])];
   const missing = [...new Set(values.flatMap(item => item.missing_dates))];
-  const details = values.flatMap(item => item.reasons);
+  const details = values.flatMap((item, index) => [...item.reasons, ...(item.coverage_status && item.coverage_status !== 'not_applicable' ? [`${index === 0 ? 'Actual' : 'Target'} source coverage: ${item.coverage_status}.`] : [])]);
   if (missing.length) details.push(`${missing.length} missing ${missing.length === 1 ? 'date' : 'dates'}: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}.`);
   if (projection?.kind === 'category' && (values.some(item => item.partial) || summary.date !== null)) {
     const selected = categoryRange(projection, range);
@@ -316,6 +309,7 @@ export function observationDetails(headline: ChartHeadline, projection?: ChartPr
   const inputs = [...observations.flatMap(observation => [observation, ...observation.inputs]), ...(headline.point?.expected.inputs ?? [])];
   for (const input of inputs) {
     details.push(...(input.coverage_reasons ?? []));
+    if (input.coverage_status && input.coverage_status !== 'not_applicable') details.push(`Source coverage for ${input.date}: ${input.coverage_status}.`);
     if (input.limitation) details.push(input.limitation);
     if (input.query_start_at != null || input.query_end_at != null) details.push(`Retained query for ${input.date} starts at ${input.query_start_at == null ? 'an unavailable bound' : new Date(input.query_start_at * 1000).toISOString()} and ends at ${input.query_end_at == null ? 'an unavailable bound' : new Date(input.query_end_at * 1000).toISOString()}.`);
   }

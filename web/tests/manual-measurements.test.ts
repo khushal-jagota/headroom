@@ -75,17 +75,45 @@ import {chartData} from '../src/lib/charts/presentation';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {ManualMeasurement} from '../src/lib/charts/components/manual-measurements';
-it('keeps accepted manual daily samples unknown while ordinary snapshots retain comparisons',async()=>{
- const examples=createManualMeasurementExamples();
- for(const {block} of examples.definitions){
-  const markup=renderToStaticMarkup(createElement(ManualMeasurement,{block,values:examples.values,adapter:examples.adapters.get(block.measure_id!),preferenceKey:`initial-${block.id}`}));
-  expect(markup).toContain(`data-manual-model="${block.manual!.model}"`);
-  expect(markup).toContain('No reading');
- }
- const daily=examples.definitions[0].block,reading=examples.definitions[2].block;
- const adapter=examples.adapters.get(daily.measure_id!)!;
- const next=await adapter.write({request_id:'manual-coverage',date:'2026-10-28',expected_definition_revision:1,expected_write_revision:0,basis:'date',operation:'replace',value:30});
- expect(next.state.observation).toMatchObject({value:30,query_start_at:null,query_end_at:null,limitation:null,coverage_status:'unknown'});
- expect(chartData(daily,examples.values,'all').at(-1)?.comparisons?.actual).toBeNull();
- expect(chartData(reading,examples.values,'all').at(-1)?.coverage_status).toBe('not_applicable');
+it('compares manual daily records in both target directions while preserving unknown coverage and missing days', async () => {
+ const examples = createManualMeasurementExamples();
+ const daily = examples.definitions[0].block, reading = examples.definitions[2].block;
+ const render = (block = daily, values = examples.values) => renderToStaticMarkup(createElement(ManualMeasurement, {
+  block, values, adapter: examples.adapters.get(block.measure_id!), preferenceKey: `initial-${block.id}`,
+ }));
+ const bars = (markup: string) => [...markup.matchAll(/<button[^>]*class="bar-pick"[^>]*>[\s\S]*?<\/button>/g)].map(match => match[0]);
+ const dailyBars = bars(render());
+ expect(dailyBars).toHaveLength(7);
+ expect(dailyBars[0]).toContain('background-color:var(--accent-done)');
+ expect(dailyBars[1]).toContain('background-color:var(--accent-done)');
+ expect(dailyBars[2]).toContain('background-color:var(--accent-error)');
+ expect(dailyBars[3]).toContain('class="bar missing"');
+ expect(dailyBars.at(-1)).toContain('background-color:var(--accent-error)');
+ const lowerBars = bars(render({ ...daily, direction: 'atmost' }));
+ expect(lowerBars[0]).toContain('background-color:var(--accent-error)');
+ expect(lowerBars[1]).toContain('background-color:var(--accent-done)');
+ expect(lowerBars[2]).toContain('background-color:var(--accent-done)');
+ const corrected = examples.values.map(item => item.measure_id === daily.measure_id && item.date === '2026-10-28' ? { ...item, value: 0 } : item);
+ const zeroBar = bars(render({ ...daily, direction: 'atmost' }, corrected)).at(-1)!;
+ expect(zeroBar).toContain('28 Oct, 0 messages sent, target 20');
+ expect(zeroBar).toContain('background-color:var(--accent-done)');
+ expect(zeroBar).not.toContain('bar missing');
+ const dated = bars(render({ ...daily, reference: [{ date: '2026-10-22', value: 30 }, { date: '2026-10-28', value: 10 }] }));
+ expect(dated[0]).toContain('background-color:var(--accent-error)');
+ expect(dated.at(-1)).toContain('background-color:var(--accent-done)');
+ expect(render()).not.toContain('class="comparison"');
+ expect(render()).not.toContain('selected-date');
+ expect(render()).toContain('aria-label="Messages sent for 28 Oct"');
+ const supporting = renderToStaticMarkup(createElement(ManualMeasurement, {
+  block: { ...daily, placement: 'supporting' }, values: examples.values,
+  adapter: examples.adapters.get(daily.measure_id!), preferenceKey: 'manual-supporting', narrow: true,
+ }));
+ expect(supporting).toContain('class="support-reading">—</span>');
+ expect(supporting).toContain('class="support-status"></span>');
+ expect(supporting).not.toContain('No reading');
+ const adapter = examples.adapters.get(daily.measure_id!)!;
+ const next = await adapter.write({ request_id: 'manual-coverage', date: '2026-10-28', expected_definition_revision: 1, expected_write_revision: 0, basis: 'date', operation: 'replace', value: 30 });
+ expect(next.state.observation).toMatchObject({ value: 30, query_start_at: null, query_end_at: null, limitation: null, coverage_status: 'unknown' });
+ expect(chartData(daily, examples.values, 'all').at(-1)?.comparisons?.actual).toBe(false);
+ expect(chartData(reading, examples.values, 'all').at(-1)?.coverage_status).toBe('not_applicable');
 });

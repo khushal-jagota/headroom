@@ -100,13 +100,13 @@ Authored charts can sum the known readings and targets across a selected range. 
 
 A live chart can bind a retained dataset or named scalar inputs. Dataset bindings choose a category dimension, optional code filters, a field or ratio, and sum or latest aggregation. Named scalar inputs use stable keys. A time budget identifies its spent and planned inputs. The server returns Week, Month, and All projections with range and point summaries. Weighted ratios, totals, differences, and comparison verdicts come from those summaries. The browser formats and plots them without recalculation.
 
-A dataset projection keeps the retained query interval, missing dates, provider limits, and reasons for unavailable values. Partial values can appear as subtotals, but they have no complete comparison verdict. A latest snapshot excludes categories absent from that snapshot. Inspection follows stable keys through corrections and label changes. If a bound chart has no projection, it shows no current value. The overview and goals table use the supplied All summary, including the planned value for a named scalar budget.
+A dataset projection keeps the retained query interval, missing dates, provider limits, and reasons for unavailable values. Available subtotals compare against their configured targets. A latest snapshot excludes categories absent from that snapshot. Inspection follows stable keys through corrections and label changes. If a bound chart has no projection, it shows no current value. The overview and goals table use the supplied All summary, including the planned value for a named scalar budget.
 
-Scalar charts also retain source-authored coverage facts. Partial period counts stay visible as valid subtotals. Unknown coverage stays distinct from proven partial coverage. Both states withhold complete-period verdicts and use neutral colors, even when a zero lies below a daily limit.
+Manual and imported charts compare each available recorded value against its configured target now. Partial or unknown period coverage does not suppress comparison or color. An unfinished day can show a comparison, and a later value can change it. Missing numeric values remain gaps.
 
-This rule applies to targets, reference paths, expectations, named scalar inputs, and range summaries. Numeric differences remain available with a coverage qualifier. Inspection and overview readouts use the same eligibility rule. Observation details show supplied bounds and reasons. A missing contributing point cannot make a range subtotal complete.
+This rule applies to targets, reference paths, expectations, named scalar inputs, and range summaries. Inspection and overview readouts use the same comparisons. Authored target direction and inclusive equality keep their existing meaning. Existing aggregate arithmetic determines whether a numeric result exists. A missing date does not neutralize an available subtotal.
 
-Older period counts keep their numeric values with unknown coverage and neutral complete-period verdicts. A date that becomes historical does not supply missing coverage. Complete-period observations, static series, and ordinary snapshot comparisons retain their meaning. Source coverage authoring is described in [Project measures](measures.md#scalar-coverage-facts).
+Source-authored coverage facts stay separate from target comparisons. Partial period counts remain subtotals, and unknown coverage stays distinct from proven partial coverage. Observation details retain supplied bounds, limitations, reasons, and provenance. A historical date does not establish completeness. Source coverage authoring is described in [Project measures](measures.md#scalar-coverage-facts).
 
 Page tables retain editable string cells and the existing sort and selection components. An optional matrix of cell tones adds the approved outcome colors without replacing the table or changing its stored cell text.
 
@@ -115,6 +115,8 @@ The unlisted application page `#/dev/goal-components` shows all 22 approved char
 ## Manual chart controls
 
 A chart can bind approved manual controls to a shared manual measure. Daily quotas edit the selected date. Cumulative targets edit a dated snapshot of the latest total. Individual readings edit the selected observation. Targets remain chart configuration.
+
+Manual charts show comparisons through the shared hover or tap inspection. They omit the permanent Difference line and repeated date label. Date controls and inspection retain necessary dates. The selected date remains the edit context.
 
 The value is a native input over the shared animated counter. Enter or focus loss commits a changed valid draft. Escape restores the accepted value. A failed or invalid draft blocks date changes and increments. A pending commit finishes before the next explicit chart action. Writes use the accepted measure revision and an explicit date. Failed requests require an explicit retry. The browser does not retry writes automatically.
 

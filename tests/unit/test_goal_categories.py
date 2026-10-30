@@ -289,7 +289,7 @@ def test_latest_snapshot_uses_one_date_and_excludes_disappeared_current_members(
 
 
 def test_partial_additive_intervals_keep_subtotals_without_zero_for_omitted_members() -> None:
-    """A limited result cannot certify an omitted category or a comparison against a full target."""
+    """Limited subtotals compare against targets while omitted categories remain missing."""
     older = result("2026-10-28", (row("actual", 10), row("target", 20)))
     latest = replace(
         result("2026-10-29", (row("actual", 5),)),
@@ -302,7 +302,7 @@ def test_partial_additive_intervals_keep_subtotals_without_zero_for_omitted_memb
     assert view["summary"]["actual"]["value"] == 35
     assert view["summary"]["actual"]["partial"]
     assert view["summary"]["difference"] == -5
-    assert view["summary"]["meets_expectation"] is None
+    assert view["summary"]["meets_expectation"] is False
     assert view["series"][1]["points"][1]["actual"]["value"] is None
     assert "Sampled population" in view["summary"]["actual"]["reasons"]
     complete = result("2026-10-29", latest.rows)
@@ -316,7 +316,7 @@ def test_partial_additive_intervals_keep_subtotals_without_zero_for_omitted_memb
 def test_mixed_ratio_keeps_additive_coverage_without_changing_snapshot_emptiness(
     numerator_kind: DatasetFieldKind,
 ) -> None:
-    """A snapshot denominator cannot certify a count numerator's partial day."""
+    """A ratio compares its value and retains a count numerator's partial coverage."""
     fields = (
         DatasetField("n", "Numerator", "", numerator_kind),
         DatasetField("d", "Denominator", "", DatasetFieldKind.snapshot),
@@ -336,10 +336,9 @@ def test_mixed_ratio_keeps_additive_coverage_without_changing_snapshot_emptiness
     assert summary["difference"] == pytest.approx(0.1)
     if numerator_kind == DatasetFieldKind.count:
         assert summary["actual"]["partial"]
-        assert summary["meets_expectation"] is None
     else:
         assert not summary["actual"]["partial"]
-        assert summary["meets_expectation"] is True
+    assert summary["meets_expectation"] is True
     empty = selected(project(chart, (replace(observed, rows=()),), first="2026-10-29"))
     assert empty["summary"]["actual"]["status"] == MeasureReadStatus.missing_input
     assert empty["summary"]["actual"]["value"] is None
@@ -402,7 +401,7 @@ def test_named_additive_summary_supplies_each_allocation_quantity_and_partial_bu
     )
     assert budget["summary"]["actual"]["value"] == 5
     assert budget["summary"]["difference"] == -3
-    assert budget["summary"]["meets_expectation"] is None
+    assert budget["summary"]["meets_expectation"] is True
 
 
 def test_ratio_zero_denominator_and_arithmetic_limit_remain_explicit() -> None:
@@ -439,6 +438,16 @@ def test_ratio_zero_denominator_and_arithmetic_limit_remain_explicit() -> None:
         )
     )["summary"]["actual"]
     assert ratio_overflow["status"] == MeasureReadStatus.arithmetic_limit
+    extreme_comparison = selected(
+        project(
+            {**dataset_chart(), "target": -1e308},
+            (result("2026-10-29", (row("a", 1e308),)),),
+            first="2026-10-29",
+        )
+    )["summary"]
+    assert extreme_comparison["actual"]["value"] == 1e308
+    assert extreme_comparison["difference"] is None
+    assert extreme_comparison["meets_expectation"] is True
 
 
 def test_bounds_clip_literal_calendars_and_refuse_unbounded_history() -> None:
@@ -537,13 +546,13 @@ def test_named_scalar_coverage_survives_points_comparisons_and_totals(
             summary = view["summary"]
             assert summary["actual"]["value"] == (3 if aggregation == "latest" else 5)
             assert summary["difference"] == (-5 if aggregation == "latest" else -11)
-            assert summary["meets_expectation"] is None
+            assert summary["meets_expectation"] is True
             affected = summary["actual"] if index == 2 else summary["comparison"]
             assert affected is not None
             assert affected["coverage_status"] == coverage
             assert affected["partial"] == (coverage == ScalarCoverageStatus.partial)
             assert "Limited input" in affected["reasons"]
-            assert view["point_summaries"][-1]["summary"]["meets_expectation"] is None
+            assert view["point_summaries"][-1]["summary"]["meets_expectation"] is True
         allocation = selected(
             scalar_project(scalar_chart(aggregation="sum"), tuple(values), submitted)
         )

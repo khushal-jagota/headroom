@@ -9,7 +9,7 @@ import { Gauge } from './components/gauge';
 import { ProgressCard, TimeBudgetCard, AllocationCard, seriesColor } from './components/goal-indicators';
 import { Bars } from './components/bar-chart';
 import { motionTokens } from './lib/motion-tokens';
-import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, observationDetails, coverageLabel, seriesKey, allocationData } from './presentation';
+import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, observationDetails, seriesKey, allocationData } from './presentation';
 import './theme.css';
 
 const colors = { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--text-muted)' };
@@ -28,8 +28,8 @@ export function Range({ value, onChange, id, block, projection }: { value: strin
 function Comparison({ block, data, headline, supporting = false }: { block: ChartBlock; data: LineChartDatum[]; headline: ReturnType<typeof chartHeadline>; supporting?: boolean }) {
   const { value, target, label, missingCount } = headline;
   const text = value === undefined ? supporting ? 'Current reading unavailable' : missingReadingText(data, label) : block.expectation && target === undefined ? 'Expected reading unavailable' : comparisonText(block, value, target, headline.point, headline.categorySummary, headline.coverage_status);
-  const tone = !coverageLabel(headline.coverage_status) && !block.binding && block.kind === 'progress' && value !== undefined && target !== undefined && value < target ? C.blue : colors[chartTone(block, value, target, headline.point, headline.categorySummary, headline.coverage_status)];
-  return <div className="comparison" style={{ color: tone }}>{value !== undefined && coverageLabel(headline.coverage_status) && text !== coverageLabel(headline.coverage_status) && <span>{coverageLabel(headline.coverage_status)}{text ? ' · ' : ''}</span>}{text}
+  const tone = !block.binding && block.kind === 'progress' && value !== undefined && target !== undefined && value < target ? C.blue : colors[chartTone(block, value, target, headline.point, headline.categorySummary, headline.coverage_status)];
+  return <div className="comparison" style={{ color: tone }}>{text}
     {block.aggregate === 'sum' && !label && value !== undefined && missingCount > 0 && <span className="partial-reading"> · {missingCount} missing {missingCount === 1 ? 'reading' : 'readings'}</span>}
   </div>;
 }
@@ -79,7 +79,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
 
   const badColor = colors[block.below_target_tone ?? 'bad'];
   const latestReading = block.expectation ? undefined : data.at(-1)?.values;
-  const datedComparisons = !!block.expectation || !!block.measure_id && data.some(item => !!coverageLabel(item.coverage_status));
+  const datedComparisons = !!block.expectation || !!block.measure_id;
   const actualKey = block.measure_id ? 'actual' : authoredSeries[0] ? seriesKey(authoredSeries[0], 0) : 'actual';
   const categorySeries: LineChartSeries[] = authoredSeries.map((item, index) => ({ key: seriesKey(item, index), label: item.name, color: seriesColor(item, index), area: index === 0 }));
   const series: LineChartSeries[] = [
@@ -96,9 +96,9 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
   if (block.kind === 'allocation') chart = <AllocationCard block={block} data={data} series={authoredSeries} range={block.binding ? selectedRange : undefined} activeKey={activeKey} />;
   else if (block.kind === 'time-budget') chart = <TimeBudgetCard block={displayBlock} value={value} summary={headline.categorySummary} coverage_status={headline.coverage_status} />;
   else if (block.kind === 'progress') chart = <ProgressCard block={displayBlock} value={value} summary={headline.categorySummary} coverage_status={headline.coverage_status} />;
-  else if (block.kind === 'gauge') chart = value === undefined ? <p className="chart-empty-value">{missingReadingText(data, headline.label)}</p> : <Gauge value={value} tone={coverageLabel(headline.coverage_status) ? 'neutral' : undefined} min={displayBlock.domain?.[0]} max={displayBlock.domain?.[1]} formatValue={v => formatTrimmedReading(block, v)} unit={readingSuffix(block)} label={title}
+  else if (block.kind === 'gauge') chart = value === undefined ? <p className="chart-empty-value">{missingReadingText(data, headline.label)}</p> : <Gauge value={value} min={displayBlock.domain?.[0]} max={displayBlock.domain?.[1]} formatValue={v => formatTrimmedReading(block, v)} unit={readingSuffix(block)} label={title}
     target={displayBlock.target === undefined ? undefined : { value: displayBlock.target, label: `${formatTrimmedReading(block, displayBlock.target)} ${block.target_label ?? 'target'}` }}
-    thresholds={!!coverageLabel(headline.coverage_status) || displayBlock.target === undefined || block.binding && headline.categorySummary?.meets_expectation == null ? undefined : [
+    thresholds={displayBlock.target === undefined || block.binding && headline.categorySummary?.meets_expectation == null ? undefined : [
       { from: Math.min(0, value), tone: block.direction === 'atmost' ? 'success' : 'danger', label: block.direction === 'atmost' ? 'Within limit' : 'Below target' },
       { from: displayBlock.target! + (block.direction === 'atmost' ? .00001 : 0), tone: block.direction === 'atmost' ? 'danger' : 'success', label: block.direction === 'atmost' ? 'Above limit' : 'On target' },
     ]} />;
@@ -112,19 +112,19 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
     const visible = preferences.expanded ? headline : summary;
     const allocation = allocationData(data, authoredSeries, block.binding ? selectedRange : undefined, preferences.expanded ? activeKey : null);
     return <section ref={root} {...trackFocus}><SupportingMetric title={title} reading={block.kind === 'allocation' && visible.value !== undefined ? formatReading(block, visible.value) : counter(visible.value)}
-      status={<>{block.kind === 'allocation' && visible.value !== undefined ? <><span style={{ color: C.blue }}>{allocationSummary(allocation.series, allocation.reading, allocation.summary)}</span>{(!!coverageLabel(visible.coverage_status)) && <Comparison block={block} data={data} headline={visible} supporting />}</> : <Comparison block={block} data={data} headline={visible} supporting />}</>}
+      status={<>{block.kind === 'allocation' && visible.value !== undefined ? <><span style={{ color: C.blue }}>{allocationSummary(allocation.series, allocation.reading, allocation.summary)}</span></> : <Comparison block={block} data={data} headline={visible} supporting />}</>}
       open={preferences.expanded} onToggle={() => preference({ expanded: !preferences.expanded })}>{plot}<CategoryNotes headline={visible} projection={projection} range={preferences.range} /></SupportingMetric></section>;
   }
   return <article ref={root} {...trackFocus} className={`metric-card ${integrated ? 'integrated-card ' : ''}${compact ? 'compact ' : ''}${block.emphasis === 'hero' ? 'hero-card ' : ''}${block.kind === 'gauge' ? 'gauge-card ' : ''}${indicator || block.kind === 'progress' ? `indicator-card ${block.kind}-card` : ''}`}>
     <div className="metric-top"><h2>{title}</h2>{!compact && hasRange && range}</div>
     {block.kind !== 'gauge' && !indicator && <div className="headline">
-      {block.kind === 'progress' && <div className="caption">{coverageLabel(headline.coverage_status) || 'Completed'}</div>}
+      {block.kind === 'progress' && <div className="caption">Completed</div>}
       <div className={block.kind === 'progress' ? 'meter-value' : 'metric-value'} data-current={value ?? 'missing'}>{counter(value)}{block.kind === 'progress' && displayBlock.target !== undefined && displayBlock.target > 0 && <span className="meter-denominator">of {formatReading(block, displayBlock.target)}</span>}</div>
-      {block.stacked && !coverageLabel(headline.coverage_status) ? <div className="comparison composition-summary">{authoredSeries.length} {block.total_label ?? 'categories'}</div> : <Comparison block={block} data={data} headline={headline} />}
+      {block.stacked ? <div className="comparison composition-summary">{authoredSeries.length} {block.total_label ?? 'categories'}</div> : <Comparison block={block} data={data} headline={headline} />}
       <CategoryNotes headline={headline} projection={projection} range={preferences.range} />
     </div>}
     {plot}
-    {(block.binding || !!coverageLabel(headline.coverage_status)) && (indicator || block.kind === 'gauge') && <><Comparison block={block} data={data} headline={headline} /><CategoryNotes headline={headline} projection={projection} range={preferences.range} /></>}
+    {(indicator || block.kind === 'gauge') && <>{block.binding && <Comparison block={block} data={data} headline={headline} />}<CategoryNotes headline={headline} projection={projection} range={preferences.range} /></>}
     {block.caption && <div className="caption">{block.caption}</div>}
   </article>;
 }

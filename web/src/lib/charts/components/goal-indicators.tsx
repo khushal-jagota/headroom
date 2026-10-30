@@ -7,7 +7,7 @@ import type { ChartBlock, ChartSeries, CategoryChartRange, CategoryChartSummary,
 import type { LineChartDatum } from './line-chart-integrated';
 import { AnimatedCounter } from './animated-counter';
 import { motionTokens } from '../lib/motion-tokens';
-import { readingSuffix, formatReading, allocationData, seriesKey, coverageLabel, categoryCoverage } from '../presentation';
+import { readingSuffix, formatReading, allocationData, seriesKey } from '../presentation';
 
 export const seriesColor = (series: ChartSeries, index: number, palette = 'allocation', active = false) =>
   `var(--chart-${palette}-${series.color ?? (index === 0 ? 'blue' : index === 1 ? 'blue-muted' : 'blue-dark')}${active ? '-active' : ''})`;
@@ -16,12 +16,12 @@ function useTransition() {
   return useReducedMotion() ? { duration: 0 } : motionTokens.spring.smooth;
 }
 
-export function ProgressCard({ block, value, summary, coverage_status }: { block: ChartBlock; value: number | undefined; summary?: CategoryChartSummary; coverage_status?: MeasureValue['coverage_status'] }) {
+export function ProgressCard({ block, value, summary }: { block: ChartBlock; value: number | undefined; summary?: CategoryChartSummary; coverage_status?: MeasureValue['coverage_status'] }) {
   const target = block.target, transition = useTransition();
   const validTarget = target !== undefined && Number.isFinite(target) && target > 0;
   const good = block.binding ? summary?.meets_expectation === true : value !== undefined && validTarget && value >= target;
-  const partial = !!coverageLabel(coverage_status) || !!coverageLabel(categoryCoverage(summary)) || block.binding && summary?.meets_expectation == null;
-  const tone = partial ? 'var(--chart-muted)' : good ? 'var(--accent-done)' : 'var(--accent-bright)';
+  const unavailableComparison = block.binding && summary?.meets_expectation == null;
+  const tone = unavailableComparison ? 'var(--chart-muted)' : good ? 'var(--accent-done)' : 'var(--accent-bright)';
   return <div className="meter-plot">
     <div className="meter-track" role="progressbar" aria-label={block.title ?? 'Progress'}
       aria-valuemin={0} aria-valuemax={validTarget ? target : undefined} aria-valuenow={value === undefined || !validTarget ? undefined : Math.max(0, Math.min(value, target))}
@@ -32,17 +32,17 @@ export function ProgressCard({ block, value, summary, coverage_status }: { block
   </div>;
 }
 
-export function TimeBudgetCard({ block, value, summary, coverage_status }: { block: ChartBlock; value: number | undefined; summary?: CategoryChartSummary; coverage_status?: MeasureValue['coverage_status'] }) {
+export function TimeBudgetCard({ block, value, summary }: { block: ChartBlock; value: number | undefined; summary?: CategoryChartSummary; coverage_status?: MeasureValue['coverage_status'] }) {
   const [active, setActive] = useState<number | null>(null);
   const budget = block.target;
   const validBudget = budget !== undefined && Number.isFinite(budget) && budget > 0;
   const remaining = block.binding ? summary?.difference == null ? undefined : -summary.difference : value === undefined || !validBudget ? undefined : budget - value;
   const over = block.binding ? summary?.meets_expectation === false : remaining !== undefined && remaining < 0;
-  const partial = !!coverageLabel(coverage_status) || !!coverageLabel(categoryCoverage(summary)) || block.binding && summary?.meets_expectation == null;
-  const tone = partial ? 'var(--chart-muted)' : over ? 'var(--accent-error)' : 'var(--accent-bright)';
+  const unavailableComparison = block.binding && summary?.meets_expectation == null;
+  const tone = unavailableComparison ? 'var(--chart-muted)' : over ? 'var(--accent-error)' : 'var(--accent-bright)';
   const transition = useTransition(), circumference = 2 * Math.PI * 80;
   const values = value === undefined || value < 0 || !validBudget || remaining === undefined ? [] : [Math.min(value, budget), Math.max(0, remaining)];
-  const names = ['Spent', partial ? (coverage_status === 'unknown' || categoryCoverage(summary) === 'unknown' ? 'Difference (coverage unavailable)' : 'Partial difference') : remaining !== undefined && remaining < 0 ? 'Over budget' : 'Remaining'];
+  const names = ['Spent', remaining !== undefined && remaining < 0 ? 'Over budget' : 'Remaining'];
   let offset = 0;
   const display = active === 1 ? (remaining === undefined ? undefined : Math.abs(remaining)) : value;
   return <div className="ring-layout allocation-layout">
@@ -67,7 +67,7 @@ export function TimeBudgetCard({ block, value, summary, coverage_status }: { blo
         onFocus={() => setActive(i)} onBlur={() => setActive(null)} onMouseEnter={() => setActive(i)} onMouseLeave={() => setActive(null)} onClick={() => setActive(i)}
         animate={{ opacity: active === null || active === i ? 1 : .5 }} transition={transition}
         aria-label={`${name}, ${amount === undefined ? 'No reading' : formatReading(block, amount)}`}>
-        <i style={{ background: i === 0 ? tone : partial ? 'var(--chart-muted)' : over ? 'var(--accent-error)' : 'var(--chart-budget-remaining)' }} /><span>{name}</span><strong>{amount === undefined ? '—' : formatReading(block, amount)}</strong>
+        <i style={{ background: i === 0 ? tone : unavailableComparison ? 'var(--chart-muted)' : over ? 'var(--accent-error)' : 'var(--chart-budget-remaining)' }} /><span>{name}</span><strong>{amount === undefined ? '—' : formatReading(block, amount)}</strong>
       </motion.button>;
     })}</div>
   </div>;

@@ -1037,7 +1037,7 @@ def test_projection_explicit_minimum_date_does_not_underflow_default_window() ->
 def test_period_coverage_survives_legacy_targets_references_and_formula_expectations(
     tmp_db: Connection,
 ) -> None:
-    """Retained subtotals and legacy counts stay numeric without full-period verdicts."""
+    """Coverage facts survive numeric target, reference, and expectation comparisons."""
     from planner.measure_sources.records import encode_outputs
     from planner.measures.data import prepare_outputs
 
@@ -1130,7 +1130,7 @@ def test_period_coverage_survives_legacy_targets_references_and_formula_expectat
         observed = reading["values"][0]
         assert observed["value"] == 0
         assert observed["coverage_status"] == coverage
-        assert reading["status"] == ("good" if coverage == "complete" else "neutral")
+        assert reading["status"] == "good"
         if day in partial_times:
             boundary = "query_start_at" if day == "2026-09-29" else "query_end_at"
             assert datetime.fromtimestamp(observed[boundary], zone).time().isoformat() == (
@@ -1140,18 +1140,16 @@ def test_period_coverage_survives_legacy_targets_references_and_formula_expectat
         for direction in ("atmost", "atleast"):
             point = reading["charts"][direction]["points"][0]
             assert point["difference"] == -5
-            assert point["meets_expectation"] == (
-                direction == "atmost" if coverage == "complete" else None
-            )
+            assert point["meets_expectation"] == (direction == "atmost")
         for comparison_coverage in ("partial", "unknown"):
             comparison = reading["charts"][f"{comparison_coverage}-comparison"]["points"][0]
             assert comparison["expected"]["coverage_status"] == comparison_coverage
             assert comparison["difference"] == 0
-            assert comparison["meets_expectation"] is None
+            assert comparison["meets_expectation"] is True
 
 
 def test_legacy_sum_keeps_coverage_and_missing_contributors() -> None:
-    """A sum must consider every dated input even when the latest point is complete."""
+    """Available subtotals compare while missing contributors retain their existing arithmetic."""
     from planner.goals.logic.status import chart_status, chart_summary
 
     chart: ChartBlock = {
@@ -1181,7 +1179,9 @@ def test_legacy_sum_keeps_coverage_and_missing_contributors() -> None:
         replace(complete, date="2026-10-28", value=None, status=MeasureReadStatus.missing_input),
     ):
         assert chart_summary(chart, [earlier, complete]) == (0, 10)
-        assert chart_status(chart, [earlier, complete]) == "neutral"
+        assert chart_status(chart, [earlier, complete]) == "good"
         latest_chart = chart.copy()
         del latest_chart["aggregate"]
         assert chart_status(latest_chart, [earlier, complete]) == "good"
+    assert chart_summary(chart, [earlier]) == (None, 5)
+    assert chart_status(chart, [earlier]) == "neutral"
