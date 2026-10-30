@@ -103,7 +103,7 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                 SimpleNamespace(identity=identity, ready=True, owns_conversation=lambda _: True),
             )
             endpoint.runtime = SimpleNamespace(system=system)
-            endpoint.writer = cast(Any, Mock(drain=AsyncMock()))
+            endpoint.writer = cast(Any, Mock(send=AsyncMock()))
             return endpoint, system
 
         endpoint, first = core()
