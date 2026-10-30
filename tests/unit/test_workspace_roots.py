@@ -92,8 +92,8 @@ def test_all_agent_resolvers_keep_explicit_and_project_precedence(
     configured = tmp_path / "configured"
     project_folder = tmp_path / "project"
     explicit = tmp_path / "explicit"
-    for path in (configured, project_folder, explicit):
-        path.mkdir()
+    for workspace_root in (configured, project_folder, explicit):
+        workspace_root.mkdir()
     project = create_project(tmp_db, name="Workspace", folder_path=project_folder, now=1)
     manager = create_manager(tmp_db, title="Manager", project_id=project.id, clock=fake_clock)
     goal = create_goal(
@@ -162,9 +162,10 @@ def test_lifespans_isolate_databases_and_reject_duplicate_database_aliases(
         if index == 0:
             env["PLAN_WORKSPACE_ROOT"] = str(configured)
         config = load_config(str(state / "absent.yaml"), env=env)
-        apps.append(
-            server.create_app(config, build_clock(config), lambda path=path: connect(str(path)))
-        )
+        def conn_factory(path: Path = path) -> Connection:
+            return connect(str(path))
+
+        apps.append(server.create_app(config, build_clock(config), conn_factory))
         paths.append(path)
 
     async def exercise() -> None:
