@@ -81,8 +81,24 @@ class AuditGuard:
             name = os.readlink(f"/proc/self/fd/{descriptor}")
         except OSError:
             self._refuse(event, f"fd:{descriptor}", "descriptor base is unavailable")
-        if not name.startswith("/") or name.endswith(" (deleted)"):
+        if not name.startswith("/"):
             self._refuse(event, f"fd:{descriptor}", "descriptor has no stable filesystem path")
+        if name.endswith(" (deleted)"):
+            try:
+                descriptor_info = os.fstat(descriptor)
+                path_info = (
+                    os.stat(name)
+                    if stat.S_ISDIR(descriptor_info.st_mode) and descriptor_info.st_nlink > 0
+                    else None
+                )
+            except (OSError, OverflowError):
+                self._refuse(event, f"fd:{descriptor}", "descriptor has no stable filesystem path")
+            # A live directory can literally end in the procfs deletion marker.
+            # Attribute its unchanged name only when it still names this object.
+            if path_info is None or (path_info.st_dev, path_info.st_ino) != (
+                descriptor_info.st_dev, descriptor_info.st_ino,
+            ):
+                self._refuse(event, f"fd:{descriptor}", "descriptor has no stable filesystem path")
         return Path(name)
 
     def _is_absent_leaf_in_deleted_directory(

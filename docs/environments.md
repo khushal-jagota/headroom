@@ -184,6 +184,15 @@ paths with separators, and other unresolved operations retain the existing
 refusal behavior. A live directory whose literal name ends in ` (deleted)` does
 not qualify.
 
+For a live directory with that literal suffix, the hook attributes the unchanged
+absolute descriptor target to its ordinary path. The descriptor must name a
+directory with a positive link count. A stat of the raw target must match the
+descriptor's device and inode. Missing evidence or a mismatch causes a refusal.
+The attributed path still passes through the ordinary protection checks. The hook
+never strips the suffix. This proof establishes identity at the stat call. It does
+not close the existing window for concurrent path changes before the protection
+check or native operation.
+
 Manifests record entry types, raw link targets, and SHA-256 hashes of regular files.
 The session compares its final manifest after fixture teardown with the immutable
 baseline. It reports traversal time, entry counts, file counts, and hashed bytes.

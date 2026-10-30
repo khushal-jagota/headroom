@@ -158,6 +158,17 @@ literal_suffix.mkdir()
 literal_suffix_fd = os.open(literal_suffix, os.O_RDONLY)
 assert os.readlink(f"/proc/self/fd/{literal_suffix_fd}").endswith(" (deleted)")
 assert os.fstat(literal_suffix_fd).st_nlink > 0
+private_suffix = root / "private literal (deleted)"
+private_suffix.mkdir()
+(private_suffix / "file").write_text("ordinary private cleanup")
+(private_suffix / "empty").mkdir()
+private_suffix_fd = os.open(private_suffix, os.O_RDONLY)
+private_suffix_name = os.readlink(f"/proc/self/fd/{private_suffix_fd}")
+assert private_suffix_name == str(private_suffix)
+assert os.fstat(private_suffix_fd).st_nlink > 0
+assert (os.stat(private_suffix_name).st_dev, os.stat(private_suffix_name).st_ino) == (
+    os.fstat(private_suffix_fd).st_dev, os.fstat(private_suffix_fd).st_ino,
+)
 (root / "parent-alias").symlink_to(empty, target_is_directory=True)
 default = root / "home/.claude/skills"
 default.mkdir(parents=True)
@@ -181,6 +192,13 @@ detached.mkdir()
 detached_fd = os.open(detached, os.O_RDONLY)
 detached.rmdir()
 assert os.fstat(detached_fd).st_nlink == 0
+# Even a raw marker path that resolves back to this descriptor cannot turn a
+# zero-link directory into a live literal-suffix directory.
+detached_name = os.readlink(f"/proc/self/fd/{detached_fd}")
+Path(detached_name).symlink_to(f"/proc/self/fd/{detached_fd}", target_is_directory=True)
+assert (os.stat(detached_name).st_dev, os.stat(detached_name).st_ino) == (
+    os.fstat(detached_fd).st_dev, os.fstat(detached_fd).st_ino,
+)
 # The old pathname now names a different, protected tree. Never reconstruct a
 # deleted descriptor's path by stripping the procfs marker.
 detached.mkdir()
@@ -194,6 +212,11 @@ baseline = snapshot(inventory)
 guard = AuditGuard(inventory)
 guard.install()
 guard.set_context("test_guard::sentinel")
+literal_suffix_operations = (
+    lambda: os.remove("SKILL.md", dir_fd=literal_suffix_fd),
+    lambda: os.rmdir("empty", dir_fd=literal_suffix_fd),
+)
+unsafe_detached_operation = lambda: os.rmdir("..", dir_fd=detached_fd)
 operations = [
     lambda: (default / "SKILL.md").write_text("bad"),
     lambda: file.write_text("bad"),
@@ -217,14 +240,13 @@ operations = [
     lambda: os.remove("SKILL.md", dir_fd=fd),
     lambda: os.rmdir("empty", dir_fd=fd),
     # A literal suffix on a live directory cannot spoof deleted-state evidence.
-    lambda: os.remove("SKILL.md", dir_fd=literal_suffix_fd),
-    lambda: os.rmdir("empty", dir_fd=literal_suffix_fd),
+    *literal_suffix_operations,
     lambda: os.remove("unknown", dir_fd=999999),
     lambda: os.remove("../configured-outside-home/skills/SKILL.md", dir_fd=detached_fd),
     lambda: os.rmdir("../configured-outside-home", dir_fd=detached_fd),
     lambda: os.remove(file, dir_fd=detached_fd),
     lambda: os.rmdir(".", dir_fd=detached_fd),
-    lambda: os.rmdir("..", dir_fd=detached_fd),
+    unsafe_detached_operation,
     lambda: os.rename("SKILL.md", "renamed", src_dir_fd=fd, dst_dir_fd=fd),
     lambda: os.open("SKILL.md", os.O_WRONLY, dir_fd=fd),
     lambda: os.open("relative-unknown", os.O_CREAT | os.O_WRONLY, dir_fd=unknown_fd),
@@ -237,9 +259,23 @@ for number, operation in enumerate(operations):
         pass
     else:
         raise AssertionError(f"operation {number} escaped guard")
+    if operation in literal_suffix_operations:
+        assert guard.receipts[-1].reason.startswith("protected launch skill path ")
+    if operation is unsafe_detached_operation:
+        assert guard.receipts[-1].reason == "descriptor has no stable filesystem path"
 assert len(guard.receipts) == len(operations)
 assert all(receipt.node == "test_guard::sentinel" for receipt in guard.receipts)
 assert not compare_manifests(baseline, snapshot(inventory))
+for operation in (
+    lambda: os.remove("file", dir_fd=private_suffix_fd),
+    lambda: os.rmdir("empty", dir_fd=private_suffix_fd),
+):
+    before_receipts = len(guard.receipts)
+    operation()
+    assert len(guard.receipts) == before_receipts
+    assert not compare_manifests(baseline, snapshot(inventory))
+assert not (private_suffix / "file").exists()
+assert not (private_suffix / "empty").exists()
 for operation in (
     lambda: os.remove("SKILL.md", dir_fd=detached_fd),
     lambda: os.rmdir(b"empty", dir_fd=detached_fd),
@@ -270,6 +306,7 @@ with open("builtin-relative", "w") as stream:
 os.close(fd)
 os.close(unknown_fd)
 os.close(literal_suffix_fd)
+os.close(private_suffix_fd)
 os.close(detached_fd)
 # Registration can be silently suppressed by an earlier hook. Acknowledge installation.
 def suppress(event, args):
@@ -413,6 +450,8 @@ def test_home_routing_precedes_all_fixture_scopes_and_preserves_teardown_paths(
         "    cleanup_root.mkdir()\n"
         "    (cleanup_root / 'live-child').mkdir()\n"
         "    (cleanup_root / 'live-child/file').write_text('ordinary private cleanup')\n"
+        "    (cleanup_root / 'literal (deleted)/nested').mkdir(parents=True)\n"
+        "    (cleanup_root / 'literal (deleted)/nested/file').write_text('literal cleanup')\n"
         "    detached = cleanup_root / 'detached'\n"
         "    detached.mkdir()\n"
         "    detached_fd = os.open(detached, os.O_RDONLY)\n"
