@@ -1721,7 +1721,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             recovery = "Recovery required: the candidate did not complete its commit."
             deployment.update(state="unknown", detail=recovery)
             signal()
-            expect(card.get_by_text(recovery, exact=True)).to_be_visible()
+            expect(card.locator(".deployment-detail").filter(has_text=recovery)).to_be_visible()
             expect(card.get_by_text("Reconnecting", exact=True)).to_be_visible()
             page.screenshot(path=str(evidence / "recovery-required.png"))
             deployment.update(state="idle", detail=None)
