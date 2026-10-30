@@ -30,10 +30,13 @@ describe("owner-controlled updates", () => {
     expect(needsActivityConfirmation("idle")).toBe(false);
   });
 
-  it("keeps a pending idle request pinned when another release appears, and cancels that request", async () => {
+  it("shows only pending request actions and cancels the exact request ID", async () => {
     const html = render(UpdateActions, { props: { status: { ...status, request,
       available: { ...release, manifest: { ...release.manifest, app_sha: "b".repeat(40) } } }, now: Date.now() } }).body;
-    expect(html).toContain("aaaaaaa");
+    // Publication pinning is proved by durable receipt equality in the connected
+    // browser case. This render proves that controls do not offer the newer release.
+    expect(html).toContain("Update waits for idle");
+    expect(html).not.toContain("aaaaaaa");
     expect(html).toContain("Cancel update");
     expect(html).not.toContain("Update now");
     expect(html).not.toContain("bbbbbbb");
