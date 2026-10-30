@@ -171,6 +171,8 @@ def test_formula_expectation_projection_and_correction_reach_mounted_chart(
     expect(chart.locator('[data-line="target"]')).to_have_attribute(
         "d", re.compile(r"M.*M.*M"), timeout=WAIT_MS
     )
+    # Keep keyboard inspection independent of pointer exits during focus scroll.
+    page.mouse.move(0, 0)
     plot.focus(timeout=WAIT_MS)
     plot.press("End", timeout=WAIT_MS)
     expect(plot).to_have_attribute(
