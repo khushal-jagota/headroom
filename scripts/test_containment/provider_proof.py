@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from test_containment.admission import enclosing_mount, parse_mountinfo  # noqa: E402
-from test_containment.provider import build_provider_configuration  # noqa: E402
+from test_containment.provider import profile_mount_args, validate_profile  # noqa: E402
 from test_containment.runner import ROOT, strict_prefix  # noqa: E402
 
 
@@ -151,32 +151,32 @@ def main() -> int:
         managed.mkdir()
         (managed / "SKILL.md").write_text("external disposable sentinel")
         (profile / "skills/native").symlink_to(managed, target_is_directory=True)
-        with build_provider_configuration("codex", {}, [profile / "skills"], scratch) as provider:
-            command = strict_prefix(scratch)
-            command += provider.mount_args
-            command += [
-                "--remount-ro",
-                "/",
-                "--chdir",
-                str(ROOT),
-                "--clearenv",
-                "--setenv",
-                "PATH",
-                "/usr/bin:/bin",
-                "--setenv",
-                "PYTHONDONTWRITEBYTECODE",
-                "1",
-                "--",
-                sys.executable,
-                str(Path(__file__).resolve()),
-                "--child",
-                str(profile),
-                "--inode",
-                str(before.st_ino),
-            ]
-            started = time.perf_counter()
-            result = subprocess.run(command, capture_output=True, close_fds=True, check=False)
-            elapsed = time.perf_counter() - started
+        profile_mount = validate_profile(profile, [profile / "skills"])
+        command = strict_prefix(scratch)
+        command += profile_mount_args(profile_mount)
+        command += [
+            "--remount-ro",
+            "/",
+            "--chdir",
+            str(ROOT),
+            "--clearenv",
+            "--setenv",
+            "PATH",
+            "/usr/bin:/bin",
+            "--setenv",
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+            "--",
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--child",
+            str(profile),
+            "--inode",
+            str(before.st_ino),
+        ]
+        started = time.perf_counter()
+        result = subprocess.run(command, capture_output=True, close_fds=True, check=False)
+        elapsed = time.perf_counter() - started
         assert (managed / "SKILL.md").read_text() == "external disposable sentinel"
     assert profile.stat().st_ino == before.st_ino
     assert sentinel.read_bytes() == baseline
@@ -187,6 +187,8 @@ def main() -> int:
     (args.evidence / "provider.json").write_text(
         json.dumps(
             {
+                "result": "profile-only pass",
+                "real_provider_route_pass": False,
                 "seconds": elapsed,
                 "status": result.returncode,
                 "proof": json.loads(result.stdout),

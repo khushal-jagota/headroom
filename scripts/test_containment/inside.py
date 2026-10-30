@@ -7,7 +7,6 @@ import base64
 import ctypes
 import json
 import os
-import socket
 import subprocess
 import sys
 import time
@@ -37,26 +36,7 @@ def main() -> int:
     (options.scratch / "reports/admission.json").write_text(
         json.dumps({"seconds": time.perf_counter() - started, "entered_monotonic": started})
     )
-    bridge = None
     try:
-        contract = json.loads(Path("/run/panels-test-containment/contract.json").read_text())
-        if contract.get("bridge_command"):
-            bridge = subprocess.Popen(
-                contract["bridge_command"], stdin=subprocess.DEVNULL, close_fds=True
-            )
-            for _ in range(100):
-                try:
-                    with socket.create_connection(
-                        ("127.0.0.1", int(os.environ["PANELS_CONTAINMENT_BRIDGE_PORT"])),
-                        timeout=0.1,
-                    ):
-                        break
-                except OSError:
-                    if bridge.poll() is not None:
-                        raise RuntimeError("provider bridge failed before pytest") from None
-                    time.sleep(0.02)
-            else:
-                raise RuntimeError("provider bridge did not become ready")
         args = options.args[1:] if options.args[:1] == ["--"] else options.args
         return subprocess.call(
             [
@@ -81,9 +61,6 @@ def main() -> int:
             + base64.b64encode(json.dumps(reports).encode()).decode(),
             flush=True,
         )
-        if bridge is not None:
-            bridge.terminate()
-            bridge.wait(timeout=5)
 
 
 if __name__ == "__main__":

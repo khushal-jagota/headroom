@@ -219,8 +219,8 @@ def run(
     try:
         if provider:
             raise RuntimeError(
-                "provider containment is unsupported: proxy destination authority "
-                "cannot be independently established before credential exposure"
+                "provider mode refuses before credential exposure: real-provider access "
+                "requires its own ticket and owner authorization"
             )
         with owned_storage(inventory.protected_paths, "panels-contained-") as scratch:
             for child in ("tmp", "cache", "data", "reports"):
@@ -248,6 +248,7 @@ def run(
             env.update(create_synthetic_homes(scratch))
             env.update(
                 {
+                    "PANELS_REQUIRE_TEST_CONTAINMENT": "1",
                     "PATH": f"{ROOT}/.venv/bin:/usr/local/bin:/usr/bin:/bin",
                     "TMPDIR": str(scratch / "tmp"),
                     "XDG_CACHE_HOME": str(scratch / "cache"),

@@ -88,3 +88,23 @@ def test_omitted_protected_inventory_does_not_hide_account_defaults() -> None:
     mounts = parse_mountinfo(_mounts(f"3 1 0:44 / {account}/.codex rw - tmpfs tmpfs rw\n"))
     with pytest.raises(ContainmentRefusal, match="protected path remains writable"):
         check_mounts(_contract(), mounts)
+
+
+def test_explicit_zero_keeps_default_without_kernel_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from test_containment.admission import requested_containment
+
+    monkeypatch.setenv("PANELS_REQUIRE_TEST_CONTAINMENT", "0")
+    # This process is admitted already. Default selection must still return None.
+    assert requested_containment() is None
+
+
+def test_invalid_selection_refuses_instead_of_silent_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from test_containment.admission import requested_containment
+
+    monkeypatch.setenv("PANELS_REQUIRE_TEST_CONTAINMENT", "true")
+    with pytest.raises(ContainmentRefusal, match="must be 0 or 1"):
+        requested_containment()

@@ -167,14 +167,17 @@ def pytest_configure(config: pytest.Config) -> None:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-    from test_containment.admission import require_containment
+    from test_containment.admission import requested_containment
     from test_containment.contracts import ContainmentRefusal
 
     try:
-        boundary = require_containment()
+        boundary = requested_containment()
     except ContainmentRefusal as error:
         raise pytest.UsageError(f"Test containment refused: {error}") from error
     if not config.pluginmanager.hasplugin("skill-tree-protection"):
         config.pluginmanager.register(
-            bootstrap(export_root=boundary.scratch_root / "reports"), "skill-tree-protection"
+            bootstrap(
+                export_root=boundary.scratch_root / "reports" if boundary is not None else None
+            ),
+            "skill-tree-protection",
         )

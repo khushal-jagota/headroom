@@ -376,3 +376,16 @@ def require_containment() -> ContainmentContract:
         subprocess.SubprocessError,
     ) as error:
         raise ContainmentRefusal(f"cannot establish test containment: {error}") from error
+
+
+def requested_containment() -> ContainmentContract | None:
+    """Select admission explicitly. The switch grants no authority.
+
+    Unset and ``0`` retain existing behavior. Other values refuse typos.
+    """
+    value = os.environ.get("PANELS_REQUIRE_TEST_CONTAINMENT")
+    if value in (None, "0"):
+        return None
+    if value != "1":
+        raise ContainmentRefusal("PANELS_REQUIRE_TEST_CONTAINMENT must be 0 or 1")
+    return require_containment()

@@ -1,4 +1,4 @@
-"""Explicit provider access for the test-only filesystem boundary.
+"""Disposable profile validation and mount helpers for the profile-only proof.
 
 A profile stays at its canonical path and retains its actual inode identity. Only
 an existing real skills directory can form the exact read-only submount needed
@@ -7,19 +7,11 @@ for root-level credential replacement and refresh locks.
 
 from __future__ import annotations
 
-import fcntl
 import os
-import pwd
-import socket
 import stat
-import struct
-import sys
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-
-from test_containment.proxy import DestinationPolicy, HostProxy
 
 
 class ProviderRefusal(ValueError):
@@ -134,82 +126,3 @@ def profile_mount_args(profile: ProviderProfile) -> list[str]:
     for root in roots:
         result.extend(["--ro-bind", str(root), str(root)])
     return result
-
-
-def host_addresses() -> set[str]:
-    """Read all assigned interface addresses without an external lookup."""
-    addresses: set[str] = set()
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-        for _, name in socket.if_nameindex():
-            try:
-                row = fcntl.ioctl(probe.fileno(), 0x8915, struct.pack("256s", name.encode()[:15]))
-            except OSError:
-                continue  # Interfaces without IPv4 have no SIOCGIFADDR value.
-            addresses.add(socket.inet_ntoa(row[20:24]))
-    for line in Path("/proc/net/if_inet6").read_text().splitlines():
-        addresses.add(socket.inet_ntop(socket.AF_INET6, bytes.fromhex(line.split()[0])))
-    return addresses
-
-
-@dataclass(frozen=True)
-class ProviderConfiguration:
-    mount_args: list[str]
-    environment: dict[str, str]
-    profile_paths: list[str]
-    bridge_command: list[str]
-
-
-@contextmanager
-def build_provider_configuration(
-    backend: str,
-    env: Mapping[str, str],
-    protected: Sequence[Path],
-    scratch: Path,
-) -> Iterator[ProviderConfiguration]:
-    # No implicit marker authorizes this route. Only the explicit runner option
-    # reaches this function, and admission still checks the actual mounts.
-    profiles = {
-        "codex": ("CODEX_HOME", ".codex"),
-        "claude": ("CLAUDE_CONFIG_DIR", ".claude"),
-    }
-    if backend not in profiles:
-        raise ProviderRefusal(f"unsupported contained provider: {backend}")
-    for name, value in env.items():
-        if name.lower() in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"} and value:
-            raise ProviderRefusal("inherited proxy configuration is unsupported in provider mode")
-    variable, default = profiles[backend]
-    home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    profile = home / default
-    if env.get(variable) and Path(env[variable]) != profile:
-        raise ProviderRefusal("provider containment requires the canonical account profile")
-    validated = validate_profile(profile, protected)
-    socket_path = scratch / "provider-egress.sock"
-    port = 43127  # Each admitted process owns a fresh network namespace.
-    with HostProxy(socket_path, DestinationPolicy(backend, host_addresses=host_addresses())):
-        proxy = f"http://127.0.0.1:{port}"
-        environment = {
-            variable: str(profile),
-            "HTTP_PROXY": proxy,
-            "HTTPS_PROXY": proxy,
-            "http_proxy": proxy,
-            "https_proxy": proxy,
-            "NO_PROXY": "",
-            "no_proxy": "",
-            "ALL_PROXY": "",
-            "all_proxy": "",
-            "PANELS_CONTAINMENT_BRIDGE_PORT": str(port),
-        }
-        yield ProviderConfiguration(
-            mount_args=profile_mount_args(validated),
-            environment=environment,
-            profile_paths=[str(profile)],
-            bridge_command=[
-                sys.executable,
-                str(Path(__file__).with_name("proxy.py")),
-                "bridge",
-                "--socket",
-                str(socket_path),
-                "--port",
-                str(port),
-            ],
-        )

@@ -178,6 +178,63 @@ def inside(scratch: Path) -> int:
     return 0
 
 
+def entrypoint_admission_proof(storage: Path, output: Path) -> list[dict[str, Any]]:
+    """Prove unchanged defaults and explicit refusal inside disposable accounts."""
+    probe = storage / "plugin-probe.py"
+    probe.write_text("def test_collection_probe(): pass\n")
+    case = "tests/unit/test_containment_admission.py"
+    routes = {
+        "pytest": [str(ROOT / ".venv/bin/pytest"), "--collect-only", "-q", case],
+        "python-module": [sys.executable, "-m", "pytest", "--collect-only", "-q", case],
+        "pytest-main": [
+            sys.executable, "-c",
+            "import pytest,sys; sys.exit(pytest.main(sys.argv[1:]))",
+            "--collect-only", "-q", case,
+        ],
+        "dev-pytest": [str(ROOT / "scripts/dev"), "pytest", "--collect-only", "-q", case],
+        "optional-probes": [
+            sys.executable, "-m", "pytest", "-q", "tests/integration/test_contained_pytest.py",
+        ],
+        "explicit-plugin": [
+            sys.executable, "-m", "pytest", "-p",
+            "tests.support.skill_tree_protection.pytest_plugin",
+            "--collect-only", "-q", str(probe),
+        ],
+    }
+    records = []
+    for route, command in routes.items():
+        for selected in (False, True):
+            env = dict(os.environ)
+            env.pop("PANELS_REQUIRE_TEST_CONTAINMENT", None)
+            # Forged inherited claims cannot substitute for actual admission.
+            env["PANELS_TEST_CONTAINMENT_ADMITTED"] = "1"
+            if selected:
+                env["PANELS_REQUIRE_TEST_CONTAINMENT"] = "1"
+            started = time.perf_counter()
+            result = subprocess.run(
+                command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, close_fds=True, check=False,
+            )
+            label = route + ("-optin" if selected else "-default")
+            (output / (label + "-stdout.txt")).write_bytes(result.stdout)
+            (output / (label + "-stderr.txt")).write_bytes(result.stderr)
+            diagnosed = b"Test containment refused" in result.stderr
+            guard_active = b"Skill-tree guard receipts" in result.stdout
+            passed = (result.returncode != 0 and diagnosed) if selected else (
+                result.returncode == 0 and guard_active
+            )
+            if route == "optional-probes" and not selected:
+                passed = passed and b"sss" in result.stdout
+            records.append({
+                "route": route, "opt_in": selected, "status": result.returncode,
+                "guard_active": guard_active, "refused": diagnosed,
+                "seconds": time.perf_counter() - started, "passed": passed,
+            })
+            if not passed:
+                raise AssertionError(f"entrypoint policy failed: {records[-1]}")
+    return records
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path)
@@ -225,6 +282,7 @@ def main() -> int:
         },
     }
     (contract_dir / "contract.json").write_text(json.dumps(contract))
+    entrypoints = entrypoint_admission_proof(storage, output)
     baseline = manifest(fixture)
     (output / "baseline.json").write_text(json.dumps(baseline, indent=2))
     args = strict_prefix(scratch)
@@ -252,6 +310,7 @@ def main() -> int:
     final = manifest(fixture)
     (output / "final.json").write_text(json.dumps(final, indent=2))
     record: dict[str, Any] = {
+        "entrypoint_policy": entrypoints,
         "command": args,
         "status": completed.returncode,
         "unchanged": baseline == final,
