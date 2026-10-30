@@ -1,143 +1,58 @@
 # Who may act
 
-One sentence decides every call in Panels: **you may act on anything strictly below
-you.**
+One sentence decides every guarded call: you may act on anything strictly below you.
 
-Every operation has exactly one address. Khushal, the Chief, a Manager and a Ticket's
-Worker all call the same route for the same thing, and who you are decides whether you
-are admitted. There is no second address for an agent, and no list of principal kinds
-in the general authority rule that says who is allowed through a particular door.
+Khushal, Chief, a Manager, and a Ticket’s Worker all call the same route. Who they are decides whether the call is admitted. There is no second address reserved for agents, and the general rule does not carry a list of principal kinds that are allowed through a particular door.
 
 ## Position
 
-```
+```text
 Khushal ─┬─ everything
 Chief ───┘
 
-Manager ─ its own current Tickets
+Manager ─ its current child Tickets
 
-Ticket ───── nothing
+Ticket ─── nothing
 ```
 
-A Manager stands above a Ticket because the Ticket says so. Its record names the
-Manager it sits under. Move the Ticket to another Manager, and the old one no
-longer stands above it. Nothing else is stored, and nothing is granted by hand.
+A Manager stands above a Ticket because the Ticket’s assignment says so. Move the Ticket, and the previous Manager no longer stands above it. A Ticket stands above nothing, so its Worker cannot decide its own proposal. That is the rule answering, not an extra ban written beside it.
 
-A Ticket stands above nothing, so a Worker cannot decide its own proposal. That is the
-rule answering, not an exception written beside it: nothing is strictly below itself.
+Retired planning types keep their history. They do not regain a shared-plan write through the old type name.
 
-Retired planning Worker types have no shared-plan declarations. Their records and
-proposals remain historical. They cannot regain calendar write authority through their
-old type name.
+## Your own record is a different question
 
-A Worker assignment explicitly names Chief or an ordinary Manager. The stored kind
-and Item reference must agree. Assignment does not grant approval authority to a holder,
-and Chief's global reach does not substitute for assignment.
+A Ticket proposes, recaps, and asks for help. A Manager writes its goal, recap, and artifacts. Those are the principal acting as itself. The chain does not decide them. Proposing is the Ticket speaking about its own work. Nobody, including Khushal, proposes on a Ticket’s behalf.
 
-Settlement is the owner-controlled action for an ordinary Manager. Chief cannot
-settle. This one owner control does not replace the ordinary authority rule elsewhere.
+## The re-parent exception
 
-## Speaking between Managers
+No principal may move a Ticket out of its chain except Khushal and Chief. Changing the Manager changes who stands above the Ticket. At the moment of the call the Ticket really is below the Manager trying to hand it away, so the ordinary rule would allow the handoff. The exception exists so authority cannot be given away by the person who currently holds it. A Ticket cannot set its own Manager either. Being the Ticket does not include choosing who stands above you.
 
-Existing ordinary Managers may send messages to one another through
-`panels send-message --manager ITEM_ID`. This permission is only for speaking. It
-does not put either Manager above the other or above the other's Workers. Approvals,
-ceiling changes, assignments, and other writes still ask the ordinary authority rule.
-Workers may speak to their own manager and principals above them. They cannot use
-Send Message or a help-recipient override to reach an unrelated Manager.
+Deletion has no special case. If you stand above a thing, you may delete it. The Ticket page still hides delete. The command and the API enforce the rule.
 
-## Your own record is not authority
+## Making a Ticket, and holding a review
 
-A principal writes its own record through its own operations, and that is a separate
-question from the rule. A Ticket proposes, recaps, notes and asks for help. A Manager
-writes its own body and artifacts. Neither is standing above anything, so the chain does
-not decide it — being the thing does.
+Making a Ticket acts on nothing that exists yet, so the rule does not refuse creation. What the new Ticket arrives with is asked piece by piece. You can put it under a Manager you stand above, a Manager you are, or the Manager you are under. Workers that spin up child Tickets cannot set the ceiling and holder at creation. Someone above the new Ticket does that.
 
-**Proposing is not a permission at all.** It is the Ticket speaking about its own work.
-Nobody proposes on a Ticket's behalf, including Khushal.
+The holder of a parked proposal must be Khushal, Chief for a Chief-assigned Ticket, or the assigned Manager. Anyone strictly above the Ticket may approve. Holding and approving are different. An assignment move that does not name a new holder returns the holder to Khushal when the old holder would no longer be legal.
 
-## The one exception
+## Schedules, skills, and settlement
 
-**No principal may move a thing out of its own chain.** Changing a Ticket's Manager
-changes who stands above it, which is handing authority around rather than using it, and
-the rule cannot refuse it: at the moment of the call the Ticket really is below the
-Manager that is moving it away. Re-parenting stays with Khushal and the Chief.
+Schedules, skills, Worker types, and projects are owner-level configuration. Khushal and Chief stand above them. Managers and Workers do not gain schedule control by being assigned the Tickets a schedule will create. A Manager’s Project edit does update the Project on schedules already assigned to that Manager. That derived write changes the Project and the timestamp. It does not enable a schedule or rewrite the rest of the template.
 
-That is asked of the caller alone, at both doors that write the column — editing the
-Ticket, and Manager membership. It includes the Ticket itself. A Ticket that could set
-its own Manager could leave one, or leave every Manager, and so choose who is allowed to
-act on it. Being a thing does not include choosing who stands above you.
-
-Deletion gets no special case: if you stand above a thing you may delete it.
-
-## Making a Ticket
-
-Making a Ticket acts on nothing that exists yet, so nobody is refused for making one. What
-the new Ticket arrives with is a different matter, and each part is asked about on its own.
-
-**Its Manager.** A created thing belongs to its creator's chain. You can name a
-Manager you stand above, a Manager you are, or the one you are under. Putting
-work under the Manager you already answer to adds nothing to your reach. The
-Manager that gains a child already stands above you. Naming any other Manager
-borrows a position you do not hold, and that is refused. This is not the exception
-above: nothing is moved out of a chain, because the Ticket was in none.
-
-**Its ceiling, and who holds it.** These are the two values editing a Ticket reserves for a
-caller above it, so stating either one at creation takes the same answer. Khushal, the
-Chief, and the Manager the Ticket will sit under can state them. A Worker that spins off a
-Ticket cannot, so the new Ticket gets its Worker type's ordinary ceiling and parks its first
-field instead of running to the end.
-
-Who holds a ceiling is an address, not a permission. **Only Khushal or the Ticket's
-direct manager may hold its review.** Chief may hold a Chief-assigned Ticket's review;
-an ordinary Manager may hold only its own Tickets' reviews. A Ticket cannot hold a
-review. Chief's general authority to create, assign, edit and approve remains unchanged.
-For example, Chief can create a Ticket under a Manager with that Manager holding it.
-
-The caller must have authority to select a holder, and the selected holder must satisfy
-this separate review rule. Creation checks the resulting holder even when it defaults
-to the creator. An ineligible default is refused: the creator must name an eligible
-holder explicitly. Holder edits and approval's next holder take the same check. A
-combined assignment and holder edit uses the resulting assignment, even when the
-explicit holder is unchanged.
-
-The approval door still asks general authority of whoever turns up. Existing records
-remain readable; historical approvals and holders are not rewritten. A live ineligible
-holder can be repaired through an ordinary authorized holder edit. An assignment move
-without an explicit holder returns the ceiling to Khushal if the old holder no longer
-satisfies the review rule. Chief therefore loses a held review when its Ticket moves
-under an ordinary Manager, even though Chief still stands above the Ticket.
-
-## Control of schedules
-
-Schedules are owner-controlled configuration. Only the owner and Chief can create or
-explicitly edit them. The shared authority rule enforces this at the API and canonical
-actions, including enable, disable, and template edits. Schedule assignment grants no
-control to a Manager or Worker. Their direct Ticket creation rights remain unchanged.
-
-An authorized Manager Project edit also synchronizes the Project of schedules already
-assigned to that Manager. Only the Project and normal update timestamp change. This
-derived update grants no explicit schedule control. It cannot change assignment,
-cadence, enabled state, or other template fields.
-
-Due execution uses trusted scheduler authority, as described in
-[Scheduled Ticket creation](scheduled-tickets.md). The mutation checks close future
-admission. They do not certify historical schedule authorship or change existing rows
-and receipts. Retired schedules remain disable-only. There is no new grant or approval
-flow for schedule activation.
+Settlement is tighter than the general rule. Only the owner may settle or reopen an ordinary Manager. Chief cannot settle, and Chief can never be settled. Settlement changes the rail. It does not stop children. See [Managers and Chief](managers.md).
 
 ## What this is not
 
-The rule decides what a caller may do. It does not decide who a caller is. A position is
-a truthful local claim, exactly as it was before: the CLI and the browser say who they
-are, and Panels believes them. What changed is that the claim must now name the thing
-being acted on.
+The rule decides what a caller may do. It does not decide who the caller is. The browser and the CLI say who they are, and the server believes that claim. Update actions and other owner doors inherit that trust. They are not a login system.
 
-Reads are open. `GET /api/tickets` and `GET /api/items` ask the rule nothing, so an
-address that only reads is not protecting anything and never was.
+Reads of the Ticket and Manager lists are open. A route that only reads is not protected by this rule.
 
-_Code paths:_ `src/planner/core/authority/` (the rule and the explicit assignment chain), `src/planner/core/authctx.py` (turning a request into a principal).
+## Where it shows up
 
----
+A refused call is the product surface: a Worker that tries to approve, a Manager that tries to reassign a Ticket, a Worker that tries to edit a skill or request an update. Review, the Ticket gate, and Settings succeed for the principals the rule allows and fail for the rest with the same writers.
 
-_Last verified: 2026-10-28._
+## Pointers
+
+`src/planner/core/authority/logic.py` is the rule. `src/planner/core/authority/service.py` is the door routes call. `src/planner/core/authctx.py` turns a request into a principal.
+
+_Last verified: 2026-10-30._
