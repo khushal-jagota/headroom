@@ -62,7 +62,7 @@ def test_https_launch_passes_identity_and_preserves_provider_access(tmp_path: Pa
         replace(launch, panels_server_url="https://panels.example/api"),
     ):
         with pytest.raises(MacExecutorConfigurationError):
-            validate_executor_launch(invalid, check_files=False)
+            validate_executor_launch(invalid)
 
 
 def test_explicit_renderer_cli_emits_only_the_plist(

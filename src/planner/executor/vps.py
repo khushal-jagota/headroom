@@ -174,9 +174,6 @@ class ExecutorEndpoint:
         self._transport_lock = asyncio.Lock()
         self._receiver_work: dict[ExecutorIdentity, set[asyncio.Task[Any]]] = {}
 
-    async def start(self) -> None:
-        """The app router owns the listener; no separate relay socket exists."""
-
     @asynccontextmanager
     async def preview_forward(self, port: int, ticket_id: str) -> AsyncIterator[int]:
         forwards = self._preview_forwards
@@ -1423,11 +1420,6 @@ class ExecutorEndpoint:
     def _command_outcome(self, conn: Any, outcome: CommandOutcome) -> JsonObject:
         self.store.record_command_outcome_in_transaction(conn, outcome)
         return {"recorded": True}
-
-    def _application(self, conn: Any, application: AnswerApplication) -> JsonObject:
-        self.store.record_application_in_transaction(conn, application)
-        return {"recorded": True}
-
 
     def _resolve_command(self, outcome: CommandOutcome) -> None:
         if not self._outcome_hint_acknowledged(outcome):

@@ -300,7 +300,6 @@ class ExecutorHarness:
             self.root / "vps/quarantine",
         )
         self.transport_app.state.executor_endpoint = self.endpoint
-        await self.endpoint.start()
         if wait_ready:
             await eventually(lambda: self.endpoint.ready, "VPS core restart did not reconcile")
 
@@ -392,7 +391,6 @@ async def boot(
         vps_root / "files",
         vps_root / "quarantine",
     )
-    await endpoint.start()
     native = ScriptedNativeChild()
     from fastapi import FastAPI
 
@@ -454,7 +452,6 @@ async def boot(
         spool=mac.spool,
         factory=native_factory or factory,
         message_files=ConversationMessageFiles(root / "mac/unused"),
-        admission_observer=mac,
     )
     task = asyncio.create_task(mac.run())
     harness = ExecutorHarness(
@@ -2080,7 +2077,6 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                 spool=mac.spool,
                 factory=factory,
                 message_files=ConversationMessageFiles(tmp_path / "mac/unused"),
-                admission_observer=mac,
             )
             task = asyncio.create_task(mac.run())
             killing: asyncio.Task[None] | None = None

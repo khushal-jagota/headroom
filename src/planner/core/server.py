@@ -284,7 +284,6 @@ def create_app(
                 conversation = replace(conversation, executor_endpoint=executor_endpoint)
                 executor_endpoint.runtime = conversation
                 executor_endpoint.app = app
-                await executor_endpoint.start()
             from planner.conversation.model_resolution.observer import ProductionCatalogObserver
             from planner.tickets.contracts import TicketLocale
 

@@ -37,7 +37,6 @@ def run(executor_id: str, application_revision: str, panels_server_url: str) -> 
     try:
         validate_executor_launch(
             ExecutorLaunchOptions(executor_id, application_revision, panels_server_url),
-            check_files=False,
         )
     except MacExecutorConfigurationError as error:
         raise click.ClickException(str(error)) from error

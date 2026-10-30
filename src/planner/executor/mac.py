@@ -33,7 +33,6 @@ from planner.conversation.model_resolution.contracts import (
     CatalogResponse,
     CatalogUnavailable,
     CorrectiveAction,
-    LaunchContext,
     ProviderCatalogObserver,
     ValidationReason,
 )
@@ -184,21 +183,7 @@ class MacExecutor:
             spool=self.spool,
             factory=self._factory(panels_server_url),
             message_files=ConversationMessageFiles(paths.root / "artifacts" / "unused-db-path"),
-            admission_observer=self,
         )
-
-    def verify_context(self, expected: LaunchContext) -> bool:
-        observer = self._catalog_observer
-        verify = getattr(observer, "verify_context", None)
-        return (
-            expected.executor_identity == self.identity
-            and callable(verify)
-            and bool(verify(expected))
-        )
-
-    def verify_prepared_launch(self, expected: LaunchContext, prepared: Any) -> bool:
-        verify = getattr(self._catalog_observer, "verify_prepared_launch", None)
-        return callable(verify) and bool(verify(expected, prepared))
 
     def _factory(
         self, server_url: str
