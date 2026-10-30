@@ -25,6 +25,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
 from tests.support.executor_turns import persist_pending_turn
 from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
@@ -56,7 +57,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendUserInputRequest,
     NeedsRebind,
-    PromptWriteFailed,
+    PromptWriteRefused,
     SessionLoadFailed,
     TurnToken,
 )
@@ -190,7 +191,7 @@ class _FakeBackendChild:
             self._backend.needs_failed_child_recovery_once = False
             raise NeedsRebind(self._backend.conversation_id, failed_child_recovery=True)
         if self._backend.write_fails:
-            raise PromptWriteFailed(self._backend.conversation_id)
+            raise PromptWriteRefused(self._backend.conversation_id)
         self._backend.written_contents.append(content)
         self._backend.live_turn_token = turn_token
         return BackendPromptAccepted(composed_content_delivered=True)
@@ -537,12 +538,15 @@ def harness(tmp_path: Path) -> Iterator[_Harness]:
     seed_test_model_catalogue(conn)
     conn.close()
     built = _Harness(db_path)
-    yield built
-    asyncio.run(built.runtime.shutdown())
+    with conversation_test_loop() as runner:
+        try:
+            yield built
+        finally:
+            runner.run(built.runtime.shutdown())
 
 
 def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
-    asyncio.run(asyncio.wait_for(exercise(), 20.0))
+    run_conversation_test(exercise)
 
 
 def _associate_ticket_conversations(harness: _Harness, *, active: str, past: str) -> None:

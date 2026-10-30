@@ -60,7 +60,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendUserInputRequest,
-    PromptWriteFailed,
+    PromptWriteRefused,
     TurnToken,
 )
 from planner.conversation.backends.hermes_acp import (
@@ -339,7 +339,7 @@ class _CountedChild:
         automatic_compaction: bool = False,
     ) -> BackendPromptAccepted:
         if self._conversation.known_prewrite_failure:
-            raise PromptWriteFailed("the controlled backend refused before transmission")
+            raise PromptWriteRefused("the controlled backend refused before transmission")
         accepted = await self._child.write_prompt(
             turn_token,
             content,

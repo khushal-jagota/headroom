@@ -3396,154 +3396,104 @@ def test_historical_inventory_confirmation_unblocks_real_mac_replay(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Old evidence confirms without settling callers; FIFO replay publishes exactly once."""
+    """Old inventory cannot settle a waiter or block replay into a still-live VPS turn."""
     import hashlib
     import json
 
-    from tests.support.executor_historical_replay import (
-        isolate_replay_paths,
-        prove_historical_replay,
-    )
-
-    from planner.conversation.contracts import ConversationAccess
+    from planner.executor.codec import encode_value
     from planner.executor.contracts import ChildCommand, ChildOperation, CommandOutcome
     from planner.executor.journal import envelope_payload_digest
-    from planner.executor.mac import as_object
-
-    isolate_replay_paths(tmp_path, monkeypatch)
 
     async def run() -> None:
-        db_path = str(tmp_path / "vps.sqlite3")
-        connection = connect(db_path)
+        harness = await boot(tmp_path, monkeypatch)
         try:
-            create_schema(connection)
-        finally:
-            connection.close()
-        endpoint = ExecutorEndpoint(db_path, RealClock())
-        current = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "current", 2)
-        old = ChildReference("historical", "old-child", "old-conversation")
-        command = ChildCommand("old-stop", old, ChildOperation.stop, None, {})
-        outcome = CommandOutcome(
-            command.command_id, old, CommandDisposition.refused, {"reason": "incarnation_gone"}
-        )
-        current_child = ChildReference("current", "current-child", "replay-conversation")
-        turn = TurnToken(current_child.conversation_id, 1)
-        await ConversationStore(db_path).create_conversation(
-            ResolvedConversationStart(
-                current_child.conversation_id,
-                ConversationBackendKey.codex,
-                "offline",
-                None,
-                None,
-                tmp_path,
-                ConversationAccess.full,
+            await eventually(
+                lambda: not harness.mac.spool.pending(), "Initial outcomes did not drain"
             )
-        )
-        endpoint.store.register_child(old, "ticket", "old-ticket", 1)
-        endpoint.store.register_child(current_child, "ticket", "current-ticket", 1)
-        connection = connect(db_path)
-        try:
-            for child, token, runtime in (
-                (
-                    old,
-                    TurnToken(old.conversation_id, 1),
-                    {
-                        "ended": True,
-                        "callbacks_revoked": True,
-                        "source_retired": False,
-                        "initial_commands": [as_object(command)],
-                    },
-                ),
-                (
-                    current_child,
-                    turn,
-                    {
-                        "ended": False,
-                        "pending_permission_ask_ids": [],
-                        "pending_user_input_questions": {},
-                    },
-                ),
-            ):
+            old = ChildReference("historical", "old-child", "old-conversation")
+            command = ChildCommand("old-stop", old, ChildOperation.stop, None, {})
+            outcome = CommandOutcome(
+                command.command_id, old, CommandDisposition.refused, {"reason": "incarnation_gone"}
+            )
+            harness.endpoint.store.register_child(old, "ticket", "old-ticket", 1)
+            connection = connect(harness.endpoint.db_path)
+            try:
                 connection.execute(
                     "INSERT INTO executor_core_turns VALUES (?,?,?,?)",
                     (
-                        child.conversation_id,
-                        json.dumps(as_object(child)),
-                        json.dumps(as_object(token)),
-                        json.dumps(runtime),
+                        old.conversation_id,
+                        json.dumps(encode_value(old)),
+                        json.dumps(encode_value(TurnToken(old.conversation_id, 1))),
+                        json.dumps({
+                            "ended": True,
+                            "callbacks_revoked": True,
+                            "source_retired": False,
+                            "initial_commands": [encode_value(command)],
+                        }),
                     ),
                 )
+            finally:
+                connection.close()
+            payload = encode_value(outcome)
+            assert isinstance(payload, dict)
+            submission = "outcome_" + hashlib.sha256(command.command_id.encode()).hexdigest()
+            digest = envelope_payload_digest(
+                payload, (), sender_id="historical-sender", conversation_id=old.conversation_id,
+                sequence=1, submission_id=submission, kind=EnvelopeKind.command_outcome,
+            )
+            evidence = QueuedEnvelope(
+                "historical-sender", old.conversation_id, 1, submission,
+                EnvelopeKind.command_outcome, payload, digest,
+            )
+            harness.endpoint.store.accept(
+                evidence,
+                lambda conn, row: (
+                    harness.endpoint.store.record_command_outcome_in_transaction(conn, outcome)
+                    or {}
+                ),
+                2,
+                identity=harness.mac.identity,
+            )
+            harness.mac.registry.outcomes[command.command_id] = outcome
+            harness.mac.registry._commands[command.command_id] = command
+            harness.mac.registry._outcomes_published.add(command.command_id)
+            waiter: asyncio.Future[CommandOutcome] = asyncio.get_running_loop().create_future()
+            harness.endpoint.pending_commands[command.command_id] = (command, waiter)
+            # The VPS process and turn stay alive. Only the transport reconnects.
+            generation = harness.mac.identity.connection_generation
+            await harness.endpoint.close()
+            assert await harness.system.is_running("c_scripted")
+            await harness.native.raise_ask()
+            pending = [
+                entry for entry in harness.mac.spool.pending()
+                if entry.kind is EnvelopeKind.backend_event
+            ]
+            assert len(pending) == 1
+            await eventually(
+                lambda: (
+                    harness.mac.identity.connection_generation > generation
+                    and harness.endpoint.ready
+                    and not harness.mac.spool.pending()
+                    and command.command_id in harness.mac.registry._confirmed_command_ids
+                ),
+                "Historical inventory did not confirm and unblock current live replay",
+            )
+            first = harness.endpoint.store.lookup_receipt(
+                pending[0].sender_id, pending[0].submission_id
+            )
+            assert first is not None and first.result.get("applied") is True
+            assert harness.events("permission_asked") == 1
+            assert await harness.endpoint.accept_envelope(pending[0], harness.mac.identity) == first
+            assert harness.events("permission_asked") == 1
+            assert not waiter.done()
+            assert harness.native.start_count == harness.native.prompt_count == 1
+            assert await harness.system.is_running("c_scripted")
         finally:
-            connection.close()
-        from dataclasses import replace
-
-        endpoint.store.begin_connection(replace(current, connection_generation=1), 1)
-        payload = as_object(outcome)
-        submission = "outcome_" + hashlib.sha256(command.command_id.encode()).hexdigest()
-        digest = envelope_payload_digest(
-            payload,
-            (),
-            sender_id="historical-sender",
-            conversation_id=old.conversation_id,
-            sequence=1,
-            submission_id=submission,
-            kind=EnvelopeKind.command_outcome,
-        )
-        evidence = QueuedEnvelope(
-            "historical-sender",
-            old.conversation_id,
-            1,
-            submission,
-            EnvelopeKind.command_outcome,
-            payload,
-            digest,
-        )
-        endpoint.store.accept(
-            evidence,
-            lambda conn, row: (
-                endpoint.store.record_command_outcome_in_transaction(conn, outcome) or {}
-            ),
-            2,
-            identity=replace(current, connection_generation=1),
-        )
-        from planner.executor.contracts import BackendEvent, BackendEventMethod
-
-        event = BackendEvent(
-            current_child,
-            BackendEventMethod.tool_call_started,
-            turn,
-            {
-                "tool_call_id": "offline-tool",
-                "title": "Offline proof",
-                "tool_kind": "shell",
-                "detail": "No native execution",
-            },
-        )
-        payload = as_object(event)
-        digest = envelope_payload_digest(
-            payload,
-            (),
-            sender_id="12345678123456781234567812345678",
-            conversation_id=current_child.conversation_id,
-            sequence=1,
-            submission_id="replay-tool",
-            kind=EnvelopeKind.backend_event,
-        )
-        envelope = QueuedEnvelope(
-            "12345678123456781234567812345678",
-            current_child.conversation_id,
-            1,
-            "replay-tool",
-            EnvelopeKind.backend_event,
-            payload,
-            digest,
-        )
-        result = await prove_historical_replay(
-            tmp_path, db_path, current, outcome, command, envelope
-        )
-        assert result["new_publications"] == 1
+            harness.endpoint.pending_commands.pop("old-stop", None)
+            await harness.close()
 
     asyncio.run(run())
+
 
 
 def test_authenticated_catalog_exchange_timeout_preserves_active_child(

@@ -180,7 +180,7 @@ class RemoteBackendChild:
             error_type = (
                 backend.BackendSpawnFailed
                 if operation is ChildOperation.start
-                else backend.PromptWriteFailed
+                else backend.PromptWriteRefused
             )
             raise error_type(str(error)) from error
         if result.disposition is CommandDisposition.uncertain:
@@ -215,6 +215,7 @@ class RemoteBackendChild:
                     "BackendSpawnFailed",
                     "SessionLoadFailed",
                     "PromptWriteFailed",
+                    "PromptWriteRefused",
                     "PermissionAnswerWriteFailed",
                     "UserInputAnswerWriteFailed",
                     "NeedsRebind",

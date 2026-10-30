@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from tests.support.conversation_test_loop import conversation_test_loop
 from tests.unit.test_conversation_system import (
     _FakeBackendChild,
     _Harness,
@@ -43,8 +44,11 @@ def durable(tmp_path: Path) -> Iterator[_Harness]:
     create_schema(conn)
     conn.close()
     harness = _Harness(path)
-    yield harness
-    asyncio.run(harness.system.shutdown())
+    with conversation_test_loop() as runner:
+        try:
+            yield harness
+        finally:
+            runner.run(harness.system.shutdown())
 
 
 async def _paused(store: ConversationStore) -> None:

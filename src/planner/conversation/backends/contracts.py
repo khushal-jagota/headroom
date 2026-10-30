@@ -15,7 +15,8 @@ provider boundary:
 
 - ``BackendSpawnFailed`` → ``backend_did_not_start``
 - ``SessionLoadFailed`` → ``session_did_not_load``
-- ``PromptWriteFailed`` → ``write_to_backend_failed``
+- ``PromptWriteRefused`` → ``write_to_backend_failed``
+- ``PromptWriteFailed`` → delivery uncertain; no automatic retry
 
 Anything else an adapter raises is a fault in the adapter, not a delivery impossibility,
 and is not translated into a refusal.
@@ -114,6 +115,10 @@ class SessionLoadFailed(BackendAdapterError):
     asked for has not loaded the session, and saying so here is what keeps that from being
     accepted in silence.
     """
+
+
+class PromptWriteRefused(BackendAdapterError):
+    """The adapter proved that this prompt was refused before any emission."""
 
 
 class PromptWriteFailed(BackendAdapterError):
@@ -499,7 +504,8 @@ class BackendChild(Protocol):
         false for every sender-authored turn, including one whose text is ``/compact``.
 
         Returns once the text is on the wire, not when the turn ends. Raises
-        ``PromptWriteFailed`` if the current write did not complete, or ``NeedsRebind``
+        ``PromptWriteRefused`` for proven non-emission, ``PromptWriteFailed`` if
+        the current write may have emitted, or ``NeedsRebind``
         if this child cannot safely accept a write that has not started.
         """
 

@@ -26,6 +26,9 @@ from planner.conversation.backends.contracts import (
     BackendPromptRejected,
     BackendSpawnFailed,
     BackendUserInputRequest,
+    NeedsRebind,
+    PromptWriteRefused,
+    SessionLoadFailed,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -808,17 +811,33 @@ class NativeChildRegistry:
                 )
             except (ValueError, BackendAdapterError) as error:
                 # A native write failure does not prove non-delivery.
+                refusal_type = next(
+                    (
+                        kind
+                        for kind in (
+                            BackendSpawnFailed, SessionLoadFailed, NeedsRebind, PromptWriteRefused
+                        )
+                        if isinstance(error, kind)
+                    ),
+                    None,
+                )
                 disposition = (
                     CommandDisposition.refused
-                    if type(error).__name__
-                    in ("BackendSpawnFailed", "SessionLoadFailed", "NeedsRebind")
+                    if refusal_type is not None
                     else CommandDisposition.uncertain
                 )
                 outcome = CommandOutcome(
                     command.command_id,
                     command.child,
                     disposition,
-                    {"error_type": type(error).__name__, "error_message": str(error)},
+                    {
+                        "error_type": (
+                            refusal_type.__name__
+                            if refusal_type is not None
+                            else type(error).__name__
+                        ),
+                        "error_message": str(error),
+                    },
                 )
             except Exception as error:
                 outcome = CommandOutcome(

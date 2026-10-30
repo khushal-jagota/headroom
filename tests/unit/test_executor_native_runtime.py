@@ -25,6 +25,9 @@ from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendPromptAccepted,
     BackendSpawnFailed,
+    PromptWriteFailed,
+    PromptWriteRefused,
+    SessionLoadFailed,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -342,6 +345,65 @@ def test_refusal_publication_and_receipts_block_exit_and_duplicates_keep_first_o
         assert await registry.execute_command(start) == first
         assert spool.pending_count() == 0
         assert native.starts == 0 and native.sink is None
+
+    asyncio.run(run())
+
+
+class _LocalSessionLoadRefused(SessionLoadFailed):
+    """The typed backend contract includes subclasses, independent of class spelling."""
+
+
+@pytest.mark.parametrize(
+    ("failure", "operation", "expected"),
+    [
+        (_LocalSessionLoadRefused("no session"), ChildOperation.start, CommandDisposition.refused),
+        (
+            PromptWriteRefused("not emitted"), ChildOperation.write_prompt,
+            CommandDisposition.refused,
+        ),
+        (
+            PromptWriteFailed("possibly emitted"), ChildOperation.write_prompt,
+            CommandDisposition.uncertain,
+        ),
+    ],
+)
+def test_native_typed_refusal_is_distinct_from_possible_emission(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    operation: ChildOperation,
+    expected: CommandDisposition,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        command = start
+        if operation is ChildOperation.write_prompt:
+            assert (
+                await registry.execute_command(start)
+            ).disposition is CommandDisposition.succeeded
+            command = ChildCommand(
+                "typed-prompt", start.child, operation, TurnToken("c_one", 1),
+                {
+                    "content": encode_value(text_message_content("once")),
+                    "sender_content": encode_value(text_message_content("once")),
+                    "sender_label": "Owner", "mode": "queue",
+                },
+            )
+        calls = 0
+
+        async def fail(*args: object, **kwargs: object) -> None:
+            nonlocal calls
+            calls += 1
+            raise failure
+
+        monkeypatch.setattr(native, operation.value, fail)
+        outcome = await registry.execute_command(command)
+        assert outcome.disposition is expected
+        if isinstance(failure, _LocalSessionLoadRefused):
+            assert outcome.result["error_type"] == "SessionLoadFailed"
+        assert spool.pending()[-1].payload == encode_value(outcome)
+        assert await registry.execute_command(command) == outcome
+        assert calls == 1
 
     asyncio.run(run())
 
