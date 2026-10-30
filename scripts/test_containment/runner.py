@@ -91,6 +91,14 @@ def strict_prefix(
         elif source.exists():
             reject_sockets(source)
             args += ["--ro-bind", directory, directory]
+    # Hosted setup-python and uv can place the interpreter outside /usr.
+    # Expose only that code prefix, never its account or toolcache parent.
+    interpreter_prefix = Path(sys.base_prefix).resolve(strict=True)
+    if not interpreter_prefix.is_relative_to("/usr"):
+        if interpreter_prefix in (Path("/"), Path("/home"), Path("/root"), Path("/opt")):
+            raise RuntimeError("interpreter code prefix is too broad for containment")
+        reject_sockets(interpreter_prefix)
+        args += ["--ro-bind", str(interpreter_prefix), str(interpreter_prefix)]
     for relative in (
         "passwd",
         "group",
