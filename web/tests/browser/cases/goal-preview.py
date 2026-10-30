@@ -1163,6 +1163,8 @@ def overview_checklist_remount(page, fixture, phone, output, mode):
     expect(toggle).to_have_attribute('aria-expanded', 'true')
     assert len(fixture.writes) == count + 2
     if output:
+        expect(checklist.get_by_text('Saving checklist…', exact=True)).to_have_count(0)
+        expect(checklist.get_by_role('button', name='2 completed', exact=True)).to_be_visible()
         card.screenshot(path=str(output / f'{mode}-overview.png'))
 
 
@@ -2044,6 +2046,8 @@ def native_goal_edits(browser, url):
             assert block("native-checklist")["title"] == "Nested readiness"
             assert block("native-checklist")["doneTitle"] == "Nested ready"
             if output:
+                expect(checklist.get_by_text("Saving checklist…", exact=True)).to_have_count(0)
+                expect(checklist.get_by_role("button", name="1 completed", exact=True)).to_be_visible()
                 checklist.screenshot(path=str(output / f"{mode}-complete.png"))
 
             # Artifact cards stay outside the editing action. This is one quick
