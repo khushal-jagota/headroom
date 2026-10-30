@@ -54,6 +54,10 @@ def test_http_scoped_read_exact_write_and_retired_corrections(tmp_path: Path, mo
             ))
             return source.current_context
         source.capture_context = capture
+        start = client.get(f"/api/tickets/{worker.id}/conversation/start-values")
+        assert start.status_code == 200, start.text
+        assert start.json()["workspace_folder"] == str(tmp_path)
+        assert start.json()["workspace_path_policy"] == "legacy_home_mapping"
         refreshed = client.post("/api/conversation/backends?refresh=true", json={"ticket_id": worker.id})
         assert refreshed.status_code == 200, refreshed.text
         assert source.calls

@@ -1346,18 +1346,13 @@ def _delivered_message_json(
 
 
 def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict:
-    """What a start resolved to, as far as anybody looking at it can choose.
-
-    The backend, the model and the reasoning effort, under the names a started
-    conversation reports them under — so a panel reads the same three fields whether it is
-    asking what a conversation runs on or what one would. The rest of a resolved start is
-    nobody's choice: the role an agent is told to be, the folder it runs in and what it
-    may reach are the same however the person answers, so nothing shows them.
-    """
+    """Expose choices and their canonical workspace for advisory-view invalidation."""
     return {
         "backend_key": values.backend_key.value,
         "model": values.model,
         "reasoning_effort": values.reasoning_effort,
+        "workspace_folder": str(values.workspace_folder),
+        "workspace_path_policy": values.workspace_path_policy.value,
     }
 
 

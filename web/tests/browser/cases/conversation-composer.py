@@ -440,6 +440,31 @@ def run(browser, urls):
         page.evaluate("window.__pickerAvailability()")
         expect(picker.locator(".model-picker-summary")).to_have_text("Claude is not installed on Mac.")
         expect(trigger).to_have_text("sonnet")
+    # Normal choices reuse this host and real picker. The stress case above remains.
+    # These captures show reference tokens/retained recipes, never live discovery.
+    for backend in ["codex", "claude"]:
+        for width, height in [(1440, 1000), (390, 844)]:
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(urls[0] + "?picker&normal=" + backend, wait_until="domcontentloaded")
+            picker = page.locator(".picker-proof > [data-conversation-model-picker]")
+            trigger = picker.locator("[data-conversation-picker-trigger]")
+            trigger.click()
+            labels = picker.locator(".model-picker-choice-name").all_inner_texts()
+            assert len(labels) == len(set(labels)), labels
+            if backend == "claude":
+                assert "Opus 5.5" in labels and "Opus 5" in labels
+                model = "claude-opus-5"
+            else:
+                assert "GPT 6.1 Terra" in labels and "GPT 6 Astra" in labels
+                model = "gpt-6.1-terra"
+            output = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+            if output:
+                page.screenshot(path=str(Path(output) / f"normal-{backend}-{width}.png"))
+            picker.locator(f'[data-conversation-picker-choice="{model}"]').click()
+            picker.get_by_role("option", name="high", exact=True).click()
+            assert page.evaluate("window.__pickerChoices.at(-1)") == {"model": model, "effort": "high"}
+            if output:
+                page.screenshot(path=str(Path(output) / f"normal-{backend}-selected-{width}.png"))
     # Missing/conflicting current-selection markers do not erase caller-owned intent.
     for selection in ["unobserved", "conflict"]:
         page.goto(urls[0] + "?picker&selection=" + selection, wait_until="domcontentloaded")

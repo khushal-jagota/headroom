@@ -131,7 +131,8 @@
   });
   $effect(() => {
     const value = section?.detail.employee_configuration_editable ? section.detail : null;
-    untrack(() => setupModelChoices.sync(value));
+    const workspace = conversationStartValues.data;
+    untrack(() => setupModelChoices.sync(value, workspace));
   });
   onDestroy(() => setupModelChoices.dispose());
   // A changed public control tuple needs its matching exact detail/configuration.
@@ -632,7 +633,6 @@
       >
         <div class="conversation-column">
           <LiveConversation locale={masthead.locale}
-            launchValidation={detail.launch_validation ?? null}
             bind:conversationState
             conversationId={shownConversationId}
             bind:selectedPastConversationId

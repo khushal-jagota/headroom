@@ -6,6 +6,7 @@ const ticket = {
   id: "t_setup", record_sha256: "record-1", locale: "macos" as const,
   employee_backend: "claude", employee_launch_model: "opus", employee_launch_reasoning_effort: "high"
 };
+const workspace = {workspace_folder:"/project", workspace_path_policy:"native_absolute" as const};
 const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -13,19 +14,22 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-it("retains snapshots during refresh and rejects a late response after destination change", async () => {
+it("retains snapshots during refresh and rejects a late response after canonical workspace change", async () => {
   const pending: ReturnType<typeof deferred<readonly BackendSnapshot[]>>[] = [];
   const read = vi.fn(() => { const next = deferred<readonly BackendSnapshot[]>(); pending.push(next); return next.promise; });
   const save = vi.fn(async () => {});
   let state = initialTicketSetupChoicesState();
   const controller = createTicketSetupModelChoices({read, save, onChange: value => {state = value;}});
-  controller.sync(ticket);
+  controller.sync(ticket, workspace);
+  await controller.chooseCustomModel("provider-next", null);
+  expect(state.loading).toBe(true);
+  save.mockClear();
   const first: BackendSnapshot[] = [];
   pending[0].resolve(first); await settle();
   const refresh = controller.retry();
   expect(state.response).toBe(first);
   expect(read).toHaveBeenLastCalledWith({ticket_id: ticket.id}, true);
-  controller.sync({...ticket, locale: "vps"});
+  controller.sync(ticket, {...workspace, workspace_folder:"/other-project"});
   pending[1].resolve([]); await refresh;
   expect(state.response).toBeNull();
   expect(save).not.toHaveBeenCalled();
@@ -37,7 +41,7 @@ it("keeps provider-specific deliberate intent without reads on model, effort, or
   const read = vi.fn(async () => []), save = vi.fn(async () => {});
   let state = initialTicketSetupChoicesState();
   const controller = createTicketSetupModelChoices({read, save, onChange: value => {state = value;}});
-  controller.sync(ticket); await settle();
+  controller.sync(ticket, workspace); await settle();
   await controller.chooseCustomModel("sonnet", null);
   await controller.previewBackend("codex");
   await controller.chooseCustomModel("gpt-6.1-terra", "ultra");
@@ -55,8 +59,12 @@ it("preserves exact custom intent after catalog failure and restores it after a 
   const save = vi.fn(async () => {});
   let state = initialTicketSetupChoicesState();
   const controller = createTicketSetupModelChoices({read, save, onChange: value => {state = value;}});
-  controller.sync(ticket); await settle();
+  controller.sync(ticket, workspace); await settle();
   await controller.chooseCustomModel("provider-next[1m]", "future-effort");
+  controller.sync({...ticket, record_sha256:"record-2", employee_launch_model:"provider-next[1m]", employee_launch_reasoning_effort:"future-effort"}, workspace);
+  await settle();
+  expect(read).toHaveBeenCalledTimes(1);
+  await controller.previewBackend("claude");
   expect(save).toHaveBeenLastCalledWith(ticket.id, {
     employee_backend:"claude", employee_launch_model:"provider-next[1m]",
     employee_launch_reasoning_effort:"future-effort", selection_kind:"legacy_unclassified"

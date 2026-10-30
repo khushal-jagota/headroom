@@ -1,5 +1,5 @@
 import type { EmployeeConfigurationSnapshot, TicketDetail } from "../types";
-import type { BackendSnapshot, ConversationBackendKey } from "./wire";
+import type { BackendSnapshot, ConversationBackendKey, ConversationStartValues } from "./wire";
 import type { SelectionKind, TicketBackendScope } from "./modelResolutionWire";
 
 export type SetupConfigurationWrite = EmployeeConfigurationSnapshot & { selection_kind: SelectionKind };
@@ -26,6 +26,7 @@ export function createTicketSetupModelChoices(dependencies: {
   let state = initialTicketSetupChoicesState();
   let current: SetupTicket | null = null;
   let signature = "";
+  let scopeKey = "";
   let generation = 0;
   let disposed = false;
   const intents = new Map<string, SetupConfigurationWrite>();
@@ -37,48 +38,49 @@ export function createTicketSetupModelChoices(dependencies: {
   async function read(request: TicketBackendScope, refresh = false): Promise<void> {
     if (disposed || !current) return;
     const captured = { ...request };
-    const source = signature;
+    const source = scopeKey;
     const attempt = ++generation;
     publish({ request: captured, loading: true, error: null });
     try {
       const response = await dependencies.read(captured, refresh);
-      if (!disposed && generation === attempt && signature === source) publish({ response });
+      if (!disposed && generation === attempt && scopeKey === source) publish({ response });
     } catch (error) {
-      if (!disposed && generation === attempt && signature === source) publish({ error });
+      if (!disposed && generation === attempt && scopeKey === source) publish({ error });
     } finally {
-      if (!disposed && generation === attempt && signature === source) publish({ loading: false });
+      if (!disposed && generation === attempt && scopeKey === source) publish({ loading: false });
     }
   }
   async function mutate(action: () => Promise<unknown>, intent?: SetupConfigurationWrite): Promise<void> {
     if (disposed || state.saving || !current) return;
-    const source = signature;
+    const source = scopeKey;
     const previousIntent = state.intent;
-    ++generation;
-    publish({ saving: true, loading: false, saveError: null, ...(intent ? {intent} : {}) });
+    publish({ saving: true, saveError: null, ...(intent ? {intent} : {}) });
     try {
       await action();
-      if (intent) intents.set(intent.employee_backend, intent);
+      if (!disposed && source === scopeKey && intent) intents.set(intent.employee_backend, intent);
     } catch (saveError) {
-      if (!disposed && source === signature) publish({ saveError, intent: previousIntent });
+      if (!disposed && source === scopeKey) publish({ saveError, intent: previousIntent });
     } finally {
-      if (!disposed) publish({ saving: false });
+      if (!disposed && source === scopeKey) publish({ saving: false });
     }
   }
   return {
-    sync(ticket: SetupTicket | null): void {
+    sync(ticket: SetupTicket | null, workspace?: Pick<ConversationStartValues, "workspace_folder" | "workspace_path_policy">): void {
+      const nextScope = JSON.stringify([ticket?.id, ticket?.locale, workspace?.workspace_folder, workspace?.workspace_path_policy]);
       const next = ticket ? JSON.stringify([ticket.id, ticket.record_sha256, ticket.locale,
-        ticket.employee_backend, ticket.employee_launch_model, ticket.employee_launch_reasoning_effort, ticket.launch_validation]) : "";
+        ticket.employee_backend, ticket.employee_launch_model, ticket.employee_launch_reasoning_effort, ticket.launch_validation, nextScope]) : "";
       if (disposed || next === signature) return;
       const configurationChanged = current?.id !== ticket?.id || current?.employee_backend !== ticket?.employee_backend
         || current?.employee_launch_model !== ticket?.employee_launch_model
         || current?.employee_launch_reasoning_effort !== ticket?.employee_launch_reasoning_effort;
-      const scopeChanged = current?.id !== ticket?.id || current?.locale !== ticket?.locale;
+      const scopeChanged = scopeKey !== nextScope;
+      scopeKey = nextScope;
       if (scopeChanged) intents.clear();
       signature = next;
       current = ticket;
-      ++generation;
-      publish({ ...(scopeChanged ? {response: null, request: null} : {}), loading: false, error: null, saveError: null, ...(configurationChanged ? {intent: null} : {}) });
-      if (ticket && (scopeChanged || state.response === null)) void read({ ticket_id: ticket.id });
+      if (scopeChanged) ++generation;
+      publish({ ...(scopeChanged ? {response: null, request: null, saving: false, loading: false, error: null} : {}), saveError: null, ...(configurationChanged ? {intent: null} : {}) });
+      if (ticket && scopeChanged && workspace?.workspace_folder !== undefined) void read({ ticket_id: ticket.id });
     },
     retry(): Promise<void> {
       return state.request ? read(state.request, true) : Promise.resolve();

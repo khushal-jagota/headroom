@@ -19,6 +19,10 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
   import { connectionStatus } from "../src/lib/changeStream";
 
+  const scopeProof = new URLSearchParams(location.search).has('scope-proof');
+  let startValues = $state({backend_key:"codex" as const, model:"gpt-test", reasoning_effort:null as string|null, workspace_folder:"/project", workspace_path_policy:"native_absolute" as const});
+  (window as any).__scopeWorkspace = (folder:string) => startValues = {...startValues, workspace_folder:folder};
+  let scopedConversationId = $state<string|null>(null);
   let shown = $state(true);
   (window as any).__showConversation = (value: boolean) => shown = value;
   let theServerAnswers = $state(false);
@@ -31,6 +35,11 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
 
   async function sendMessage(body: any): Promise<any> {
     (window as any).__sends = [...((window as any).__sends ?? []), body];
+    if (scopeProof) {
+      startValues = {...startValues, model:body.model_change ?? startValues.model, reasoning_effort:body.reasoning_effort_change};
+      scopedConversationId = "conversation-one";
+      return {conversation_id:"conversation-one",fate:"started"};
+    }
     const delivery = (window as any).__delivery;
     if (delivery) {
       await new Promise<void>(resolve => {(window as any).__resolveDelivery = resolve;});
@@ -46,7 +55,9 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
 
 <div style="height:650px;width:760px;margin:20px auto;display:flex;flex-direction:column">
 {#if shown}<LiveConversation
-  conversationId={new URLSearchParams(location.search).has('unstarted')?null:'conversation-one'}
+  conversationId={scopeProof ? scopedConversationId : new URLSearchParams(location.search).has('unstarted')?null:'conversation-one'}
+  uploadOwner={scopeProof ? {kind:"ticket",id:"scope-fixture"} : null}
+  startValues={scopeProof ? startValues : null}
   composerPlaceholder={new URLSearchParams(location.search).get('placeholder')??undefined}
   persistenceKey="unanswered-send-fixture"
   label="Worker"
@@ -131,8 +142,16 @@ let theServerIsDown = window.sessionStorage.getItem("server-is-down") === "yes";
   theServerIsDown = down;
   window.sessionStorage.setItem("server-is-down", down ? "yes" : "no");
 };
+(globalThis as any).__catalogReads = 0;
 (globalThis as any).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
+  if (/\/api\/conversation\/backends(?:\?|$)/.test(url) && init?.method === "POST") {
+    const number = ++(globalThis as any).__catalogReads;
+    if (number === 1) throw new Error("Fixture catalog unavailable");
+    const response = (model:string) => Response.json({backends:[{backend_key:"codex",installed:true,identity:{status:"authenticated"},available_models:[{model_id:model,display_name:model,enabled:true,reasoning_effort_options:["high"]}],reasoning_effort_options:["high"],default_model_id:null,default_reasoning_effort:null,diagnoses:[]}]});
+    if (number === 2) return await new Promise<Response>(resolve => {(globalThis as any).__oldScopeReply = () => resolve(response("old-workspace-model"));});
+    return response("current-workspace-model");
+  }
   if (theServerIsDown) throw new TypeError("Failed to fetch");
   if (/conversations\/conversation-one\/view\/body\/content/.test(url))return new Response(streamingText);
   if (/conversations\/conversation-one\/view\/receipts\?/.test(url)) {
