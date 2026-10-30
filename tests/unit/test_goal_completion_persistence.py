@@ -112,7 +112,9 @@ def test_item_deadline_changes_preserve_saved_completion_selection_and_active_st
     reopened = edit(tmp_db, changed, page=document, active=True)
     assert not effective_completion(reopened.binary_checked, reopened.page, "delivery")
     assert reopened.active and reopened.deadline == initial.deadline
-    assert selected_checklist(reopened.page, "delivery")["items"][0]["deadline"] == "2026-10-30"
+    reopened_checklist = selected_checklist(reopened.page, "delivery")
+    assert reopened_checklist is not None
+    assert reopened_checklist["items"][0]["deadline"] == "2026-10-30"
     stale_document = deepcopy(changed.page)
     stale_checklist = selected_checklist(stale_document, "delivery")
     assert stale_checklist is not None
