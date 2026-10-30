@@ -39,6 +39,7 @@ from planner.executor.contracts import (
     ChildOperation,
     ChildReference,
     CommandDisposition,
+    decode_command_arguments,
 )
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
@@ -53,7 +54,9 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
     async def run() -> None:
         actual: list[ScriptedTransport] = []
 
-        def client_factory(options: ClaudeAgentOptions) -> _ObservedClaudeSdkClient:
+        def client_factory(
+            options: ClaudeAgentOptions, *, emission_check: EmissionCheck | None = None
+        ) -> _ObservedClaudeSdkClient:
             inner = ScriptedTransport(options)
             actual.append(inner)
             return _ObservedClaudeSdkClient(options, _ClaudeProtocolTransport(inner))
@@ -89,11 +92,14 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
                 reference,
                 ChildOperation.start,
                 None,
-                {
-                    "resolved_start": encode_value(resolved),
-                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                    "admission_expectation": encode_value(expectation),
-                },
+                decode_command_arguments(
+                    ChildOperation.start,
+                    {
+                        "resolved_start": encode_value(resolved),
+                        "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                        "admission_expectation": encode_value(expectation),
+                    },
+                ),
             )
             assert (
                 await registry.execute_command(start)
@@ -104,13 +110,16 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
                 reference,
                 ChildOperation.write_prompt,
                 turn,
-                {
-                    "content": encode_value(text_message_content("synthetic")),
-                    "sender_content": encode_value(text_message_content("synthetic")),
-                    "sender_label": "Owner",
-                    "mode": PromptDeliveryMode.queue.value,
-                    "admission_expectation": encode_value(replace(expectation, turn=turn)),
-                },
+                decode_command_arguments(
+                    ChildOperation.write_prompt,
+                    {
+                        "content": encode_value(text_message_content("synthetic")),
+                        "sender_content": encode_value(text_message_content("synthetic")),
+                        "sender_label": "Owner",
+                        "mode": PromptDeliveryMode.queue.value,
+                        "admission_expectation": encode_value(replace(expectation, turn=turn)),
+                    },
+                ),
             )
             outcome = await registry.execute_command(prompt)
             assert outcome.disposition is CommandDisposition.succeeded
@@ -128,13 +137,16 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
                 reference,
                 ChildOperation.steer,
                 turn,
-                {
-                    "content": encode_value(text_message_content("never emitted")),
-                    "sender_label": "Owner",
-                    "admission_expectation": encode_value(
-                        replace(expectation, turn=TurnToken(reference.conversation_id, 2))
-                    ),
-                },
+                decode_command_arguments(
+                    ChildOperation.steer,
+                    {
+                        "content": encode_value(text_message_content("never emitted")),
+                        "sender_label": "Owner",
+                        "admission_expectation": encode_value(
+                            replace(expectation, turn=TurnToken(reference.conversation_id, 2))
+                        ),
+                    },
+                ),
             )
             assert (
                 await registry.execute_command(bad_turn)
@@ -159,11 +171,14 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
                 reference,
                 ChildOperation.steer,
                 turn,
-                {
-                    "content": encode_value(text_message_content("never emitted")),
-                    "sender_label": "Owner",
-                    "admission_expectation": encode_value(replace(expectation, turn=turn)),
-                },
+                decode_command_arguments(
+                    ChildOperation.steer,
+                    {
+                        "content": encode_value(text_message_content("never emitted")),
+                        "sender_label": "Owner",
+                        "admission_expectation": encode_value(replace(expectation, turn=turn)),
+                    },
+                ),
             )
             refused = await registry.execute_command(steer)
             assert refused.disposition is CommandDisposition.succeeded

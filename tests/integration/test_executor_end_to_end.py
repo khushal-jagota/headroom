@@ -20,6 +20,7 @@ import pytest
 from tests.support.executor_control import paused_outbox
 from tests.support.executor_https import HttpsProxy, serve_executor_app
 
+from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
@@ -27,6 +28,7 @@ from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendPromptAccepted,
     BackendUserInputRequest,
+    EmissionCheck,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -57,6 +59,7 @@ from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
+from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
@@ -76,8 +79,12 @@ from planner.executor.contracts import (
     OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
+    StartRun,
+    Steer,
     WireMessage,
     WireMessageKind,
+    WritePrompt,
+    decode_command_arguments,
 )
 from planner.executor.mac import MacExecutor
 from planner.executor.publication import PublicationReceiver
@@ -101,7 +108,12 @@ class ScriptedNativeChild:
         self.emit_early_event = False
 
     async def start(
-        self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+        self,
+        resolved_start: ResolvedConversationStart,
+        *,
+        vendor_session_cursor: str | None,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         del resolved_start, vendor_session_cursor
         self.start_count += 1
@@ -618,7 +630,9 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
         clients: list[_ScriptedClaudeSdkClient] = []
         cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
 
-        def client_factory(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
+        def client_factory(
+            options: ClaudeAgentOptions, *, emission_check: EmissionCheck | None = None
+        ) -> _ScriptedClaudeSdkClient:
             if clients:
                 assert clients[-1].disconnected, "replacement started before exact cleanup"
             client = _ScriptedClaudeSdkClient(options)
@@ -740,9 +754,9 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                     command
                     for command in harness.mac.registry._commands.values()
                     if command.operation is ChildOperation.write_prompt
-                    and command.arguments.get("sender_label") == "Chief"
-                    and command.arguments.get("model_change") == "claude-new"
-                    and command.arguments.get("reasoning_effort_change")
+                    and getattr(command.arguments, "sender_label", None) == "Chief"
+                    and getattr(command.arguments, "model_change", None) == "claude-new"
+                    and getattr(command.arguments, "reasoning_effort_change", None)
                     == ("low" if index == 1 else "high")
                 ]
                 assert len(writes) == 2
@@ -752,10 +766,8 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 assert accepted.disposition is CommandDisposition.succeeded
                 assert refused.child == old_reference
                 assert accepted.child != old_reference
-                assert writes[0].arguments["content"] == writes[1].arguments["content"]
-                assert (
-                    writes[0].arguments["sender_content"] == writes[1].arguments["sender_content"]
-                )
+                assert writes[0].arguments.content == writes[1].arguments.content
+                assert writes[0].arguments.sender_content == writes[1].arguments.sender_content
                 assert all(
                     harness.mac.registry.ask((outcome.command_id,))[0].outcome == outcome
                     for outcome in (refused, accepted)
@@ -895,7 +907,8 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                 ChildOperation.write_prompt,
             ]
             for command in commands:
-                expectation = command.arguments["admission_expectation"]
+                assert isinstance(command.arguments, (StartRun, WritePrompt, Steer))
+                expectation = encode_value(command.arguments.admission_expectation)
                 assert isinstance(expectation, dict)
                 assert expectation["conversation_id"] == conversation_id
                 selection = expectation["selection"]
@@ -957,8 +970,10 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                 if command.child.conversation_id == conversation_id
                 and command.operation is ChildOperation.write_prompt
             ]
-            assert writes[-1].arguments["model_change"] == "gpt-6.1-terra"
-            assert writes[-1].arguments["reasoning_effort_change"] == "future-effort"
+            assert isinstance(writes[-1].arguments, WritePrompt)
+            assert encode_value(writes[-1].arguments.model_change) == "gpt-6.1-terra"
+            assert isinstance(writes[-1].arguments, WritePrompt)
+            assert encode_value(writes[-1].arguments.reasoning_effort_change) == "future-effort"
             print(
                 f"synthetic native refresh-to-first-send: {first_delivery_at - refreshed_at:.3f}s; "
                 f"change-to-second-send: {time.monotonic() - first_delivery_at:.3f}s"
@@ -1704,8 +1719,9 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
             assert fate.model_validation is not None
             assert fate.model_validation["reason"] == "context_changed"
             assert fate.model_validation["evidence"] is None
+            assert isinstance(commands[0].arguments, (StartRun, WritePrompt, Steer))
             refused = TypeAdapter(AdmissionExpectation).validate_python(
-                commands[0].arguments["admission_expectation"]
+                commands[0].arguments.admission_expectation
             )
             assert refused.executor_identity is not None
             assert refused.executor_identity.connection_generation == generation
@@ -1722,8 +1738,9 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
             assert state is not None and state.running_turn is not None
             fresh = state.running_turn.launch_validation
             assert fresh is not None and fresh.evidence is None
+            assert isinstance(commands[-1].arguments, (StartRun, WritePrompt, Steer))
             admitted = TypeAdapter(AdmissionExpectation).validate_python(
-                commands[-1].arguments["admission_expectation"]
+                encode_value(commands[-1].arguments.admission_expectation)
             )
             assert admitted.executor_identity == harness.mac.identity
             assert admitted.attempt_id != refused.attempt_id
@@ -1944,19 +1961,25 @@ def test_concurrent_identical_inputs_keep_distinct_publications(
                         f"input_command_{index}",
                         child,
                         ChildOperation.write_prompt,
-                        None,
-                        {
-                            "content": encode_value(
-                                (
-                                    MessageFile(
-                                        kept.stored_file_id,
-                                        "application/octet-stream",
-                                        "input.bin",
-                                        len(contents),
-                                    ),
-                                )
-                            )
-                        },
+                        TurnToken(conversation_id, 1),
+                        decode_command_arguments(
+                            ChildOperation.write_prompt,
+                            {
+                                "sender_content": [],
+                                "sender_label": "Owner",
+                                "mode": "queue",
+                                "content": encode_value(
+                                    (
+                                        MessageFile(
+                                            kept.stored_file_id,
+                                            "application/octet-stream",
+                                            "input.bin",
+                                            len(contents),
+                                        ),
+                                    )
+                                ),
+                            },
+                        ),
                     )
                 )
                 paths.append(
@@ -2426,21 +2449,24 @@ def test_input_receipt_must_validate_before_command_dispatch(
                 harness.ask.child,
                 ChildOperation.write_prompt,
                 harness.native.turn,
-                {
-                    "content": encode_value(
-                        (
-                            MessageFile(
-                                kept.stored_file_id,
-                                "application/octet-stream",
-                                "input.bin",
-                                len(contents),
-                            ),
-                        )
-                    ),
-                    "sender_content": encode_value(text_message_content("Inspect the bytes")),
-                    "sender_label": "Test",
-                    "mode": "queue",
-                },
+                decode_command_arguments(
+                    ChildOperation.write_prompt,
+                    {
+                        "content": encode_value(
+                            (
+                                MessageFile(
+                                    kept.stored_file_id,
+                                    "application/octet-stream",
+                                    "input.bin",
+                                    len(contents),
+                                ),
+                            )
+                        ),
+                        "sender_content": encode_value(text_message_content("Inspect the bytes")),
+                        "sender_label": "Test",
+                        "mode": "queue",
+                    },
+                ),
             )
             target = (
                 harness.mac.paths.root
@@ -3142,7 +3168,11 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
         try:
             reference = harness.ask.child
             command = ChildCommand(
-                "reconnect-proof", reference, ChildOperation.cancel_running_turn, None, {}
+                "reconnect-proof",
+                reference,
+                ChildOperation.cancel_running_turn,
+                None,
+                decode_command_arguments(ChildOperation.cancel_running_turn, {}),
             )
             mac_send = harness.mac._send
             # Commands use the shared send lock directly; observe at the writer boundary.

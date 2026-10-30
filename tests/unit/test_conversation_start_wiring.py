@@ -27,6 +27,7 @@ from planner.conversation.contracts import (
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
+    NativeMessageOperation,
     PromptDeliveryFate,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
@@ -111,7 +112,6 @@ class _LinkWatchingConversationSystem:
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         return await self._system.run_if_idle(conversation_id, operation)
 
-
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         self.start_requests.append(request)
         await self._system.start_conversation(request)
@@ -137,6 +137,7 @@ class _LinkWatchingConversationSystem:
         recipient: Principal | None = None,
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -154,6 +155,7 @@ class _LinkWatchingConversationSystem:
             recipient=recipient,
             reply_requested=reply_requested,
             recovery_references=recovery_references,
+            native_message_operation=native_message_operation,
         )
 
     async def send_with_receipt(
@@ -175,6 +177,7 @@ class _LinkWatchingConversationSystem:
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> AddressedPromptDeliveryReceipt:
         return await self._system.send_with_receipt(
             conversation_id,
@@ -193,6 +196,7 @@ class _LinkWatchingConversationSystem:
             reply_requested=reply_requested,
             recovery_references=recovery_references,
             record_refusal=record_refusal,
+            native_message_operation=native_message_operation,
         )
 
     async def record_message_to_owner(
@@ -206,6 +210,7 @@ class _LinkWatchingConversationSystem:
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         credit_explicit_reply: bool = True,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> None:
         await self._system.record_message_to_owner(
             conversation_id,
@@ -216,6 +221,7 @@ class _LinkWatchingConversationSystem:
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             credit_explicit_reply=credit_explicit_reply,
+            native_message_operation=native_message_operation,
         )
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:

@@ -10,10 +10,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
-from dataclasses import asdict, dataclass
+from collections.abc import Callable
+from dataclasses import asdict
 from functools import partial
 from typing import cast
 
@@ -23,7 +21,8 @@ from planner.conversation.api import delivery_fate_json
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import (
     ConversationSystem,
-    PromptDeliveryFate,
+    NativeMessageAdmission,
+    NativeMessageOperation,
     PromptDeliveryInjected,
     PromptDeliveryStarted,
 )
@@ -50,39 +49,7 @@ from planner.executor.transfers import settled_io
 from planner.message_delivery import api, service
 from planner.message_delivery.contracts import MessageDeliveryMode
 
-
-# The context reaches ConversationStore's shielded asyncio.to_thread append. The
-# sender ID check prevents a background queued promotion from crediting another op.
-@dataclass(slots=True)
-class _Operation:
-    sender_id: str
-    submission_id: str
-    composed_confirmed: bool = False
-
-
-_OPERATION: ContextVar[_Operation | None] = ContextVar("executor_native_message", default=None)
 type RecipientResolver = Callable[[sqlite3.Connection, CliWrite, Principal], Principal]
-
-
-@dataclass(frozen=True, slots=True)
-class _Admission:
-    fate: PromptDeliveryFate
-    composed_content_delivered: bool
-
-
-_ADMISSION: ContextVar[_Admission | None] = ContextVar("executor_native_admission", default=None)
-
-
-@contextmanager
-def native_message_admission(
-    fate: PromptDeliveryFate, *, composed_content_delivered: bool
-) -> Iterator[None]:
-    """Core supplies the actual native result at its canonical append boundary."""
-    token = _ADMISSION.set(_Admission(fate, composed_content_delivered))
-    try:
-        yield
-    finally:
-        _ADMISSION.reset(token)
 
 
 def _json(value: object) -> str:
@@ -95,15 +62,6 @@ def _principal_json(principal: Principal) -> str:
 
 def _now_ms() -> int:
     return time.time_ns() // 1_000_000
-
-
-@contextmanager
-def _operation_context(envelope: QueuedEnvelope) -> Iterator[None]:
-    token = _OPERATION.set(_Operation(envelope.sender_id, envelope.submission_id))
-    try:
-        yield
-    finally:
-        _OPERATION.reset(token)
 
 
 def _lookup(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> sqlite3.Row | None:
@@ -158,21 +116,18 @@ def _save_result(
     )
 
 
-def native_reply_was_composed() -> bool | None:
-    operation = _OPERATION.get()
-    return None if operation is None else operation.composed_confirmed
-
-
 def _message_operations(
     connection: sqlite3.Connection,
     conversation_id: str,
     submission_id: str | None,
     sender: Principal | None,
     recipient: Principal | None,
+    *,
+    native_message_operation: NativeMessageOperation | None = None,
 ) -> tuple[sqlite3.Row, ...]:
     if submission_id is None or sender is None or recipient is None:
         return ()
-    operation = _OPERATION.get()
+    operation = native_message_operation
     if operation is not None and operation.submission_id == submission_id:
         row = connection.execute(
             "SELECT * FROM executor_native_messages WHERE sender_id=? AND submission_id=?",
@@ -247,10 +202,15 @@ def interrupt_native_messages_in_transaction(connection: sqlite3.Connection) -> 
 
 
 def record_native_message_event_in_transaction(
-    connection: sqlite3.Connection, conversation_id: str, payload: ConversationEventPayload
+    connection: sqlite3.Connection,
+    conversation_id: str,
+    payload: ConversationEventPayload,
+    *,
+    native_message_operation: NativeMessageOperation | None = None,
+    native_message_admission: NativeMessageAdmission | None = None,
 ) -> None:
     """Settle immediate or held delivery with its canonical event and reply credit."""
-    admission = _ADMISSION.get()
+    admission = native_message_admission
     composed = False
     if isinstance(payload, MessageToOwnerEventPayload):
         fate: JsonObject = {"fate": "recorded"}
@@ -272,7 +232,12 @@ def record_native_message_event_in_transaction(
     else:
         return
     for row in _message_operations(
-        connection, conversation_id, payload.sender_message_id, payload.sender, payload.recipient
+        connection,
+        conversation_id,
+        payload.sender_message_id,
+        payload.sender,
+        payload.recipient,
+        native_message_operation=native_message_operation,
     ):
         result: JsonObject = {
             "target": cast(JsonObject, json.loads(row["recipient_json"])),
@@ -280,7 +245,7 @@ def record_native_message_event_in_transaction(
             **fate,
         }
         _save_result(connection, row, result, composed_content_delivered=composed)
-        operation = _OPERATION.get()
+        operation = native_message_operation
         if (
             composed
             and operation is not None
@@ -387,17 +352,19 @@ async def deliver_native_message(
 
         connection = connect(store.db_path)
         try:
-            with _operation_context(envelope):
-                delivered = await service.send_message(
-                    conversations,
-                    connection,
-                    clock,
-                    RequestContext(principal),
-                    recipient,
-                    message,
-                    mode,
-                    sender_message_id=envelope.submission_id,
-                )
+            delivered = await service.send_message(
+                conversations,
+                connection,
+                clock,
+                RequestContext(principal),
+                recipient,
+                message,
+                mode,
+                sender_message_id=envelope.submission_id,
+                native_message_operation=NativeMessageOperation(
+                    envelope.sender_id, envelope.submission_id
+                ),
+            )
             result = cast(JsonObject, api._result_json(delivered))
         except PlannerError as error:
             result = cast(JsonObject, error.to_payload())

@@ -5,9 +5,13 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from planner.conversation.admission.contracts import AdmissionExpectation
 from uuid import uuid4
 
+from planner.conversation.admission.service import bind_command
 from planner.conversation.backends import contracts as backend
 from planner.conversation.contracts import (
     PromptDeliveryMode,
@@ -15,22 +19,30 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
     WorkspacePathPolicy,
 )
-from planner.conversation.launch_intent import reasoning_effort_is_set
+from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.contracts import Principal
 from planner.executor.codec import decode_prompt_result, decode_provider_submission, encode_value
 from planner.executor.contracts import (
+    AnswerPermission,
+    AnswerUserInput,
+    CancelTurn,
     CanonicalSkillSnapshot,
     ChildCommand,
+    ChildCommandArguments,
     ChildOperation,
     ChildReference,
     CommandDisposition,
     CommandOutcome,
     JsonObject,
     RemoteInputTransferFailed,
+    StartRun,
+    Steer,
+    StopRun,
     WireMessage,
     WireMessageKind,
+    WritePrompt,
 )
 from planner.executor.skills import validate_skill_snapshot
 from planner.executor.wire import ProtocolRefused, encode_message
@@ -133,25 +145,15 @@ class RemoteBackendChild:
         return self.initial_history_complete and not may_have_sent and not self.prompt_accepted
 
     async def _call(
-        self, operation: ChildOperation, turn: backend.TurnToken | None = None, **arguments: Any
+        self, arguments: ChildCommandArguments, turn: backend.TurnToken | None = None
     ) -> JsonObject:
-        if operation in (ChildOperation.start, ChildOperation.write_prompt, ChildOperation.steer):
-            from planner.conversation.admission.service import (
-                bind_command,
-                current_admission_expectation,
-            )
-
-            expectation = current_admission_expectation()
-            if expectation is not None:
-                arguments["admission_expectation"] = bind_command(
-                    expectation, child=self.reference, turn=turn
-                )
+        operation = ChildOperation(arguments.kind)
         command = ChildCommand(
             command_id=str(uuid4()),
             child=self.reference,
             operation=operation,
             turn=turn,
-            arguments={key: encode_value(value) for key, value in arguments.items()},
+            arguments=arguments,
         )
         if operation in (ChildOperation.start, ChildOperation.write_prompt):
             if self.initial_delivery_cancelled:
@@ -229,7 +231,12 @@ class RemoteBackendChild:
         return result.result
 
     async def start(
-        self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+        self,
+        resolved_start: ResolvedConversationStart,
+        *,
+        vendor_session_cursor: str | None,
+        emission_check: backend.EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         try:
             snapshot = self._skill_snapshot_supplier(resolved_start)
@@ -238,11 +245,7 @@ class RemoteBackendChild:
             raise backend.BackendSpawnFailed(
                 f"Canonical skill snapshot unavailable: {error}"
             ) from error
-        arguments: dict[str, Any] = {
-            "canonical_skill_snapshot": snapshot,
-            "resolved_start": resolved_start,
-            "vendor_session_cursor": vendor_session_cursor,
-        }
+        relative_path = None
         if resolved_start.workspace_path_policy == WorkspacePathPolicy.legacy_home_mapping:
             try:
                 relative = resolved_start.workspace_folder.resolve().relative_to(
@@ -251,10 +254,18 @@ class RemoteBackendChild:
             except ValueError:
                 pass
             else:
-                arguments["workspace_home_relative"] = (
-                    "" if relative == Path(".") else relative.as_posix()
-                )
-        await self._call(ChildOperation.start, **arguments)
+                relative_path = "" if relative == Path(".") else relative.as_posix()
+        await self._call(
+            StartRun(
+                canonical_skill_snapshot=snapshot,
+                resolved_start=resolved_start,
+                vendor_session_cursor=vendor_session_cursor,
+                workspace_home_relative=relative_path,
+                admission_expectation=None
+                if admission_expectation is None
+                else bind_command(admission_expectation, child=self.reference, turn=None),
+            )
+        )
 
     async def write_prompt(
         self,
@@ -268,20 +279,27 @@ class RemoteBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        reasoning_effort_is_set: bool = False,
+        emission_check: backend.EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> backend.BackendPromptAccepted:
         return decode_prompt_result(
             await self._call(
-                ChildOperation.write_prompt,
+                WritePrompt(
+                    content=content,
+                    sender_label=sender_label,
+                    sender_content=sender_content,
+                    sender_message_count=sender_message_count,
+                    mode=mode,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                    reasoning_effort_is_set=reasoning_effort_is_set,
+                    automatic_compaction=automatic_compaction,
+                    admission_expectation=None
+                    if admission_expectation is None
+                    else bind_command(admission_expectation, child=self.reference, turn=turn_token),
+                ),
                 turn_token,
-                content=content,
-                sender_label=sender_label,
-                sender_content=sender_content,
-                sender_message_count=sender_message_count,
-                mode=mode,
-                model_change=model_change,
-                reasoning_effort_change=reasoning_effort_change,
-                reasoning_effort_is_set=reasoning_effort_is_set(),
-                automatic_compaction=automatic_compaction,
             )
         )
 
@@ -292,13 +310,19 @@ class RemoteBackendChild:
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
+        emission_check: backend.EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> backend.BackendSteerOutcome:
         result = await self._call(
-            ChildOperation.steer,
+            Steer(
+                content=content,
+                sender_content=sender_content,
+                sender_label=sender_label,
+                admission_expectation=None
+                if admission_expectation is None
+                else bind_command(admission_expectation, child=self.reference, turn=turn_token),
+            ),
             turn_token,
-            content=content,
-            sender_content=sender_content,
-            sender_label=sender_label,
         )
         if result["kind"] == "steer_refused":
             return backend.BackendSteerRefused(
@@ -314,16 +338,18 @@ class RemoteBackendChild:
         )
 
     async def cancel_running_turn(self) -> None:
-        await self._call(ChildOperation.cancel_running_turn)
+        await self._call(CancelTurn())
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
-        await self._call(ChildOperation.answer_permission_ask, ask_id=ask_id, option_id=option_id)
+        await self._call(AnswerPermission(ask_id=ask_id, option_id=option_id))
 
-    async def answer_user_input(self, request_id: str, answers: tuple[Any, ...]) -> None:
-        await self._call(ChildOperation.answer_user_input, request_id=request_id, answers=answers)
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> None:
+        await self._call(AnswerUserInput(request_id=request_id, answers=answers))
 
     async def stop(self) -> None:
-        await self._call(ChildOperation.stop)
+        await self._call(StopRun())
 
 
 class RemoteCommandUncertain(RuntimeError):

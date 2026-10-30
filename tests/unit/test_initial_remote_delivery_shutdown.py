@@ -36,6 +36,7 @@ from planner.executor.contracts import (
     CommandOutcome,
     ControlMessageWriter,
     WireMessage,
+    decode_command_arguments,
 )
 from planner.executor.remote import RemoteBackendChildFactory
 from planner.executor.vps import ExecutorEndpoint
@@ -405,7 +406,7 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
         reference,
         ChildOperation.stop,
         TurnToken(reference.conversation_id, 1),
-        {},
+        decode_command_arguments(ChildOperation.stop, {}),
     )
     tmp_db.execute(
         "INSERT INTO executor_core_turns VALUES (?,?,?,?)",

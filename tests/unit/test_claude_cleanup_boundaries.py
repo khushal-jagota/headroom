@@ -27,7 +27,7 @@ from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChildFactory,
     ClaudeAgentSdkChildLaunch,
 )
-from planner.conversation.backends.contracts import BackendChildFactory
+from planner.conversation.backends.contracts import BackendChildFactory, EmissionCheck
 from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
@@ -54,6 +54,7 @@ from planner.executor.contracts import (
     CommandDisposition,
     CommandOutcome,
     ReceiptDisposition,
+    decode_command_arguments,
 )
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
@@ -68,7 +69,9 @@ def claude_registry(
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
     clients: list[_ScriptedClaudeSdkClient] = []
 
-    def client(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
+    def client(
+        options: ClaudeAgentOptions, *, emission_check: EmissionCheck | None = None
+    ) -> _ScriptedClaudeSdkClient:
         scripted = _ScriptedClaudeSdkClient(options)
         clients.append(scripted)
         return scripted
@@ -257,11 +260,14 @@ def test_claude_disconnect_failure_cannot_confirm_quiescence(
             reference,
             ChildOperation.start,
             None,
-            {
-                "resolved_start": encode_value(resolved),
-                "admission_expectation": encode_value(expectation),
-                "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-            },
+            decode_command_arguments(
+                ChildOperation.start,
+                {
+                    "resolved_start": encode_value(resolved),
+                    "admission_expectation": encode_value(expectation),
+                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                },
+            ),
         )
         assert (await registry.execute_command(start)).disposition is CommandDisposition.succeeded
         child = registry.children[reference.child_id]

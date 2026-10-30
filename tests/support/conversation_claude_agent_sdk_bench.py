@@ -34,6 +34,7 @@ from planner.conversation.backends.claude_agent_sdk import (
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendUserInputRequest,
+    EmissionCheck,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -126,7 +127,14 @@ class _ScriptedClaudeSdkClient:
     async def get_server_info(self) -> dict[str, Any] | None:
         return self.handshake
 
-    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
+    async def query(
+        self,
+        prompt: str | AsyncIterable[dict[str, Any]],
+        *,
+        emission_check: EmissionCheck | None = None,
+    ) -> None:
+        if emission_check is not None:
+            emission_check()
         if self.query_failure is not None:
             raise self.query_failure
         if isinstance(prompt, str):
@@ -412,7 +420,9 @@ def _bench(
     """
     clients: list[_ScriptedClaudeSdkClient] = []
 
-    def make(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
+    def make(
+        options: ClaudeAgentOptions, *, emission_check: EmissionCheck | None = None
+    ) -> _ScriptedClaudeSdkClient:
         client = _ScriptedClaudeSdkClient(options, handshake=handshake)
         clients.append(client)
         return client

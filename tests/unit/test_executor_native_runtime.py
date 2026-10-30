@@ -17,7 +17,6 @@ from pydantic import TypeAdapter
 from tests.support.executor_control import MessageReader
 
 from planner.conversation.admission.contracts import AdmissionExpectation
-from planner.conversation.admission.service import admission_scope
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
@@ -25,6 +24,7 @@ from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendPromptAccepted,
     BackendSpawnFailed,
+    EmissionCheck,
     PromptWriteFailed,
     PromptWriteRefused,
     SessionLoadFailed,
@@ -70,13 +70,56 @@ from planner.executor.contracts import (
     Quiescence,
     QuiesceRequest,
     ReceiptDisposition,
+    StartRun,
     WireMessage,
     WireMessageKind,
+    WritePrompt,
+    decode_command_arguments,
 )
 from planner.executor.mac import MacExecutor, as_object
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
 from planner.tickets.contracts import TicketLocale
+
+
+def test_command_json_door_checks_shape_and_preserves_nullable_effort() -> None:
+    """The union rejects mismatched inputs before native work and keeps explicit clear."""
+    reference = ChildReference(str(uuid4()), str(uuid4()), "typed-command")
+    arguments: dict[str, object] = {
+        "content": [],
+        "sender_content": [],
+        "sender_label": "Owner",
+        "mode": "queue",
+    }
+    raw: dict[str, object] = {
+        "command_id": "write",
+        "child": encode_value(reference),
+        "operation": "write_prompt",
+        "turn": encode_value(TurnToken(reference.conversation_id, 1)),
+        "arguments": arguments,
+    }
+    adapter = TypeAdapter(ChildCommand)
+    omitted = adapter.validate_python(raw)
+    assert isinstance(omitted.arguments, WritePrompt)
+    assert omitted.arguments.reasoning_effort_change is None
+    assert isinstance(omitted.arguments, WritePrompt)
+    assert omitted.arguments.reasoning_effort_is_set is False
+    clear_raw = {**raw, "arguments": {**arguments, "reasoning_effort_is_set": True}}
+    cleared = adapter.validate_python(clear_raw)
+    assert isinstance(cleared.arguments, WritePrompt)
+    assert cleared.arguments.reasoning_effort_change is None
+    assert isinstance(cleared.arguments, WritePrompt)
+    assert cleared.arguments.reasoning_effort_is_set is True
+    assert adapter.validate_json(adapter.dump_json(cleared)) == cleared
+    for invalid_arguments in (
+        {**arguments, "kind": "stop"},
+        {**arguments, "hidden_setting": True},
+        {"kind": "write_prompt", "content": []},
+    ):
+        with pytest.raises(ValueError):
+            adapter.validate_python({**raw, "arguments": invalid_arguments})
+    with pytest.raises(ValueError, match="exact turn"):
+        adapter.validate_python({**raw, "turn": None})
 
 
 def _fixture_admission(
@@ -157,14 +200,25 @@ class ScriptedChild:
         self.sink: BackendEventSink | None = None
 
     async def start(
-        self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+        self,
+        resolved_start: ResolvedConversationStart,
+        *,
+        vendor_session_cursor: str | None,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
+        if emission_check is not None:
+            emission_check()
         self.starts += 1
         await asyncio.sleep(0)
 
     async def write_prompt(
         self, turn: TurnToken, content: MessageContent, **kwargs: object
     ) -> BackendPromptAccepted:
+        check = kwargs.get("emission_check")
+        if check is not None:
+            assert callable(check)
+            check()
         self.prompts += 1
         return BackendPromptAccepted(True)
 
@@ -217,10 +271,13 @@ def native_registry(
         reference,
         ChildOperation.start,
         None,
-        {
-            "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-            "resolved_start": encode_value(resolved),
-        },
+        decode_command_arguments(
+            ChildOperation.start,
+            {
+                "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                "resolved_start": encode_value(resolved),
+            },
+        ),
     )
     try:
         yield registry, spool, native, start
@@ -261,12 +318,15 @@ def test_pre_dispatch_refusal_never_calls_native(
                 start.child,
                 ChildOperation.write_prompt,
                 TurnToken("c_one", 1),
-                {
-                    "content": encode_value(text_message_content("go")),
-                    "sender_content": encode_value(text_message_content("go")),
-                    "sender_label": "Owner",
-                    "mode": PromptDeliveryMode.queue.value,
-                },
+                decode_command_arguments(
+                    ChildOperation.write_prompt,
+                    {
+                        "content": encode_value(text_message_content("go")),
+                        "sender_content": encode_value(text_message_content("go")),
+                        "sender_label": "Owner",
+                        "mode": PromptDeliveryMode.queue.value,
+                    },
+                ),
             )
         if boundary == "prompt_lock":
             child = registry.children[start.child.child_id]
@@ -344,12 +404,15 @@ def test_native_typed_refusal_is_distinct_from_possible_emission(
                 start.child,
                 operation,
                 TurnToken("c_one", 1),
-                {
-                    "content": encode_value(text_message_content("once")),
-                    "sender_content": encode_value(text_message_content("once")),
-                    "sender_label": "Owner",
-                    "mode": "queue",
-                },
+                decode_command_arguments(
+                    operation,
+                    {
+                        "content": encode_value(text_message_content("once")),
+                        "sender_content": encode_value(text_message_content("once")),
+                        "sender_label": "Owner",
+                        "mode": "queue",
+                    },
+                ),
             )
         calls = 0
 
@@ -379,7 +442,11 @@ def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and
         registry, spool, native, start = native_registry
 
         async def failing_start(
-            resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+            resolved_start: ResolvedConversationStart,
+            *,
+            vendor_session_cursor: str | None,
+            emission_check: EmissionCheck | None = None,
+            admission_expectation: AdmissionExpectation | None = None,
         ) -> None:
             native.starts += 1
             raise ValueError("executor is quiescing")
@@ -429,13 +496,16 @@ async def uncertain_automatic_compaction(
         start.child,
         ChildOperation.write_prompt,
         TurnToken(start.child.conversation_id, 1),
-        {
-            "content": encode_value(text_message_content("continue")),
-            "sender_content": encode_value(text_message_content("continue")),
-            "sender_label": "Owner",
-            "mode": PromptDeliveryMode.queue.value,
-            "automatic_compaction": True,
-        },
+        decode_command_arguments(
+            ChildOperation.write_prompt,
+            {
+                "content": encode_value(text_message_content("continue")),
+                "sender_content": encode_value(text_message_content("continue")),
+                "sender_label": "Owner",
+                "mode": PromptDeliveryMode.queue.value,
+                "automatic_compaction": True,
+            },
+        ),
     )
     outcome = await registry.execute_command(command)
     assert outcome.disposition == CommandDisposition.uncertain
@@ -449,7 +519,13 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
     async def run() -> None:
         registry, spool, native, start = native_registry
         command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
-        stop = ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+        stop = ChildCommand(
+            "stop",
+            start.child,
+            ChildOperation.stop,
+            None,
+            decode_command_arguments(ChildOperation.stop, {}),
+        )
         assert (await registry.execute_command(stop)).disposition == CommandDisposition.succeeded
         assert start.child.child_id not in registry.children
 
@@ -462,7 +538,9 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
         assert registry.outcomes[command.command_id] == first
         assert await registry.execute_command(command) == first
         with pytest.raises(ValueError, match="different content"):
-            await registry.execute_command(replace(command, arguments={}))
+            await registry.execute_command(
+                replace(command, turn=TurnToken(command.child.conversation_id, 999))
+            )
         assert (native.starts, native.prompts) == (1, 1)
         assert spool.pending_count() == 0
 
@@ -501,12 +579,24 @@ def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_chi
 
             monkeypatch.setattr(native, "stop", failed_stop)
             failed = await registry.execute_command(
-                ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+                ChildCommand(
+                    "stop",
+                    start.child,
+                    ChildOperation.stop,
+                    None,
+                    decode_command_arguments(ChildOperation.stop, {}),
+                )
             )
             assert failed.disposition == CommandDisposition.uncertain
 
         elif missing_evidence != "no_stop":
-            stop = ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+            stop = ChildCommand(
+                "stop",
+                start.child,
+                ChildOperation.stop,
+                None,
+                decode_command_arguments(ChildOperation.stop, {}),
+            )
             stopped = await registry.execute_command(stop)
             assert stopped.disposition == CommandDisposition.succeeded
             if missing_evidence == "live_child":
@@ -525,7 +615,7 @@ def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_chi
                     stopped, child=replace(start.child, conversation_id="c_other")
                 )
             elif missing_evidence == "not_stop":
-                registry._commands["stop"] = replace(stop, operation=ChildOperation.start)
+                registry._commands["stop"] = replace(start, command_id=stop.command_id)
 
         acknowledge_pending(spool)
         blocked = await registry.quiesce()
@@ -546,7 +636,13 @@ def test_historical_uncertainty_does_not_clear_another_child_active_turn(
         registry, spool, native, start = native_registry
         command, _ = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
         await registry.execute_command(
-            ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+            ChildCommand(
+                "stop",
+                start.child,
+                ChildOperation.stop,
+                None,
+                decode_command_arguments(ChildOperation.stop, {}),
+            )
         )
 
         other = replace(
@@ -573,7 +669,13 @@ def test_restart_keeps_stop_receipts_and_discards_command_memory_and_child_autho
         command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
         capability = registry.children[start.child.child_id].capability
         await registry.execute_command(
-            ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+            ChildCommand(
+                "stop",
+                start.child,
+                ChildOperation.stop,
+                None,
+                decode_command_arguments(ChildOperation.stop, {}),
+            )
         )
 
         acknowledge_pending(spool)
@@ -647,18 +749,19 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
             reference,
             ChildOperation.start,
             None,
-            {
-                "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                "resolved_start": encode_value(resolved),
-            },
+            decode_command_arguments(
+                ChildOperation.start,
+                {
+                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                    "resolved_start": encode_value(resolved),
+                },
+            ),
         )
         expectation = _fixture_admission(registry, reference, resolved)
+        assert isinstance(start.arguments, StartRun)
         start = replace(
             start,
-            arguments={
-                **start.arguments,
-                "admission_expectation": encode_value(expectation),
-            },
+            arguments=replace(start.arguments, admission_expectation=expectation),
         )
         caller = asyncio.create_task(registry.execute_command(start))
         await asyncio.sleep(0)
@@ -669,7 +772,9 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
         assert outcome.disposition == CommandDisposition.succeeded
         assert native.starts == 1
         with pytest.raises(ValueError, match="different content"):
-            await registry.execute_command(replace(start, arguments={}))
+            await registry.execute_command(
+                replace(start, turn=TurnToken(start.child.conversation_id, 999))
+            )
         assert native.sink is not None
         turn = TurnToken("c_one", 1)
         prompt = ChildCommand(
@@ -677,19 +782,22 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
             reference,
             ChildOperation.write_prompt,
             turn,
-            {
-                "content": encode_value(text_message_content("go")),
-                "sender_content": encode_value(text_message_content("go")),
-                "sender_label": "Owner",
-                "mode": PromptDeliveryMode.queue.value,
-            },
+            decode_command_arguments(
+                ChildOperation.write_prompt,
+                {
+                    "content": encode_value(text_message_content("go")),
+                    "sender_content": encode_value(text_message_content("go")),
+                    "sender_label": "Owner",
+                    "mode": PromptDeliveryMode.queue.value,
+                },
+            ),
         )
+        assert isinstance(prompt.arguments, WritePrompt)
         prompt = replace(
             prompt,
-            arguments={
-                **prompt.arguments,
-                "admission_expectation": encode_value(replace(expectation, turn=turn)),
-            },
+            arguments=replace(
+                prompt.arguments, admission_expectation=replace(expectation, turn=turn)
+            ),
         )
         await registry.execute_command(prompt)
         uncertain = ChildCommand(
@@ -697,11 +805,14 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
             reference,
             ChildOperation.steer,
             turn,
-            {
-                "content": encode_value(text_message_content("steer")),
-                "sender_label": "Owner",
-                "admission_expectation": encode_value(replace(expectation, turn=turn)),
-            },
+            decode_command_arguments(
+                ChildOperation.steer,
+                {
+                    "content": encode_value(text_message_content("steer")),
+                    "sender_label": "Owner",
+                    "admission_expectation": encode_value(replace(expectation, turn=turn)),
+                },
+            ),
         )
         assert (
             await registry.execute_command(uncertain)
@@ -840,6 +951,8 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
                 resolved_start: ResolvedConversationStart,
                 *,
                 vendor_session_cursor: str | None,
+                emission_check: EmissionCheck | None = None,
+                admission_expectation: AdmissionExpectation | None = None,
             ) -> None:
                 entered.set()
                 await released.wait()
@@ -885,10 +998,13 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
                     reference,
                     ChildOperation.start,
                     None,
-                    {
-                        "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                        "resolved_start": encode_value(resolved),
-                    },
+                    decode_command_arguments(
+                        ChildOperation.start,
+                        {
+                            "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                            "resolved_start": encode_value(resolved),
+                        },
+                    ),
                 )
             )
         )
@@ -972,10 +1088,13 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
                 reference,
                 ChildOperation.start,
                 None,
-                {
-                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                    "resolved_start": encode_value(resolved),
-                },
+                decode_command_arguments(
+                    ChildOperation.start,
+                    {
+                        "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                        "resolved_start": encode_value(resolved),
+                    },
+                ),
             )
         )
         assert native.sink is not None
@@ -1006,7 +1125,9 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             reference,
             ChildOperation.answer_permission_ask,
             turn,
-            {"answer": encode_value(answer)},
+            decode_command_arguments(
+                ChildOperation.answer_permission_ask, {"answer": encode_value(answer)}
+            ),
         )
         with pytest.raises(OSError, match="after callback"):
             if wrapper:
@@ -1104,11 +1225,14 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
                 reference,
                 ChildOperation.start,
                 None,
-                {
-                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                    "resolved_start": encode_value(resolved),
-                    "admission_expectation": encode_value(expectation),
-                },
+                decode_command_arguments(
+                    ChildOperation.start,
+                    {
+                        "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                        "resolved_start": encode_value(resolved),
+                        "admission_expectation": encode_value(expectation),
+                    },
+                ),
             )
         )
         for owner in ("t_own", "t_other"):
@@ -1255,6 +1379,8 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                 resolved_start: ResolvedConversationStart,
                 *,
                 vendor_session_cursor: str | None,
+                emission_check: EmissionCheck | None = None,
+                admission_expectation: AdmissionExpectation | None = None,
             ) -> None:
                 received.append(resolved_start)
                 assert vendor_session_cursor == "retained-native-session"
@@ -1344,14 +1470,20 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                 ),
                 localized=workspace,
             )
-            with admission_scope(expectation):
-                await remote.start(resolved, vendor_session_cursor="retained-native-session")
+            await remote.start(
+                resolved,
+                vendor_session_cursor="retained-native-session",
+                admission_expectation=expectation,
+            )
         if policy is WorkspacePathPolicy.legacy_home_mapping:
-            assert forwarded[0].arguments["workspace_home_relative"] == "projects/same-checkout"
+            assert isinstance(forwarded[0].arguments, StartRun)
+            assert forwarded[0].arguments.workspace_home_relative == "projects/same-checkout"
         else:
-            assert "workspace_home_relative" not in forwarded[0].arguments
+            assert isinstance(forwarded[0].arguments, StartRun)
+            assert forwarded[0].arguments.workspace_home_relative is None
+            assert isinstance(forwarded[0].arguments, StartRun)
             forwarded_start = TypeAdapter(ResolvedConversationStart).validate_python(
-                forwarded[0].arguments["resolved_start"]
+                forwarded[0].arguments.resolved_start
             )
             assert forwarded_start.workspace_folder == configured_workspace
         assert (
@@ -1417,11 +1549,14 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
                 reference,
                 ChildOperation.start,
                 None,
-                {
-                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                    "resolved_start": encode_value(resolved),
-                    "workspace_home_relative": relative,
-                },
+                decode_command_arguments(
+                    ChildOperation.start,
+                    {
+                        "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                        "resolved_start": encode_value(resolved),
+                        "workspace_home_relative": relative,
+                    },
+                ),
             )
         )
         assert result.disposition == CommandDisposition.refused
@@ -1490,10 +1625,13 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
                 reference,
                 ChildOperation.start,
                 None,
-                {
-                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                    "resolved_start": encode_value(resolved),
-                },
+                decode_command_arguments(
+                    ChildOperation.start,
+                    {
+                        "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                        "resolved_start": encode_value(resolved),
+                    },
+                ),
             )
         )
         turn = TurnToken("c_one", 1)
@@ -1503,12 +1641,15 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
                 reference,
                 ChildOperation.write_prompt,
                 turn,
-                {
-                    "content": encode_value(text_message_content("go")),
-                    "sender_content": encode_value(text_message_content("go")),
-                    "sender_label": "Owner",
-                    "mode": PromptDeliveryMode.queue.value,
-                },
+                decode_command_arguments(
+                    ChildOperation.write_prompt,
+                    {
+                        "content": encode_value(text_message_content("go")),
+                        "sender_content": encode_value(text_message_content("go")),
+                        "sender_label": "Owner",
+                        "mode": PromptDeliveryMode.queue.value,
+                    },
+                ),
             )
         )
         questions = (
@@ -1567,7 +1708,9 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
             reference,
             ChildOperation.answer_user_input,
             turn,
-            {"answer": encode_value(answer)},
+            decode_command_arguments(
+                ChildOperation.answer_user_input, {"answer": encode_value(answer)}
+            ),
         )
         caller = asyncio.create_task(registry.execute_command(outer))
         await entered.wait()
@@ -2157,7 +2300,8 @@ def test_native_absolute_workspace_refuses_missing_directory_or_file_before_chil
             await RemoteBackendChild(reference, send, lambda _: canonical_snapshot()).start(
                 resolved, vendor_session_cursor=None
             )
-        assert "workspace_home_relative" not in forwarded[0].arguments
+        assert isinstance(forwarded[0].arguments, StartRun)
+        assert forwarded[0].arguments.workspace_home_relative is None
         assert registry.outcomes[forwarded[0].command_id].disposition is CommandDisposition.refused
         assert created == []
         assert registry.children == {}
@@ -2173,11 +2317,20 @@ def test_missing_or_invalid_snapshot_refuses_before_provider_creation(
 ) -> None:
     async def run() -> None:
         registry, _spool, native, start = native_registry
-        arguments = dict(start.arguments)
+        arguments = encode_value(start.arguments)
+        assert isinstance(arguments, dict)
         arguments.pop("canonical_skill_snapshot")
         if snapshot_value is not None:
             arguments["canonical_skill_snapshot"] = encode_value(snapshot_value)
-        outcome = await registry.execute_command(replace(start, arguments=arguments))
+        if snapshot_value is None or snapshot_value == {}:
+            with pytest.raises(ValueError):
+                decode_command_arguments(start.operation, arguments)
+            assert native.starts == 0
+            assert registry.children == {}
+            return
+        outcome = await registry.execute_command(
+            replace(start, arguments=decode_command_arguments(start.operation, arguments))
+        )
         assert outcome.disposition is CommandDisposition.refused
         assert outcome.result["error_type"] == "BackendSpawnFailed"
         assert "Canonical skill bootstrap failed" in str(outcome.result["error_message"])
@@ -2230,12 +2383,16 @@ def test_claude_bootstrap_uses_ordinary_account_home_when_unconfigured(
 
     async def run() -> None:
         registry, _spool, native, start = native_registry
+        assert isinstance(start.arguments, StartRun)
         resolved = TypeAdapter(ResolvedConversationStart).validate_python(
-            start.arguments["resolved_start"]
+            start.arguments.resolved_start
         )
         resolved = replace(resolved, backend_key=ConversationBackendKey.claude)
         outcome = await registry.execute_command(
-            replace(start, arguments={**start.arguments, "resolved_start": encode_value(resolved)})
+            replace(
+                start,
+                arguments=replace(start.arguments, resolved_start=resolved),
+            )
         )
         assert outcome.disposition is CommandDisposition.succeeded
         assert native.starts == 1
@@ -2314,7 +2471,16 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
     async def run() -> None:
         registry, spool, native, start = native_registry
         # A command for an absent identity retains its original uncertain result.
-        old = replace(start, command_id="old", operation=ChildOperation.steer, arguments={})
+        old = replace(
+            start,
+            command_id="old",
+            operation=ChildOperation.steer,
+            turn=TurnToken(start.child.conversation_id, 1),
+            arguments=decode_command_arguments(
+                ChildOperation.steer,
+                {"content": encode_value(text_message_content("test")), "sender_label": "Owner"},
+            ),
+        )
         first = await registry.execute_command(old)
         assert first.disposition is CommandDisposition.uncertain
         entered, release = asyncio.Event(), asyncio.Event()
@@ -2331,7 +2497,13 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
             registry.execute_command(replace(start, command_id="delayed-start"))
         )
         await entered.wait()
-        stop = ChildCommand("cleanup", start.child, ChildOperation.stop, None, {})
+        stop = ChildCommand(
+            "cleanup",
+            start.child,
+            ChildOperation.stop,
+            None,
+            decode_command_arguments(ChildOperation.stop, {}),
+        )
         blocked = await registry.execute_command(stop)
         assert blocked.disposition is CommandDisposition.uncertain
         assert start.child.child_id not in registry._retired_children
@@ -2390,7 +2562,19 @@ def test_stop_fences_native_lock_waiter_keeps_final_event_and_refuses_second_own
         monkeypatch.setattr(registry, "_execute", execute)
         waiter = asyncio.create_task(
             registry.execute_command(
-                ChildCommand("waiter", start.child, ChildOperation.steer, None, {})
+                ChildCommand(
+                    "waiter",
+                    start.child,
+                    ChildOperation.steer,
+                    TurnToken(start.child.conversation_id, 1),
+                    decode_command_arguments(
+                        ChildOperation.steer,
+                        {
+                            "content": encode_value(text_message_content("test")),
+                            "sender_label": "Owner",
+                        },
+                    ),
+                )
             )
         )
         await waiter_entered.wait()
@@ -2403,7 +2587,13 @@ def test_stop_fences_native_lock_waiter_keeps_final_event_and_refuses_second_own
             await native.sink.vendor_session_cursor_rebound("final-cursor")
 
         monkeypatch.setattr(native, "stop", stop_native)
-        stop = ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+        stop = ChildCommand(
+            "stop",
+            start.child,
+            ChildOperation.stop,
+            None,
+            decode_command_arguments(ChildOperation.stop, {}),
+        )
         task = asyncio.create_task(registry.execute_command(stop))
         # The command waiter must cross the lock after stop owns admission.
         while start.child.child_id not in registry._retiring_children:
@@ -2460,7 +2650,13 @@ def test_stop_waits_for_admitted_answer_publication(
         monkeypatch.setattr(native, "stop", stop_native)
         stop = asyncio.create_task(
             registry.execute_command(
-                ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+                ChildCommand(
+                    "stop",
+                    start.child,
+                    ChildOperation.stop,
+                    None,
+                    decode_command_arguments(ChildOperation.stop, {}),
+                )
             )
         )
         while start.child.child_id not in registry._retiring_children:
@@ -2661,7 +2857,11 @@ def test_command_states_keep_one_provider_attempt_through_caller_loss(
         entered, release = asyncio.Event(), asyncio.Event()
 
         async def invoke(
-            resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+            resolved_start: ResolvedConversationStart,
+            *,
+            vendor_session_cursor: str | None,
+            emission_check: EmissionCheck | None = None,
+            admission_expectation: AdmissionExpectation | None = None,
         ) -> None:
             native.starts += 1
             entered.set()
@@ -2686,7 +2886,9 @@ def test_command_states_keep_one_provider_attempt_through_caller_loss(
         assert registry.ask((command.command_id,))[0].outcome == outcome
         assert await registry.execute_command(command) == outcome
         with pytest.raises(ValueError, match="different content"):
-            await registry.execute_command(replace(command, arguments={}))
+            await registry.execute_command(
+                replace(command, turn=TurnToken(command.child.conversation_id, 999))
+            )
         assert native.starts == 1 and spool.pending() == ()
 
     asyncio.run(run())

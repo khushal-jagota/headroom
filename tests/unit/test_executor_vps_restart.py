@@ -62,7 +62,13 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
     async def run() -> None:
         commands: list[ChildCommand] = []
         stop_entered, release_stop = asyncio.Event(), asyncio.Event()
-        identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "mac", 1)
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION,
+            "a" * 40,
+            SPOOL_FORMAT_VERSION,
+            "22222222-2222-2222-2222-222222222222",
+            1,
+        )
 
         async def native(command: ChildCommand) -> CommandOutcome:
             # This is the first possible native emission. Both halves must exist.
@@ -206,7 +212,7 @@ def test_assignment_rolls_back_if_retained_turn_cannot_be_saved(
     """Gap: a failing turn write must never leave a separately committed assignment."""
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     store = ConversationStore(path)
-    child = ChildReference("mac", "child", "c")
+    child = ChildReference("22222222-2222-2222-2222-222222222222", "child", "c")
     metadata = (json.dumps(encode_value(child)), '{"conversation_id":"c","turn_number":1}', "{}")
 
     def fail(*arguments: object) -> None:

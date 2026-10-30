@@ -39,6 +39,7 @@ from planner.conversation.contracts import (
     ConversationMessageContent,
     ConversationStartRequest,
     ConversationSystem,
+    NativeMessageOperation,
     PromptDeliveryFate,
     PromptDeliveryMode,
     PromptDeliveryRefused,
@@ -542,6 +543,7 @@ async def _send_with_addressed_receipt(
     recipient: Principal | None,
     reply_requested: bool,
     record_refusal: bool = False,
+    native_message_operation: NativeMessageOperation | None = None,
 ) -> AddressedPromptDeliveryReceipt:
     """Keep recipient attribution and freshness for caller-authored and system sends."""
     if recipient is not None:
@@ -561,6 +563,7 @@ async def _send_with_addressed_receipt(
             recipient=recipient,
             reply_requested=reply_requested,
             record_refusal=record_refusal,
+            native_message_operation=native_message_operation,
         )
     fate = await system.send(
         conversation_id,
@@ -574,6 +577,7 @@ async def _send_with_addressed_receipt(
         owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+        native_message_operation=native_message_operation,
     )
     return AddressedPromptDeliveryReceipt(
         fate=fate,
@@ -600,6 +604,7 @@ async def send_to_ticket_conversation(
     reply_requested: bool = True,
     worker_type_registry: WorkerTypeRegistry | None = None,
     now: int,
+    native_message_operation: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Send a message into this Ticket's conversation, making one if there is none yet.
 
@@ -673,6 +678,7 @@ async def send_to_ticket_conversation(
             reply_requested=reply_requested,
             worker_type_registry=worker_type_registry,
             now=now,
+            native_message_operation=native_message_operation,
         )
     # The sender had none but the Ticket has gained one — the readiness loop starts
     # conversations too. The message joins it rather than making a second, and what it says
@@ -700,6 +706,7 @@ async def send_to_ticket_conversation(
         recipient=recipient,
         reply_requested=reply_requested,
         now=now,
+        native_message_operation=native_message_operation,
     )
 
 
@@ -720,6 +727,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
     recipient: Principal | None,
     reply_requested: bool,
     now: int,
+    native_message_operation: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Deliver into a conversation that is already there, carrying what it changes.
 
@@ -759,6 +767,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
         sender=sender,
         recipient=recipient,
         reply_requested=reply_requested,
+        native_message_operation=native_message_operation,
     )
     fate = receipt.fate
     if (
@@ -813,6 +822,7 @@ async def _make_a_conversation_and_send_into_it(
     reply_requested: bool,
     worker_type_registry: WorkerTypeRegistry | None,
     now: int,
+    native_message_operation: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Bring a conversation into being with the message that is its first, or neither.
 
@@ -865,6 +875,7 @@ async def _make_a_conversation_and_send_into_it(
             recipient=recipient,
             reply_requested=reply_requested,
             now=now,
+            native_message_operation=native_message_operation,
         )
     # From here the conversation is this call's own: it was made here, on the values this
     # message says it runs under, so the message has nothing to change and carries none.
@@ -885,6 +896,7 @@ async def _make_a_conversation_and_send_into_it(
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            native_message_operation=native_message_operation,
         )
         fate = receipt.fate
         if (
@@ -1107,6 +1119,7 @@ async def send_to_agent_conversation(
     reply_requested: bool = True,
     required_manager_id: str | None = None,
     retain_created_conversation: bool = False,
+    native_message_operation: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
 
@@ -1154,6 +1167,7 @@ async def send_to_agent_conversation(
                     recipient=recipient,
                     reply_requested=reply_requested,
                     record_refusal=retain_created_conversation,
+                    native_message_operation=native_message_operation,
                 )
                 fate = receipt.fate
             except BaseException:
@@ -1202,6 +1216,7 @@ async def send_to_agent_conversation(
         recipient=recipient,
         reply_requested=reply_requested,
         record_refusal=retain_created_conversation,
+        native_message_operation=native_message_operation,
     )
     return DeliveredMessage(
         conversation_id=sending_into,

@@ -15,6 +15,7 @@ from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
+from planner.executor.codec import encode_value
 from planner.executor.contracts import (
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
@@ -23,6 +24,7 @@ from planner.executor.contracts import (
     ChildReference,
     CommandDisposition,
     CommandOutcome,
+    StartRun,
 )
 from planner.executor.remote import RemoteBackendChildFactory
 
@@ -163,8 +165,9 @@ def test_each_native_start_reads_database_snapshot_and_replay_keeps_command(
         )
         await child.start(start, vendor_session_cursor=None)
         first = commands[0]
+        assert isinstance(first.arguments, StartRun)
         snapshot = TypeAdapter(CanonicalSkillSnapshot).validate_python(
-            first.arguments["canonical_skill_snapshot"]
+            encode_value(first.arguments.canonical_skill_snapshot)
         )
         assert (
             next(row.source_text for row in snapshot.sources if row.skill_name == "panels")
@@ -184,19 +187,24 @@ def test_each_native_start_reads_database_snapshot_and_replay_keeps_command(
         # A retry sends the retained command, with no supplier read or enrichment.
         await send(first)
         assert commands[1] is first
-        assert (
-            commands[1].arguments["canonical_skill_snapshot"]
-            == first.arguments["canonical_skill_snapshot"]
+        assert isinstance(commands[1].arguments, StartRun)
+        assert isinstance(first.arguments, StartRun)
+        assert encode_value(commands[1].arguments.canonical_skill_snapshot) == encode_value(
+            first.arguments.canonical_skill_snapshot
         )
         await child.start(replace(start), vendor_session_cursor="retained-provider-session")
+        assert isinstance(commands[2].arguments, StartRun)
         resumed = TypeAdapter(CanonicalSkillSnapshot).validate_python(
-            commands[2].arguments["canonical_skill_snapshot"]
+            encode_value(commands[2].arguments.canonical_skill_snapshot)
         )
         assert (
             next(row.source_text for row in resumed.sources if row.skill_name == "panels")
             == second_text
         )
-        assert commands[2].arguments["vendor_session_cursor"] == "retained-provider-session"
+        assert isinstance(commands[2].arguments, StartRun)
+        assert (
+            encode_value(commands[2].arguments.vendor_session_cursor) == "retained-provider-session"
+        )
         assert commands[2].command_id != first.command_id
 
     asyncio.run(run())

@@ -30,6 +30,7 @@ from tests.support.executor_turns import persist_pending_turn
 from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
+from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
     LIVE_FRAME_STREAM_NAME,
@@ -56,6 +57,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerAccepted,
     BackendSteerOutcome,
     BackendUserInputRequest,
+    EmissionCheck,
     NeedsRebind,
     PromptWriteRefused,
     SessionLoadFailed,
@@ -157,6 +159,8 @@ class _FakeBackendChild:
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         del resolved_start
         if self._backend.session_load_fails:
@@ -177,6 +181,9 @@ class _FakeBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         del (
             sender_content,
@@ -203,6 +210,8 @@ class _FakeBackendChild:
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         del turn_token
         del sender_content

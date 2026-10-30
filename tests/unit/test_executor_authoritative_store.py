@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 from tests.support.executor_control import MessageReader
 
+from planner.executor.contracts import decode_command_arguments
+
 if TYPE_CHECKING:
     pass
 
@@ -450,7 +452,13 @@ def test_input_transfer_preserves_conversation_order_without_blocking_other_comm
 
         monkeypatch.setattr(endpoint, "_transfer_command_inputs_locked", transfer)
         child = ChildReference(str(uuid4()), str(uuid4()), "conversation-a")
-        bulk = ChildCommand("bulk", child, ChildOperation.stop, None, {})
+        bulk = ChildCommand(
+            "bulk",
+            child,
+            ChildOperation.stop,
+            None,
+            decode_command_arguments(ChildOperation.stop, {}),
+        )
         later = replace(bulk, command_id="later")
         unrelated = replace(
             bulk, command_id="unrelated", child=replace(child, conversation_id="conversation-b")
@@ -722,7 +730,13 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
     from planner.executor.vps import ExecutorEndpoint
 
     async def run() -> None:
-        command = ChildCommand("retire", CHILD, ChildOperation.stop, None, {})
+        command = ChildCommand(
+            "retire",
+            CHILD,
+            ChildOperation.stop,
+            None,
+            decode_command_arguments(ChildOperation.stop, {}),
+        )
         outcome = CommandOutcome(command.command_id, CHILD, CommandDisposition.succeeded, {})
         persist_pending_turn(
             store, ASK, runtime_overrides={"initial_commands": [encode_value(command)]}
@@ -1130,7 +1144,13 @@ def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
         endpoint = ExecutorEndpoint(store.db_path, RealClock())
         endpoint.identity, endpoint.writer = IDENTITY, Mock()
         commands = tuple(
-            ChildCommand(phase, CHILD, ChildOperation.cancel_running_turn, None, {})
+            ChildCommand(
+                phase,
+                CHILD,
+                ChildOperation.cancel_running_turn,
+                None,
+                decode_command_arguments(ChildOperation.cancel_running_turn, {}),
+            )
             for phase in ("unknown", "preparing", "invoking", "finished")
         )
         for command in commands:
@@ -1202,7 +1222,13 @@ def test_ready_ack_includes_stop_registered_after_reconnect_ask(
         writer = peer()
         endpoint.identity, endpoint.writer = IDENTITY, writer
         endpoint.runtime = SimpleNamespace(system=SimpleNamespace())
-        command = ChildCommand("late-stop", CHILD, ChildOperation.stop, None, {})
+        command = ChildCommand(
+            "late-stop",
+            CHILD,
+            ChildOperation.stop,
+            None,
+            decode_command_arguments(ChildOperation.stop, {}),
+        )
         caller: asyncio.Task[CommandOutcome] | None = None
         outcome = CommandOutcome(command.command_id, CHILD, CommandDisposition.uncertain, {})
 

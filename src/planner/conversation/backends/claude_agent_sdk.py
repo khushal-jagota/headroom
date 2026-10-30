@@ -66,10 +66,10 @@ import uuid
 import warnings
 from base64 import b64encode
 from collections import deque
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final, Protocol, cast
+from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 
 from anyio.abc import Process
 from claude_agent_sdk import (
@@ -104,6 +104,10 @@ from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 from planner.conversation.backends.claude_settings import (
     ClaudeControlTransport,
 )
+
+if TYPE_CHECKING:
+    from planner.conversation.admission.contracts import AdmissionExpectation
+
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
     BackendEmissionInputs,
@@ -124,8 +128,6 @@ from planner.conversation.backends.contracts import (
     SessionLoadFailed,
     TurnToken,
     UserInputAnswerWriteFailed,
-    current_emission_check,
-    emission_check_scope,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
@@ -311,7 +313,12 @@ class ClaudeSdkClient(Protocol):
         """
         ...
 
-    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
+    async def query(
+        self,
+        prompt: str | AsyncIterable[dict[str, Any]],
+        *,
+        emission_check: EmissionCheck | None = None,
+    ) -> None:
         """A message as words, or as the content blocks a richer one is made of.
 
         Both are the SDK's own input shapes. Words stay words: the SDK wraps a string in
@@ -357,11 +364,16 @@ class ClaudeSdkClient(Protocol):
     async def disconnect(self) -> None: ...
 
 
-type ClaudeSdkClientFactory = Callable[[ClaudeAgentOptions], ClaudeSdkClient]
+class ClaudeSdkClientFactory(Protocol):
+    def __call__(
+        self, options: ClaudeAgentOptions, *, emission_check: EmissionCheck | None = None
+    ) -> ClaudeSdkClient: ...
 
 
 def claude_sdk_client(
     options: ClaudeAgentOptions,
+    *,
+    emission_check: EmissionCheck | None = None,
 ) -> ClaudeSdkClient:
     """The real SDK client, with the SDK's public custom-transport observation seam."""
 
@@ -373,7 +385,9 @@ def claude_sdk_client(
         warnings.simplefilter("ignore", CanUseToolShadowedWarning)
         transport_options = _configure_can_use_tool(options)
     transport = _ClaudeProtocolTransport(
-        _ClaudeCleanupTransport(prompt=empty_prompt(), options=transport_options)
+        _ClaudeCleanupTransport(
+            prompt=empty_prompt(), options=transport_options, emission_check=emission_check
+        )
     )
     return _ObservedClaudeSdkClient(options, transport)
 
@@ -390,11 +404,13 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         self,
         prompt: str | AsyncIterable[dict[str, Any]],
         options: ClaudeAgentOptions,
+        *,
+        emission_check: EmissionCheck | None = None,
     ) -> None:
         super().__init__(prompt, options)
         self._cleanup_process: Process | None = None
         self._cleanup_started = False
-        self._start_check = current_emission_check()
+        self._start_check = emission_check
         self._message_checks: dict[str, EmissionCheck] = {}
 
     def _build_command(self) -> list[str]:
@@ -715,8 +731,13 @@ class _ObservedClaudeSdkClient:
     async def get_server_info(self) -> dict[str, Any] | None:
         return await self._client.get_server_info()
 
-    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
-        check = current_emission_check()
+    async def query(
+        self,
+        prompt: str | AsyncIterable[dict[str, Any]],
+        *,
+        emission_check: EmissionCheck | None = None,
+    ) -> None:
+        check = emission_check
         if check is None:
             await self._client.query(prompt)
             return
@@ -890,6 +911,8 @@ class ClaudeAgentSdkBackendChild:
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         """Spawn claude and bind the session this conversation runs in.
 
@@ -903,7 +926,7 @@ class ClaudeAgentSdkBackendChild:
         self._child_lifetime = uuid.uuid4().hex
         minted_session_id = None if vendor_session_cursor is not None else str(uuid.uuid4())
         options = self._options(resolved_start, vendor_session_cursor, minted_session_id)
-        client = self._client_factory(options)
+        client = self._client_factory(options, emission_check=emission_check)
         self._wire_broken = True
         self._client = client
         await self._connect(client, resumed_from=vendor_session_cursor)
@@ -956,6 +979,9 @@ class ClaudeAgentSdkBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Start a turn with this message, on values this child is already running.
 
@@ -969,19 +995,10 @@ class ClaudeAgentSdkBackendChild:
         """
         del mode
         self._require_the_carried_values_are_in_force(
-            model_change, reasoning_effort_change
+            model_change, reasoning_effort_change, reasoning_effort_is_set=reasoning_effort_is_set
         )
         client = self._connected_client()
         self._require_a_live_wire()
-        check = current_emission_check()
-        if check is not None:
-            check(
-                BackendEmissionInputs(
-                    self._session_model,
-                    self._session_reasoning_effort,
-                    self._resolved_start.workspace_folder,
-                )
-            )
         native_command = sender_message_count == 1 and self._is_catalog_command(sender_content)
         try:
             delivered_content = (
@@ -998,7 +1015,7 @@ class ClaudeAgentSdkBackendChild:
             asked = await self._query_argument(delivered_content)
             self._turn = _TurnInFlight(token=turn_token)
             try:
-                await client.query(asked)
+                await client.query(asked, emission_check=emission_check)
             except AdmissionRefused:
                 self._turn = None
                 raise
@@ -1018,7 +1035,7 @@ class ClaudeAgentSdkBackendChild:
         client.watch_user_message(user_message_uuid)
         query_failure: Exception | None = None
         try:
-            await client.query(asked)
+            await client.query(asked, emission_check=emission_check)
         except AdmissionRefused:
             self._turn = None
             raise
@@ -1136,6 +1153,8 @@ class ClaudeAgentSdkBackendChild:
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         """Admit one UUID-named command to work owned by the captured Panels turn.
 
@@ -1186,7 +1205,7 @@ class ClaudeAgentSdkBackendChild:
             )
         client.watch_user_message(user_message_uuid)
         turn.owned_steer_uuids.add(user_message_uuid)
-        check = current_emission_check()
+        check = emission_check
 
         def check_running_steer(prepared: BackendEmissionInputs | None = None) -> None:
             if (self._turn is not turn or turn.cancel_requested
@@ -1196,17 +1215,18 @@ class ClaudeAgentSdkBackendChild:
                 check(prepared)
 
         try:
-            with emission_check_scope(check_running_steer):
-                await client.query(asked)
+            await client.query(asked, emission_check=check_running_steer)
         except AdmissionRefused:
             turn.owned_steer_uuids.discard(user_message_uuid)
             if isinstance(client, _ObservedClaudeSdkClient):
                 client.forget_user_message(user_message_uuid)
-            return BackendSteerRefused(
-                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-                if self._turn is not turn or turn.cancel_requested
-                else PromptDeliveryRefusalReason.write_to_backend_failed
-            )
+            if self._turn is not turn or turn.cancel_requested:
+                return BackendSteerRefused(
+                    PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+                )
+            if self._client is not client or self._wire_broken:
+                return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
+            raise
         except Exception:
             # A write failure cannot undo admission that Claude already observed.
             # Keep turn ownership until the UUID's later settlement.
@@ -1412,7 +1432,11 @@ class ClaudeAgentSdkBackendChild:
     # --- model and reasoning effort ------------------------------------------------------
 
     def _require_the_carried_values_are_in_force(
-        self, model_change: str | None, reasoning_effort_change: str | None
+        self,
+        model_change: str | None,
+        reasoning_effort_change: str | None,
+        *,
+        reasoning_effort_is_set: bool = False,
     ) -> None:
         """Ask for a new child unless this one is already running on what was asked for.
 
@@ -1420,7 +1444,6 @@ class ClaudeAgentSdkBackendChild:
         that is up. Saying so before anything is written is what keeps a change and its
         prompt one act: the child that takes the prompt was started on the new values.
         """
-        from planner.conversation.launch_intent import reasoning_effort_is_set
 
         if model_change is not None and model_change != self._session_model:
             raise NeedsRebind(
@@ -1428,9 +1451,8 @@ class ClaudeAgentSdkBackendChild:
                 "a child started on it"
             )
         if (
-            (reasoning_effort_change is not None or reasoning_effort_is_set())
-            and reasoning_effort_change != self._session_reasoning_effort
-        ):
+            reasoning_effort_change is not None or reasoning_effort_is_set
+        ) and reasoning_effort_change != self._session_reasoning_effort:
             raise NeedsRebind(
                 "claude takes its reasoning effort when the child starts, so "
                 f"{reasoning_effort_change!r} needs a child started on it"

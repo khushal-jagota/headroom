@@ -24,12 +24,13 @@ and is not translated into a refusal.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from planner.conversation.admission.contracts import AdmissionExpectation
 
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
@@ -62,25 +63,6 @@ class BackendEmissionInputs:
 
 class EmissionCheck(Protocol):
     def __call__(self, prepared: BackendEmissionInputs | None = None) -> None: ...
-
-
-_emission_check: ContextVar[EmissionCheck | None] = ContextVar(
-    "provider_emission_check", default=None
-)
-
-
-def current_emission_check() -> EmissionCheck | None:
-    """Capture only for one exact outbound user message, never background defaults."""
-    return _emission_check.get()
-
-
-@contextmanager
-def emission_check_scope(check: EmissionCheck) -> Iterator[None]:
-    token = _emission_check.set(check)
-    try:
-        yield
-    finally:
-        _emission_check.reset(token)
 
 
 class BackendAdapterError(Exception):
@@ -438,6 +420,8 @@ class BackendChild(Protocol):
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         """Spawn the process and create or resume its session.
 
@@ -462,6 +446,9 @@ class BackendChild(Protocol):
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Start a turn with this message, on these values.
 
@@ -516,6 +503,8 @@ class BackendChild(Protocol):
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         """Try to admit a message to the exact turn named by ``turn_token``.
 

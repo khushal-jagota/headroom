@@ -38,6 +38,7 @@ from planner.executor.contracts import (
     IpcResponse,
     JsonObject,
     ReceiptDisposition,
+    StopRun,
 )
 from planner.executor.files import snapshot_ticket
 from planner.executor.mac import MacExecutor
@@ -552,7 +553,7 @@ def test_failed_add_reports_unknown_and_never_proves_stop(
             # prevents the final stop proof from claiming complete delivery.
             executor.registry.children.clear()
             stopped = await executor.registry._stop_exact_child(
-                ChildCommand("stop", child.reference, ChildOperation.stop, None, {})
+                ChildCommand("stop", child.reference, ChildOperation.stop, None, StopRun())
             )
             assert stopped.disposition is CommandDisposition.uncertain
             assert stopped.result == {"reason": "child_has_unsettled_work"}

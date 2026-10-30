@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
 
 from pydantic import TypeAdapter
 
 from planner.conversation.backends.contracts import (
     AgentMessageCompletedArguments,
     AgentMessageDeltaArguments,
-    BackendChild,
     BackendPromptAccepted,
-    BackendSteerAccepted,
-    BackendSteerRefused,
     ComposerCatalogReportedArguments,
     ContextCompactedArguments,
     DecodedBackendEventArguments,
@@ -31,21 +27,12 @@ from planner.conversation.backends.contracts import (
     UserInputRequestedArguments,
     VendorSessionCursorReboundArguments,
 )
-from planner.conversation.contracts import (
-    PromptDeliveryMode,
-    ResolvedConversationStart,
-)
 from planner.conversation.events import (
     ProviderSubmissionFact,
-    UserInputAnswer,
 )
-from planner.conversation.launch_intent import carried_effort_presence
-from planner.conversation.message_content import MessageContent
 from planner.executor.contracts import (
     BackendEvent,
     BackendEventMethod,
-    ChildCommand,
-    ChildOperation,
     EnvelopeKind,
     FileManifest,
     JsonObject,
@@ -64,79 +51,6 @@ def encode_backend_event(
 ) -> JsonObject:
     del method, turn
     return {key: encode_value(value) for key, value in arguments.items()}
-
-
-async def invoke_child(child: BackendChild, command: ChildCommand) -> JsonObject:
-    """Invoke one already deduplicated native operation; never retry it here."""
-    args: dict[str, Any] = dict(command.arguments)
-    match command.operation:
-        case ChildOperation.start:
-            await child.start(
-                TypeAdapter(ResolvedConversationStart).validate_python(args["resolved_start"]),
-                vendor_session_cursor=args.get("vendor_session_cursor"),
-            )
-        case ChildOperation.write_prompt:
-            if command.turn is None:
-                raise ValueError("write_prompt needs its exact turn")
-            with carried_effort_presence(bool(args.get("reasoning_effort_is_set", False))):
-                result = await child.write_prompt(
-                    command.turn,
-                    TypeAdapter(MessageContent).validate_python(args["content"]),
-                    sender_label=args["sender_label"],
-                    sender_content=TypeAdapter(MessageContent).validate_python(
-                        args["sender_content"]
-                    ),
-                    sender_message_count=args.get("sender_message_count", 1),
-                    mode=PromptDeliveryMode(args["mode"]),
-                    model_change=args.get("model_change"),
-                    reasoning_effort_change=args.get("reasoning_effort_change"),
-                    automatic_compaction=args.get("automatic_compaction", False),
-                )
-            return {
-                "kind": "prompt_accepted",
-                "provider_submission": encode_value(result.provider_submission),
-                "composed_content_delivered": result.composed_content_delivered,
-            }
-        case ChildOperation.steer:
-            if command.turn is None:
-                raise ValueError("steer needs its exact turn")
-            outcome = await child.steer(
-                command.turn,
-                TypeAdapter(MessageContent).validate_python(args["content"]),
-                sender_content=(
-                    None
-                    if args.get("sender_content") is None
-                    else TypeAdapter(MessageContent).validate_python(args["sender_content"])
-                ),
-                sender_label=args["sender_label"],
-            )
-            if isinstance(outcome, BackendSteerRefused):
-                return {
-                    "kind": "steer_refused",
-                    "refusal_reason": outcome.refusal_reason.value,
-                    "provider_submission": encode_value(outcome.provider_submission),
-                }
-            return {
-                "kind": "steer_accepted"
-                if isinstance(outcome, BackendSteerAccepted)
-                else "steer_uncertain",
-                "composed_content_delivered": outcome.composed_content_delivered,
-                "provider_submission": encode_value(outcome.provider_submission)
-                if isinstance(outcome, BackendSteerAccepted)
-                else None,
-            }
-        case ChildOperation.cancel_running_turn:
-            await child.cancel_running_turn()
-        case ChildOperation.answer_permission_ask:
-            await child.answer_permission_ask(args["ask_id"], args["option_id"])
-        case ChildOperation.answer_user_input:
-            await child.answer_user_input(
-                args["request_id"],
-                TypeAdapter(tuple[UserInputAnswer, ...]).validate_python(args["answers"]),
-            )
-        case ChildOperation.stop:
-            await child.stop()
-    return {}
 
 
 def decode_event_arguments(event: BackendEvent) -> DecodedBackendEventArguments:

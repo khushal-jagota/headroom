@@ -634,6 +634,21 @@ type PromptDeliveryFate = (
 )
 
 
+@dataclass(slots=True)
+class NativeMessageOperation:
+    """One executor-origin send's reply credit, shared with its canonical append."""
+
+    sender_id: str
+    submission_id: str
+    composed_confirmed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class NativeMessageAdmission:
+    fate: PromptDeliveryFate
+    composed_content_delivered: bool
+
+
 @dataclass(frozen=True, slots=True)
 class AddressedPromptDeliveryReceipt:
     """An internal receipt for reply attribution after one addressed send.
@@ -757,6 +772,7 @@ class ConversationSystem(Protocol):
         recipient: Principal | None = None,
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -816,6 +832,7 @@ class ConversationSystem(Protocol):
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> AddressedPromptDeliveryReceipt:
         """Run the canonical send and expose replay freshness to addressed-send wiring.
 
@@ -838,6 +855,7 @@ class ConversationSystem(Protocol):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         credit_explicit_reply: bool = True,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> None:
         """Record one addressed message that no backend receives.
 
