@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 
 from planner.goals.contracts import ChartBlock, Tone
-from planner.measures.contracts import MeasureValue, ScalarCoverageStatus
+from planner.measures.contracts import MeasureValue
 
 
 def goal_status(completed: bool, deadline: str | None, today: str) -> Tone:
@@ -105,18 +105,6 @@ def chart_status(
 ) -> Tone:
     if chart is None:
         return "neutral"
-    if chart.get("measure_id"):
-        readings = sorted(
-            (item for item in observations if isinstance(item, MeasureValue)),
-            key=lambda item: item.date,
-        )
-        contributors = readings if chart.get("aggregate") == "sum" else readings[-1:]
-        if any(
-            item.value is None
-            or item.coverage_status in (ScalarCoverageStatus.partial, ScalarCoverageStatus.unknown)
-            for item in contributors
-        ):
-            return "neutral"
     value, target = chart_summary(chart, observations)
     tone = quantitative_status(
         value,

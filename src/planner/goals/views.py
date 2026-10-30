@@ -429,7 +429,7 @@ def readings_json(
                     "summary"
                 ]
                 meets = summary["meets_expectation"]
-                if meets is None or summary["actual"]["partial"]:
+                if meets is None:
                     status = "neutral"
                 else:
                     status = "good" if meets else goal.primary_chart.get("below_target_tone", "bad")

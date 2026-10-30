@@ -84,22 +84,22 @@ describe('category chart projection adapters', () => {
     expect(chartHeadline(grouped, data, 'category:target', source)).toMatchObject({ value: 5, label: 'Target code' });
   });
 
-  it('keeps partial verdicts neutral and reports provider limits beside the reading', () => {
-    const partial = summary(reading(0.45, true, ['Provider returned a partial interval.']), reading(0.5), -0.05, null, null);
-    expect(chartTone(chart, 0.45, 0.5, undefined, partial)).toBe('neutral');
-    expect(comparisonText(chart, 0.45, 0.5, undefined, partial)).toBe('Partial difference: -0.05');
+  it('compares partial values and preserves provider limits in inspection details', () => {
+    const partial = summary(reading(0.45, true, ['Provider returned a partial interval.']), reading(0.5), -0.05, false, null);
+    expect(chartTone(chart, 0.45, 0.5, undefined, partial)).toBe('bad');
+    expect(comparisonText(chart, 0.45, 0.5, undefined, partial)).toBe('0.05 below target');
     const pointsChart: ChartBlock = { ...chart, unit: '%', difference_unit: 'pp', comparison_decimals: 1 };
-    expect(comparisonText(pointsChart, 45, 50, undefined, summary(reading(45, true), reading(50), -5, null, null))).toBe('Partial difference: -5.0 pp');
+    expect(comparisonText(pointsChart, 45, 50, undefined, summary(reading(45, true), reading(50), -5, false, null))).toBe('5.0 pp below target');
     expect(comparisonText(pointsChart, 45, 50, undefined, summary(reading(45), reading(50), -5, false, null))).toBe('5.0 pp below target');
     expect(categoryDetails(partial)).toContain('Provider returned a partial interval.');
     expect(categoryDetails(partial).join(' ')).toContain('1 missing date: 2026-10-28');
-    expect(comparisonText(chart, 0.45, undefined, undefined, { ...partial, comparison: null, difference: null })).toBe('Partial total');
+    expect(comparisonText(chart, 0.45, undefined, undefined, { ...partial, comparison: null, difference: null })).toBe('');
     expect(chartData(chart, [], 'all')).toEqual([]);
     expect(chartHeadline(chart, [], null, undefined).value).toBeUndefined();
   });
 
-  it('keeps partial summaries concise and exact query bounds in accessible inspection details', () => {
-    const source = projection({ ...dateRange, summary: summary(reading(0.45, true), reading(0.5), -0.05, null, null) });
+  it('keeps comparisons concise and exact query bounds in accessible inspection details', () => {
+    const source = projection({ ...dateRange, summary: summary(reading(0.45, true), reading(0.5), -0.05, false, null) });
     source.dataset_results = [retainedResult()];
     const details = categoryDetails(source.ranges[0].summary, source);
     expect(details.join(' ')).toContain('no supplied start restriction');
@@ -115,7 +115,8 @@ describe('category chart projection adapters', () => {
       expect(inspection).toContain('no supplied start restriction');
       expect(inspection).toContain('2026-10-29T18:00:00.000Z');
       const visible = markup.replace(/<details\b[\s\S]*?<\/details>/g, '');
-      expect(visible.match(/Partial difference:/g)).toHaveLength(1);
+      expect(visible.match(/0.05 below target/g)).toHaveLength(1);
+      expect(visible).not.toContain('Partial difference:');
       expect(visible).not.toContain('Provider returned');
       expect(visible).not.toContain('The query covers');
       expect(visible).not.toContain('2026-10-29T18:00:00.000Z');
@@ -169,12 +170,14 @@ describe('category chart projection adapters', () => {
     expect(allocationData(data, series, range, '2026-10-29')).toMatchObject({ total: 6, reading: { values: { 'category:2026-10-29': 4 } } });
   });
 
-  it('keeps partial indicator geometry neutral and missing plans finite', () => {
-    const partial = summary(reading(7, true), reading(10), -3, null, '2026-10-29');
+  it('retains native indicator colors for partial values and keeps missing plans finite', () => {
+    const partial = summary(reading(7, true), reading(10), -3, false, '2026-10-29');
     const progress = renderToStaticMarkup(createElement(ProgressCard, { block: { ...chart, kind: 'progress', target: 10 }, value: 7, summary: partial }));
-    expect(progress).toContain('var(--chart-muted)');
-    const budget = renderToStaticMarkup(createElement(TimeBudgetCard, { block: { ...chart, kind: 'time-budget', target: 10 }, value: 7, summary: partial }));
-    expect(budget).toContain('var(--chart-muted)');
+    expect(progress).toContain('var(--accent-bright)');
+    expect(progress).not.toContain('var(--chart-muted)');
+    const budget = renderToStaticMarkup(createElement(TimeBudgetCard, { block: { ...chart, kind: 'time-budget', target: 10 }, value: 7, summary: { ...partial, meets_expectation: true } }));
+    expect(budget).toContain('var(--accent-bright)');
+    expect(budget).not.toContain('var(--chart-muted)');
     const missing = renderToStaticMarkup(createElement(TimeBudgetCard, { block: { ...chart, kind: 'time-budget', target: undefined }, value: 7, summary: summary(reading(7), reading(null), null, null, null) }));
     expect(missing).not.toMatch(/NaN|Infinity/);
     expect(missing).toContain('Planned reading unavailable');
@@ -195,24 +198,25 @@ describe('category chart projection adapters', () => {
     const current = chartHeadline(budget, chartData(budget, [], 'all', source), null, source);
     expect(current).toMatchObject({ value: 7, target: 10 });
     expect(chartTone(budget, current.value, current.target, current.point, current.categorySummary)).toBe('good');
-    const partial = summary(reading(7, true), reading(10), -3, null, '2026-10-29');
-    expect(chartTone(budget, 7, 10, undefined, partial)).toBe('neutral');
+    const partial = summary(reading(7, true), reading(10), -3, true, '2026-10-29');
+    expect(chartTone(budget, 7, 10, undefined, partial)).toBe('good');
   });
 });
 
-it('keeps unknown scalar category comparisons distinct from partial totals in all indicator readouts', () => {
+it('compares unknown scalar category values across all indicator readouts', () => {
   const unknown: CategoryChartValue = { ...reading(7), coverage_status: 'unknown', reasons: ['The scalar period lacks query bounds.'] };
-  const uncertain = summary(unknown, reading(5), 2, null, '2026-10-29');
+  const uncertain = summary(unknown, reading(5), 2, true, '2026-10-29');
   const source = projection({ ...dateRange, summary: uncertain, point_summaries: [{ key: '2026-10-29', summary: uncertain }] });
-  expect(chartTone(chart, 7, 5, undefined, uncertain)).toBe('neutral');
-  expect(comparisonText(chart, 7, 5, undefined, uncertain)).toBe('Difference (coverage unavailable): 2.00');
+  expect(chartTone(chart, 7, 5, undefined, uncertain)).toBe('good');
+  expect(comparisonText(chart, 7, 5, undefined, uncertain)).toBe('2.00 above target');
   const headline = chartHeadline(chart, chartData(chart, [], 'all', source), null, source);
   expect(headline).toMatchObject({ value: 7, target: 5, coverage_status: 'unknown' });
   for (const kind of ['progress', 'time-budget', 'gauge'] as const) {
     const markup = renderToStaticMarkup(createElement(GoalChart, { block: { ...chart, kind }, values: [], projection: source, narrow: false, preferenceKey: `unknown-${kind}` }));
-    expect(markup).toContain('Coverage unavailable');
-    expect(markup).not.toContain('var(--accent-done)');
-    expect(markup).not.toContain('On target');
+    expect(markup).not.toContain('Coverage unavailable');
+    expect(markup).toContain('Actual source coverage: unknown.');
+    if(kind==='progress')expect(markup).toContain('var(--accent-done)');
+    if(kind==='gauge')expect(markup).toContain('On target');
   }
 });
 

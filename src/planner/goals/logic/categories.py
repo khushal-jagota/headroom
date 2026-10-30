@@ -359,20 +359,14 @@ def _summary(
     ):
         delta = actual["value"] - comparison["value"]
         difference = delta if math.isfinite(delta) else None
-        if difference is not None and all(
-            not item["partial"]
-            and item.get("coverage_status")
-            not in (ScalarCoverageStatus.partial, ScalarCoverageStatus.unknown)
-            for item in (actual, comparison)
-        ):
-            direction = chart.get(
-                "direction", "atmost" if chart["kind"] == "time-budget" else "atleast"
-            )
-            meets = (
-                actual["value"] <= comparison["value"]
-                if direction == "atmost"
-                else actual["value"] >= comparison["value"]
-            )
+        direction = chart.get(
+            "direction", "atmost" if chart["kind"] == "time-budget" else "atleast"
+        )
+        meets = (
+            actual["value"] <= comparison["value"]
+            if direction == "atmost"
+            else actual["value"] >= comparison["value"]
+        )
     return {
         "actual": actual,
         "comparison": comparison,

@@ -8,7 +8,9 @@ import { LineChart } from './line-chart-integrated';
 import { motionTokens } from '../lib/motion-tokens';
 import { SupportingMetric } from './supporting-metric';
 import { Range } from '../GoalChart';
-import { chartData, readChartPreference, selectedTarget, coverageLabel, readingSuffix } from '../presentation';
+import { chartData, chartTone, comparisonText, formatReading, readChartPreference, referenceAt, selectedTarget, readingSuffix } from '../presentation';
+import { ChartInspectionContent } from './chart-inspection-content';
+import inspectionStyles from './line-chart.module.css';
 import './manual-measurements.css';
 
 const blue = 'var(--accent-bright)', green = 'var(--accent-done)', red = 'var(--accent-error)';
@@ -110,6 +112,7 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   useLayoutEffect(() => { if (foldable && !preferences.expanded && focusInside.current) host.current?.querySelector<HTMLButtonElement>('.support-summary')?.focus(); }, [foldable, preferences.expanded]);
   const cumulative = block.manual!.model === 'cumulative_target', reading = block.manual!.model === 'individual_readings';
   const [state, setState] = useState<ManualMeasureState | null>(null), stateRef = useRef<ManualMeasureState | null>(null);
+  const [inspectedDate, setInspectedDate] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | undefined>(session.current?.command.date), selectedRef = useRef<string | undefined>(session.current?.command.date);
   const [acceptedHistory, setAcceptedHistory] = useState<Map<string, MeasureValue>>(new Map()), acceptedHistoryRef = useRef(new Map<string, MeasureValue>());
   const history = useMemo(() => [...values.filter(value => value.measure_id !== block.measure_id || !acceptedHistory.has(value.date)), ...acceptedHistory.values()].sort((a, b) => a.date.localeCompare(b.date)), [values, acceptedHistory, block.measure_id]);
@@ -219,10 +222,15 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   const current = state ? manualAcceptedValue(state, cumulative) : undefined, target = selectedTarget(block, preferences.range)!;
   const today = state?.current_date ?? history.at(-1)?.date;
   const dates = block.ranges?.length ? chartData(block, history, preferences.range).map(datum => datum.key) : today ? Array.from({ length: 7 }, (_, index) => dayBefore(today, 6 - index)) : [];
-  const readings = dates.map(date => history.find(item => item.measure_id === block.measure_id && item.date === date)?.value ?? undefined);
+  const readings = dates.map(date => {
+    const item = history.find(item => item.measure_id === block.measure_id && item.date === date);
+    return item?.status === 'value' && item.value !== null && Number.isFinite(item.value) ? item.value : undefined;
+  });
   if (state?.observation && dates.includes(state.date)) readings[dates.indexOf(state.date)] = state.observation.value;
-  const minimum = Math.min(0, target ?? 0, ...readings.filter((item): item is number => item !== undefined));
-  const maximum = Math.max(target ?? 0, 0, ...readings.map(item => item ?? 0)), span = maximum - minimum || 1;
+  const targetAt = (date: string | undefined) => block.reference?.length ? date ? referenceAt(block, date) : undefined : target;
+  const targets = dates.map(targetAt);
+  const minimum = Math.min(0, ...targets.map(value => value ?? 0), ...readings.filter((item): item is number => item !== undefined));
+  const maximum = Math.max(0, ...targets.map(value => value ?? 0), ...readings.map(item => item ?? 0)), span = maximum - minimum || 1;
   const selected = selectedDate ?? today, title = block.title ?? 'Reading';
   const numberText = (number: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 20 }).format(number);
   const suffix = readingSuffix(block);
@@ -232,11 +240,17 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   }} recovery={recovery} onEdit={() => { if (session.current?.status === 'failed') { session.discard(); retryRequest.current = null; setError(''); } }} pending={pending} blocked={!!retryRequest.current && retryRequest.current.operation === 'increment'}
     label={cumulative ? title : `${title} for ${selected ? dateLabel(selected) : 'selected date'}`} suffix={reading ? suffix : ''} decimals={block.format?.decimals ?? 0} center={cumulative} focusToken={focusToken} />;
   const adds = <div className="add-buttons">{block.manual!.increments?.map((amount, index) => <button type="button" key={`${index}:${amount}`} disabled={!state} aria-busy={pending || undefined} onClick={() => void increment(amount)}>{amount > 0 ? '+' : ''}{amount}</button>)}</div>;
-  const acceptedObservation = cumulative ? state?.latest_observation : state?.observation;
-  const coverage = coverageLabel(acceptedObservation?.coverage_status ?? 'not_applicable');
-  const comparison = current !== undefined && coverage ? `${coverage}${target === undefined ? '' : ` · ${coverage === 'Partial reading' ? 'Partial difference' : 'Difference (coverage unavailable)'}: ${numberText(current - target)}${suffix}`}` : current === undefined ? 'No reading' : target === undefined ? '' : reading
-    ? current >= target ? `${numberText(target)}${suffix} target reached` : `${(target - current).toFixed(block.format?.decimals ?? 0)}${suffix} to a ${numberText(target)}${suffix} ${(block.series?.[0]?.name ?? 'Reading').toLowerCase()}`
-    : current < target ? `${numberText(target - current)} to daily target` : current === target ? 'Daily target reached' : `${numberText(current - target)} above daily target`;
+  const currentTarget = targetAt(cumulative ? state?.latest_observation?.date ?? state?.date : selected);
+  const fraction = currentTarget === undefined ? 0 : currentTarget === 0 ? current === 0 ? 1 : 0 : (current ?? 0) / currentTarget;
+  const comparison = current === undefined ? 'No reading' : comparisonText(block, current, currentTarget);
+  const toneColor = (value: number | undefined, comparedTarget: number | undefined) => {
+    const tone = chartTone(block, value, comparedTarget);
+    return tone === 'good' ? green : tone === 'attention' ? 'var(--accent-attention)' : tone === 'bad' ? red : blue;
+  };
+  const completion = current === undefined || currentTarget === undefined || chartTone(block, current, currentTarget) !== 'good' ? ''
+    : current === currentTarget ? 'Target reached' : block.direction === 'atmost' ? comparison : `${numberText(current - currentTarget)} beyond target`;
+  const inspectionIndex = inspectedDate === null ? -1 : dates.indexOf(inspectedDate);
+  const inspectionValue = readings[inspectionIndex], inspectionTarget = targets[inspectionIndex];
   const range = block.ranges?.length ? <div className="chart-range-footer"><Range block={block} value={preferences.range} id={preferenceKey} onChange={range => { void runAction(async () => {
     if (!await control.current?.prepare() || retryRequest.current) return;
     const date = chartData(block, history, range).at(-1)?.key;
@@ -249,27 +263,35 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
     preference({ range });
   }); }} /></div> : null;
   const card = <article className="manual-measurement" data-embedded={foldable || integrated || undefined} data-compact={compact || block.placement === 'supporting' || undefined} data-manual-model={block.manual!.model} aria-busy={pending || undefined}>
-    {!foldable && <div className="card-heading"><h3>{title}</h3>{!cumulative && selected && selected !== today && <span className="selected-date">{dateLabel(selected)}</span>}</div>}
-    {foldable && !cumulative && selected && selected !== today && <div className="selected-date embedded-date">{dateLabel(selected)}</div>}
-    {cumulative ? <><div className="radial"><svg viewBox="0 0 100 90" role="meter" aria-label={title} aria-valuemin={Math.min(0, current ?? 0)} aria-valuemax={target} aria-valuenow={Math.min(current ?? 0, target)} aria-valuetext={current === undefined ? 'No reading' : `${current} of ${target}${coverage ? `, ${coverage}` : current >= target ? ', target reached' : ''}`}>
-      <path className="radial-track" d={arcFor(1)} /><motion.path className="radial-fill" d={arcFor(1)} pathLength="1" initial={false} animate={{ strokeDasharray: `${Math.max(0, Math.min(1, (current ?? 0) / target))} 1`, stroke: coverage ? 'var(--text-muted)' : current !== undefined && current >= target ? green : blue, opacity: current === undefined || current <= 0 ? 0 : 1 }} transition={reduce ? { duration: 0 } : motionTokens.spring.smooth} />
-    </svg><div className="radial-center">{inline}<span className="denominator">of {numberText(target)}</span></div></div><div className="radial-footer"><span className="completion" style={{ color: coverage ? 'var(--text-muted)' : green }} role="status">{coverage ? comparison : current === target ? 'Target reached' : current !== undefined && current > target ? `${numberText(current - target)} beyond target` : ''}</span>{adds}</div></> : <>
-      <div className="reading-row">{inline}{!reading && adds}</div><p className="comparison" style={{ color: current === undefined ? 'var(--text-faintest)' : coverage ? 'var(--text-muted)' : current >= target ? green : reading ? 'var(--text-faint)' : red }}>{comparison}</p>
-      {reading ? <div className="reading-chart"><LineChart data={dates.map((date, index) => ({ key: date, label: dateLabel(date), axisLabel: dateLabel(date), values: { actual: readings[index], target } }))}
-        series={[{ key: 'actual', label: block.series?.[0]?.name ?? 'Reading', color: blue, area: true }, ...(target === undefined ? [] : [{ key: 'target', label: `${numberText(target)}${suffix} target`, color: 'var(--text-faintest)', dashed: true, area: false }])]}
+    {!foldable && <div className="card-heading"><h3>{title}</h3></div>}
+    {cumulative ? <><div className="radial"><svg viewBox="0 0 100 90" role="meter" aria-label={title} aria-valuemin={Math.min(0, current ?? 0)} aria-valuemax={currentTarget} aria-valuenow={current === undefined || currentTarget === undefined ? undefined : Math.min(current, currentTarget)} aria-valuetext={current === undefined ? 'No reading' : `${current}${currentTarget === undefined ? '' : ` of ${currentTarget}`}${chartTone(block, current, currentTarget) === 'good' ? ', target reached' : ''}`}>
+      <path className="radial-track" d={arcFor(1)} /><motion.path className="radial-fill" d={arcFor(1)} pathLength="1" initial={false} animate={{ strokeDasharray: `${Math.max(0, Math.min(1, fraction))} 1`, stroke: toneColor(current, currentTarget), opacity: current === undefined || currentTarget === undefined || fraction <= 0 ? 0 : 1 }} transition={reduce ? { duration: 0 } : motionTokens.spring.smooth} />
+    </svg><div className="radial-center">{inline}{currentTarget !== undefined && <span className="denominator">of {numberText(currentTarget)}</span>}</div></div><div className="radial-footer"><span className="completion" style={{ color: toneColor(current, currentTarget) }} role="status">{completion}</span>{adds}</div></> : <>
+      <div className="reading-row">{inline}{!reading && adds}</div>
+      {reading ? <div className="reading-chart"><LineChart data={dates.map((date, index) => ({ key: date, label: dateLabel(date), axisLabel: dateLabel(date), values: { actual: readings[index], target: targets[index] }, comparisons: { actual: readings[index] === undefined || targets[index] === undefined ? null : chartTone(block, readings[index], targets[index]) === 'good' } }))}
+        series={[{ key: 'actual', label: block.series?.[0]?.name ?? 'Reading', color: blue, area: true, datedComparisons: true, goodColor: green, badColor: block.below_target_tone === 'attention' ? 'var(--accent-attention)' : red, neutralColor: blue }, ...(targets.every(value => value === undefined) ? [] : [{ key: 'target', label: 'Target', color: 'var(--text-faintest)', dashed: true, area: false }])]}
         label={title} height={196} domain={[minimum, maximum]} formatValue={value => `${value.toFixed(block.format?.decimals ?? 0)}${suffix}`} onSelect={index => void select(dates[index], true)} /></div>
         : <div className="bar-chart" data-maximum={maximum}><div className="bar-grid" aria-hidden="true">
-          {(maximum - target) / span > .09 && <span style={{ bottom: '100%' }}>{formatCompactNumber(maximum)}</span>}
-          <span className="target" style={{ bottom: (target - minimum) / span * 100 + '%' }}>{(target - minimum) / span > .08 ? formatCompactNumber(target) : ''}</span><span style={{ bottom: -minimum / span * 100 + '%' }}>0</span>
+          {(block.reference?.length || target === undefined || (maximum - target) / span > .09) && <span style={{ bottom: '100%' }}>{formatCompactNumber(maximum)}</span>}
+          {target !== undefined && !block.reference?.length && <span className="target" style={{ bottom: (target - minimum) / span * 100 + '%' }}>{(target - minimum) / span > .08 ? formatCompactNumber(target) : ''}</span>}<span style={{ bottom: -minimum / span * 100 + '%' }}>0</span>
           {minimum < 0 && <span style={{ bottom: 0 }}>{formatCompactNumber(minimum)}</span>}
         </div><div className="bars" style={{ gridTemplateColumns: `repeat(${Math.max(1, dates.length)}, minmax(0, 1fr))` }} role="group" aria-label={`${title} by date`}>
-          {readings.map((value, index) => <button type="button" key={dates[index]} className="bar-pick" aria-pressed={selected === dates[index]} aria-label={`${dateLabel(dates[index])}, ${value == null ? 'no reading' : `${value} ${title.toLowerCase()}`}`} onClick={() => void select(dates[index])}>
+          {readings.map((value, index) => <button type="button" key={dates[index]} className="bar-pick" aria-pressed={selected === dates[index]} aria-label={`${dateLabel(dates[index])}, ${value == null ? 'no reading' : `${formatReading(block, value)} ${title.toLowerCase()}`}${targets[index] === undefined ? '' : `, target ${formatReading(block, targets[index]!)}`}`} onPointerEnter={event => { if (event.pointerType === 'mouse') setInspectedDate(dates[index]); }}
+            onPointerLeave={event => { if (event.pointerType === 'mouse' && !event.currentTarget.matches(':focus')) setInspectedDate(null); }}
+            onFocus={() => setInspectedDate(dates[index])} onBlur={() => setInspectedDate(null)} onKeyDown={event => { if (event.key === 'Escape') setInspectedDate(null); }}
+            onClick={() => { setInspectedDate(dates[index]); void select(dates[index]); }}>
             <span className="bar-space"><motion.span className={'bar ' + (value == null ? 'missing' : '')} initial={false}
               style={minimum < 0 ? { position: 'absolute', bottom: (Math.min(0, value ?? 0) - minimum) / span * 100 + '%' } : undefined}
-              animate={{ height: value == null || value === 0 ? 2 : Math.abs(value) / span * 100 + '%', backgroundColor: value == null ? 'var(--text-faintest)' : coverageLabel(history.find(item => item.measure_id === block.measure_id && item.date === dates[index])?.coverage_status ?? 'not_applicable') ? 'var(--text-muted)' : value >= target ? green : red }} transition={{ duration: reduce ? 0 : motionTokens.duration.standard }} /></span>
+              animate={{ height: value == null || value === 0 ? 2 : Math.abs(value) / span * 100 + '%', backgroundColor: value == null ? 'var(--text-faintest)' : toneColor(value, targets[index]) }} transition={{ duration: reduce ? 0 : motionTokens.duration.standard }} /></span>
             <span className="bar-date">{dates[index] === today ? 'Today' : dateLabel(dates[index]).split(' ')[0]}</span>
           </button>)}
-        </div></div>}
+        </div>{inspectionIndex >= 0 && <div data-chart-tooltip className={`${inspectionStyles.tooltip} bar-inspection`} aria-hidden="true"
+          style={{ left: `${(inspectionIndex + .5) / dates.length * 100}%`, transform: `translateX(-${(inspectionIndex + .5) / dates.length * 100}%)` }}>
+          <ChartInspectionContent label={dateLabel(dates[inspectionIndex])} rows={[
+            { key: 'actual', label: title, value: inspectionValue === undefined ? 'No reading' : formatReading(block, inspectionValue), color: toneColor(inspectionValue, inspectionTarget) },
+            ...(inspectionTarget === undefined ? [] : [{ key: 'target', label: 'Target', value: formatReading(block, inspectionTarget), color: 'var(--text-faintest)', dashed: true }]),
+          ]} />
+        </div>}</div>}
     </>}
     {range}
     {error && retryRequest.current?.operation !== 'replace' && <div className="manual-write-error error" role="alert">{error}<button type="button" disabled={pending} onClick={() => { const retry = retryRequest.current; if (retry && !(isManualWriteConflict(session.current?.error))) void send(retry).catch(() => {}); else void refresh().then(() => { session.discard(); setError(''); }).catch(cause => setError(manualErrorMessage(cause))); }}>Retry</button></div>}

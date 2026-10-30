@@ -4,7 +4,7 @@ import { useReducedMotion } from 'motion/react';
 import { Chart, registerables, type ChartDataset } from 'chart.js';
 import type { ChartBlock, ChartSeries, ChartProjection } from '../../goals/contracts';
 import type { LineChartDatum } from './line-chart-integrated';
-import { chartHeadline, chartTone, formatReading, formatAxisTick, hasCountAxis, categoryRange, seriesKey, coverageLabel, categoryCoverage } from '../presentation';
+import { chartHeadline, chartTone, formatReading, formatAxisTick, hasCountAxis, categoryRange, seriesKey } from '../presentation';
 import { motionTokens } from '../lib/chart-motion';
 import { seriesColor } from './goal-indicators';
 
@@ -24,7 +24,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   const summaries = new Map(selectedRange?.point_summaries.map(item => [item.key, item.summary]));
   const currentTone = chartTone(block, latest?.actual, latest?.target, undefined, summaries.get(data.at(-1)?.key ?? ''), data.at(-1)?.coverage_status);
   const latestSummary = summaries.get(data.at(-1)?.key ?? '');
-  const unknownVerdict = (summary: typeof latestSummary) => !!block.binding && !!summary && (!!coverageLabel(categoryCoverage(summary)) || summary.comparison !== null && summary.meets_expectation === null);
+  const unknownVerdict = (summary: typeof latestSummary) => !!block.binding && !!summary && summary.comparison !== null && summary.meets_expectation === null;
   const currentColor = latest?.actual === undefined ? 'var(--chart-muted)' : unknownVerdict(latestSummary) ? 'var(--chart-muted)' : latest.target === undefined ? 'var(--accent-bright)'
     : { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--chart-muted)' }[currentTone];
   const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? currentColor : seriesColor(item, i, 'composition') }));
@@ -41,7 +41,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
     } : {
       type: 'bar', label: entry.label, data: data.map(d => d.values[entry.key] ?? null),
       backgroundColor: block.stacked || entry.key !== 'actual' ? resolve(entry.color) : data.map(d => {
-        if (coverageLabel(d.coverage_status) || unknownVerdict(summaries.get(d.key))) return color('--chart-muted');
+        if (unknownVerdict(summaries.get(d.key))) return color('--chart-muted');
         if (d.values.target === undefined) return color('--accent-bright');
         const point = projection?.kind === 'scalar' ? projection.points.find(item => item.date === d.key) : undefined;
         const tone = chartTone(block, d.values.actual, d.values.target, point, summaries.get(d.key), d.coverage_status);

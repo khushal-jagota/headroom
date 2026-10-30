@@ -77,7 +77,8 @@ def test_dataset_binding_reads_complete_retained_maps_and_validates_current_refe
     summary = all_summary(projection)
     assert summary["actual"]["value"] == 4
     assert summary["actual"]["partial"] and summary["actual"]["missing_dates"] == ["2026-10-26"]
-    assert result["status"] == "neutral"
+    assert summary["meets_expectation"] is True
+    assert result["status"] == "good"
     assert projection["dataset_results"][0]["output"]["fields"][0]["name"] == "events"
     assert projection["dataset_results"][0]["provenance"]["script_sha256"] == "synthetic"
     assert {value["source_id"] for value in result["sources"]} == {item.source_id}

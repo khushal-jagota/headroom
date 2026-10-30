@@ -6,6 +6,7 @@ import { motionTokens } from "../lib/chart-motion";
 import { segmentedCurve, valueAt, morphShape, comparisonAt, type Point } from "../lib/line-geometry";
 import type { MeasureValue } from "../../goals/contracts";
 import styles from "./line-chart.module.css";
+import { ChartInspectionContent } from "./chart-inspection-content";
 
 export interface LineChartSeries {
   /** Stable identity. A series keeps its line across data changes, so switching ranges morphs the path instead of redrawing it. */
@@ -406,12 +407,10 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
           {series.map((line, at) => <circle key={line.key} ref={node => { if (node) dots.current.set(line.key, node); else dots.current.delete(line.key); }} data-dot={line.key} className={styles.dot} r={4} data-hidden={hidden.includes(line.key) || undefined} style={{ "--series": colorOf(line, at) } as CSSProperties} />)}
         </svg>
         <motion.div ref={tip} data-chart-tooltip className={styles.tooltip} style={{ x: tipX, y: tipY }} aria-hidden="true">
-          <p className={styles.tipTitle}>{(reading ?? data[last])?.label ?? ""}</p>
-          {visible.map(line => <p key={line.key} data-tooltip-series={line.key} className={styles.tipRow} style={{ "--series": colorOf(line, series.indexOf(line)) } as CSSProperties}>
-            <span className={styles.tipSwatch} data-dashed={line.dashed || undefined} />
-            <span className={styles.tipName}>{line.label}</span>
-            <span className={styles.tipValue}>{format((reading ?? data[last])?.values[line.key] ?? NaN, line)}</span>
-          </p>)}
+          <ChartInspectionContent label={(reading ?? data[last])?.label ?? ""} rows={visible.map(line => ({
+            key: line.key, label: line.label, color: colorOf(line, series.indexOf(line)), dashed: line.dashed,
+            value: format((reading ?? data[last])?.values[line.key] ?? NaN, line),
+          }))} />
         </motion.div>
         <AnimatePresence initial={false}>
           {(empty || allHidden) && !loading && <motion.p key={empty ? "empty" : "hidden"} className={styles.message} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: fadeFast }}>{empty ? emptyLabel : "Choose a series to show"}</motion.p>}
