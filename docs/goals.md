@@ -28,6 +28,18 @@ Each command returns `schema`, `examples`, and `notes` without stdin or a server
 
 _Code paths:_ `src/planner/goals/`, `src/planner/core/request_guidance.py`, and `src/planner/runtime/logic/conversation_start_resolution.py`.
 
+## Sidebar previews
+
+Active goals appear inside the full Chief card, before its Worker groups. Each row links to its goal page. Hover, keyboard focus, or a touch hold opens the goal preview. The preview shows the Project, deadline, full title, and primary content.
+
+A selected completion checklist uses the same checklist as the goal page. Other goals show their native chart, with its available date ranges and manual controls. Binary goals without a selected checklist retain Mark done and Mark not done. Automatic readings remain read-only.
+
+Tab reaches the preview controls from its goal row. Escape inside a value field first cancels its draft. An outer Escape dismisses the preview and returns focus to its connected row. Pointer exit, outside input, and user scroll outside the preview also dismiss it. Internal preview scroll keeps it open. Background refresh and keyboard focus can reposition the preview without dismissal. A successful touch hold survives release and suppresses the release click.
+
+Before dismissal or replacement, a focused value field loses focus while it remains mounted. Its valid draft saves through the native control. Submitted writes continue after the preview closes. Reopen the same goal to see a pending save or a failed save with its native retry control. Manual retries reuse the original request and receipt. A stale manual edit requires an accepted-state refresh and another explicit edit. Saves never retry automatically.
+
+Checklist and binary edits share the goal page's revision-checked writer. Queued checklist commands use the accepted document after the preceding write. Accepted saves refresh the page and sidebar queries. A refresh failure remains a read error and does not turn an accepted save into a failed write. Historical chart selection does not change the current sidebar status.
+
 ## Completion displays
 
 Effective completion comes from the selected display's saved input. Panels derives it when it reads a goal. It does not save another completion flag. A binary display uses its saved checked input. A quantitative goal keeps its chart and uses that binary input for completion.
@@ -80,7 +92,7 @@ _Code paths:_ `src/planner/files/`, `src/planner/goals/cli.py`, and `web/src/com
 
 ## Charts and measurement controls
 
-Interactive measurement entry and increment controls remain outside this implementation. Existing collection scripts, source schedules, corrections, and measure APIs keep their existing behavior.
+Manual charts use the controls described below. Existing collection scripts, source schedules, corrections, and measure APIs keep their existing behavior.
 
 The approved chart sheet also includes a single progress bar, a time-budget ring, a time-allocation ring, and stacked composition bars. Progress and budget use a positive target as their denominator. Authored allocation and stacked bars use the same point identity across categories; a missing category leaves their total unavailable. Static ring and progress values are nonnegative. A negative measured value remains in the readings payload, but progress and budget summaries treat it as unavailable. Existing line and bar measurements still support signed values. Category colors use the shared palette.
 
@@ -140,4 +152,4 @@ Explicit date requests override the display interval and can extend beyond the d
 
 Code paths: `src/planner/goals/`, `src/planner/measures/logic/`, and `web/src/lib/charts/`.
 
-_Last verified: October 29, 2026._
+_Last verified: October 30, 2026._

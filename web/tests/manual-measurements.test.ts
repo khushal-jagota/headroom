@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PlannerFetchError } from '../src/lib/api';
-import type { ManualMeasureState, Observation } from '../src/lib/goals/contracts';
-import { manualAcceptedValue, manualConflictState, manualStateCanReplace, parseManualDraft } from '../src/lib/goals/manualMeasurements';
+import type { ManualMeasureState, ManualWriteBody, ManualWriteResult, Observation } from '../src/lib/goals/contracts';
+import { manualAcceptedValue, manualConflictState, manualStateCanReplace, parseManualDraft, submitManualWrite } from '../src/lib/goals/manualMeasurements';
+import { createGoalRequestSessions, type ManualWriteCommand } from '../src/lib/goals/requestSessions';
 
 const observation = (date: string, value: number): Observation => ({
   measure_id: 'manual', date, value, run_id: null, manual_write_id: 'accepted-request',
@@ -14,6 +15,33 @@ const state: ManualMeasureState = {
 };
 
 describe('manual measurement editing boundary', () => {
+  it('retains cumulative drafts during preflight and freezes the submitted body before HTTP retries', async () => {
+    const sessions = createGoalRequestSessions(), session = sessions.manual('goal', 'manual');
+    let rejectRead!: (error: Error) => void;
+    const preflight = new Promise<ManualMeasureState>((_resolve, reject) => { rejectRead = reject; });
+    const read = vi.fn().mockReturnValueOnce(preflight).mockResolvedValue({ ...state, current_date: '2026-10-29' });
+    const receipt: ManualWriteResult = { state, replayed: false, receipt: { request_id: 'original', measure_id: 'manual', actor: { kind: 'owner', id: 'owner' }, payload_fingerprint: 'fingerprint', date: '2026-10-29', value: 19, write_revision: 5, accepted_at: 0 } };
+    const write = vi.fn<(body: ManualWriteBody) => Promise<ManualWriteResult>>().mockRejectedValueOnce(new Error('Write rejected')).mockResolvedValue(receipt);
+    const adapter = { read, write };
+    const intent: ManualWriteCommand = { request_id: 'original', operation: 'replace', basis: 'latest', preflight: true, date: state.date, value: 19, expected_definition_revision: 1, expected_write_revision: 4 };
+    const pending = submitManualWrite(session, intent, adapter);
+    const reopened = sessions.manual('goal', 'manual');
+    expect(reopened.current).toEqual({ status: 'pending', command: intent });
+    expect(write).not.toHaveBeenCalled();
+    const failed = expect(pending).rejects.toThrow('Read rejected');
+    rejectRead(new Error('Read rejected')); await failed;
+    expect(reopened.current).toMatchObject({ status: 'failed', command: intent });
+    expect(read).toHaveBeenCalledTimes(1); expect(write).not.toHaveBeenCalled();
+    await expect(submitManualWrite(reopened, reopened.current!.command, adapter)).rejects.toThrow('Write rejected');
+    const body = write.mock.calls[0][0];
+    expect(body).toEqual({ request_id: 'original', operation: 'replace', basis: 'latest', date: '2026-10-29', value: 19, expected_definition_revision: 1, expected_write_revision: 4 });
+    expect(reopened.current?.command).toBe(body);
+    await submitManualWrite(reopened, reopened.current!.command, adapter);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(write.mock.calls[1][0]).toBe(body);
+    expect(reopened.current).toBeUndefined();
+  });
+
   it('distinguishes an invalid blank from zero without prototype numeric restrictions', () => {
     expect(['', ' ', 'Infinity', 'NaN', '1e309', '0x10', '4 km'].map(parseManualDraft)).toEqual(Array(7).fill(null));
     expect(['0', '-2.75', '.125', '1.25e-7', '1000001'].map(parseManualDraft)).toEqual([0, -2.75, .125, 1.25e-7, 1000001]);
