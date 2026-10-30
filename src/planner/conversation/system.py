@@ -28,7 +28,6 @@ its own prompt.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sqlite3
 import time
@@ -55,7 +54,6 @@ if TYPE_CHECKING:
 from planner.conversation.backend_event_contracts import (
     AcceptedEvent,
     CommitParticipant,
-    RetainedDeliveryChild,
     TurnEndingContext,
     child_stops_outside_lock,
 )
@@ -86,6 +84,7 @@ from planner.conversation.backends.contracts import (
     PromptWriteRefused,
     ProviderSelectionReportedArguments,
     RetainedBackendChildFactory,
+    RetainedBackendRun,
     SessionLoadFailed,
     TokenUsageReportedArguments,
     ToolCallFinishedArguments,
@@ -209,8 +208,6 @@ from planner.executor.protocol import (
     AcceptanceReceipt,
     AnswerApplication,
     BackendEvent,
-    ChildCommand,
-    ChildOperation,
 )
 
 LOGGER = logging.getLogger("planner.conversation")
@@ -311,6 +308,7 @@ class _ReservedTurn:
     resolved: asyncio.Event
     automatic_compaction: bool = False
     automatic_notice: bool = False
+    prompt_accepted: bool = False
     shutdown_owned: bool = False
     shutdown_fate: PromptDeliveryFate | None = None
     messages: tuple[_HeldPrompt, ...] = ()
@@ -460,8 +458,7 @@ class _ConversationState:
     child_launch_context: LaunchContext | None = None
     local_child_retirement_proven: bool = False
     child_is_quarantined: bool = False
-    executor_child_reference: Any = None
-    executor_initial_commands: tuple[ChildCommand, ...] = ()
+    executor_child_reference: ChildReference | None = None
     executor_delivery_uncertain: bool = False
     initial_shutdown_task: asyncio.Task[bool] | None = None
     initial_shutdown_child: BackendChild | None = None
@@ -523,10 +520,17 @@ class SqliteProcessConversationSystem:
         self._signal = store.signal_coordinator
         self._runtime_ownership = store.claim_runtime(existing_ownership=runtime_ownership)
         try:
-            for record, metadata in store.read_executor_runtime_snapshots():
+            retained_ids = {
+                run.reference.conversation_id
+                for factory in {
+                    id(value): value for value in self._backend_child_factories.values()
+                }.values()
+                if isinstance(factory, RetainedBackendChildFactory)
+                for run in factory.retained_runs()
+            }
+            for record in store.read_conversation_records(retained_ids):
                 state = _ConversationState(record=record)
-                if metadata is not None:
-                    self._restore_executor_turn_metadata(state, metadata)
+                self._restore_retained_run(state)
                 self._conversations[record.conversation_id] = state
         except BaseException:
             self._runtime_ownership.close()
@@ -1119,13 +1123,11 @@ class SqliteProcessConversationSystem:
 
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
         """Require an actual cleanup receipt or proof that no source ever started."""
-        retained = await self._store.read_executor_turn(conversation_id)
-        remote_receipt = (
-            retained is not None and json.loads(retained[2]).get("source_retired") is True
-        )
         state = await self._conversation_state(conversation_id)
         if state is None:
-            return remote_receipt
+            return False
+        retained = self._retained_run(state)
+        remote_receipt = retained is not None and retained.retirement_confirmed
         async with state.lock:
             return (
                 state.child is None
@@ -1175,7 +1177,7 @@ class SqliteProcessConversationSystem:
             await self._discard_held_prompts(state)
             running = state.running_turn
             if running is not None:
-                await self._revoke_executor_turn_asks(state, running)
+                await self._revoke_turn_requests(state, running)
             owns_ending = True
             try:
                 cancel_fact = None
@@ -1189,7 +1191,7 @@ class SqliteProcessConversationSystem:
                 if child is not None:
                     if running is not None:
                         if child_stops_outside_lock(child):
-                            reference = child.reference
+                            reference = state.executor_child_reference
                             reservation = state.reserved_turn
                             self._set_phase(state, _ConversationPhase.ending)
                             running.ending_is_the_cores = True
@@ -1222,7 +1224,6 @@ class SqliteProcessConversationSystem:
                             if (
                                 not owns_ending
                                 or not child_stops_outside_lock(current_child)
-                                or current_child.reference != reference
                                 or state.executor_child_reference != reference
                             ):
                                 owns_ending = False
@@ -1289,7 +1290,7 @@ class SqliteProcessConversationSystem:
             if (
                 not reservation.shutdown_owned
                 and child_stops_outside_lock(child)
-                and child.prompt_accepted
+                and reservation.prompt_accepted
             ):
                 return False
             reservation.shutdown_owned = True
@@ -1317,7 +1318,6 @@ class SqliteProcessConversationSystem:
                     LifecycleStatus.suppressed if suppressed else LifecycleStatus.unknown,
                 ),
             )
-            metadata = self._initial_shutdown_metadata(state, reservation)
             payloads: list[ConversationEventPayload] = []
             if reservation.messages:
                 for message in reservation.messages:
@@ -1361,7 +1361,6 @@ class SqliteProcessConversationSystem:
                     state.record.conversation_id,
                     tuple(payloads),
                     lifecycle,
-                    metadata,
                 ),
             )
             self._take_in_written_rows(state, written)
@@ -1376,92 +1375,21 @@ class SqliteProcessConversationSystem:
             self._set_phase(state, _ConversationPhase.idle)
             reservation.resolved.set()
             if child_stops_outside_lock(child):
-                self._configure_initial_command_recording(state, child, reservation)
                 self._schedule_remote_retirement(state, child, reservation=reservation)
             return True
-
-    def _initial_shutdown_metadata(
-        self,
-        state: _ConversationState,
-        reservation: _ReservedTurn,
-        *,
-        source_retired: bool = False,
-    ) -> tuple[str, str, str] | None:
-        metadata = self._executor_turn_metadata(
-            state, _RunningTurn(token=reservation.token, ended=True, callbacks_revoked=True)
-        )
-        if metadata is None:
-            return None
-        runtime = json.loads(metadata[2])
-        runtime["source_retired"] = source_retired
-        return metadata[0], metadata[1], json.dumps(runtime)
-
-    def _configure_initial_command_recording(
-        self, state: _ConversationState, child: RetainedDeliveryChild, reservation: _ReservedTurn
-    ) -> None:
-
-        async def record(command: ChildCommand) -> None:
-            async with state.lock:
-                if reservation.shutdown_owned and command.operation is not ChildOperation.stop:
-                    raise DeliveryCancelled()
-                if state.executor_child_reference != child.reference:
-                    raise DeliveryCancelled()
-                if command.operation is ChildOperation.write_prompt:
-                    if (
-                        state.reserved_turn is not reservation
-                        or command.turn != reservation.token
-                        or (
-                            state.last_ended_turn_token is not None
-                            and state.last_ended_turn_token.turn_number
-                            >= reservation.token.turn_number
-                        )
-                    ):
-                        raise DeliveryCancelled()
-                    state.executor_initial_commands = tuple(
-                        earlier
-                        for earlier in state.executor_initial_commands
-                        if earlier.operation is ChildOperation.start
-                    )
-                state.executor_initial_commands += (command,)
-                metadata = (
-                    self._initial_shutdown_metadata(state, reservation)
-                    if reservation.shutdown_owned
-                    else self._executor_turn_metadata(state, _RunningTurn(token=reservation.token))
-                )
-                if not reservation.shutdown_owned and metadata is not None:
-                    runtime = json.loads(metadata[2])
-                    # Intent is not native acceptance. A crash at any preparation or
-                    # frame boundary restores uncertainty, never a fabricated run.
-                    runtime["delivery_uncertain"] = True
-                    metadata = metadata[0], metadata[1], json.dumps(runtime)
-                await self._persist(
-                    state,
-                    partial(
-                        self._store.transition_lifecycle,
-                        state.record.conversation_id,
-                        (),
-                        executor_turn=metadata,
-                        launch_command=command,
-                        assigned_child=(
-                            (child.reference, child.assignment_principal)
-                            if child.assignment_principal is not None
-                            else None
-                        ),
-                    ),
-                )
-
-        child.record_command = record
 
     def _schedule_remote_retirement(
         self,
         state: _ConversationState,
-        child: RetainedDeliveryChild,
+        child: BackendChild,
         *,
         reservation: _ReservedTurn | None = None,
         nonadmitted_turn: TurnToken | None = None,
     ) -> asyncio.Task[bool]:
         """Fence the captured identity before its cleanup owner yields the lock."""
-        reference: ChildReference = child.reference
+        reference = state.executor_child_reference
+        if reference is None:
+            raise ValueError("Retirement lacks retained identity")
         if nonadmitted_turn is not None:
             # Only the owner of this exact refused write may remove its circular
             # reservation dependency. The reservation itself remains unresolved.
@@ -1485,26 +1413,15 @@ class SqliteProcessConversationSystem:
                 raise ValueError("Pending retirement belongs to another child")
             return existing
         state.child_is_quarantined = True
-        token = next(
-            (
-                command.turn
-                for command in reversed(
-                    state.executor_initial_commands + tuple(child.initial_commands)
-                )
-                if command.child == child.reference and command.turn is not None
-            ),
-            None,
+        token = (
+            reservation.token
+            if reservation is not None
+            else state.reserved_turn.token
+            if state.reserved_turn is not None
+            else state.running_turn.token
+            if state.running_turn is not None
+            else state.last_ended_turn_token
         )
-        if token is None:
-            token = (
-                reservation.token
-                if reservation is not None
-                else state.reserved_turn.token
-                if state.reserved_turn is not None and child.initial_commands
-                else state.running_turn.token
-                if state.running_turn is not None
-                else state.last_ended_turn_token
-            )
         pending = state.reserved_turn
         dependency = pending if pending is not None and pending.token == token else None
         if dependency is not None and (
@@ -1519,48 +1436,9 @@ class SqliteProcessConversationSystem:
             # to serialize. Its retained reservation cannot make exact source
             # retirement wait for the admission fact that retirement must settle.
             dependency = None
-        if token is None:
-            # Without original metadata there is no identity-safe retirement commit.
-            async def unconfirmed() -> bool:
-                return False
-
-            task = asyncio.create_task(unconfirmed())
-        else:
-            snapshot = self._executor_turn_metadata(
-                state, _RunningTurn(token=token, ended=True, callbacks_revoked=True)
-            )
-            if snapshot is not None:
-                cleanup_runtime = json.loads(snapshot[2])
-                cleanup_runtime["source_retired"] = False
-                snapshot = (snapshot[0], snapshot[1], json.dumps(cleanup_runtime))
-
-            async def record_stop(command: ChildCommand) -> None:
-                async with state.lock:
-                    if snapshot is None or command.child != child.reference:
-                        raise ValueError("Retirement lacks exact child metadata")
-                    from planner.executor.protocol import encode_value
-
-                    runtime = json.loads(snapshot[2])
-                    commands = tuple(
-                        earlier
-                        for earlier in state.executor_initial_commands
-                        if earlier.child == child.reference
-                    ) + (command,)
-                    runtime["initial_commands"] = encode_value(commands)
-                    if state.executor_child_reference == child.reference:
-                        state.executor_initial_commands = commands
-                    await self._persist(
-                        state,
-                        partial(
-                            self._store.transition_lifecycle,
-                            state.record.conversation_id,
-                            (),
-                            executor_turn=(snapshot[0], snapshot[1], json.dumps(runtime)),
-                        ),
-                    )
-
-            child.record_command = record_stop
-            task = asyncio.create_task(self._stop_initial_child(state, child, dependency, snapshot))
+        task = asyncio.create_task(
+            self._stop_initial_child(state, child, dependency, reference, token)
+        )
         state.initial_shutdown_task = task
         state.initial_shutdown_child = child
         state.settlement_tasks.add(task)
@@ -1570,13 +1448,11 @@ class SqliteProcessConversationSystem:
     async def _stop_initial_child(
         self,
         state: _ConversationState,
-        child: RetainedDeliveryChild,
+        child: BackendChild,
         dependency: _ReservedTurn | None,
-        metadata: tuple[str, str, str] | None,
+        reference: ChildReference,
+        token: TurnToken | None,
     ) -> bool:
-        from pydantic import TypeAdapter
-
-        reference = child.reference
         if dependency is not None:
             await dependency.resolved.wait()
         try:
@@ -1587,31 +1463,12 @@ class SqliteProcessConversationSystem:
             LOGGER.exception("Remote child termination remains unconfirmed")
             return False
         async with state.lock:
-            latest = await self._store.read_executor_turn(reference.conversation_id)
+            retained = self._retained_run(state)
             if (
-                metadata is None
-                or latest is None
-                or TypeAdapter(ChildReference).validate_json(latest[0]) != reference
-                or json.loads(latest[2]).get("cleanup_evidence_uncertain")
+                retained is None
+                or retained.reference != reference
+                or not retained.retirement_confirmed
             ):
-                return False
-            runtime = json.loads(metadata[2])
-            if state.executor_child_reference == reference:
-                from planner.executor.protocol import encode_value
-
-                runtime["initial_commands"] = encode_value(state.executor_initial_commands)
-            runtime["source_retired"] = True
-            retired = await self._persist(
-                state,
-                partial(
-                    self._store.transition_lifecycle,
-                    state.record.conversation_id,
-                    (),
-                    executor_turn=(metadata[0], metadata[1], json.dumps(runtime)),
-                    retired_child=reference,
-                ),
-            )
-            if retired is False:
                 return False
             await child.detach()
             if state.child is child:
@@ -1623,7 +1480,7 @@ class SqliteProcessConversationSystem:
                 if (
                     pending is not None
                     and state.executor_delivery_uncertain
-                    and pending.token.turn_number == json.loads(metadata[1])["turn_number"]
+                    and pending.token == token
                 ):
                     state.last_ended_turn_token = pending.token
                     state.reserved_turn = None
@@ -3188,12 +3045,6 @@ class SqliteProcessConversationSystem:
         async with state.lock:
             state.child_is_quarantined = True
             state.executor_delivery_uncertain = True
-            pending = _RunningTurn(
-                token=reservation.token,
-                automatic_compaction=reservation.automatic_compaction,
-                automatic_notice=reservation.automatic_notice,
-            )
-            metadata = self._executor_turn_metadata(state, pending)
             for message in messages:
                 await self._append_event(
                     state,
@@ -3208,7 +3059,6 @@ class SqliteProcessConversationSystem:
                         recovery_references=message.recovery_references,
                     ),
                     lifecycle=(_prompt_fact(reservation.token, LifecycleStatus.unknown),),
-                    executor_turn=metadata,
                     native_message_operation=message.native_message_operation,
                 )
             self._settle_held_deliveries(state, messages)
@@ -3326,16 +3176,6 @@ class SqliteProcessConversationSystem:
                 async with state.lock:
                     state.child_is_quarantined = True
                     state.executor_delivery_uncertain = True
-                    pending = _RunningTurn(
-                        token=reservation.token,
-                        automatic_compaction=reservation.automatic_compaction,
-                        automatic_notice=reservation.automatic_notice,
-                    )
-                    metadata = self._executor_turn_metadata(state, pending)
-                    if metadata is not None:
-                        runtime = json.loads(metadata[2])
-                        runtime["delivery_uncertain"] = True
-                        metadata = (metadata[0], metadata[1], json.dumps(runtime))
                     await self._append_event(
                         state,
                         PromptDeliveryUncertainEventPayload(
@@ -3348,7 +3188,6 @@ class SqliteProcessConversationSystem:
                             recipient=recipient,
                         ),
                         lifecycle=(_prompt_fact(reservation.token, LifecycleStatus.unknown),),
-                        executor_turn=metadata,
                         native_message_operation=native_message_operation,
                     )
                 self._set_phase(state, _ConversationPhase.idle)
@@ -4262,8 +4101,6 @@ class SqliteProcessConversationSystem:
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
-        if child_stops_outside_lock(child) and state.reserved_turn is not None:
-            self._configure_initial_command_recording(state, child, state.reserved_turn)
         automatic_notice = False
         if messages:
             messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
@@ -4350,6 +4187,8 @@ class SqliteProcessConversationSystem:
                     rebound.refusal_reason is not None and rebind.failed_child_recovery
                 ),
             )
+        if attempted_reservation is not None:
+            attempted_reservation.prompt_accepted = True
         return _PromptDeliveryAttempt(
             messages=messages,
             automatic_notice=automatic_notice,
@@ -4413,8 +4252,6 @@ class SqliteProcessConversationSystem:
             if state.child is not old_child:
                 raise DeliveryCancelled()
             if child_stops_outside_lock(old_child):
-                if state.executor_child_reference != old_child.reference:
-                    raise DeliveryCancelled()
                 cleanup = self._schedule_remote_retirement(
                     state,
                     old_child,
@@ -4453,8 +4290,6 @@ class SqliteProcessConversationSystem:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
         async with state.lock:
             check_delivery_owner()
-            if child_stops_outside_lock(child) and reservation is not None:
-                self._configure_initial_command_recording(state, child, reservation)
         automatic_notice = False
         if messages:
             messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
@@ -4519,6 +4354,8 @@ class SqliteProcessConversationSystem:
         except BaseException:
             await self._discard_child(state, child)
             raise
+        if reservation is not None:
+            reservation.prompt_accepted = True
         return _PromptDeliveryAttempt(
             composed_content_delivered=accepted.composed_content_delivered,
             provider_submission=accepted.provider_submission,
@@ -4693,15 +4530,6 @@ class SqliteProcessConversationSystem:
                 # One transaction: the change, the conversation's new values and the
                 # prompt are one fact about one delivery, and a half-written one would
                 # leave the record saying something that never happened.
-                accepted_metadata = self._executor_turn_metadata(state, accepted_turn)
-                if accepted_metadata is not None:
-                    accepted_runtime = json.loads(accepted_metadata[2])
-                    accepted_runtime["delivery_uncertain"] = False
-                    accepted_metadata = (
-                        accepted_metadata[0],
-                        accepted_metadata[1],
-                        json.dumps(accepted_runtime),
-                    )
                 written = await self._persist(
                     state,
                     partial(
@@ -4723,7 +4551,6 @@ class SqliteProcessConversationSystem:
                             _turn_fact(reservation.token, LifecycleStatus.running),
                             _prompt_fact(reservation.token, LifecycleStatus.started),
                         ),
-                        executor_turn=accepted_metadata,
                         original_ticket_selection=(
                             original_selection if delivery_carries_change else None
                         ),
@@ -5083,18 +4910,6 @@ class SqliteProcessConversationSystem:
             fate = PromptDeliveryRefused(outcome.refusal_reason)
         else:
             fate = PromptDeliveryUncertain()
-        executor_turn = None
-        current = state.running_turn
-        if current is not None and current.token == turn_token:
-            predicted = replace(current, prompt_senders=dict(current.prompt_senders))
-            if (
-                isinstance(outcome, (BackendSteerAccepted, BackendSteerUncertain))
-                and outcome.composed_content_delivered
-            ):
-                predicted.automatic_notice = predicted.automatic_notice and automatic_notice
-                if reply_requested and sender is not None:
-                    predicted.prompt_senders.setdefault(sender, None)
-            executor_turn = self._executor_turn_metadata(state, predicted)
         if isinstance(outcome, BackendSteerAccepted):
             await self._append_event(
                 state,
@@ -5109,7 +4924,6 @@ class SqliteProcessConversationSystem:
                     sender=sender,
                     recipient=recipient,
                 ),
-                executor_turn=executor_turn,
                 native_message_admission=NativeMessageAdmission(
                     fate, getattr(outcome, "composed_content_delivered", False) is True
                 ),
@@ -5151,7 +4965,6 @@ class SqliteProcessConversationSystem:
                 lifecycle=(
                     () if attempt is None else (replace(attempt, status=LifecycleStatus.refused),)
                 ),
-                executor_turn=executor_turn,
                 native_message_admission=NativeMessageAdmission(
                     fate, getattr(outcome, "composed_content_delivered", False) is True
                 ),
@@ -5178,7 +4991,6 @@ class SqliteProcessConversationSystem:
                 sender=sender,
                 recipient=recipient,
             ),
-            executor_turn=executor_turn,
             native_message_admission=NativeMessageAdmission(
                 fate, outcome.composed_content_delivered is True
             ),
@@ -5228,9 +5040,6 @@ class SqliteProcessConversationSystem:
         # exists for: a turn that has started and has nothing to show yet.
         state.model_thinking_shown_at_monotonic = 0.0
         state.reserved_turn = reservation
-        if child_stops_outside_lock(state.child):
-            state.child.initial_commands = []
-            state.child.prompt_accepted = False
         self._set_phase(state, _ConversationPhase.starting)
         return reservation
 
@@ -5268,12 +5077,18 @@ class SqliteProcessConversationSystem:
         async with state.lock:
             await emit()
 
-    async def _revoke_executor_turn_asks(
-        self, state: _ConversationState, running: _RunningTurn
-    ) -> None:
+    async def _revoke_turn_requests(self, state: _ConversationState, running: _RunningTurn) -> None:
         if state.executor_child_reference is not None:
-            await self._store.revoke_executor_turn_asks(
-                state.executor_child_reference, running.token
+            facts = await self._store.lifecycle_facts(state.record.conversation_id)
+            await self._store.transition_lifecycle(
+                state.record.conversation_id,
+                tuple(
+                    replace(fact, status=LifecycleStatus.unavailable)
+                    for fact in facts
+                    if fact.kind is LifecycleKind.request
+                    and fact.turn_number == running.token.turn_number
+                    and fact.status in (LifecycleStatus.pending, LifecycleStatus.answering)
+                ),
             )
             running.callbacks_revoked = True
 
@@ -5290,7 +5105,7 @@ class SqliteProcessConversationSystem:
         """
         self._set_phase(state, _ConversationPhase.ending)
         running.ending_is_the_cores = True
-        await self._revoke_executor_turn_asks(state, running)
+        await self._revoke_turn_requests(state, running)
         child = state.child
         cancel_fact = None
         state.lock.release()
@@ -5324,7 +5139,7 @@ class SqliteProcessConversationSystem:
         """
         if running.ended:
             return None
-        await self._revoke_executor_turn_asks(state, running)
+        await self._revoke_turn_requests(state, running)
         interpreted = interpret_turn_ending(
             _ending_context(running),
             ending,
@@ -5348,15 +5163,6 @@ class SqliteProcessConversationSystem:
                 automatic_compaction_confirmed=running.compaction_confirmed,
                 automatic_compaction_result=automatic_compaction_result,
                 create_failure_notice=interpreted.failure_notice,
-                executor_turn=self._executor_turn_metadata(
-                    state,
-                    replace(
-                        running,
-                        ended=True,
-                        pending_permission_ask_ids=set(),
-                        pending_user_input_questions={},
-                    ),
-                ),
             ),
             runtime_mutation=self._runtime_mutation(
                 state,
@@ -5433,10 +5239,6 @@ class SqliteProcessConversationSystem:
             raise BackendSpawnFailed(state.record.conversation_id)
         child = state.child
         if child is not None:
-            if child_stops_outside_lock(child) and state.reserved_turn is not None:
-                child.initial_commands = []
-                child.prompt_accepted = False
-                self._configure_initial_command_recording(state, child, state.reserved_turn)
             return child
 
         resolved_start = state.record.resolved_start()
@@ -5487,16 +5289,16 @@ class SqliteProcessConversationSystem:
             message_files=self._message_files,
         )
         if child_stops_outside_lock(child):
-            state.executor_child_reference = child.reference
-            state.executor_initial_commands = ()
+            retained = self._retained_run(state)
+            if retained is None:
+                raise BackendSpawnFailed("Backend did not retain its run identity")
+            state.executor_child_reference = retained.reference
             state.executor_delivery_uncertain = False
             if state.initial_shutdown_task is not None and state.initial_shutdown_task.done():
                 state.initial_shutdown_task = None
                 state.initial_shutdown_child = None
             # Retain the original identity even while native start is unacknowledged.
             state.child = child
-            if state.reserved_turn is not None:
-                self._configure_initial_command_recording(state, child, state.reserved_turn)
         # The pump is running before the child is, so news the child makes while it starts
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
@@ -5932,13 +5734,7 @@ class SqliteProcessConversationSystem:
                 was_quarantined = state.child_is_quarantined
                 if child_stops_outside_lock(child):
                     # Only an explicit operation retries failed remote cleanup.
-                    if was_quarantined and (
-                        state.initial_shutdown_task is not None
-                        or any(
-                            command.operation is ChildOperation.stop
-                            for command in state.executor_initial_commands
-                        )
-                    ):
+                    if was_quarantined and state.initial_shutdown_task is not None:
                         continue
                     if not was_quarantined and (
                         self._monotonic_now() - state.last_touched_monotonic
@@ -5964,74 +5760,30 @@ class SqliteProcessConversationSystem:
         for state in recovered_quarantines:
             await self._drain_held_prompts(state)
 
-    @staticmethod
-    def _executor_turn_metadata(
-        state: _ConversationState, running: _RunningTurn
-    ) -> tuple[str, str, str] | None:
-        from planner.executor.protocol import encode_value
-
-        child = state.child
-        reference = (
-            child.reference if child_stops_outside_lock(child) else state.executor_child_reference
-        )
-        if reference is None:
+    def _retained_run(self, state: _ConversationState) -> RetainedBackendRun | None:
+        factory = self._backend_child_factories[state.record.backend_key]
+        if not isinstance(factory, RetainedBackendChildFactory):
             return None
-        runtime = {
-            "launch_validation": encode_value(running.launch_validation),
-            "automatic_compaction": running.automatic_compaction,
-            "compaction_confirmed": running.compaction_confirmed,
-            "automatic_notice": running.automatic_notice,
-            "ended": running.ended,
-            "callbacks_revoked": running.callbacks_revoked,
-            "permission_provider_ids": running.permission_provider_ids,
-            "user_input_provider_ids": running.user_input_provider_ids,
-            "pending_permission_ask_ids": list(running.pending_permission_ask_ids),
-            "pending_user_input_questions": encode_value(running.pending_user_input_questions),
-            "prompt_senders": encode_value(tuple(running.prompt_senders)),
-            "explicit_reply_recipients": encode_value(tuple(running.explicit_reply_recipients)),
-            "initial_commands": encode_value(state.executor_initial_commands),
-            "delivery_uncertain": state.executor_delivery_uncertain,
-        }
-        return (
-            json.dumps(encode_value(reference)),
-            json.dumps(encode_value(running.token)),
-            json.dumps(runtime),
+        return next(
+            (
+                run
+                for run in factory.retained_runs()
+                if run.reference.conversation_id == state.record.conversation_id
+            ),
+            None,
         )
 
-    async def _restore_executor_turn(self, state: _ConversationState) -> None:
-        metadata = await self._store.read_executor_turn(state.record.conversation_id)
-        if metadata is not None:
-            self._restore_executor_turn_metadata(state, metadata)
-
-    def _restore_executor_turn_metadata(
-        self, state: _ConversationState, metadata: tuple[str, str, str]
-    ) -> None:
-        from pydantic import TypeAdapter
-
-        from planner.execution_identity import ChildReference
-
-        child = TypeAdapter(ChildReference).validate_json(metadata[0])
-        token = TypeAdapter(TurnToken).validate_json(metadata[1])
-        runtime = json.loads(metadata[2])
-        state.executor_initial_commands = tuple(
-            TypeAdapter(ChildCommand).validate_python(raw)
-            for raw in runtime.get("initial_commands", ())
-        )
-        state.executor_delivery_uncertain = runtime.get("delivery_uncertain", False)
-        state.executor_child_reference = None if runtime.get("source_retired") else child
-        state.next_turn_number = max(state.next_turn_number, token.turn_number + 1)
-        state.has_delivered_prompt = True
-        if runtime.get("source_retired"):
-            state.last_ended_turn_token = token
-            state.last_ended_turn_was_automatic_compaction = runtime.get(
-                "automatic_compaction", False
-            )
+    def _restore_retained_run(self, state: _ConversationState) -> None:
+        retained = self._retained_run(state)
+        if retained is None:
             return
-        # Startup has ended the turn and closed its callbacks in one transaction.
-        # Retain only stop evidence, never a reservation or running callback state.
-        state.last_ended_turn_token = token
-        state.last_ended_turn_was_automatic_compaction = runtime.get("automatic_compaction", False)
-        state.child_is_quarantined = True
+        state.executor_delivery_uncertain = retained.delivery_uncertain
+        state.executor_child_reference = (
+            None if retained.retirement_confirmed else retained.reference
+        )
+        state.has_delivered_prompt = True
+        state.last_ended_turn_token = retained.turn
+        state.child_is_quarantined = not retained.retirement_confirmed
 
     async def interrupt_replaced_executor_runs(self, current_incarnation: str) -> None:
         """A new service process proves that children of the old service are gone.
@@ -6054,8 +5806,6 @@ class SqliteProcessConversationSystem:
     async def _interrupt_replaced_executor_child(
         self, state: _ConversationState, reference: ChildReference
     ) -> None:
-        from pydantic import TypeAdapter
-
         # Pending command futures have already become uncertain. Let their normal
         # delivery writers finish; replacing the process cannot prove non-delivery.
         await self._acquire_settled(state)
@@ -6066,26 +5816,13 @@ class SqliteProcessConversationSystem:
                 await self._end_turn(
                     state, state.running_turn, ConversationTurnEnding.interrupted, None
                 )
-            metadata = await self._store.read_executor_turn(reference.conversation_id)
+            retained = self._retained_run(state)
             if (
-                metadata is None
-                or TypeAdapter(ChildReference).validate_json(metadata[0]) != reference
+                retained is None
+                or retained.reference != reference
+                or not retained.retirement_confirmed
             ):
-                raise ValueError("Replaced executor lacks exact retained child metadata")
-            runtime = json.loads(metadata[2])
-            runtime.update(source_retired=True, ended=True, callbacks_revoked=True)
-            retired = await self._persist(
-                state,
-                partial(
-                    self._store.transition_lifecycle,
-                    reference.conversation_id,
-                    (),
-                    executor_turn=(metadata[0], metadata[1], json.dumps(runtime)),
-                    retired_child=reference,
-                ),
-            )
-            if not retired:
-                raise ValueError("Replaced executor child retirement was not committed")
+                raise ValueError("Replaced executor termination was not committed")
             if child_stops_outside_lock(state.child):
                 await state.child.detach()
             state.child = None
@@ -6187,9 +5924,6 @@ class SqliteProcessConversationSystem:
             )
 
             conversation_id = state.record.conversation_id
-            metadata = (
-                self._executor_turn_metadata(state, predicted) if predicted is not None else None
-            )
 
             def write(
                 connection: sqlite3.Connection,
@@ -6247,10 +5981,6 @@ class SqliteProcessConversationSystem:
                         (payload,),
                         lifecycle=lifecycle,
                     )
-                if metadata is not None:
-                    self._store.save_executor_turn_in_transaction(
-                        connection, conversation_id, metadata
-                    )
                 return {"recorded": True}, written
 
             result = await self._persist(
@@ -6273,7 +6003,7 @@ class SqliteProcessConversationSystem:
         if state is None or event.turn is None:
             return
         child = state.child
-        if not child_stops_outside_lock(child) or child.reference != event.child:
+        if not child_stops_outside_lock(child) or state.executor_child_reference != event.child:
             return
         sink = state.child_event_sink
         if not isinstance(sink, _CoreBackendEventSink):
@@ -6525,9 +6255,6 @@ class SqliteProcessConversationSystem:
                 return AcceptedEvent({"applied": False}, False)
 
             conversation_id = state.record.conversation_id
-            metadata = (
-                self._executor_turn_metadata(state, predicted) if predicted is not None else None
-            )
             agent_activity = (
                 bool(payloads)
                 and not compacted
@@ -6566,8 +6293,6 @@ class SqliteProcessConversationSystem:
                         conversation_id,
                         composer_catalog=args.composer_catalog,
                     )
-                if metadata is not None:
-                    self._store.save_executor_turn_in_transaction(conn, conversation_id, metadata)
                 return {"applied": live}, written
 
             result = await self._persist(
@@ -6683,7 +6408,7 @@ class SqliteProcessConversationSystem:
             if record is None:
                 return None
             state = _ConversationState(record=record)
-            await self._restore_executor_turn(state)
+            self._restore_retained_run(state)
             with nullcontext() if self._signal is None else self._signal.runtime_registry():
                 self._conversations[conversation_id] = state
             return state
@@ -6696,7 +6421,6 @@ class SqliteProcessConversationSystem:
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
         owner_read_through_sequence: int | None = None,
-        executor_turn: tuple[str, str, str] | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
         runtime_mutation: SignalRuntimeMutation | None = None,
         native_message_operation: NativeMessageOperation | None = None,
@@ -6719,16 +6443,6 @@ class SqliteProcessConversationSystem:
                 recipient=payload.recipient,
                 recovery_references=payload.recovery_references,
             )
-        running = state.running_turn
-        if executor_turn is None and running is not None:
-            predicted = running
-            if isinstance(payload, MessageToOwnerEventPayload):
-                predicted = replace(
-                    running,
-                    explicit_reply_recipients=running.explicit_reply_recipients
-                    | {payload.recipient},
-                )
-            executor_turn = self._executor_turn_metadata(state, predicted)
         stored = await self._persist(
             state,
             partial(
@@ -6741,7 +6455,6 @@ class SqliteProcessConversationSystem:
                 agent_activity=agent_activity,
                 automatic_compaction_confirmed=automatic_compaction_confirmed,
                 owner_read_through_sequence=owner_read_through_sequence,
-                executor_turn=executor_turn,
             ),
             runtime_mutation=runtime_mutation,
         )

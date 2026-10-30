@@ -44,9 +44,15 @@ STATEMENTS = (
            OR (answer_id IS NOT NULL AND accepted_at_vps_ms IS NOT NULL
                AND ((ask_kind='permission' AND option_id IS NOT NULL AND user_input_answers_json IS NULL)
                     OR (ask_kind='user_input' AND option_id IS NULL AND user_input_answers_json IS NOT NULL)))))""",
-    """CREATE TABLE executor_core_turns (
-        conversation_id TEXT PRIMARY KEY, child_json TEXT NOT NULL,
-        turn_json TEXT NOT NULL, runtime_json TEXT NOT NULL)""",
+    """CREATE TABLE mac_runs (
+        conversation_id TEXT PRIMARY KEY, executor_incarnation TEXT NOT NULL, child_id TEXT NOT NULL,
+        principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL, turn_number INTEGER NOT NULL,
+        delivery_uncertain INTEGER NOT NULL CHECK(delivery_uncertain IN (0,1)),
+        stop_state TEXT NOT NULL CHECK(stop_state IN ('open','stopping','unproved','closed')))""",
+    """CREATE TABLE conversation_reply_credits (
+        conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+        turn_number INTEGER NOT NULL, principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL,
+        PRIMARY KEY(conversation_id,turn_number,principal_kind,principal_id))""",
     """CREATE TABLE executor_command_outcomes (
         executor_incarnation TEXT NOT NULL, command_id TEXT NOT NULL,
         outcome_json TEXT NOT NULL, output_confirmed INTEGER NOT NULL DEFAULT 0,
@@ -227,7 +233,8 @@ def _create_launch_validation() -> None:
     if wake_sequence is not None:
         conn.exec_driver_sql(
             "INSERT INTO sqlite_sequence(name,seq) SELECT 'manager_wakes',? WHERE NOT EXISTS "
-            "(SELECT 1 FROM sqlite_sequence WHERE name='manager_wakes')", (wake_sequence,)
+            "(SELECT 1 FROM sqlite_sequence WHERE name='manager_wakes')",
+            (wake_sequence,),
         )
         conn.exec_driver_sql(
             "UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name='manager_wakes'", (wake_sequence,)

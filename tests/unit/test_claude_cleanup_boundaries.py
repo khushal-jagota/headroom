@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -199,9 +198,8 @@ def test_claude_stop_result_controls_canonical_retirement(
             assert first.disposition is (
                 CommandDisposition.uncertain if fails else CommandDisposition.succeeded
             )
-            metadata = await system._store.read_executor_turn("c_cleanup")
-            assert metadata is not None
-            assert json.loads(metadata[2])["source_retired"] is (not fails)
+            retained = remote.runs.store.retained_runs()
+            assert len(retained) == 1 and retained[0].retirement_confirmed is (not fails)
             if fails:
                 assert registry._children[reference.child_id] is child
                 assert child.native is native and native._client is client

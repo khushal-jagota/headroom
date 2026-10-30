@@ -13,6 +13,7 @@ from typing import Any, cast
 import pytest
 from pydantic import TypeAdapter
 from tests.support.executor_control import message_link
+from tests.support.executor_turns import MacRemoteChildFactory
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.contracts import (
@@ -38,7 +39,6 @@ from planner.executor.protocol import (
     WireMessageKind,
     decode_command_arguments,
 )
-from planner.executor.vps_remote_child import MacRemoteChildFactory
 from planner.executor.vps_transport import VpsExecutor
 
 
@@ -111,6 +111,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
             endpoint.runs.send_command,
             lambda start: canonical_snapshot(),
             endpoint.runs.cancel_initial_delivery,
+            db_path=db_path,
         )
         system = SqliteProcessConversationSystem(
             store=ConversationStore(db_path),
@@ -231,10 +232,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                 await asyncio.wait_for(recovered.initial_shutdown_task, 2)
                 assert not recovered.child_is_quarantined
                 assert endpoint.inbox.store.runs.child_assignment(reference) is None
-                metadata = await restored._store.read_executor_turn("c_cancel")
-                assert metadata is not None
-                runtime = json.loads(metadata[2])
-                assert runtime["source_retired"] is True
+                assert endpoint.inbox.store.runs.retained_runs()[0].retirement_confirmed
             finally:
                 await restored.shutdown()
         finally:
@@ -272,6 +270,7 @@ def test_preparation_kill_settles_sender_and_old_continuation_cannot_run_after_s
             lambda start, sink: ChildReference("incarnation", "successor", "c_preparation"),
             send,
             lambda start: canonical_snapshot(),
+            db_path=db_path,
         )
         system = SqliteProcessConversationSystem(
             store=ConversationStore(db_path),
@@ -411,21 +410,6 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
         TurnToken(reference.conversation_id, 1),
         decode_command_arguments(ChildOperation.stop, {}),
     )
-    tmp_db.execute(
-        "INSERT INTO executor_core_turns VALUES (?,?,?,?)",
-        (
-            reference.conversation_id,
-            json.dumps(encode_value(reference)),
-            json.dumps(encode_value(command.turn)),
-            json.dumps(
-                {
-                    "ended": True,
-                    "delivery_uncertain": True,
-                    "initial_commands": [encode_value(command)],
-                }
-            ),
-        ),
-    )
     tmp_db.commit()
     endpoint.inbox.store.runs.close_child(reference, 2)
 
@@ -452,6 +436,10 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
         )
 
     async def run() -> None:
+        endpoint.runs.pending_commands[command.command_id] = (
+            command,
+            asyncio.get_running_loop().create_future(),
+        )
         actual = CommandOutcome(command.command_id, reference, CommandDisposition.succeeded, {})
         receipt = await endpoint.inbox.accept(envelope(actual, sequence=1), IDENTITY)
         assert receipt.disposition is ReceiptDisposition.accepted
@@ -478,13 +466,13 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
     asyncio.run(run())
 
 
-def test_retirement_rolls_back_metadata_assignment_and_asks_together(
+def test_retirement_rolls_back_run_assignment_and_asks_together(
     tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gap: a crash after stop must not retain authority beside retired metadata."""
     from planner.conversation.backends.contracts import TurnToken
     from planner.execution_identity import AskReference
-    from planner.executor.protocol import AskReachability, encode_value
+    from planner.executor.protocol import AskReachability
     from planner.executor.store import ExecutorStore
     from planner.executor.vps_inbox import InboxStore
 
@@ -495,53 +483,26 @@ def test_retirement_rolls_back_metadata_assignment_and_asks_together(
     executors.runs.register_child(reference, "ticket", "retirement-ticket", 1)
     ask = AskReference(reference, turn, "retirement-ask", AskKind.permission)
     executors.runs.publish_ask(ask, ("allow", "deny"), 1)
-    store = ConversationStore(db_path)
-    metadata = (
-        json.dumps(encode_value(reference)),
-        json.dumps(encode_value(turn)),
-        json.dumps(
-            {"source_retired": False, "delivery_uncertain": True, "explicit_reply_recipients": []}
-        ),
-    )
-    retired = (
-        *metadata[:2],
-        json.dumps(
-            {"source_retired": True, "delivery_uncertain": True, "explicit_reply_recipients": []}
-        ),
-    )
     close = ExecutorStore.close_child_in_transaction
 
     def fail_after_close(
         connection: Connection,
         child: ChildReference,
         now_ms: int,
-        *,
-        retained_commands: tuple[ChildCommand, ...] = (),
     ) -> None:
-        close(connection, child, now_ms, retained_commands=retained_commands)
+        close(connection, child, now_ms)
         raise RuntimeError("injected retirement failure")
 
-    async def run() -> None:
-        await store.transition_lifecycle(reference.conversation_id, (), executor_turn=metadata)
-        with monkeypatch.context() as patch:
-            patch.setattr(
-                ExecutorStore, "close_child_in_transaction", staticmethod(fail_after_close)
-            )
-            with pytest.raises(RuntimeError, match="injected retirement failure"):
-                await store.transition_lifecycle(
-                    reference.conversation_id, (), executor_turn=retired, retired_child=reference
-                )
-        assert await store.read_executor_turn(reference.conversation_id) == metadata
-        assert executors.runs.child_assignment(reference) == ("ticket", "retirement-ticket")
-        evidence = executors.runs.ask_evidence(ask)
-        assert evidence is not None and evidence.reachability is AskReachability.uncertain
-        await store.transition_lifecycle(
-            reference.conversation_id, (), executor_turn=retired, retired_child=reference
-        )
-        assert await store.read_executor_turn(reference.conversation_id) == retired
-        assert executors.runs.child_assignment(reference) is None
-        evidence = executors.runs.ask_evidence(ask)
-        assert evidence is not None and evidence.reachability is AskReachability.child_gone
-        await store.finish_writes()
-
-    asyncio.run(run())
+    with monkeypatch.context() as patch:
+        patch.setattr(ExecutorStore, "close_child_in_transaction", staticmethod(fail_after_close))
+        with pytest.raises(RuntimeError, match="injected retirement failure"):
+            executors.runs.close_child(reference, 2)
+    assert not executors.runs.retained_runs()[0].retirement_confirmed
+    assert executors.runs.child_assignment(reference) == ("ticket", "retirement-ticket")
+    evidence = executors.runs.ask_evidence(ask)
+    assert evidence is not None and evidence.reachability is AskReachability.uncertain
+    executors.runs.close_child(reference, 3)
+    assert executors.runs.retained_runs()[0].retirement_confirmed
+    assert executors.runs.child_assignment(reference) is None
+    evidence = executors.runs.ask_evidence(ask)
+    assert evidence is not None and evidence.reachability is AskReachability.child_gone

@@ -39,8 +39,6 @@ from planner.execution_identity import ExecutorIdentity
 from planner.executor.protocol import (
     OutboxEntry,
     StartRun,
-    Steer,
-    WritePrompt,
     decode_command_arguments,
     encode_value,
 )
@@ -107,21 +105,19 @@ def resolved_for(exact: AdmissionExpectation, workspace: Path) -> ResolvedConver
     )
 
 
-def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
+def test_retained_run_custody_and_stop_proofs_survive_disk_reopen(
     tmp_path: Path,
 ) -> None:
-    """Retained initial commands and ordered stop output survive their actual stores.
+    """Run custody and ordered stop output survive their actual stores.
 
     Provider results stay in memory; reopening output never invokes the provider.
     """
-    from pydantic import TypeAdapter
 
     from planner.conversation.contracts import (
         ConversationAccess,
         ConversationRoleMaterials,
         ResolvedConversationStart,
     )
-    from planner.conversation.storage import ConversationStore
     from planner.core.db import connect, create_schema
     from planner.execution_identity import ChildReference, ProtocolRefused, parse_identity
     from planner.executor.configuration import ExecutorPaths
@@ -139,6 +135,7 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
         WireMessage,
         WireMessageKind,
     )
+    from planner.executor.store import ExecutorStore
 
     def payload_object(value: object) -> JsonObject:
         payload = encode_value(value)
@@ -189,33 +186,14 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
                 "access,created_at) VALUES('conversation','codex','exact',?,'full',1)",
                 (str(tmp_path),),
             )
-            runtime = {"initial_commands": [encode_value(old), encode_value(new)]}
-            ConversationStore.save_executor_turn_in_transaction(
-                conn,
-                child.conversation_id,
-                (
-                    json.dumps(encode_value(child)),
-                    json.dumps({"conversation_id": child.conversation_id, "turn_number": 1}),
-                    json.dumps(runtime),
-                ),
-            )
         finally:
             conn.close()
-        reopened = connect(database)
-        try:
-            stored = json.loads(
-                reopened.execute("SELECT runtime_json FROM executor_core_turns").fetchone()[0]
-            )
-            restored = tuple(
-                TypeAdapter(ChildCommand).validate_python(raw) for raw in stored["initial_commands"]
-            )
-            assert restored == (old, new)
-            assert isinstance(restored[0].arguments, (StartRun, WritePrompt, Steer))
-            assert restored[0].arguments.admission_expectation is None
-            assert isinstance(restored[1].arguments, (StartRun, WritePrompt, Steer))
-            assert restored[1].arguments.admission_expectation == replace(exact, child=child)
-        finally:
-            reopened.close()
+        store = ExecutorStore(database)
+        store.register_child(child, "ticket", "ticket", 1)
+        store.prepare_command(new)
+        retained = ExecutorStore(database).retained_runs()
+        assert len(retained) == 1 and retained[0].reference == child
+        assert retained[0].delivery_uncertain and not retained[0].retirement_confirmed
 
         paths = ExecutorPaths(tmp_path / "native")
         spool = MacOutbox(paths.spool)

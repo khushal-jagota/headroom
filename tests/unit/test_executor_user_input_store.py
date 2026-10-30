@@ -11,8 +11,7 @@ from tests.support.executor_turns import persist_pending_turn
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
 from planner.core.contracts import PlannerError
-from planner.core.db import connect
-from planner.core.migrations.versions.mac_vps_execution import STATEMENTS
+from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
@@ -60,8 +59,7 @@ def store(tmp_path: Path) -> InboxStore:
     path = str(tmp_path / "vps.sqlite")
     connection = connect(path)
     try:
-        for statement in STATEMENTS:
-            connection.execute(statement)
+        create_schema(connection)
     finally:
         connection.close()
     result = InboxStore(path)

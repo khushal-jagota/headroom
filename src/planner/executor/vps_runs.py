@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sqlite3
 import time
@@ -16,13 +15,13 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendSpawnFailed,
     DeliveryCancelled,
+    RetainedBackendRun,
 )
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core import db
 from planner.core.contracts import Principal, PrincipalKind
-from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.execution_identity import (
     AskKind,
@@ -97,14 +96,19 @@ class MacRuns:
         ticket_id = environment.get("PLAN_TICKET_ID")
         if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
             raise BackendSpawnFailed("Mac runs require a Ticket Worker identity")
-        return MacRemoteChild(
-            self.assign_child(resolved_start, event_sink),
+        reference = self.assign_child(resolved_start, event_sink)
+        child = MacRemoteChild(
+            reference,
             self.send_new_command,
             self._read_skill_snapshot,
             self.cancel_initial_delivery,
             retire_reference=self.retire_child,
-            assignment_principal=Principal(PrincipalKind.ticket, ticket_id),
         )
+        self.children[reference.child_id] = child
+        return child
+
+    def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
+        return self.store.retained_runs()
 
     def recover(self, reference: ChildReference) -> MacRemoteChild | None:
         if self.store.child_assignment(reference) is None:
@@ -118,8 +122,10 @@ class MacRuns:
             "WHERE active=1",
             (at_ms,),
         )
+        conn.execute("UPDATE mac_runs SET stop_state='stopping' WHERE stop_state='open'")
         conn.execute(
-            "UPDATE executor_asks SET reachability='uncertain' WHERE reachability='reachable'"
+            "UPDATE executor_asks SET reachability='callback_gone' "
+            "WHERE reachability IN ('reachable','uncertain')"
         )
 
     @staticmethod
@@ -149,10 +155,11 @@ class MacRuns:
         identity = self.identity
         if identity is None:
             return
-        if (
+        replaced = (
             old_identity is not None
             and old_identity.executor_incarnation != identity.executor_incarnation
-        ):
+        )
+        if replaced:
             for command, future in tuple(self.pending_commands.values()):
                 if not future.done():
                     future.set_result(
@@ -163,7 +170,14 @@ class MacRuns:
                             {"reason": "executor_process_replaced"},
                         )
                     )
-        if hasattr(self, "conversations"):
+        for run in await settled_io(self.store.retained_runs):
+            if (
+                not run.retirement_confirmed
+                and run.reference.executor_incarnation != identity.executor_incarnation
+            ):
+                await settled_io(self.store.close_child, run.reference, now_ms())
+                replaced = True
+        if replaced and hasattr(self, "conversations"):
             await self.conversations.interrupt_replaced_executor_runs(identity.executor_incarnation)
 
     async def link_up(self, link: Link, request_id: str) -> None:
@@ -227,8 +241,13 @@ class MacRuns:
         child = ChildReference(
             self.identity.executor_incarnation, str(uuid4()), start.conversation_id
         )
-        proxy = self.recover_child(child, initial_history_complete=True)
-        self.children[child.child_id] = proxy
+        environment = dict(
+            start.role_materials.identity_environment_variables if start.role_materials else ()
+        )
+        ticket_id = environment.get("PLAN_TICKET_ID")
+        if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
+            raise BackendSpawnFailed("Mac runs require a Ticket Worker identity")
+        self.store.register_child(child, "ticket", ticket_id, now_ms())
         return child
 
     def recover_child(
@@ -459,24 +478,17 @@ class MacRuns:
         in-process evidence only; a reopened journal never gains unsent provenance.
         """
 
-        def retained_initial_command() -> bool:
-            conn = connect(self.db_path)
-            try:
-                retained = conn.execute(
-                    "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
-                    (command.child.conversation_id,),
-                ).fetchone()
-                return retained is not None and any(
-                    TypeAdapter(ChildCommand).validate_python(raw) == command
-                    for raw in json.loads(retained[0]).get("initial_commands", ())
-                )
-            finally:
-                conn.close()
-
+        await settled_io(self.store.prepare_command, command)
         if command.operation in (ChildOperation.start, ChildOperation.write_prompt):
-            if await settled_io(retained_initial_command):
-                self._newly_recorded_commands.setdefault(command.command_id, command)
-        return await self.send_command(command)
+            self._newly_recorded_commands.setdefault(command.command_id, command)
+        outcome = await self.send_command(command)
+        await settled_io(self.store.record_prompt_outcome, command, outcome)
+        if (
+            command.operation is ChildOperation.stop
+            and outcome.disposition is CommandDisposition.succeeded
+        ):
+            await settled_io(self.store.close_child, command.child, now_ms())
+        return outcome
 
     async def _command_policy_allows_emission(
         self, command: ChildCommand, identity: ExecutorIdentity | None
@@ -578,9 +590,12 @@ class MacRuns:
     ) -> None:
         # Closed assignments admit only their retained exact stop proof.
         # They grant no callback, command-result or new native-work authority.
+        pending = self.pending_commands.get(outcome.command_id)
         if not (
             self.store.has_closed_child_assignment(outcome.child)
-            and self.store.is_retirement_outcome(outcome)
+            and pending is not None
+            and pending[0].child == outcome.child
+            and pending[0].operation is ChildOperation.stop
         ):
             self.authority(outcome.child)
 
@@ -751,6 +766,20 @@ class MacRuns:
                 proxy = self.recover_child(item.child)
                 self.children[item.child.child_id] = proxy
                 await self.conversations.stop_interrupted_remote_child(item.child, proxy)
+        # Inventory absence is not termination evidence. Stop every retained run
+        # after a VPS restart, including one that never reached Mac creation.
+        for run in await settled_io(self.store.retained_runs):
+            if (
+                run.retirement_confirmed
+                or run.reference.executor_incarnation != identity.executor_incarnation
+                or run.reference.child_id in self.children
+            ):
+                continue
+            if not await self._reconciliation_current(identity, writer):
+                raise ConnectionError("reconnect generation changed")
+            proxy = self.recover_child(run.reference)
+            self.children[run.reference.child_id] = proxy
+            await self.conversations.stop_interrupted_remote_child(run.reference, proxy)
         if not await self._reconciliation_current(identity, writer):
             raise ConnectionError("reconnect generation changed")
         await settled_io(self.store.observe_children, identity, tuple(children), now_ms())

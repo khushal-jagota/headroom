@@ -7,6 +7,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.executor_turns import MacRemoteChildFactory
 
 from planner.conversation.backends.contracts import BackendChild, RemoteCommandUncertain
 from planner.conversation.contracts import (
@@ -29,7 +30,7 @@ from planner.executor.protocol import (
     StartRun,
     encode_value,
 )
-from planner.executor.vps_remote_child import MacRemoteChild, MacRemoteChildFactory
+from planner.executor.vps_remote_child import MacRemoteChild
 
 
 def test_unknown_prompt_is_durable_and_quarantined_across_vps_restart(
@@ -57,6 +58,7 @@ def test_unknown_prompt_is_durable_and_quarantined_across_vps_restart(
             ),
             ("panels", "panels-worker", "panels-worker-coding"),
         ),
+        db_path=db_path,
     )
 
     def core() -> SqliteProcessConversationSystem:
@@ -364,6 +366,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
             ),
             ("panels", "panels-worker", "panels-worker-coding"),
         ),
+        db_path=db_path,
     )
 
     def no_local(**kwargs: Any) -> Any:
@@ -410,15 +413,15 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         restored._backend_child_factories = {key: factory for key in ConversationBackendKey}
         await restored.send("c_retry", text_message_content("fresh"), sender_label="Test")
         assert len(references) == 2
-        metadata = await restored._store.read_executor_turn("c_retry")
-        assert metadata is not None and not json.loads(metadata[2])["delivery_uncertain"]
+        retained = store.runs.retained_runs()
+        assert len(retained) == 1 and not retained[0].delivery_uncertain
         await restored.shutdown()
         healthy = core()
         state = healthy._conversations["c_retry"]
         assert state.child_is_quarantined
         assert state.running_turn is None
         assert state.executor_child_reference == references[1]
-        assert all(c.child == references[1] for c in state.executor_initial_commands)
+        assert store.runs.retained_runs()[0].reference == references[1]
         cancel_states.append(state)
         await healthy.kill("c_retry")
         await healthy.wait_until_quiescent()
@@ -528,7 +531,8 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         assert state.child_is_quarantined and store.runs.child_assignment(poisoned) is not None
         await healthy.kill("c_retry")
         await healthy.wait_until_quiescent()
-        assert state.child_is_quarantined and store.runs.cleanup_evidence_uncertain(poisoned)
+        assert state.child_is_quarantined
+        assert tmp_db.execute("SELECT stop_state FROM mac_runs").fetchone()[0] == "unproved"
         await healthy.shutdown()
         quarantined = core(restored=True)
         await quarantined.kill("c_retry")

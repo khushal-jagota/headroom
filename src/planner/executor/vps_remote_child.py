@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -28,8 +27,6 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageContent
-from planner.conversation.message_files import ConversationMessageFiles
-from planner.core.contracts import Principal
 from planner.core.db import connect
 from planner.execution_identity import ChildReference, ExecutorIdentity, ProtocolRefused
 from planner.executor.protocol import (
@@ -59,43 +56,7 @@ from planner.executor.store import ExecutorStore
 
 type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
 type SendCommand = Callable[[ChildCommand], Awaitable[CommandOutcome]]
-type AssignChild = Callable[[ResolvedConversationStart, backend.BackendEventSink], ChildReference]
 type CancelInitialDelivery = Callable[[ChildReference, tuple[str, ...]], Awaitable[bool]]
-
-
-@dataclass(slots=True)
-class MacRemoteChildFactory:
-    assign_child: AssignChild
-    send_command: SendCommand
-    skill_snapshot_supplier: SkillSnapshotSupplier
-    cancel_initial_delivery: CancelInitialDelivery | None = None
-    retire_reference: Callable[[ChildReference], None] | None = None
-
-    def recover(self, reference: ChildReference) -> MacRemoteChild:
-        return MacRemoteChild(
-            reference,
-            self.send_command,
-            self.skill_snapshot_supplier,
-            self.cancel_initial_delivery,
-            initial_history_complete=False,
-            retire_reference=self.retire_reference,
-        )
-
-    def __call__(
-        self,
-        *,
-        resolved_start: ResolvedConversationStart,
-        event_sink: backend.BackendEventSink,
-        message_files: ConversationMessageFiles,
-    ) -> MacRemoteChild:
-        del message_files
-        return MacRemoteChild(
-            self.assign_child(resolved_start, event_sink),
-            self.send_command,
-            self.skill_snapshot_supplier,
-            self.cancel_initial_delivery,
-            retire_reference=self.retire_reference,
-        )
 
 
 class MacRemoteChild:
@@ -110,17 +71,14 @@ class MacRemoteChild:
         *,
         initial_history_complete: bool = True,
         retire_reference: Callable[[ChildReference], None] | None = None,
-        assignment_principal: Principal | None = None,
     ) -> None:
         self.reference = reference
-        self.assignment_principal = assignment_principal
         self._retire_reference = retire_reference
         self._send_command = send_command
         self._skill_snapshot_supplier = skill_snapshot_supplier
         self._cancel_initial_delivery = cancel_initial_delivery
         self.initial_history_complete = initial_history_complete
-        self.initial_commands: list[ChildCommand] = []
-        self.record_command: Callable[[ChildCommand], Awaitable[None]] | None = None
+        self._delivery_commands: list[ChildCommand] = []
         self.initial_delivery_cancelled = False
         self.prompt_accepted = False
 
@@ -141,12 +99,12 @@ class MacRemoteChild:
         self.initial_delivery_cancelled = True
         may_have_sent = (
             await self._cancel_initial_delivery(
-                self.reference, tuple(command.command_id for command in self.initial_commands)
+                self.reference, tuple(command.command_id for command in self._delivery_commands)
             )
             if self._cancel_initial_delivery is not None
             else any(
                 command.operation is ChildOperation.write_prompt
-                for command in self.initial_commands
+                for command in self._delivery_commands
             )
         )
         return self.initial_history_complete and not may_have_sent and not self.prompt_accepted
@@ -165,13 +123,14 @@ class MacRemoteChild:
         if operation in (ChildOperation.start, ChildOperation.write_prompt):
             if self.initial_delivery_cancelled:
                 raise DeliveryCancelled()
-            self.initial_commands.append(command)
-            if self.record_command is not None:
-                await self.record_command(command)
-            if self.initial_delivery_cancelled:
-                raise DeliveryCancelled()
-        elif operation is ChildOperation.stop and self.record_command is not None:
-            await self.record_command(command)
+            if operation is ChildOperation.write_prompt:
+                self._delivery_commands = [
+                    earlier
+                    for earlier in self._delivery_commands
+                    if earlier.operation is ChildOperation.start
+                ]
+                self.prompt_accepted = False
+            self._delivery_commands.append(command)
         if operation is ChildOperation.start:
             try:
                 encode_message(
@@ -379,19 +338,6 @@ def command_emission_decision(
             scoped_ticket = (
                 original is not None and original[0] == "ticket" and original[1] != "hermes"
             )
-            if original is None:
-                retained = conn.execute(
-                    "SELECT e.child_json,c.backend_key FROM executor_core_turns e "
-                    "JOIN conversations c ON c.conversation_id=e.conversation_id "
-                    "JOIN tickets t ON t.conversation_id=e.conversation_id "
-                    "WHERE e.conversation_id=?",
-                    (command.child.conversation_id,),
-                ).fetchone()
-                scoped_ticket = (
-                    retained is not None
-                    and retained[1] in ("codex", "claude")
-                    and TypeAdapter(ChildReference).validate_json(retained[0]) == command.child
-                )
             if not scoped_ticket:
                 return True
         known = conn.execute(

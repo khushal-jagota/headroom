@@ -530,25 +530,19 @@ def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(archive: P
     assert candidates() == expected
     with closing(sqlite3.connect(archive)) as conn:
         conn.execute(
-            "INSERT INTO executor_child_assignments VALUES ('mac','child','history',"
-            "'ticket','ticket',1,NULL)"
+            "INSERT INTO mac_runs VALUES ('history','mac','child','ticket','ticket',1,0,'open')"
         )
         conn.commit()
     assert candidates() == set()
     with closing(sqlite3.connect(archive)) as conn:
-        conn.execute("UPDATE executor_child_assignments SET closed_at_ms=2")
-        conn.execute(
-            "INSERT INTO executor_core_turns VALUES ('history','{}','{}',?)",
-            (json.dumps({"source_retired": False}),),
-        )
+        conn.execute("UPDATE mac_runs SET stop_state='stopping'")
         conn.commit()
     assert candidates() == set()
     with closing(sqlite3.connect(archive)) as conn:
-        conn.execute("UPDATE executor_core_turns SET runtime_json=?",
-                     (json.dumps({"source_retired": True}),))
+        conn.execute("UPDATE mac_runs SET stop_state='closed'")
         conn.commit()
     assert candidates() == expected
     with closing(sqlite3.connect(archive)) as conn:
-        conn.execute("UPDATE executor_core_turns SET runtime_json='malformed'")
+        conn.execute("UPDATE mac_runs SET stop_state='unproved'")
         conn.commit()
     assert candidates() == set()

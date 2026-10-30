@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -11,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 from tests.support.executor_catalog import ScriptedCatalogObserver
+from tests.support.executor_turns import MacRemoteChildFactory
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.backends.contracts import TurnToken
@@ -54,7 +54,6 @@ from planner.executor.protocol import (
 from planner.executor.store import ExecutorStore
 from planner.executor.vps_agent_writes import deliver_native_message
 from planner.executor.vps_inbox import InboxStore
-from planner.executor.vps_remote_child import MacRemoteChild
 from planner.tickets import data
 from planner.tickets.contracts import TicketLocale
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
@@ -180,17 +179,16 @@ class HeldFixture:
                 conn.close()
             return outcome
 
-        def factory(**kwargs: Any) -> MacRemoteChild:
-            start = kwargs["resolved_start"]
-            return MacRemoteChild(
-                ChildReference(
-                    "11111111-1111-1111-1111-111111111111",
-                    "child_" + start.conversation_id,
-                    start.conversation_id,
-                ),
-                native,
-                lambda start: canonical_snapshot(),
-            )
+        factory = MacRemoteChildFactory(
+            lambda start, sink: ChildReference(
+                "11111111-1111-1111-1111-111111111111",
+                "child_" + start.conversation_id,
+                start.conversation_id,
+            ),
+            native,
+            lambda start: canonical_snapshot(),
+            db_path=self.path,
+        )
 
         system = SqliteProcessConversationSystem(
             store=ConversationStore(self.path),
@@ -264,11 +262,17 @@ class HeldFixture:
     async def source_reply_credited(
         self, system: SqliteProcessConversationSystem | None = None
     ) -> bool:
-        metadata = await (system or self.system)._store.read_executor_turn("c_source")
-        assert metadata is not None
-        return {"kind": "chief", "id": "chief"} in json.loads(metadata[2])[
-            "explicit_reply_recipients"
-        ]
+        state = (system or self.system)._conversations["c_source"]
+        token = state.running_turn.token if state.running_turn else state.last_ended_turn_token
+        assert token is not None
+        return (
+            self.connection.execute(
+                "SELECT 1 FROM conversation_reply_credits WHERE conversation_id='c_source' "
+                "AND turn_number=? AND principal_kind='chief' AND principal_id='chief'",
+                (token.turn_number,),
+            ).fetchone()
+            is not None
+        )
 
     async def close(self) -> None:
         self.spool.close()

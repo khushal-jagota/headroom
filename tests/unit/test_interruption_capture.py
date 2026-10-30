@@ -41,9 +41,7 @@ def capture_database(tmp_path: Path) -> Path:
                 conversation_id TEXT,owner_kind TEXT,owner_id TEXT);
             CREATE TABLE managers(id TEXT,title TEXT);
             CREATE TABLE agents(agent_key TEXT,conversation_id TEXT);
-            CREATE TABLE executor_core_turns(conversation_id TEXT,runtime_json TEXT);
-            CREATE TABLE executor_child_assignments(
-                executor_incarnation TEXT,child_id TEXT,conversation_id TEXT,closed_at_ms INTEGER);
+            CREATE TABLE mac_runs(conversation_id TEXT,stop_state TEXT);
             INSERT INTO agents VALUES('chief_of_staff','legacy');
         """)
     return database
@@ -182,21 +180,15 @@ def test_capture_keeps_historical_ticket_name_without_current_claim_authority(
     assert turn.claim is None and turn.claim_revision is None
 
 
-@pytest.mark.parametrize("evidence", ["metadata", "corrupt_metadata", "assignment", "locale"])
+@pytest.mark.parametrize("evidence", ["open", "stopping", "unproved", "closed", "locale"])
 def test_vps_stop_requires_native_evidence_before_excluding_local_recovery(
     capture_database: Path, evidence: str
 ) -> None:
     # Existing local fixture also proves that the exclusion does not suppress
     # ordinary local recovery. No native connection or provider is involved.
     with sqlite3.connect(capture_database) as conn:
-        if evidence in {"metadata", "corrupt_metadata"}:
-            runtime = '{"ended": false}' if evidence == "metadata" else 'unknown'
-            conn.execute("INSERT INTO executor_core_turns VALUES('worker',?)", (runtime,))
-        elif evidence == "assignment":
-            conn.execute(
-                "INSERT INTO executor_child_assignments "
-                "VALUES('exact-executor','child','worker',NULL)"
-            )
+        if evidence != "locale":
+            conn.execute("INSERT INTO mac_runs VALUES('worker',?)", (evidence,))
         else:
             conn.execute("ALTER TABLE tickets ADD COLUMN locale TEXT DEFAULT 'vps'")
             conn.execute("UPDATE tickets SET locale='macos' WHERE conversation_id='worker'")
@@ -204,7 +196,7 @@ def test_vps_stop_requires_native_evidence_before_excluding_local_recovery(
     manifest = read_manifests(capture_database)[0]
     assert manifest.state == "captured"
     assert [turn.conversation_id for turn in manifest.turns] == (
-        ["legacy", "worker"] if evidence == "locale" else ["legacy"]
+        ["legacy", "worker"] if evidence in {"locale", "closed"} else ["legacy"]
     )
     with sqlite3.connect(capture_database) as conn:
         assert conn.execute(

@@ -7,7 +7,6 @@ connected Mac host. Socket loss and command replay remain covered by transport t
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -34,7 +33,6 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
-from planner.core.contracts import CHIEF_PRINCIPAL
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
@@ -52,8 +50,9 @@ from planner.executor.vps_transport import VpsExecutor
 
 
 @pytest.mark.parametrize("stop_before_inventory", [False, True])
+@pytest.mark.parametrize("reported_by_mac", [False, True])
 def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
-    tmp_db: Connection, tmp_path: Path, stop_before_inventory: bool
+    tmp_db: Connection, tmp_path: Path, stop_before_inventory: bool, reported_by_mac: bool
 ) -> None:
     """Gap: startup, inventory retirement, and admission must share one child fence."""
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
@@ -72,10 +71,10 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
         async def native(command: ChildCommand) -> CommandOutcome:
             # This is the first possible native emission. Both halves must exist.
             retained = tmp_db.execute(
-                "SELECT child_json,turn_json FROM executor_core_turns WHERE conversation_id='c'"
+                "SELECT executor_incarnation,child_id FROM mac_runs WHERE conversation_id='c'"
             ).fetchone()
             assert retained is not None
-            assert json.loads(retained[0]) == encode_value(command.child)
+            assert tuple(retained) == (command.child.executor_incarnation, command.child.child_id)
             assert endpoint.runs.store.child_assignment(command.child) == (
                 "ticket",
                 "restart-ticket",
@@ -98,7 +97,6 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             endpoint.runs.store.mark_ready(identity, 1)
             endpoint.runs.send_command = native  # type: ignore[method-assign]
             endpoint.runs._read_skill_snapshot = lambda start: canonical_snapshot()  # type: ignore[method-assign]
-            endpoint.runs.send_new_command = native  # type: ignore[method-assign]
             system = SqliteProcessConversationSystem(
                 store=ConversationStore(path),
                 backend_child_factories={key: endpoint.runs for key in ConversationBackendKey},
@@ -132,6 +130,7 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
         state = first._conversations["c"]
         assert state.running_turn is not None and state.child_event_sink is not None
         old = state.executor_child_reference
+        assert old is not None
         token = state.running_turn.token
         await cast(BackendEventSink, state.child_event_sink).permission_ask_raised(
             token,
@@ -140,9 +139,6 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
             ),
         )
         await first.wait_until_quiescent()
-        metadata = first._executor_turn_metadata(state, state.running_turn)
-        assert metadata is not None
-        await first._store.save_executor_turn("c", metadata)
         ask = AskReference(old, token, "allow", AskKind.permission)
         endpoint.runs.store.publish_ask(ask, ("yes",), 1)
         saved = endpoint.runs.store.choose_answer(ask, "yes", 1, 2)
@@ -176,7 +172,13 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
                     cast(
                         Any,
                         encode_value(
-                            ReconnectResult(identity, (), (ChildInventory(old, token, (ask,), ()),))
+                            ReconnectResult(
+                                identity,
+                                (),
+                                (ChildInventory(old, token, (ask,), ()),)
+                                if reported_by_mac
+                                else (),
+                            )
                         ),
                     ),
                 )
@@ -210,24 +212,18 @@ def test_restart_closes_callback_and_waits_for_exact_stop_before_fresh_run(
     asyncio.run(run())
 
 
-def test_assignment_rolls_back_if_retained_turn_cannot_be_saved(
-    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Gap: a failing turn write must never leave a separately committed assignment."""
+def test_assignment_rolls_back_if_run_cannot_be_saved(tmp_db: Connection) -> None:
+    """Run custody and assignment must commit together before transport."""
+    from planner.executor.store import ExecutorStore
+
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    store = ConversationStore(path)
     child = ChildReference("22222222-2222-2222-2222-222222222222", "child", "c")
-    metadata = (json.dumps(encode_value(child)), '{"conversation_id":"c","turn_number":1}', "{}")
-
-    def fail(*arguments: object) -> None:
-        raise RuntimeError("turn write failed")
-
-    monkeypatch.setattr(store, "save_executor_turn_in_transaction", fail)
-    with pytest.raises(RuntimeError, match="turn write failed"):
-        asyncio.run(
-            store.transition_lifecycle(
-                "c", (), executor_turn=metadata, assigned_child=(child, CHIEF_PRINCIPAL)
-            )
-        )
+    tmp_db.execute(
+        "CREATE TRIGGER refuse_run BEFORE INSERT ON mac_runs "
+        "BEGIN SELECT RAISE(ABORT,'run write failed'); END"
+    )
+    tmp_db.commit()
+    with pytest.raises(Exception, match="run write failed"):
+        ExecutorStore(path).register_child(child, "chief", "chief", 1)
     assert tmp_db.execute("SELECT COUNT(*) FROM executor_child_assignments").fetchone()[0] == 0
-    assert tmp_db.execute("SELECT COUNT(*) FROM executor_core_turns").fetchone()[0] == 0
+    assert tmp_db.execute("SELECT COUNT(*) FROM mac_runs").fetchone()[0] == 0

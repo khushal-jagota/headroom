@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from planner.conversation.backends.contracts import TurnToken
+from planner.conversation.backends.contracts import RetainedBackendRun, TurnToken
 from planner.conversation.events import UserInputAnswer, UserInputQuestion
 from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.core.contracts import ErrorCode, PlannerError
@@ -89,40 +89,74 @@ class VpsDatabase:
 
 
 class ExecutorStore(VpsDatabase):
-    def cleanup_evidence_uncertain(self, child: ChildReference) -> bool:
+    def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         connection = connect(self.db_path)
         try:
-            row = connection.execute(
-                "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
-                (child.conversation_id,),
-            ).fetchone()
-            # Missing exact metadata cannot establish confirmed cleanup.
-            return (
-                row is None
-                or _parse(ChildReference, row[0]) != child
-                or bool(json.loads(row[1]).get("cleanup_evidence_uncertain"))
+            return tuple(
+                RetainedBackendRun(
+                    ChildReference(
+                        row["executor_incarnation"], row["child_id"], row["conversation_id"]
+                    ),
+                    TurnToken(row["conversation_id"], row["turn_number"]),
+                    bool(row["delivery_uncertain"]),
+                    row["stop_state"] == "closed",
+                )
+                for row in connection.execute("SELECT * FROM mac_runs")
             )
         finally:
             connection.close()
 
-    def is_retirement_outcome(self, outcome: CommandOutcome) -> bool:
-        connection = connect(self.db_path)
-        try:
+    def prepare_command(self, command: ChildCommand) -> None:
+        """Commit uncertainty before transport. An old callback cannot reopen custody."""
+        with self._transaction() as connection:
             row = connection.execute(
-                "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
-                (outcome.child.conversation_id,),
+                "SELECT * FROM mac_runs WHERE conversation_id=? "
+                "AND executor_incarnation=? AND child_id=?",
+                (
+                    command.child.conversation_id,
+                    command.child.executor_incarnation,
+                    command.child.child_id,
+                ),
             ).fetchone()
-            if row is None or _parse(ChildReference, row[0]) != outcome.child:
-                return False
-            return any(
-                command.command_id == outcome.command_id
-                and command.child == outcome.child
-                and command.operation is ChildOperation.stop
-                for raw in json.loads(row[1]).get("initial_commands", ())
-                for command in (TypeAdapter(ChildCommand).validate_python(raw),)
+            if row is None or row["stop_state"] == "closed":
+                raise ValueError("Mac run no longer owns this conversation")
+            if command.operation in (ChildOperation.start, ChildOperation.write_prompt):
+                if row["stop_state"] != "open" or (
+                    command.turn is not None and command.turn.turn_number < row["turn_number"]
+                ):
+                    raise ValueError("Mac run cannot accept a stale or stopped delivery")
+                connection.execute(
+                    "UPDATE mac_runs SET delivery_uncertain=1,turn_number=? "
+                    "WHERE conversation_id=?",
+                    (
+                        row["turn_number"] if command.turn is None else command.turn.turn_number,
+                        command.child.conversation_id,
+                    ),
+                )
+            elif command.operation is ChildOperation.stop:
+                connection.execute(
+                    "UPDATE mac_runs SET stop_state='stopping' WHERE conversation_id=? "
+                    "AND stop_state='open'",
+                    (command.child.conversation_id,),
+                )
+
+    def record_prompt_outcome(self, command: ChildCommand, outcome: CommandOutcome) -> None:
+        if (
+            command.operation is not ChildOperation.write_prompt
+            or outcome.disposition.value == "uncertain"
+        ):
+            return
+        with self._transaction() as connection:
+            connection.execute(
+                "UPDATE mac_runs SET delivery_uncertain=0 WHERE conversation_id=? "
+                "AND executor_incarnation=? AND child_id=? AND turn_number=? AND stop_state='open'",
+                (
+                    command.child.conversation_id,
+                    command.child.executor_incarnation,
+                    command.child.child_id,
+                    command.turn.turn_number if command.turn is not None else 0,
+                ),
             )
-        finally:
-            connection.close()
 
     def has_accepted_command_outcome(self, outcome: CommandOutcome) -> bool:
         """A retained result alone does not prove its original FIFO publication."""
@@ -256,6 +290,31 @@ class ExecutorStore(VpsDatabase):
             ) != (child.conversation_id, principal_kind, principal_id):
                 raise _invalid("Child assignment identity conflicts")
             return
+        retained = connection.execute(
+            "SELECT * FROM mac_runs WHERE conversation_id=?", (child.conversation_id,)
+        ).fetchone()
+        if retained is not None and retained["stop_state"] != "closed":
+            raise _invalid("An unresolved Mac run already owns this conversation")
+        turn = connection.execute(
+            "SELECT COALESCE(MAX(turn_number),0) FROM conversation_turn_occurrences "
+            "WHERE conversation_id=?",
+            (child.conversation_id,),
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO mac_runs VALUES(?,?,?,?,?,?,0,'open') "
+            "ON CONFLICT(conversation_id) DO UPDATE SET "
+            "executor_incarnation=excluded.executor_incarnation,child_id=excluded.child_id,"
+            "principal_kind=excluded.principal_kind,principal_id=excluded.principal_id,"
+            "turn_number=excluded.turn_number,delivery_uncertain=0,stop_state='open'",
+            (
+                child.conversation_id,
+                child.executor_incarnation,
+                child.child_id,
+                principal_kind,
+                principal_id,
+                turn[0],
+            ),
+        )
         connection.execute(
             "INSERT INTO executor_child_assignments VALUES (?,?,?,?,?,?,NULL)",
             (
@@ -331,10 +390,25 @@ class ExecutorStore(VpsDatabase):
         connection: sqlite3.Connection,
         child: ChildReference,
         now_ms: int,
-        *,
-        retained_commands: tuple[ChildCommand, ...] = (),
     ) -> None:
         """Retire assignment and asks inside the caller's existing transaction."""
+        row = connection.execute(
+            "SELECT stop_state FROM mac_runs WHERE conversation_id=? "
+            "AND executor_incarnation=? AND child_id=?",
+            (child.conversation_id, child.executor_incarnation, child.child_id),
+        ).fetchone()
+        current = connection.execute(
+            "SELECT executor_incarnation FROM executor_connections WHERE active=1"
+        ).fetchone()
+        if row is None or (
+            row[0] == "unproved" and (current is None or current[0] == child.executor_incarnation)
+        ):
+            raise ValueError("Mac run termination remains unproved")
+        connection.execute(
+            "UPDATE mac_runs SET stop_state='closed' WHERE conversation_id=? "
+            "AND executor_incarnation=? AND child_id=?",
+            (child.conversation_id, child.executor_incarnation, child.child_id),
+        )
         connection.execute(
             "UPDATE executor_child_assignments SET closed_at_ms=? "
             "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
@@ -350,25 +424,6 @@ class ExecutorStore(VpsDatabase):
                 child.child_id,
             ),
         )
-
-    def has_retained_command(self, outcome: CommandOutcome) -> bool:
-        """Historical evidence grants no child execution or mutation authority."""
-        connection = connect(self.db_path)
-        try:
-            row = connection.execute(
-                "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
-                (outcome.child.conversation_id,),
-            ).fetchone()
-            if row is None or TypeAdapter(ChildReference).validate_json(row[0]) != outcome.child:
-                return False
-            runtime = json.loads(row[1])
-            return any(
-                TypeAdapter(ChildCommand).validate_python(raw).command_id == outcome.command_id
-                and TypeAdapter(ChildCommand).validate_python(raw).child == outcome.child
-                for raw in runtime.get("initial_commands", ())
-            )
-        finally:
-            connection.close()
 
     def publish_ask(self, ask: AskReference, option_ids: tuple[str, ...], now_ms: int) -> None:
         with self._transaction() as connection:
@@ -442,51 +497,38 @@ class ExecutorStore(VpsDatabase):
         connection: sqlite3.Connection, conversation_id: str
     ) -> ExecutorTurnContext | None:
         row = connection.execute(
-            "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
-            "WHERE conversation_id=?",
-            (conversation_id,),
+            "SELECT * FROM mac_runs WHERE conversation_id=?", (conversation_id,)
         ).fetchone()
         if row is None:
             return None
-        try:
-            child = _parse(ChildReference, row[0])
-            turn = _parse(TurnToken, row[1])
-            runtime = json.loads(row[2])
-            pending = tuple(
-                TypeAdapter(list[str]).validate_python(
-                    runtime["pending_permission_ask_ids"], strict=True
-                )
-            )
-            questions = TypeAdapter(dict[str, tuple[UserInputQuestion, ...]]).validate_python(
-                runtime["pending_user_input_questions"]
-            )
-            ended = TypeAdapter(bool).validate_python(runtime["ended"], strict=True)
-            flags = tuple(
-                TypeAdapter(bool).validate_python(runtime.get(key, False), strict=True)
-                for key in (
-                    "source_retired",
-                    "delivery_uncertain",
-                    "callbacks_revoked",
-                )
-            )
-            if child.conversation_id != conversation_id or turn.conversation_id != conversation_id:
-                return None
-            permission_ids = TypeAdapter(dict[str, str]).validate_python(
-                runtime["permission_provider_ids"]
-            )
-            input_ids = TypeAdapter(dict[str, str]).validate_python(
-                runtime["user_input_provider_ids"]
-            )
-            return ExecutorTurnContext(
-                child,
-                turn,
-                tuple(permission_ids[identity] for identity in pending),
-                tuple(input_ids[identity] for identity in questions),
-                ended,
-                *flags,
-            )
-        except (ValueError, TypeError, KeyError):
-            return None
+        facts = connection.execute(
+            "SELECT operation,provider_identity,status FROM conversation_lifecycle_facts "
+            "WHERE conversation_id=? AND turn_number=? AND kind='request'",
+            (conversation_id, row["turn_number"]),
+        ).fetchall()
+        turn = connection.execute(
+            "SELECT status FROM conversation_lifecycle_facts WHERE conversation_id=? "
+            "AND turn_number=? AND kind='turn'",
+            (conversation_id, row["turn_number"]),
+        ).fetchone()
+        return ExecutorTurnContext(
+            ChildReference(row["executor_incarnation"], row["child_id"], conversation_id),
+            TurnToken(conversation_id, row["turn_number"]),
+            tuple(
+                f[1]
+                for f in facts
+                if f[0] == "permission" and f[2] in ("pending", "answering") and f[1] is not None
+            ),
+            tuple(
+                f[1]
+                for f in facts
+                if f[0] == "user_input" and f[2] in ("pending", "answering") and f[1] is not None
+            ),
+            turn is None or turn[0] != "running",
+            row["stop_state"] == "closed",
+            bool(row["delivery_uncertain"]),
+            row["stop_state"] != "open",
+        )
 
     def public_request_id(self, ask: AskReference) -> str | None:
         """Resolve one persisted original public identity for an exact native ask."""
@@ -498,29 +540,6 @@ class ExecutorStore(VpsDatabase):
             ).fetchone()
             if evidence is None or _parse(AskReference, str(evidence[0])) != ask:
                 return None
-            row = connection.execute(
-                "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
-                "WHERE conversation_id=?",
-                (ask.child.conversation_id,),
-            ).fetchone()
-            if row is not None:
-                runtime = json.loads(str(row[2]))
-                if (
-                    _parse(ChildReference, str(row[0])) == ask.child
-                    and _parse(TurnToken, str(row[1])) == ask.turn
-                ):
-                    field = (
-                        "user_input_provider_ids"
-                        if ask.kind is AskKind.user_input
-                        else "permission_provider_ids"
-                    )
-                    matches = [
-                        public
-                        for public, provider in runtime[field].items()
-                        if provider == ask.ask_id
-                    ]
-                    if len(matches) == 1:
-                        return str(matches[0])
             matches = connection.execute(
                 "SELECT identity FROM conversation_lifecycle_facts WHERE conversation_id=? "
                 "AND kind='request' AND turn_number=? AND operation=? AND provider_identity=?",
@@ -908,15 +927,8 @@ class ExecutorStore(VpsDatabase):
             or child.conversation_id != envelope.conversation_id
         ):
             return
-        row = connection.execute(
-            "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
-            (child.conversation_id,),
-        ).fetchone()
-        if row is None or _parse(ChildReference, row[0]) != child:
-            return
-        runtime = json.loads(row[1])
-        runtime["cleanup_evidence_uncertain"] = True
         connection.execute(
-            "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
-            (_json(runtime), child.conversation_id),
+            "UPDATE mac_runs SET stop_state='unproved' WHERE conversation_id=? "
+            "AND executor_incarnation=? AND child_id=? AND stop_state!='closed'",
+            (child.conversation_id, child.executor_incarnation, child.child_id),
         )

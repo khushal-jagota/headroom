@@ -9,6 +9,7 @@ from planner.conversation.backends.contracts import (
     BackendChildFactory,
     BackendEventSink,
     RetainedBackendChildFactory,
+    RetainedBackendRun,
 )
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
@@ -22,6 +23,11 @@ class LocaleBackendChildFactory:
     db_path: str
     local_factory: BackendChildFactory
     remote_factory: BackendChildFactory
+
+    def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
+        if isinstance(self.remote_factory, RetainedBackendChildFactory):
+            return self.remote_factory.retained_runs()
+        return ()
 
     def recover(self, reference: ChildReference) -> BackendChild | None:
         """Recover only retained authority, without allocation or native execution."""

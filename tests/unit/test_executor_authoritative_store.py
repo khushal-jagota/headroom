@@ -27,8 +27,7 @@ from tests.unit.test_executor_request_deadlines import peer
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.core.db import connect
-from planner.core.migrations.versions.mac_vps_execution import STATEMENTS
+from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.protocol import (
     AnswerApplication,
@@ -61,8 +60,7 @@ def store(tmp_path: Path) -> InboxStore:
     path = str(tmp_path / "vps.sqlite")
     connection = connect(path)
     try:
-        for statement in STATEMENTS:
-            connection.execute(statement)
+        create_schema(connection)
         connection.execute("CREATE TABLE effects (id TEXT PRIMARY KEY)")
     finally:
         connection.close()
@@ -241,6 +239,7 @@ def test_first_answer_requires_open_assignment_and_exact_persisted_pending_turn(
     elif closure == "pending":
         persist_pending_turn(store.runs, ASK, runtime_overrides={"pending_permission_ask_ids": []})
     elif closure == "child":
+        store.runs.close_child(CHILD, 1100)
         persist_pending_turn(store.runs, replace(ASK, child=replace(CHILD, child_id="replacement")))
     elif closure == "turn":
         persist_pending_turn(store.runs, replace(ASK, turn=TurnToken("conversation", 2)))
@@ -248,9 +247,9 @@ def test_first_answer_requires_open_assignment_and_exact_persisted_pending_turn(
         connection = connect(store.db_path)
         try:
             if closure == "missing":
-                connection.execute("DELETE FROM executor_core_turns")
+                connection.execute("DELETE FROM mac_runs")
             else:
-                connection.execute("UPDATE executor_core_turns SET runtime_json='{}'")
+                connection.execute("DELETE FROM conversation_lifecycle_facts WHERE kind='turn'")
         finally:
             connection.close()
     with pytest.raises(PlannerError):
@@ -536,9 +535,7 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
             decode_command_arguments(ChildOperation.stop, {}),
         )
         outcome = CommandOutcome(command.command_id, CHILD, CommandDisposition.succeeded, {})
-        persist_pending_turn(
-            store.runs, ASK, runtime_overrides={"initial_commands": [encode_value(command)]}
-        )
+        store.runs.prepare_command(command)
         endpoint = VpsExecutor(store.db_path, RealClock())
         endpoint.inbox.store = store
         endpoint.runs.identity = IDENTITY
@@ -632,10 +629,8 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
 def test_refused_native_evidence_marker_survives_domain_rollback_and_metadata_turns(
     store: InboxStore, kind: EnvelopeKind
 ) -> None:
-    import json
     from typing import cast
 
-    from planner.conversation.storage import ConversationStore
     from planner.executor.protocol import BackendEvent, BackendEventMethod, encode_value
 
     value: object
@@ -668,103 +663,69 @@ def test_refused_native_evidence_marker_survives_domain_rollback_and_metadata_tu
 
     receipt = store.accept(queued, refuse, 1100, identity=IDENTITY)
     assert receipt.disposition is ReceiptDisposition.refused
-    assert store.runs.cleanup_evidence_uncertain(CHILD) is (kind is not EnvelopeKind.cli_write)
     connection = connect(store.db_path)
     try:
         assert connection.execute("SELECT count(*) FROM effects").fetchone()[0] == 0
-        old = connection.execute(
-            "SELECT child_json,turn_json,runtime_json FROM executor_core_turns"
-        ).fetchone()
-        metadata = (
-            old[0],
-            json.dumps(encode_value(replace(ASK.turn, turn_number=2))),
-            json.dumps({"ended": True, "explicit_reply_recipients": []}),
-        )
-        ConversationStore.save_executor_turn_in_transaction(
-            connection, CHILD.conversation_id, metadata
+        assert connection.execute("SELECT stop_state FROM mac_runs").fetchone()[0] == (
+            "open" if kind is EnvelopeKind.cli_write else "unproved"
         )
     finally:
         connection.close()
-    assert store.runs.cleanup_evidence_uncertain(CHILD) is (kind is not EnvelopeKind.cli_write)
+    from planner.executor.protocol import StopRun
+
+    store.runs.prepare_command(
+        ChildCommand("stop", CHILD, ChildOperation.stop, ASK.turn, StopRun())
+    )
+    if kind is not EnvelopeKind.cli_write:
+        with pytest.raises(ValueError, match="unproved"):
+            store.runs.close_child(CHILD, 1200)
+    else:
+        store.runs.close_child(CHILD, 1200)
     assert store.lookup_receipt(queued.sender_id, queued.submission_id) == receipt
 
 
-def test_retirement_metadata_is_monotonic_and_stale_child_cannot_replace_fresh(
+def test_closed_run_rejects_stale_delivery_before_and_after_replacement(
     store: InboxStore,
 ) -> None:
-    import json
+    from planner.conversation.contracts import PromptDeliveryMode
+    from planner.conversation.message_content import text_message_content
+    from planner.executor.protocol import WritePrompt
 
-    from planner.conversation.storage import ConversationStore
-    from planner.executor.protocol import encode_value
-
-    connection = connect(store.db_path)
-    try:
-        old = connection.execute(
-            "SELECT child_json,turn_json,runtime_json FROM executor_core_turns"
-        ).fetchone()
-        metadata = (old[0], old[1], json.dumps({"ended": True, "source_retired": True}))
-        ConversationStore.save_executor_turn_in_transaction(
-            connection, CHILD.conversation_id, metadata
-        )
-        unmarked = (old[0], json.dumps(encode_value(replace(ASK.turn, turn_number=2))), old[2])
-        ConversationStore.save_executor_turn_in_transaction(
-            connection, CHILD.conversation_id, unmarked
-        )
-        assert json.loads(
-            connection.execute("SELECT runtime_json FROM executor_core_turns").fetchone()[0]
-        )["source_retired"]
-    finally:
-        connection.close()
-    connection = connect(store.db_path)
-    try:
-        newest_runtime = {
-            "ended": False,
-            "delivery_uncertain": False,
-            "initial_commands": ["new-command"],
-            "callbacks_revoked": False,
-        }
-        newest = (
-            old[0],
-            json.dumps(encode_value(replace(ASK.turn, turn_number=3))),
-            json.dumps(newest_runtime),
-        )
-        ConversationStore.save_executor_turn_in_transaction(
-            connection, CHILD.conversation_id, newest
-        )
-        ConversationStore.save_executor_turn_in_transaction(
-            connection, CHILD.conversation_id, metadata
-        )
-        row = connection.execute(
-            "SELECT turn_json,runtime_json FROM executor_core_turns"
-        ).fetchone()
-        assert json.loads(row[0])["turn_number"] == 3
-        retained = json.loads(row[1])
-        assert retained["initial_commands"] == ["new-command"]
-        assert retained["delivery_uncertain"] is False
-        assert retained["callbacks_revoked"] is False
-        assert retained["source_retired"] is True
-    finally:
-        connection.close()
+    content = text_message_content("late")
+    stale = ChildCommand(
+        "late",
+        CHILD,
+        ChildOperation.write_prompt,
+        ASK.turn,
+        WritePrompt(
+            content=content,
+            sender_label="Test",
+            sender_content=content,
+            sender_message_count=1,
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+        ),
+    )
+    with pytest.raises(PlannerError, match="unresolved"):
+        store.runs.register_child(replace(CHILD, child_id="blocked"), "ticket", "test-ticket", 1100)
+    store.runs.prepare_command(stale)
+    late_outcome = CommandOutcome(stale.command_id, CHILD, CommandDisposition.succeeded, {})
     fresh = replace(CHILD, child_id="fresh")
     store.runs.close_child(CHILD, 1200)
+    store.runs.record_prompt_outcome(stale, late_outcome)
+    with pytest.raises(ValueError, match="no longer owns"):
+        store.runs.prepare_command(stale)
+    assert store.runs.retained_runs()[0].retirement_confirmed
+    assert store.runs.retained_runs()[0].delivery_uncertain
     store.runs.register_child(fresh, "ticket", "test-ticket", 1201)
-    connection = connect(store.db_path)
-    try:
-        fresh_metadata = (json.dumps(encode_value(fresh)), unmarked[1], old[2])
-        ConversationStore.save_executor_turn_in_transaction(
-            connection, CHILD.conversation_id, fresh_metadata
-        )
-        ConversationStore.save_executor_turn_in_transaction(
-            connection, CHILD.conversation_id, unmarked
-        )
-        row = connection.execute(
-            "SELECT child_json,runtime_json FROM executor_core_turns"
-        ).fetchone()
-        assert json.loads(row[0]) == encode_value(fresh)
-        assert not json.loads(row[1]).get("source_retired")
-        assert not json.loads(row[1]).get("cleanup_evidence_uncertain")
-    finally:
-        connection.close()
+    store.runs.prepare_command(replace(stale, command_id="fresh-prompt", child=fresh))
+    store.runs.record_prompt_outcome(stale, late_outcome)
+    with pytest.raises(ValueError, match="no longer owns"):
+        store.runs.prepare_command(stale)
+    assert store.runs.retained_runs()[0].reference == fresh
+    assert not store.runs.retained_runs()[0].retirement_confirmed
+    assert store.runs.retained_runs()[0].delivery_uncertain
 
 
 def test_postcommit_error_preserves_durable_effect_and_receipt(
@@ -832,7 +793,9 @@ def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
         endpoint = VpsExecutor(str(tmp_path / "unused.sqlite"), RealClock())
         writer = peer()
         endpoint.runs.identity, endpoint.runs.link = IDENTITY, message_link(writer, IDENTITY)
-        endpoint.inbox.store = Mock()
+        mocked_store = Mock()
+        mocked_store.runs.retained_runs.return_value = ()
+        endpoint.inbox.store = mocked_store
         endpoint.runs.store = endpoint.inbox.store.runs
         endpoint.inbox.store.runs.unapplied_answers.return_value = ()
         from planner.executor.protocol import ReconnectResult, as_object
@@ -894,7 +857,9 @@ def test_superseded_ingress_cannot_reach_handler_or_close_replacement(
     async def exercise() -> None:
         endpoint = vps.VpsExecutor(str(tmp_path / "unused.sqlite"), RealClock())
         original, replacement = peer(), peer()
-        endpoint.inbox.store = Mock()
+        mocked_store = Mock()
+        mocked_store.runs.retained_runs.return_value = ()
+        endpoint.inbox.store = mocked_store
         endpoint.runs.store = endpoint.inbox.store.runs
         endpoint.catalog._measure_clock = AsyncMock()  # type: ignore[method-assign]
         endpoint._close_transport = AsyncMock()  # type: ignore[method-assign]
@@ -937,6 +902,8 @@ def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
     async def run() -> None:
         endpoint = VpsExecutor(store.db_path, RealClock())
         endpoint.runs.identity, endpoint.runs.link = IDENTITY, message_link(peer(), IDENTITY)
+        # This snapshot belongs to this live VPS, which already owns its proxy.
+        endpoint.runs.children[CHILD.child_id] = endpoint.runs.recover_child(CHILD)
         commands = tuple(
             ChildCommand(
                 phase,

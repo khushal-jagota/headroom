@@ -22,6 +22,7 @@ from tests.support.conversation_scripted_acp_agent import (
     scripted_acp_agent_launch,
 )
 from tests.support.executor_catalog import ScriptedCatalogObserver
+from tests.support.executor_turns import MacRemoteChildFactory
 
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChildFactory,
@@ -70,7 +71,7 @@ from planner.executor.protocol import (
     WritePrompt,
     encode_value,
 )
-from planner.executor.vps_remote_child import MacRemoteChild, MacRemoteChildFactory
+from planner.executor.vps_remote_child import MacRemoteChild
 from planner.executor.vps_transport import VpsExecutor
 from planner.projects.data import create_project
 from planner.tickets import data as tickets
@@ -199,7 +200,9 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             commands.append((command, outcome))
             return outcome
 
-        remote = MacRemoteChildFactory(lambda start, sink: reference, send, lambda start: snapshot)
+        remote = MacRemoteChildFactory(
+            lambda start, sink: reference, send, lambda start: snapshot, db_path=db_path
+        )
         system = SqliteProcessConversationSystem(
             store=store,
             message_files=ConversationMessageFiles(db_path),
@@ -391,6 +394,7 @@ def test_native_context_scope_and_rebind_do_not_duplicate_composed_content(
             lambda start, sink: ChildReference("test-incarnation", str(uuid4()), "c"),
             dispatch,
             lambda start: snapshot,
+            db_path=db_path,
         )
         system = SqliteProcessConversationSystem(
             store=ConversationStore(db_path),
@@ -548,6 +552,7 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
             reference,
             dispatch,
             lambda start: snapshot,
+            db_path=db_path,
         )
         system = SqliteProcessConversationSystem(
             store=ConversationStore(db_path),

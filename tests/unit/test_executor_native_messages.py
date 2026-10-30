@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -43,7 +42,6 @@ from planner.executor.protocol import (
 )
 from planner.executor.vps_agent_writes import deliver_native_message
 from planner.executor.vps_inbox import InboxStore
-from planner.executor.vps_remote_child import MacRemoteChild
 from planner.tickets import data
 
 
@@ -164,8 +162,11 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 outcome_conn.close()
             return outcome
 
-        def factory(**kwargs: Any) -> MacRemoteChild:
-            return MacRemoteChild(reference, native, lambda start: canonical_snapshot())
+        from tests.support.executor_turns import MacRemoteChildFactory
+
+        factory = MacRemoteChildFactory(
+            lambda start, sink: reference, native, lambda start: canonical_snapshot(), db_path=path
+        )
 
         system = CrashAfterCanonicalOwnerMessage(
             store=ConversationStore(path),
@@ -261,12 +262,15 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 assert domain is not None and domain.kind.value == "message_to_owner"
             else:
                 assert domain is None
-            metadata = await system._store.read_executor_turn("c_source")
-            assert metadata is not None
             assert (
-                {"kind": "owner", "id": "owner"}
-                in json.loads(metadata[2])["explicit_reply_recipients"]
-            ) is committed
+                bool(
+                    tmp_db.execute(
+                        "SELECT 1 FROM conversation_reply_credits WHERE conversation_id='c_source' "
+                        "AND principal_kind='owner' AND principal_id='owner'"
+                    ).fetchone()
+                )
+                is committed
+            )
             changed = data.accept_proposal(
                 tmp_db,
                 ticket.id,
@@ -298,12 +302,15 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 "conversation_id": "c_source" if committed else None,
                 "fate": "recorded" if committed else "uncertain",
             }
-            metadata_after_replay = await system._store.read_executor_turn("c_source")
-            assert metadata_after_replay is not None
             assert (
-                {"kind": "owner", "id": "owner"}
-                in json.loads(metadata_after_replay[2])["explicit_reply_recipients"]
-            ) is committed
+                bool(
+                    tmp_db.execute(
+                        "SELECT 1 FROM conversation_reply_credits WHERE conversation_id='c_source' "
+                        "AND principal_kind='owner' AND principal_id='owner'"
+                    ).fetchone()
+                )
+                is committed
+            )
             assert resolutions == [OWNER_PRINCIPAL]
             assert system.owner_deliveries == int(committed)
             assert native_calls == native_before
@@ -385,8 +392,14 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
                 outcome_conn.close()
             return outcome
 
-        def factory(**kwargs: Any) -> MacRemoteChild:
-            return MacRemoteChild(reference, native, lambda start: canonical_snapshot())
+        from tests.support.executor_turns import MacRemoteChildFactory
+
+        factory = MacRemoteChildFactory(
+            lambda start, sink: reference,
+            native,
+            lambda start: canonical_snapshot(),
+            db_path=path,
+        )
 
         system = CrashAfterPrompt(
             store=ConversationStore(path),

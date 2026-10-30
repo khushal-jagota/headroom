@@ -313,7 +313,7 @@ async def deliver_native_message(
         else:
             return
         if composed and write.turn is not None:
-            ConversationStore.credit_executor_reply_in_transaction(conn, write.turn, recipient)
+            ConversationStore.credit_reply_in_transaction(conn, write.turn, recipient)
         operation.composed_confirmed = composed
         current = conn.execute(
             "SELECT submission_id,disposition FROM mac_inbox_positions "

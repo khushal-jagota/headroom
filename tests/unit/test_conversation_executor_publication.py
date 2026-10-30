@@ -10,7 +10,7 @@ import asyncio
 import sqlite3
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import pytest
 from tests.unit.test_conversation_api import _Harness, _start
@@ -297,15 +297,24 @@ def test_restart_closes_native_request_before_initial_signal_snapshot(
             raise AssertionError("VPS restart must not dispatch native work")
 
         state.child = MacRemoteChild(child, no_native_dispatch, lambda start: canonical_snapshot())
-        metadata = source.system._executor_turn_metadata(state, state.running_turn)
-        assert metadata is not None
-        await source.store.save_executor_turn("c", metadata)
+        native = InboxStore(str(path))
+        native.runs.register_child(child, "chief", "chief", 1)
         await source.runtime.shutdown()
         async with AsyncExitStack() as cleanup:
             composition = SignalRuntimeComposition(str(path), 1000)
             cleanup.callback(composition.close)
             composition.bootstrap()
-            restored = _Harness(path, signal_composition=composition, cleanup=cleanup)
+            from tests.support.executor_turns import MacRemoteChildFactory
+
+            factory = MacRemoteChildFactory(
+                lambda start, sink: child,
+                no_native_dispatch,
+                lambda start: canonical_snapshot(),
+                db_path=str(path),
+            )
+            restored = _Harness(
+                path, signal_composition=composition, cleanup=cleanup, backend_child_factory=factory
+            )
             # Restore before any API request or inventory callback loads the conversation.
             assert "c" in restored.system._conversations
             assert restored.system._conversations["c"].child is None
@@ -330,13 +339,10 @@ def test_restart_closes_native_request_before_initial_signal_snapshot(
     asyncio.run(exercise())
 
 
-def test_reserved_turn_exceeds_native_history_without_lifecycle_facts(
+def test_reserved_turn_exceeds_conversation_history_without_run_metadata(
     tmp_db: sqlite3.Connection,
 ) -> None:
-    """A database from the feature branch cannot reuse an earlier native turn number."""
-    import json
-
-    from planner.conversation.backends.contracts import TurnToken
+    """Reserved numbers survive independently of the Mac run table."""
 
     path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
 
@@ -345,15 +351,9 @@ def test_reserved_turn_exceeds_native_history_without_lifecycle_facts(
         try:
             async with harness.client() as client:
                 await _start(client, "c")
-            await harness.store.save_executor_turn(
-                "c",
-                (
-                    json.dumps(encode_value(ChildReference("native", "child", "c"))),
-                    json.dumps(encode_value(TurnToken("c", 57))),
-                    json.dumps({"ended": True}),
-                ),
-            )
-            assert await harness.store.lifecycle_facts("c") == ()
+            for expected in range(1, 58):
+                assert await harness.store.reserve_turn("c") == expected
+            assert tmp_db.execute("SELECT COUNT(*) FROM mac_runs").fetchone()[0] == 0
             assert await harness.store.reserve_turn("c") == 58
         finally:
             await harness.runtime.shutdown()
@@ -361,8 +361,8 @@ def test_reserved_turn_exceeds_native_history_without_lifecycle_facts(
     asyncio.run(exercise())
 
 
-def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_available(
-    tmp_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+def test_refused_evidence_before_stop_commit_keeps_core_available(
+    tmp_db: sqlite3.Connection,
 ) -> None:
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
@@ -374,7 +374,6 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
         CommandOutcome,
         ReceiptDisposition,
     )
-    from planner.executor.vps_remote_child import MacRemoteChild
 
     async def exercise() -> None:
         path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
@@ -396,26 +395,12 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
 
             stops: list[str] = []
 
+            guarded = asyncio.Event()
+
             async def stop_result(command: ChildCommand) -> CommandOutcome:
                 if command.operation is ChildOperation.stop:
                     stops.append(command.command_id)
-                return CommandOutcome(
-                    command.command_id, reference, CommandDisposition.succeeded, {}
-                )
-
-            state.child = MacRemoteChild(reference, stop_result, lambda start: canonical_snapshot())
-            state.executor_child_reference = reference
-            metadata = harness.system._executor_turn_metadata(state, state.running_turn)
-            assert metadata is not None
-            await harness.store.save_executor_turn("c", metadata)
-            transition = harness.store.transition_lifecycle
-            guarded = asyncio.Event()
-
-            async def race_receipt(conversation_id: str, facts: Any, **options: Any) -> bool:
-                if options.get("retired_child") is not None:
-                    # The core already read the clean marker. The next canonical
-                    # receipt wins before the atomic closure writer starts.
-                    assert not native.runs.cleanup_evidence_uncertain(reference)
+                if not guarded.is_set():
                     event = BackendEvent(reference, BackendEventMethod.turn_ended, token, {})
                     queued = _envelope(1, EnvelopeKind.backend_event, event)
 
@@ -427,16 +412,30 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
                     receipt = native.accept(queued, refuse, 100, identity=identity)
                     assert receipt.disposition is ReceiptDisposition.refused
                     guarded.set()
-                return await transition(conversation_id, facts, **options)
+                return CommandOutcome(
+                    command.command_id, reference, CommandDisposition.succeeded, {}
+                )
 
-            monkeypatch.setattr(harness.store, "transition_lifecycle", race_receipt)
+            from tests.support.executor_turns import MacRemoteChildFactory
+
+            factory = MacRemoteChildFactory(
+                lambda start, sink: reference,
+                stop_result,
+                lambda start: canonical_snapshot(),
+                db_path=str(path),
+            )
+            harness.system._backend_child_factories = {
+                key: factory for key in harness.system._backend_child_factories
+            }
+            state.child = factory.recover(reference)
+            state.executor_child_reference = reference
             await asyncio.wait_for(harness.system.kill("c"), 2)
             assert guarded.is_set()
             assert not state.lock.locked()
             assert state.child is not None and state.child_is_quarantined
             assert state.executor_child_reference == reference
             assert native.runs.child_assignment(reference) is not None
-            assert native.runs.cleanup_evidence_uncertain(reference)
+            assert tmp_db.execute("SELECT stop_state FROM mac_runs").fetchone()[0] == "unproved"
             assert harness.store.recording_failures("c") == ()
             await asyncio.wait_for(harness.system.kill("c"), 2)
             assert state.initial_shutdown_task is not None
@@ -445,7 +444,7 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
             assert (
                 state.child_is_quarantined and native.runs.child_assignment(reference) is not None
             )
-            assert InboxStore(str(path)).runs.cleanup_evidence_uncertain(reference)
+            assert InboxStore(str(path)).runs.retained_runs()[0].retirement_confirmed is False
         finally:
             # A failed cleanup stays quarantined. Teardown only releases this
             # test process and must not schedule a second retirement attempt.
