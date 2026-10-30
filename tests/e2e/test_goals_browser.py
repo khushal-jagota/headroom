@@ -435,13 +435,13 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     )
     # Promotion crosses the same revision-checked writer as ordinary checklist edits.
     before_selection = current["page"]
-    page.get_by_role("button", name="Edit goal", exact=True).click(timeout=WAIT_MS)
-    page.get_by_label("Completion display", exact=True).select_option(label="Approach checklist")
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
         timeout=WAIT_MS,
     ) as selected:
-        page.get_by_role("button", name="Save", exact=True).click(timeout=WAIT_MS)
+        page.get_by_label("Completion display", exact=True).select_option(
+            label="Approach checklist"
+        )
     assert selected.value.ok
     current = api.get(server, path)
     assert current["primary_checklist_block_id"] == "approach"
@@ -477,15 +477,14 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(primary.get_by_role("checkbox", name="Review the draft", exact=True)).to_be_checked(
         timeout=WAIT_MS
     )
-    # The approved page keeps the independent active state behind Edit goal.
-    page.get_by_role("button", name="Edit goal", exact=True).click(timeout=WAIT_MS)
-    page.get_by_label("State", exact=True).select_option(label="Inactive")
+    # The native State select saves the independent active state immediately.
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
         timeout=WAIT_MS,
-    ):
-        page.get_by_role("button", name="Save", exact=True).click(timeout=WAIT_MS)
-    expect(page.locator("[data-goal-page] .goal-state")).to_have_text("Inactive", timeout=WAIT_MS)
+    ) as inactive:
+        page.get_by_label("State", exact=True).select_option(label="Inactive")
+    assert inactive.value.ok
+    expect(page.get_by_label("State", exact=True)).to_have_value("false", timeout=WAIT_MS)
     current = api.get(server, path)
     assert current["completed"] is True and current["active"] is False
     updated_page = current["page"]
@@ -506,14 +505,14 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )
     assert api.get(server, path)["completed"] is False
-    expect(page.locator("[data-goal-page] .goal-state")).to_have_text("Active", timeout=WAIT_MS)
+    expect(page.get_by_label("State", exact=True)).to_have_value("true", timeout=WAIT_MS)
     expect(
         primary.get_by_role("list", name="Open items").get_by_role(
             "checkbox", name="Review the updated draft", exact=True
         )
     ).to_be_visible(timeout=WAIT_MS)
     # The list response supplies the same saved item counts to cards and the table.
-    page.get_by_role("link", name="Chief of Staff", exact=True).click(timeout=WAIT_MS)
+    page.locator("button[data-chief-destination]").click(timeout=WAIT_MS)
     card = page.locator(f'[data-goal-card="{goal["id"]}"]')
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
@@ -584,9 +583,34 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     )
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"
 
-    # Authored text is read-only on a goal page. The goal agent still writes the document,
-    # and the page shows the written words without an editor of its own.
-    assert page.locator("[data-goal-page] [contenteditable]").count() == 0
+    # Reuse this connected host to prove a real native title commit and reload.
+    # Frontend-only cases cannot prove API acceptance and persisted browser reads.
+    title_editor = page.get_by_role("textbox", name="Goal title", exact=True)
+    before_title = api.get(server, path)
+    title_editor.fill("Owner title", timeout=WAIT_MS)
+    with page.expect_response(
+        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as titled:
+        title_editor.press("Enter", timeout=WAIT_MS)
+    assert titled.value.ok, titled.value.text()
+    assert titled.value.request.post_data_json == {
+        "expected_revision": before_title["revision"],
+        "title": "Owner title",
+    }
+    accepted_title = api.get(server, path)
+    assert accepted_title["title"] == "Owner title"
+    assert accepted_title["page"] == before_title["page"]
+    page.reload()
+    page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Owner title", timeout=WAIT_MS)
+
+    # An external revision must reach the mounted page without replacing a focused
+    # draft. Submitting that original revision must produce a real stale response.
+    title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
+    page.locator("[data-goal-page]").evaluate(
+        "node => node.dataset.nativeEditProof = 'retained'"
+    )
     current = api.get(server, path)
     reordered = current["page"]
     reordered["blocks"][1]["rows"].reverse()
@@ -608,7 +632,33 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             timeout=10,
         )
         assert remote.is_success, remote.text
-    expect(page.locator("[data-goal-page] h1")).to_have_text("Agent title", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    expect(page.locator(f'a[data-goal-id="{goal["id"]}"] .row-title')).to_have_text(
+        "Agent title", timeout=WAIT_MS
+    )
+    expect(page.locator("[data-goal-page]")).to_have_attribute(
+        "data-native-edit-proof", "retained", timeout=WAIT_MS
+    )
+    with page.expect_response(
+        lambda reply: reply.url.endswith(path) and reply.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as stale_title:
+        title_editor.press("Enter", timeout=WAIT_MS)
+    assert stale_title.value.status == 409
+    assert stale_title.value.request.post_data_json == {
+        "expected_revision": current["revision"],
+        "title": "Unaccepted local title",
+    }
+    error = page.locator("[data-goal-page] .goal-heading .error-line")
+    expect(error).to_contain_text("goal changed", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    accepted_remote = api.get(server, path)
+    assert accepted_remote["title"] == "Agent title"
+    assert accepted_remote["revision"] == remote.json()["revision"]
+    title_editor.press("Escape", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Agent title", timeout=WAIT_MS)
+    expect(error).to_have_count(0, timeout=WAIT_MS)
+    assert api.get(server, path)["revision"] == accepted_remote["revision"]
     expect(page.locator('[data-block="table"] tbody tr').first).to_contain_text(
         "Second", timeout=WAIT_MS
     )

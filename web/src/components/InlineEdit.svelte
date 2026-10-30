@@ -111,12 +111,14 @@
         return;
       }
     } else {
-      if (!editableMarkupChanged(node, editSnapshot)) {
+      // A remounted failed empty draft has the same markup as the initial
+      // snapshot. It still needs an explicit focus/blur retry of its writer.
+      if (!editableMarkupChanged(node, editSnapshot) && draft?.value == null) {
         editing = false;
         paint(rawValue());
         return;
       }
-      raw = readPlainEditable(node);
+      raw = readPlainEditable(node, multiline);
     }
     if (raw === rawValue()) {
       if (draft) { draft.value = null; draft.error = null; }
@@ -202,7 +204,7 @@
     if (draft && editing && !draft.saving && el) {
       draft.value = markdown
         ? (markdownSurface?.hasChanges() ? markdownSurface.read() : pendingMarkdownSave ?? markdownSurface?.read() ?? rawValue())
-        : readPlainEditable(el);
+        : readPlainEditable(el, multiline);
       draft.error = error;
     }
     disposed = true;
@@ -240,7 +242,7 @@
   onkeydown={onKeydown}
   oninput={() => {
     if (markdown) markdownSurface?.refreshEmptyState();
-    else if (el) refreshPlainEditableEmptyState(el);
+    else if (el) refreshPlainEditableEmptyState(el, multiline);
   }}
   onpaste={handlePlainTextPaste}
 ></div>

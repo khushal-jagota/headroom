@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Block } from "../../lib/pageKit";
-  import MarkdownBlock from "../MarkdownBlock.svelte";
+  import PageText from "./PageText.svelte";
   import PageBlocks from "./PageBlocks.svelte";
   import PageChart from "./PageChart.svelte";
   import PageChecklist from "./PageChecklist.svelte";
@@ -24,24 +24,24 @@
     {#if block.type === "section"}
       <PageSection {block} {view} />
     {:else if block.type === "text"}
-      <div class="text" data-block="text"><MarkdownBlock text={block.text} quiet="" /></div>
+      <div class="text" data-block="text"><PageText blockId={block.id} field="text" value={block.text} label="Text" markdown multiline update={(current, raw) => current.type === "text" ? {...current, text: raw} : current} /></div>
     {:else if block.type === "callout"}
       <aside class="callout" data-block="callout" data-tone={block.tone}>
-        {#if block.title}<p class="callout-title">{block.title}</p>{/if}
-        <p class="callout-text">{block.text}</p>
+        {#if block.title}<div class="callout-title"><PageText blockId={block.id} field="title" value={block.title} label="Callout title" update={(current, raw) => current.type === "callout" ? {...current, title: raw} : current} /></div>{/if}
+        <div class="callout-text"><PageText blockId={block.id} field="text" value={block.text} label="Callout text" multiline update={(current, raw) => current.type === "callout" ? {...current, text: raw} : current} /></div>
       </aside>
     {:else if block.type === "metrics"}
       <div class="metrics" data-block="metrics" data-count={block.items.length}>
         {#each block.items as item, itemIndex (`metric-${itemIndex}`)}
           <article class="metric">
             <div class="metric-top">
-              <p class="metric-label">{item.label}</p>
+              <div class="metric-label"><PageText blockId={block.id} field={`items.${itemIndex}.label`} value={item.label} label="Metric label" update={(current, raw) => current.type === "metrics" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, label: raw} : entry)} : current} /></div>
               {#if item.change}
-                <p class="metric-change" data-tone={item.tone ?? "neutral"}>{item.change}</p>
+                <div class="metric-change" data-tone={item.tone ?? "neutral"}><PageText blockId={block.id} field={`items.${itemIndex}.change`} value={item.change} label="Metric change" update={(current, raw) => current.type === "metrics" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, change: raw} : entry)} : current} /></div>
               {/if}
             </div>
-            <p class="metric-value">{item.value}</p>
-            {#if item.hint}<p class="metric-hint">{item.hint}</p>{/if}
+            <div class="metric-value"><PageText blockId={block.id} field={`items.${itemIndex}.value`} value={item.value} label="Metric value" update={(current, raw) => current.type === "metrics" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, value: raw} : entry)} : current} /></div>
+            {#if item.hint}<div class="metric-hint"><PageText blockId={block.id} field={`items.${itemIndex}.hint`} value={item.hint} label="Metric hint" update={(current, raw) => current.type === "metrics" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, hint: raw} : entry)} : current} /></div>{/if}
           </article>
         {/each}
       </div>
@@ -51,13 +51,13 @@
       <dl class="facts" data-block="properties" data-count={block.items.length}>
         {#each block.items as item, itemIndex (itemIndex)}
           <div class="fact">
-            <dt>{item.label}</dt>
-            <dd>{item.value}</dd>
+            <dt><PageText blockId={block.id} field={`items.${itemIndex}.label`} value={item.label} label="Property label" update={(current, raw) => current.type === "properties" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, label: raw} : entry)} : current} /></dt>
+            <dd><PageText blockId={block.id} field={`items.${itemIndex}.value`} value={item.value} label="Property value" update={(current, raw) => current.type === "properties" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, value: raw} : entry)} : current} /></dd>
           </div>
         {/each}
       </dl>
     {:else if block.type === "status"}
-      <p class="status" data-block="status" data-tone={block.tone}>{block.label}</p>
+      <div class="status" data-block="status" data-tone={block.tone}><PageText blockId={block.id} field="label" value={block.label} label="Status label" update={(current, raw) => current.type === "status" ? {...current, label: raw} : current} /></div>
     {:else if block.type === "checklist"}
       <PageChecklist {block} />
     {:else if block.type === "grid"}
@@ -75,7 +75,7 @@
         {/each}
       </div>
     {:else if block.type === "segmented"}
-      <PageSegmented views={block.views} body={view} />
+      <PageSegmented blockId={block.id} views={block.views} body={view} />
     {:else if block.type === "chart"}
       <div data-block="chart">
         <PageChart {block} {inset} />
@@ -85,13 +85,13 @@
         {#each block.items as item, itemIndex (`row-${itemIndex}`)}
           <li class="row">
             <div class="row-copy">
-              <p class="row-title">{item.title}</p>
-              {#if item.detail}<p class="row-detail">{item.detail}</p>{/if}
+              <div class="row-title"><PageText blockId={block.id} field={`items.${itemIndex}.title`} value={item.title} label="Row title" update={(current, raw) => current.type === "rows" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, title: raw} : entry)} : current} /></div>
+              {#if item.detail}<div class="row-detail"><PageText blockId={block.id} field={`items.${itemIndex}.detail`} value={item.detail} label="Row detail" update={(current, raw) => current.type === "rows" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, detail: raw} : entry)} : current} /></div>{/if}
             </div>
             {#if item.status || item.meta}
               <div class="row-aside" data-tone={item.tone ?? "neutral"}>
-                {#if item.status}<p class="row-status">{item.status}</p>{/if}
-                {#if item.meta}<p class="row-meta">{item.meta}</p>{/if}
+                {#if item.status}<div class="row-status"><PageText blockId={block.id} field={`items.${itemIndex}.status`} value={item.status} label="Row status" update={(current, raw) => current.type === "rows" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, status: raw} : entry)} : current} /></div>{/if}
+                {#if item.meta}<div class="row-meta"><PageText blockId={block.id} field={`items.${itemIndex}.meta`} value={item.meta} label="Row meta" update={(current, raw) => current.type === "rows" ? {...current, items: current.items.map((entry, position) => position === itemIndex ? {...entry, meta: raw} : entry)} : current} /></div>{/if}
               </div>
             {/if}
           </li>

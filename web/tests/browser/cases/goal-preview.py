@@ -1157,7 +1157,8 @@ def authored_goal_presentation(browser, url):
             if output:
                 page.screenshot(path=str(output / f"{mode}.png"))
             motion = disclosure_motion(
-                checklist.get_by_role("button", name="Review release", exact=True), reduced
+                checklist.get_by_role("button", name="Details for Review release", exact=True),
+                reduced,
             )
             expect(checklist.get_by_text(
                 "Read the release notes before submission."
@@ -1231,7 +1232,7 @@ def authored_goal_presentation(browser, url):
                     ("action", "Submit build", "[data-action]"),
                 ):
                     row = checklist.locator(f'[data-step="{identity}"]')
-                    row.get_by_role("button", name=name, exact=True).click()
+                    row.get_by_role("button", name=f"Details for {name}", exact=True).click()
                     expect(row.locator(child)).to_be_visible()
                     expect(row.locator(".detail")).to_have_count(0)
                 # The shared native checklist renderer also owns the rail preview.
@@ -1288,3 +1289,854 @@ def run(browser, urls):
     agent_unit_spacing(browser, urls[0])
     manual_unit_spacing(browser, urls[0])
     authored_goal_presentation(browser, urls[0])
+    native_goal_edits(browser, urls[0])
+
+
+class NativeGoalEditFixture(GoalFixture):
+    def __init__(self):
+        self.__dict__.update(goal_presentation_fixture().__dict__)
+        self.fail_next = 0
+        self.reads = {}
+        goal = self.goals["goal_wrenfixture"]
+        goal["why"] = ""
+        goal["page"]["blocks"].append(
+            {
+                "type": "section",
+                "id": "native-section",
+                "title": "Authored approach",
+                "summary": "Saved summary",
+                "blocks": [
+                    {
+                        "type": "grid",
+                        "id": "native-grid",
+                        "blocks": [
+                            {
+                                "type": "callout",
+                                "id": "native-callout",
+                                "tone": "neutral",
+                                "title": "Saved callout",
+                                "text": "Saved callout body",
+                            },
+                            {
+                                "type": "metrics",
+                                "id": "native-metrics",
+                                "items": [
+                                    {
+                                        "label": "Authored metric",
+                                        "value": "Seven releases",
+                                        "change": "Plus one",
+                                        "hint": "Saved metric hint",
+                                    }
+                                ],
+                            },
+                            {
+                                "type": "properties",
+                                "id": "native-properties",
+                                "items": [{"label": "Owner", "value": "Wren team"}],
+                            },
+                            {
+                                "type": "status",
+                                "id": "native-status",
+                                "label": "Draft status",
+                                "tone": "neutral",
+                            },
+                            {
+                                "type": "rows",
+                                "id": "native-rows",
+                                "items": [
+                                    {
+                                        "title": "Saved row",
+                                        "detail": "Saved detail",
+                                        "status": "Saved status",
+                                        "meta": "Saved meta",
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                    {
+                        "type": "segmented",
+                        "id": "native-views",
+                        "views": [
+                            {
+                                "id": "first",
+                                "label": "Readiness",
+                                "blocks": [
+                                    {
+                                        "type": "checklist",
+                                        "id": "native-checklist",
+                                        "title": "Nested readiness",
+                                        "doneTitle": "Nested ready",
+                                        "items": [
+                                            {
+                                                "id": "native-step",
+                                                "label": "Native item",
+                                                "state": "open",
+                                                "detail": "Native detail",
+                                                "action": "Complete native item",
+                                            }
+                                        ],
+                                    }
+                                ],
+                            },
+                            {
+                                "id": "second",
+                                "label": "Evidence",
+                                "blocks": [
+                                    {
+                                        "type": "table",
+                                        "id": "native-table",
+                                        "caption": "Saved table",
+                                        "columns": ["Name", "Score"],
+                                        "rows": [["Zulu", "2"], ["Alpha", "1"]],
+                                        "cell_tones": [["attention", None], [None, "good"]],
+                                    },
+                                    {
+                                        "type": "table",
+                                        "id": "native-empty",
+                                        "columns": ["Empty"],
+                                        "rows": [],
+                                        "empty_message": "Nothing saved",
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }
+        )
+        self.goals["daily_quota"]["primary_chart"]["unit"] = "minutes"
+
+    @staticmethod
+    def blocks(blocks):
+        for block in blocks:
+            yield block
+            yield from NativeGoalEditFixture.blocks(block.get("blocks", []))
+            for view in block.get("views", []):
+                yield from NativeGoalEditFixture.blocks(view.get("blocks", []))
+
+    def accept(self, route, path, body):
+        if path.endswith("/manual-writes"):
+            return super().accept(route, path, body)
+        if self.fail_next:
+            self.fail_next -= 1
+            route.fulfill(
+                status=503, json={"error": {"code": "fixture", "message": "Save rejected"}}
+            )
+            return
+        goal = self.goals[path.split("/")[3]]
+        if body["expected_revision"] != goal["revision"]:
+            route.fulfill(
+                status=409,
+                json={
+                    "error": {
+                        "code": "conflict",
+                        "message": "Goal changed. Discard the draft before another edit.",
+                    }
+                },
+            )
+            return
+        goal.update(
+            copy.deepcopy({key: value for key, value in body.items() if key != "expected_revision"})
+        )
+        goal["revision"] += 1
+        self.version += 1
+        selected = next(
+            (
+                block
+                for block in self.blocks(goal["page"]["blocks"])
+                if block["id"] == goal["primary_checklist_block_id"]
+            ),
+            None,
+        )
+        if selected:
+            goal["completed"] = bool(selected["items"]) and all(
+                item["state"] == "done" for item in selected["items"]
+            )
+        goal["status"] = "good" if goal["completed"] else "neutral"
+        route.fulfill(json=goal)
+
+    def respond(self, route):
+        parts = urlsplit(route.request.url)
+        query = parse_qs(parts.query)
+        key = query.get("key", [parts.path])[0]
+        self.reads[key] = self.reads.get(key, 0) + 1
+        if route.request.method == "GET" and key.startswith("/api/projects"):
+            result = {
+                "projects": [
+                    {"id": "project", "name": "Field guide"},
+                    {"id": "project-two", "name": "Native editing"},
+                ]
+            }
+            route.fulfill(
+                json={
+                    "key": key,
+                    "epoch": "goal-fixture",
+                    "revision": str(self.version),
+                    "body": result,
+                }
+                if parts.path == "/api/resource-body"
+                else result
+            )
+            return
+        return super().respond(route)
+
+
+def native_goal_edits(browser, url):
+    started = time.monotonic()
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root) / "native-goal-edits" if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    receipts = []
+    # All field variants run once on desktop. Phone adds touch/keyboard separation
+    # and overflow/spacing evidence, rather than duplicating the whole matrix.
+    def run_mode(phone):
+        mode = "phone" if phone else "desktop"
+        context = browser.new_context(
+            viewport={"width": 390 if phone else 1440, "height": 844 if phone else 1000},
+            has_touch=phone,
+            is_mobile=phone,
+            reduced_motion="reduce",
+        )
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        fixture = NativeGoalEditFixture()
+        errors = []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        page.expose_function("__nativeWriteCount", lambda: len(fixture.writes))
+        page.expose_function("__nativeReadCount", lambda key: fixture.reads.get(key, 0))
+        page.expose_function(
+            "__nativeAccepted", lambda identity: copy.deepcopy(fixture.goals[identity])
+        )
+        page.route("**/api/**", fixture.respond)
+        page.route(
+            "**/files/goals/goal_wrenfixture/artifacts/intake.md",
+            lambda route: route.fulfill(
+                content_type="text/markdown", body="# Wren intake\n\nWren iOS release.\n"
+            ),
+        )
+        identity = "goal_wrenfixture"
+
+        def workspace(goal_id=identity):
+            page.evaluate("hash => {location.hash=hash;}", f"#/workspace/goal/{goal_id}")
+            result = page.locator(f'[data-goal-page="{goal_id}"]')
+            expect(result.get_by_role("textbox", name="Goal title", exact=True)).to_be_visible()
+            return result
+
+        def wait_fixture(predicate, message):
+            # This Playwright build returns a false async predicate immediately.
+            # Poll the Python fixture while browser events and routes progress.
+            deadline = time.monotonic() + 5
+            while not predicate():
+                assert time.monotonic() < deadline, (
+                    message,
+                    page.evaluate(
+                        "({active:document.activeElement?.tagName,"
+                        "label:document.activeElement?.getAttribute('aria-label'),"
+                        "errors:[...document.querySelectorAll('.error-line')].map(n=>n.textContent)})"
+                    ),
+                )
+                page.wait_for_timeout(10)
+
+        def wait_writes(count):
+            wait_fixture(
+                lambda: len(fixture.writes) >= count,
+                f"Expected {count} writes, got {len(fixture.writes)}",
+            )
+
+        def field_write(field, value, action, goal_id=identity):
+            before = len(fixture.writes)
+            revision = fixture.goals[goal_id]["revision"]
+            with page.expect_response(
+                lambda response: (
+                    urlsplit(response.url).path == f"/api/goals/{goal_id}"
+                    and response.request.method == "PATCH"
+                )
+            ) as response:
+                action()
+            assert response.value.status == 200, (
+                field,
+                fixture.writes[-1],
+                fixture.goals[goal_id]["revision"],
+                {
+                    "mode": mode,
+                    "focus": page.evaluate(
+                        "({active:document.activeElement?.tagName,label:document.activeElement?.getAttribute('aria-label')})"
+                    ),
+                },
+                response.value.text(),
+            )
+            assert fixture.goals[goal_id]["revision"] > revision
+            expect(
+                page.locator(
+                    f'[data-goal-page="{goal_id}"] .ed[contenteditable="false"], '
+                    f'[data-goal-page="{goal_id}"] .goal-heading input:disabled, '
+                    f'[data-goal-page="{goal_id}"] .goal-heading select:disabled'
+                )
+            ).to_have_count(0)
+            assert len(fixture.writes) == before + 1, fixture.writes[before:]
+            path, body = fixture.writes[-1]
+            assert path == f"/api/goals/{goal_id}", (path, body)
+            assert body == {field: value, "expected_revision": revision}, body
+
+        def text_action(locator, value, multiline=False):
+            locator.fill(value)
+            locator.press("Control+Enter" if multiline else "Enter")
+
+        def block(identity):
+            return next(
+                item
+                for item in fixture.blocks(fixture.goals["goal_wrenfixture"]["page"]["blocks"])
+                if item["id"] == identity
+            )
+
+        def page_text(locator, value, block_id, field_path, multiline=False):
+            expected = copy.deepcopy(fixture.goals[identity]["page"])
+            target = next(
+                item for item in fixture.blocks(expected["blocks"]) if item["id"] == block_id
+            )
+            for key in field_path[:-1]:
+                target = target[key]
+            target[field_path[-1]] = value
+            field_write("page", expected, lambda: text_action(locator, value, multiline))
+
+        def refresh():
+            key = f"/api/goals/{identity}"
+            before = fixture.reads.get(key, 0)
+            with page.expect_response(
+                lambda response: (
+                    urlsplit(response.url).path == key
+                    or parse_qs(urlsplit(response.url).query).get("key", [None])[0] == key
+                )
+            ):
+                page.evaluate(
+                    "document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))"
+                )
+            assert fixture.reads.get(key, 0) > before
+
+        try:
+            page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
+            goal = workspace()
+            title = goal.get_by_role("textbox", name="Goal title", exact=True)
+            why = goal.get_by_role("textbox", name="Why this goal matters", exact=True)
+            expect(why).to_be_visible()
+            assert why.bounding_box()["height"] > 0
+            field_write(
+                "title", "Native Wren release", lambda: text_action(title, "Native Wren release")
+            )
+            if not phone:
+                field_write(
+                    "why",
+                    "A direct reason",
+                    lambda: (why.fill("A direct reason"), why.press("Tab")),
+                )
+                field_write(
+                    "why",
+                    "A direct reason\nWith a second line",
+                    lambda: text_action(why, "A direct reason\nWith a second line", True),
+                )
+                # Native Enter creates div/br nodes rather than literal text newlines.
+                field_write(
+                    "why",
+                    "First keyboard line\nSecond keyboard line",
+                    lambda: (
+                        why.fill("First keyboard line"),
+                        why.press("End"),
+                        why.press("Enter"),
+                        why.type("Second keyboard line"),
+                        why.press("Control+Enter"),
+                    ),
+                )
+                field_write(
+                    "why",
+                    "First paragraph\n\nSecond paragraph",
+                    lambda: text_action(why, "First paragraph\n\nSecond paragraph", True),
+                )
+                field_write(
+                    "why",
+                    "Trailing line\n",
+                    lambda: (
+                        why.fill("Trailing line"),
+                        why.press("End"),
+                        why.press("Enter"),
+                        why.press("Control+Enter"),
+                    ),
+                )
+                field_write("why", "", lambda: (why.fill(""), why.press("Control+Enter")))
+                expect(why).to_have_attribute("data-empty", "true")
+                assert why.bounding_box()["height"] > 0
+                before = len(fixture.writes)
+                title.fill("Discard this title")
+                title.press("Escape")
+                expect(title).to_have_text("Native Wren release")
+                assert len(fixture.writes) == before
+                title.fill("")
+                title.press("Enter")
+                expect(goal.locator(".error-line")).to_contain_text("Enter a goal title")
+                assert len(fixture.writes) == before
+                title.press("Escape")
+                expect(title).to_have_text("Native Wren release")
+                # Plain metadata must not become Markdown markup.
+                field_write(
+                    "why",
+                    "**literal metadata**",
+                    lambda: text_action(why, "**literal metadata**", True),
+                )
+                expect(why.locator("strong")).to_have_count(0)
+                deadline = goal.get_by_label("By date", exact=True)
+                field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
+                field_write(
+                    "deadline",
+                    "2027-02-03",
+                    lambda: (
+                        deadline.focus(),
+                        deadline.fill("2027-02-03"),
+                        goal.get_by_label("Project", exact=True).focus(),
+                    ),
+                )
+                field_write(
+                    "project_id",
+                    "project-two",
+                    lambda: goal.get_by_label("Project", exact=True).select_option("project-two"),
+                )
+                field_write(
+                    "active",
+                    False,
+                    lambda: goal.get_by_label("State", exact=True).select_option("false"),
+                )
+                field_write(
+                    "active",
+                    True,
+                    lambda: goal.get_by_label("State", exact=True).select_option("true"),
+                )
+                # Selection traverses section -> segmented view -> nested checklist.
+                field_write(
+                    "primary_checklist_block_id",
+                    "native-checklist",
+                    lambda: goal.get_by_label("Completion display", exact=True).select_option(
+                        "native-checklist"
+                    ),
+                )
+                field_write(
+                    "primary_checklist_block_id",
+                    None,
+                    lambda: goal.get_by_label("Completion display", exact=True).select_option(""),
+                )
+                field_write(
+                    "primary_checklist_block_id",
+                    "release",
+                    lambda: goal.get_by_label("Completion display", exact=True).select_option(
+                        "release"
+                    ),
+                )
+
+                # A pristine focus cycle must not retain an obsolete edit revision.
+                title.focus()
+                page.locator("[data-chief-destination]").first.focus()
+                fixture.goals[identity]["why"] = "Remote purpose"
+                fixture.goals[identity]["revision"] += 1
+                fixture.version += 1
+                refresh()
+                expect(why).to_have_text("Remote purpose")
+                field_write(
+                    "title",
+                    "Fresh revision title",
+                    lambda: text_action(title, "Fresh revision title"),
+                )
+
+                if not phone:
+                    # Preserve a focused draft through a background accepted refresh.
+                    title.fill("Local draft after refresh")
+                    original_revision = fixture.goals[identity]["revision"]
+                    fixture.goals[identity]["title"] = "Remote accepted title"
+                    fixture.goals[identity]["why"] = "Remote accepted purpose"
+                    fixture.goals[identity]["revision"] += 1
+                    fixture.version += 1
+                    refresh()
+                    expect(why).to_have_text("Remote accepted purpose")
+                    expect(title).to_have_text("Local draft after refresh")
+                    count = len(fixture.writes)
+                    title.press("Enter")
+                    expect(goal.locator(".error-line").first).to_contain_text("Goal changed")
+                    assert fixture.writes[-1][1] == {
+                        "title": "Local draft after refresh",
+                        "expected_revision": original_revision,
+                    }
+                    assert len(fixture.writes) == count + 1
+                    expect(title).to_have_text("Local draft after refresh")
+                    title.press("Escape")
+                    expect(title).to_have_text("Remote accepted title")
+
+                    # Failed structured drafts retain their selected value. Explicit
+                    # retry uses the same payload; discard restores accepted data.
+                    state = goal.get_by_label("State", exact=True)
+                    fixture.fail_next = 1
+                    count = len(fixture.writes)
+                    state.select_option("false")
+                    expect(goal.locator(".error-line").first).to_contain_text("Save rejected")
+                    failed = copy.deepcopy(fixture.writes[-1])
+                    expect(state).to_have_value("false")
+                    assert fixture.goals[identity]["active"] is True
+                    assert len(fixture.writes) == count + 1
+                    goal.get_by_role("button", name="Retry save", exact=True).click()
+                    wait_writes(count + 2)
+                    expect(goal.locator(".error-line")).to_have_count(0)
+                    assert fixture.writes[-1] == failed
+                    assert fixture.goals[identity]["active"] is False
+                    field_write("active", True, lambda: state.select_option("true"))
+                    fixture.fail_next = 1
+                    state.select_option("false")
+                    expect(goal.locator(".error-line").first).to_contain_text("Save rejected")
+                    count = len(fixture.writes)
+                    goal.get_by_role("button", name="Discard edit", exact=True).click()
+                    expect(state).to_have_value("true")
+                    assert len(fixture.writes) == count
+
+                    # The same binary metadata snapshot also rejects stale selects.
+                    state.focus()
+                    revision = fixture.goals[identity]["revision"]
+                    fixture.goals[identity]["revision"] += 1
+                    fixture.version += 1
+                    state.select_option("false")
+                    expect(goal.locator(".error-line").first).to_contain_text("Goal changed")
+                    assert fixture.writes[-1][1] == {"active": False, "expected_revision": revision}
+                    expect(state).to_have_value("false")
+                    assert fixture.goals[identity]["active"] is True
+                    goal.get_by_role("button", name="Discard edit", exact=True).click()
+                    expect(state).to_have_value("true")
+
+                    # A held receipt must retain the old goal identity after routing
+                    # reuses the workspace for another goal.
+                    fixture.hold = True
+                    count = len(fixture.writes)
+                    title = goal.get_by_role("textbox", name="Goal title", exact=True)
+                    title.fill("Accepted after goal switch")
+                    title.press("Enter")
+                    wait_writes(count + 1)
+                    assert len(fixture.held) == 1
+                    quantitative = workspace("daily_quota")
+                    other_title = fixture.goals["daily_quota"]["title"]
+                    route, path, body = fixture.held.pop(0)
+                    fixture.hold = False
+                    fixture.accept(route, path, body)
+                    expect(
+                        quantitative.get_by_role("textbox", name="Goal title", exact=True)
+                    ).to_have_text(other_title)
+                    assert fixture.goals[identity]["title"] == "Accepted after goal switch"
+                    assert fixture.goals["daily_quota"]["title"] == other_title
+                    assert path == f"/api/goals/{identity}"
+                    target = quantitative.get_by_label("Success threshold", exact=True)
+                    for number, key in ((0, "Enter"), (0.125, "Tab")):
+                        chart = copy.deepcopy(fixture.goals["daily_quota"]["primary_chart"])
+                        chart["target"] = number
+                        field_write(
+                            "primary_chart",
+                            chart,
+                            lambda number=number, key=key: (
+                                target.fill(str(number)),
+                                target.press(key),
+                            ),
+                            "daily_quota",
+                        )
+                    chart = copy.deepcopy(fixture.goals["daily_quota"]["primary_chart"])
+                    chart["direction"] = "atmost"
+                    field_write(
+                        "primary_chart",
+                        chart,
+                        lambda: quantitative.get_by_label(
+                            "Threshold direction", exact=True
+                        ).select_option("atmost"),
+                        "daily_quota",
+                    )
+                    count = len(fixture.writes)
+                    target.fill("3.75")
+                    target.press("Escape")
+                    expect(target).to_have_value("0.125")
+                    assert len(fixture.writes) == count
+                    goal = workspace()
+
+            else:
+                field_write(
+                    "why",
+                    "A direct reason",
+                    lambda: (why.tap(), why.fill("A direct reason"), why.press("Tab")),
+                )
+
+            # Every renderer category receives one persisted authored edit. Full
+            # page equality proves that neighboring fields and stable IDs survive.
+            if not phone:
+                edits = [
+                    ("Section title", "Edited approach", "native-section", ["title"], False),
+                    (
+                        "Section summary",
+                        "Edited summary\nWith its second line",
+                        "native-section",
+                        ["summary"],
+                        True,
+                    ),
+                    ("Callout title", "Edited callout", "native-callout", ["title"], False),
+                    (
+                        "Callout text",
+                        "Edited callout body\n\nWith a second paragraph",
+                        "native-callout",
+                        ["text"],
+                        True,
+                    ),
+                    (
+                        "Metric value",
+                        "Eight authored releases",
+                        "native-metrics",
+                        ["items", 0, "value"],
+                        False,
+                    ),
+                    (
+                        "Property value",
+                        "Wren release team",
+                        "native-properties",
+                        ["items", 0, "value"],
+                        False,
+                    ),
+                    ("Status label", "Ready status", "native-status", ["label"], False),
+                    ("Row meta", "Edited row meta", "native-rows", ["items", 0, "meta"], False),
+                ]
+                for label, value, block_id, path, multiline in edits:
+                    page_text(
+                        goal.get_by_role("textbox", name=label, exact=True),
+                        value,
+                        block_id,
+                        path,
+                        multiline,
+                    )
+            nested = goal.locator('[data-block="segmented"]')
+            count = len(fixture.writes)
+            label = nested.get_by_role("textbox", name="View label: Evidence", exact=True)
+            if phone:
+                label.tap()
+                label.press("ArrowLeft")
+                expect(
+                    nested.get_by_role("radio", name="Show Readiness view", exact=True)
+                ).to_have_attribute("aria-checked", "true")
+                label.press("Escape")
+            else:
+                page_text(label, "Proof", "native-views", ["views", 1, "label"])
+            selected_label = "Evidence" if phone else "Proof"
+            radio = nested.get_by_role("radio", name=f"Show {selected_label} view", exact=True)
+            if phone:
+                radio.tap()
+            else:
+                native_radio = nested.get_by_role("radio", name="Show Readiness view", exact=True)
+                native_radio.focus()
+                native_radio.press("ArrowRight")
+            expect(radio).to_have_attribute("aria-checked", "true")
+            count = len(fixture.writes)
+            table = nested.locator('[data-block="table"]').first
+            sort = table.get_by_role("button", name="Sort by Name", exact=True)
+            (sort.tap if phone else sort.click)()
+            expect(table.locator("tbody tr").first).to_contain_text("Alpha")
+            assert len(fixture.writes) == count
+            cell = table.get_by_role("textbox", name="Score, row 2", exact=True)
+            page_text(cell, "1.5", "native-table", ["rows", 1, 1])
+            assert block("native-table")["rows"] == [["Zulu", "2"], ["Alpha", "1.5"]]
+            if not phone:
+                page_text(
+                    table.get_by_role("textbox", name="Table caption", exact=True),
+                    "Edited table",
+                    "native-table",
+                    ["caption"],
+                )
+                page_text(
+                    table.get_by_role("textbox", name="Table column 2", exact=True),
+                    "Reading",
+                    "native-table",
+                    ["columns", 1],
+                )
+                empty = nested.get_by_role("textbox", name="Table empty message", exact=True)
+                page_text(empty, "No evidence yet", "native-empty", ["empty_message"])
+
+            nested.get_by_role("radio", name="Show Readiness view", exact=True).click()
+            checklist = nested.locator('[data-block="checklist"]')
+            page_text(
+                checklist.get_by_role("textbox", name="Checklist title", exact=True),
+                "Edited nested readiness",
+                "native-checklist",
+                ["title"],
+            )
+            item = checklist.get_by_role("textbox", name="Checklist item label", exact=True)
+            row = checklist.locator('[data-step="native-step"]')
+            if phone:
+                item.tap()
+            else:
+                item.focus()
+            detail_button = checklist.get_by_role(
+                "button", name="Details for Native item", exact=True
+            )
+            expanded = detail_button.get_attribute("aria-expanded")
+            item.press("ArrowDown")
+            expect(detail_button).to_have_attribute("aria-expanded", expanded)
+            item.press("Escape")
+            page_text(item, "Edited native item", "native-checklist", ["items", 0, "label"])
+            detail_button = checklist.get_by_role(
+                "button", name="Details for Edited native item", exact=True
+            )
+            if detail_button.get_attribute("aria-expanded") != "true":
+                (detail_button.tap if phone else detail_button.click)()
+            page_text(
+                row.get_by_role("textbox", name="Details for Edited native item", exact=True),
+                "Edited native detail",
+                "native-checklist",
+                ["items", 0, "detail"],
+                True,
+            )
+            # Failed empty plain drafts must survive a disclosure remount. The
+            # second blur is an explicit retry and preserves the captured revision.
+            if not phone:
+                detail = row.get_by_role(
+                    "textbox", name="Details for Edited native item", exact=True
+                )
+                fixture.fail_next = 1
+                detail.fill("")
+                detail.press("Control+Enter")
+                expect(row.locator(".error-line")).to_contain_text("Save rejected")
+                failed = copy.deepcopy(fixture.writes[-1])
+                count = len(fixture.writes)
+                # Toggle through DOM click so the failed field does not blur and
+                # retry before the remount that this case exists to exercise.
+                detail_button.evaluate("button => button.click()")
+                expect(detail).to_have_count(0)
+                detail_button.click()
+                expect(detail).to_have_text("")
+                expect(row.locator(".error-line")).to_contain_text("Save rejected")
+                assert len(fixture.writes) == count
+                with page.expect_response(
+                    lambda response: (
+                        urlsplit(response.url).path == f"/api/goals/{identity}"
+                        and response.request.method == "PATCH"
+                    )
+                ) as response:
+                    detail.focus()
+                    detail.press("Control+Enter")
+                assert response.value.status == 200
+                expect(row.locator('[contenteditable="false"]')).to_have_count(0)
+                expect(row.locator(".error-line")).to_have_count(0)
+                assert len(fixture.writes) == count + 1
+                assert fixture.writes[-1] == failed
+            page_text(
+                row.get_by_role("textbox", name="Action label for Edited native item", exact=True),
+                "Mark native ready",
+                "native-checklist",
+                ["items", 0, "action"],
+            )
+            assert block("native-checklist")["items"][0]["state"] == "open"
+            count = len(fixture.writes)
+            action = row.get_by_role("button", name="Mark native ready", exact=True)
+            (action.tap if phone else action.click)()
+            wait_writes(count + 1)
+            expect(checklist.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "1")
+            assert block("native-checklist")["items"][0]["state"] == "done"
+            assert len(fixture.writes) == count + 1
+            page_text(
+                checklist.get_by_role("textbox", name="Completed checklist title", exact=True),
+                "Edited nested ready",
+                "native-checklist",
+                ["doneTitle"],
+            )
+            assert block("native-checklist")["doneTitle"] == "Edited nested ready"
+
+            # Artifact cards stay outside the editing action. This is one quick
+            # check of that collision, not a repeat of artifact presentation tests.
+            text = goal.locator('[data-block="text"]').first
+            markdown = text.get_by_role("textbox", name="Text", exact=True)
+            count = len(fixture.writes)
+            link = text.locator('[data-file-preview-kind="markdown"] a.file-preview-link:visible')
+            (link.tap if phone else link.click)()
+            viewer = page.locator("[data-ticket-artifact]")
+            expect(viewer.get_by_role("heading", name="Wren intake", exact=True)).to_be_visible()
+            assert len(fixture.writes) == count
+            viewer.get_by_role("button", name="Close", exact=True).click()
+            expect(viewer).to_have_count(0)
+            if not phone:
+                # Alter a prose text node only. The managed Markdown serializer
+                # must retain its artifact source token and sanitized link.
+                before = fixture.goals[identity]["revision"]
+                markdown.focus()
+                markdown.locator("strong").evaluate(
+                    "node => {node.textContent='release intake'; "
+                    "node.dispatchEvent(new InputEvent('input',"
+                    "{bubbles:true,inputType:'insertText'}));}"
+                )
+                markdown.press("Control+Enter")
+                wait_fixture(
+                    lambda: fixture.goals[identity]["revision"] > before,
+                    "No accepted revision after checklist edit",
+                )
+                stored = block("intake-notes")["text"]
+                assert "**release intake**" in stored, stored
+                assert (
+                    "[Wren intake](/files/goals/goal_wrenfixture/artifacts/intake.md)" in stored
+                ), stored
+                assert "https://example.org/app-store" in stored, stored
+                expect(text.locator('[data-file-preview-kind="markdown"]')).to_be_visible()
+
+            # Capture only real renders from this scenario. The receipt measures
+            # Chief -> goal container and Chief -> first goal, on both viewports.
+            page.locator(".board-workspace-right").evaluate("node => node.scrollTop=0")
+            heading_geometry = goal.locator(".goal-heading").evaluate("""header => {
+                const why=header.querySelector('.why'), editor=why.querySelector('.ed');
+                const selector=header.querySelector('[aria-label="Completion display"]');
+                const label=selector.closest('label');
+                const w=why.getBoundingClientRect(), e=editor.getBoundingClientRect();
+                const c=label.getBoundingClientRect();
+                return {wrapperHeight:w.height,editorHeight:e.height,gap:c.top-e.bottom,
+                    marginTop:parseFloat(getComputedStyle(label).marginTop)};
+            }""")
+            print(f"{mode} native header geometry: {heading_geometry}", flush=True)
+            assert abs(heading_geometry["wrapperHeight"] - heading_geometry["editorHeight"]) <= 1, (
+                mode,
+                heading_geometry,
+            )
+            assert abs(heading_geometry["gap"] - heading_geometry["marginTop"]) <= 1, (
+                mode,
+                heading_geometry,
+            )
+            if output:
+                page.screenshot(path=str(output / f"{mode}.png"), full_page=True)
+            if phone:
+                page.evaluate("location.hash='#/workspace'")
+            rail = page.locator(".goals-rail")
+            expect(rail).to_be_visible()
+            geometry = rail.evaluate("""rail => {
+                const chief = rail.closest('.chief').querySelector('[data-chief-destination]');
+                const c = chief.getBoundingClientRect(), r = rail.getBoundingClientRect();
+                const firstGoal = rail.querySelector('a[data-goal-id] .row-heading');
+                const first = firstGoal.getBoundingClientRect();
+                return {containerGap:r.top-c.bottom, firstGoalInset:first.top-c.bottom,
+                    railMargin:getComputedStyle(rail).marginTop,
+                    viewport:innerWidth, scrollWidth:document.documentElement.scrollWidth};
+            }""")
+            assert abs(geometry["containerGap"] - 8) <= 1, geometry
+            assert abs(geometry["firstGoalInset"] - 16) <= 1, geometry
+            assert geometry["railMargin"] == "8px", geometry
+            assert geometry["scrollWidth"] <= geometry["viewport"], geometry
+            if output:
+                page.screenshot(path=str(output / f"{mode}-rail.png"))
+            assert errors == [], errors
+            receipts.append(
+                {
+                    "mode": mode,
+                    "writes": len(fixture.writes),
+                    "geometry": geometry,
+                    "heading_geometry": heading_geometry,
+                    "errors": errors,
+                }
+            )
+        finally:
+            context.close()
+    for phone in (False, True):
+        run_mode(phone)
+    elapsed = time.monotonic() - started
+    if output:
+        (output / "receipt.json").write_text(
+            json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
+        )
+    print(f"native goal edits metadata/page desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
