@@ -207,7 +207,7 @@ def test_parallel_suite_setup_and_evidence_keep_the_existing_native_and_mount_bo
 @pytest.mark.parametrize("case", [
     "later_check", "uncertain", "cancelled", "replacement", "same_sha_stale",
     "health_failure", "recovery_failure", "success", "replacement_no_lifecycle",
-    "missing_receipt", "installed_uncertain",
+    "missing_receipt", "installed_uncertain", "apply_failure",
 ])
 def test_adoption_finalizer_reports_own_evidence_without_service_actions(
     tmp_path: Path, case: str,
@@ -269,6 +269,10 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
     step = next(s for s in job["steps"] if s.get("name") == "Finalize owner adoption lifecycle")
     assert step["if"] == "${{ always() }}"
     assert job["steps"][-1] is step
+    apply_failed = case in {
+        "apply_failure", "health_failure", "recovery_failure", "cancelled",
+        "replacement", "same_sha_stale", "replacement_no_lifecycle", "missing_receipt",
+    }
     result = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", step["run"]],
         env=os.environ | {
@@ -277,9 +281,11 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
             "PANELS_CURRENT_ROOT": str(root),
             "PANELS_DEPLOY_VENV": str(Path(sys.executable).parent.parent),
             "PANELS_DEPLOYMENT_ID": "123-1", "UPDATE_REQUEST_ID": "first",
-            "UPDATE_APP_SHA": sha, "UPDATE_APPLY_OUTCOME": "success",
+            "UPDATE_APP_SHA": sha,
+            "UPDATE_APPLY_OUTCOME": "failure" if apply_failed else "success",
             "UPDATE_PROVISION_OUTCOME": ("success" if case == "success" else
-                                         "skipped" if case == "installed_uncertain" else "failure"),
+                                         "skipped" if apply_failed or case == "installed_uncertain"
+                                         else "failure"),
             "UPDATE_PUBLISHED_ROUTE_OUTCOME": "success" if case == "success" else "skipped",
         }, text=True, capture_output=True, check=True,
     )
@@ -311,7 +317,11 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
     elif case in {"health_failure", "recovery_failure"}:
         assert report["status"] == "preserved"
         assert path.read_bytes() == before_lifecycle
+        assert recorded.code == (
+            "candidate_unhealthy" if case == "health_failure" else "rollback_recovery_failed"
+        )
         assert store.project(sha).state == "problem"
+        assert store.project(sha).outcome == "failed"
     elif case == "cancelled":
         assert recorded.phase == "cancelled"
         assert recorded.detail == (
@@ -319,11 +329,14 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
         )
         assert store.project(sha).state == "idle"
         assert store.project(sha).outcome == "cancelled"
-    elif case == "uncertain":
+    elif case in {"uncertain", "apply_failure"}:
         assert recorded.phase == "unknown"
         assert recorded.serving_sha is None
         assert "uncertain" in (recorded.detail or "")
         assert store.project(sha).state == "unknown"
+        assert recorded.code == "admission_evidence_uncertain"
+        assert "health" not in (recorded.detail or "")
+        assert "rollback" not in (recorded.detail or "")
     elif case == "later_check":
         assert recorded.phase == "failed" and recorded.serving_sha == sha
         assert recorded.code == "workflow_check_failed"
