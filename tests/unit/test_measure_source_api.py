@@ -3,7 +3,7 @@
 import json
 from collections.abc import Iterator
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from sqlite3 import Connection
 from typing import Annotated, Any, cast
 
@@ -182,7 +182,12 @@ def test_authored_request_examples_preserve_only_request_values_across_cached_re
         count: int = 4
 
     router = APIRouter()
-    examples = {"explicit": {"value": {"choice": None, "values": [None, 4]}}}
+    examples = {"explicit": {"value": {
+        "choice": None, "values": [None, 4], "day": date(2026, 10, 30)
+    }}}
+    encoded_examples = {"explicit": {"value": {
+        "choice": None, "values": [None, 4], "day": "2026-10-30"
+    }}}
 
     responses: dict[int | str, dict[str, Any]] = {200: {"content": {"application/json": {
         "examples": {"response": {"value": {"choice": None}}}
@@ -224,9 +229,12 @@ def test_authored_request_examples_preserve_only_request_values_across_cached_re
             assert media["schema"] == before["requestBody"]["content"][
                 "application/vnd.panels.example+json"
             ]["schema"]
-            assert media["examples"] == original_examples
+            assert media["examples"] == encoded_examples
             media["examples"]["explicit"]["value"]["choice"] = "mutated cached document"
+            media["examples"]["explicit"]["value"]["day"] = "mutated date"
         assert metadata.openapi_examples == original_examples
+        assert metadata.openapi_examples is not None
+        assert metadata.openapi_examples["explicit"]["value"]["day"] == date(2026, 10, 30)
 
 
 def test_published_examples_complete_writes_and_diagnose_recorded_failures(

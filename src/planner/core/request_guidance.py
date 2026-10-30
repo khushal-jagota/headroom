@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, NotRequired, get_origin, get_type_hints
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
 from fastapi.params import Body
 from fastapi.routing import APIRoute, iter_route_contexts
 from pydantic import GetJsonSchemaHandler, TypeAdapter
@@ -37,7 +38,7 @@ def preserve_authored_request_examples(app: FastAPI) -> None:
                 operation = document["paths"].get(route.path_format, {}).get(method.lower())
                 if operation is not None:
                     media = operation["requestBody"]["content"][body.media_type]
-                    media["examples"] = copy.deepcopy(body.openapi_examples)
+                    media["examples"] = jsonable_encoder(body.openapi_examples, exclude_none=False)
         return document
 
     app.openapi = openapi
