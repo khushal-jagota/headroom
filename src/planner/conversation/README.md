@@ -46,7 +46,7 @@ ceiling leaves room for the base64 form of both file and image budgets plus JSON
 Video takes a separate bounded upload before message intake. The send carries a ready
 upload reference, which the shared converter adopts as an ordinary durable file piece.
 The destination lock checks the upload before conversation creation. See
-`video_uploads/` and [conversation attachments](../../../docs/conversation-system.md)
+`video_uploads/` and [Conversations](../../../docs/conversations.md)
 for the transfer, retention, quota, and pending-send rules.
 
 The durable message stores a managed file id, the original file name, the canonical media

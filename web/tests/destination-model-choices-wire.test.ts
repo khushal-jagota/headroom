@@ -12,8 +12,9 @@ it("posts scoped preview without converting omitted effort into provider default
   expect(await readScopedBackends(selection)).toEqual(answer.backends);
   expect(fetcher.mock.calls[0]).toEqual([
     "/api/conversation/backends",
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(selection) }
+    { method: "POST", headers: expect.anything(), body: JSON.stringify(selection) }
   ]);
+  expect(new Headers(fetcher.mock.calls[0][1]?.headers).get("content-type")).toBe("application/json");
   await readScopedBackends({ ...selection, employee_launch_reasoning_effort: null });
   expect(fetcher.mock.calls[1][1]).toMatchObject({
     body: JSON.stringify({ ...selection, employee_launch_reasoning_effort: null })

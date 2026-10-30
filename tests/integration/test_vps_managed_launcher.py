@@ -25,6 +25,7 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
         "src/planner/environments/__init__.py",
         "src/planner/environments/app.py",
         "src/planner/environments/app_launcher.py",
+        "src/planner/environments/runtime_contracts.py",
         "src/planner/environments/executor_launch_contracts.py",
         "src/planner/environments/vps_launch.py",
     }

@@ -9,7 +9,7 @@ export type DeploymentStatusState =
   | "problem"
   | "unknown";
 
-export type DeploymentOutcome = "succeeded" | "failed" | "rolled_back";
+export type DeploymentOutcome = "succeeded" | "failed" | "rolled_back" | "cancelled";
 
 export type SuccessPresentation = {
   state: "connected" | "reconnecting" | "back_up";

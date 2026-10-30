@@ -119,6 +119,7 @@ def prepare_background_loops(
     *,
     conversation_system: ConversationSystem,
     asyncio_loop: asyncio.AbstractEventLoop,
+    before_readiness_poll: Callable[[], bool] | None = None,
 ) -> BackgroundLoops:
     """Own the background loops when this process holds the machine lock.
 
@@ -153,6 +154,7 @@ def prepare_background_loops(
                 config.db_path,
                 clock,
                 busy_timeout_ms=config.db_busy_timeout_ms,
+                workspace_admission=getattr(conversation_system, "workspace_admission", None),
             )
             candidate_loop = WorkerStepReadinessLoop(
                 config.db_path,
@@ -160,12 +162,14 @@ def prepare_background_loops(
                 conversation_system=conversation_system,
                 asyncio_loop=asyncio_loop,
                 busy_timeout_ms=config.db_busy_timeout_ms,
+                before_poll=before_readiness_poll,
             )
             candidate_notification_loop = NotificationLoop(
                 config.db_path,
                 clock,
                 canonical_origin=config.trusted_ingress_canonical_origin,
                 busy_timeout_ms=config.db_busy_timeout_ms,
+                workspace_admission=getattr(conversation_system, "workspace_admission", None),
             )
             candidate_manager_wake_loop = ManagerWakeLoop(
                 config.db_path,
@@ -173,6 +177,7 @@ def prepare_background_loops(
                 conversation_system=conversation_system,
                 asyncio_loop=asyncio_loop,
                 busy_timeout_ms=config.db_busy_timeout_ms,
+                workspace_admission=getattr(conversation_system, "workspace_admission", None),
             )
             candidate_notification_loop.reconcile_imported_state()
         except Exception:

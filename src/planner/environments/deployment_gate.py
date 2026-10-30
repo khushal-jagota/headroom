@@ -21,6 +21,8 @@ from planner.environments.app import validate_app_manifest, validate_app_sha
 from planner.environments.deployment_gate_contracts import (
     GateEvidence,
     HealthObservation,
+    LegacyGateEvidence,
+    PublicationGateEvidence,
     ServedObservation,
 )
 
@@ -69,11 +71,10 @@ def observe_served(current_root: Path, health_url: str) -> ServedObservation:
 
 def read_gate_evidence(path: Path) -> GateEvidence:
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or set(value) != {
-        "requested_sha",
-        "artifact_digest",
-        "observation",
-    }:
+    if not isinstance(value, dict) or set(value) not in (
+        {"requested_sha", "artifact_digest", "observation"},
+        {"requested_sha", "artifact_digest", "publication_run_id", "archive_sha256"},
+    ):
         raise ValueError("invalid deployment gate evidence")
     if not isinstance(value["requested_sha"], str):
         raise ValueError("invalid requested SHA")
@@ -83,6 +84,14 @@ def read_gate_evidence(path: Path) -> GateEvidence:
         or re.fullmatch(r"[0-9a-f]{64}", value["artifact_digest"]) is None
     ):
         raise ValueError("invalid deployment artifact digest")
+    if "publication_run_id" in value:
+        if type(value["publication_run_id"]) is not int or value["publication_run_id"] <= 0:
+            raise ValueError("invalid publication run identity")
+        if not isinstance(value["archive_sha256"], str) or re.fullmatch(
+            r"[0-9a-f]{64}", value["archive_sha256"]
+        ) is None:
+            raise ValueError("invalid publication archive hash")
+        return cast(PublicationGateEvidence, value)
     observation = value["observation"]
     if not isinstance(observation, dict) or set(observation) != {
         "current_root",
@@ -130,7 +139,11 @@ def verify_gate_evidence(evidence: GateEvidence, current_root: Path, candidate_a
     )
     if manifest.artifact_digest != evidence["artifact_digest"]:
         raise ValueError("candidate artifact differs from checked artifact")
-    previous = evidence["observation"]
+    if "observation" not in evidence:
+        # Trusted publication proof is portable across installed base revisions.
+        # The deployment transaction owns current-root/schema/snapshot admission.
+        return
+    previous = cast(LegacyGateEvidence, evidence)["observation"]
     if previous["current_root"] != str(current_root.resolve()):
         raise ValueError("gate evidence names another deployment root")
     if observe_served(current_root, previous["health_url"]) != previous:

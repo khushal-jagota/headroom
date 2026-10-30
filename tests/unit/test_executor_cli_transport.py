@@ -129,3 +129,21 @@ def test_launcher_refuses_non_origin_urls(origin: str, monkeypatch: pytest.Monke
     )
     assert result.exit_code != 0
     constructor.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["prepare", "register", "show", "stop"])
+def test_mac_preview_cli_refuses_before_any_transport(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, command: str
+) -> None:
+    monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(tmp_path))
+
+    def no_transport(*args: object, **kwargs: object) -> None:
+        raise AssertionError("Mac preview commands must refuse before transport")
+
+    monkeypatch.setattr(http, "send", no_transport)
+    arguments = ["preview", command]
+    if command == "register":
+        arguments += ["--port", "3001"]
+    result = CliRunner().invoke(main, arguments)
+    assert result.exit_code == 1
+    assert "previews are unavailable for Tickets running on the Mac" in result.output

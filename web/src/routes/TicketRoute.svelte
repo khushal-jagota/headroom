@@ -61,12 +61,10 @@
     // holds the value itself.
     requestedConversationId = null,
     openFile = null,
-    onOpenFile = null,
-    navigationErrorHandledByParent = false
+    onOpenFile = null
   }: {
     id: string;
     requestedConversationId?: string | null;
-    navigationErrorHandledByParent?: boolean;
     openFile?: ManagedFileTarget | null;
     onOpenFile?: ((file: ManagedFileTarget | null) => void) | null;
   } = $props();
@@ -458,7 +456,7 @@
   data-stage={section?.record.value.stage}
   onclick={artifact.claimPress}
 >
-  <ResourceState shape="document" layout="fill" error={ticket.error ?? (navigationErrorHandledByParent ? null : navigation.state.error)} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(ticket.data && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
+  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(ticket.data && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
     {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine

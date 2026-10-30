@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.unit.test_db import _migration_tree_through
 
 from planner.conversation.lifecycle_storage import (
     ConversationRuntimeAlreadyOwned,
@@ -77,6 +78,8 @@ def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         "_require_no_backend_activity",
         lambda database, **options: scanner(database, proc=proc, **options),
     )
+    # The offline writer deliberately refuses later, unreviewed schema revisions.
+    _migration_tree_through(tmp_path, monkeypatch, "owner_message_preview")
     database = tmp_path / "archive.db"
     seed_archive(database)
     yield database
@@ -341,7 +344,7 @@ def test_orphan_backend_without_database_identity_blocks_all_principals(
 
 
 def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_identity(
-    archive: Path, tmp_path: Path
+    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Actual deletion/rebuild must preserve non-Ticket history and classify real tool refs."""
     from tests.unit.test_conversation_api import (
@@ -457,6 +460,11 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     copied = tmp_path / "post-expiry.db"
     with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
         source.backup(target)
+    # Read the maintained conversation API only after upgrading the offline copy.
+    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY",
+                        Path(db.__file__).parent / "migrations")
+    with closing(connect(str(copied))) as upgraded:
+        create_schema(upgraded)
 
     async def exercise() -> None:
         async with AsyncExitStack() as cleanup:
@@ -515,9 +523,19 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     _run(exercise)
 
 
-def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(archive: Path) -> None:
+def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
+    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A locally ended turn cannot release history while its Mac child may still run."""
     from planner.maintenance.diagnostic_history_measure import independent_removal_oracle
+
+    copied = tmp_path / "native-stop-proof.db"
+    with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
+        source.backup(target)
+    archive = copied
+    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", Path(db.__file__).parent / "migrations")
+    with closing(connect(str(archive))) as upgraded:
+        create_schema(upgraded)
 
     def candidates() -> set[tuple[str, int]]:
         report = read_report(archive, as_of_unix=AS_OF)

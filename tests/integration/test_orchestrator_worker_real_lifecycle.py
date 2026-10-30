@@ -35,6 +35,7 @@ from planner.skill_sources import provision_native_backend_skills
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.real_provider_homes
 @pytest.mark.skipif(
     os.environ.get("PANELS_REAL_LUNA_LIFECYCLE") != "1",
     reason="set PANELS_REAL_LUNA_LIFECYCLE=1 to run real provider calls",

@@ -1,71 +1,45 @@
 # docs/ conventions
 
-Guidance for Claude when creating or editing files under `docs/`. The root
-`CLAUDE.md` always loads; this file loads only when working in this directory.
+Guidance for agents editing `docs/`. The root `AGENTS.md` always loads. This file loads when the work is in this directory.
 
-`docs/` is the plain-language account of what the planner is and how it works —
-for a smart reader who does not write code. A section a non-engineer can't follow
-without reading the source is a section to rewrite, not to leave.
+`docs/` is the top-level manual for Headroom. The readers are Khushal and coding agents. `docs/README.md` is the map. It names the pages. This file does not.
 
-## The bar
+## The shape of a focused page
 
-Write or keep a doc only when the _why_ or the shape of a system isn't already
-visible elsewhere. "Elsewhere" is the source code (including docstrings), the
-owning Panels ticket (current work and judgment calls), `DESIGN.md` (the visual
-language), and git history. When a fact is derivable from
-code, let the code carry it. When a fact is explained in one place, do not restate
-it in a second — duplication rots, and two of the copies will drift wrong.
+Explain what the thing is in the product, how we think about building and running it, what feeds it, what it feeds, and where a person or an operator meets it. Mechanism and product story come first. Light code detail comes after. A module map of files, ownership, and connections is optional garnish at the end.
 
-## Keep it current, not frozen
+Order:
 
-These docs describe the system **as it is now**. When a feature changes or is
-removed, the doc that described it is wrong and must be corrected in the same
-breath — a doc still describing deleted machinery is a bug, not history. (History
-is git's job; current work belongs on its Panels ticket.) A doc is not a build log
-and never narrates stages ("Stage 4 did X"); it states what stands today.
+1. What it is, and why it exists.
+2. How it works.
+3. What feeds it, and what it feeds.
+4. Where it shows up in the product or in operations.
+5. Light code pointers.
+6. Optional short module map or invariants, last.
 
-## What a system doc carries
+Prefer a separate focused page over a combined dump. A thin system stays thin. A page that only says which module connects to which module does not earn a place.
 
-- **Leads with what the system _is_ and what it's _for_** — where its work lands
-  in the product — then the load-bearing decisions. A doc is an editorial cut, not
-  a catalogue: drop anything that doesn't earn its place.
-- **An ASCII diagram when shape is the point** — use one near the top for ordered
-  stages, ownership splits, or multi-system flow. Do not force one into a reference or
-  operator page that is clearer without it. Never use a call graph of function names.
-  Mermaid and other renderer-dependent formats do not display here.
-- **Plain language, the system's own words** — never the code's vocabulary as
-  substance (signatures, types, control flow). Names appear only in the code-path
-  pointers.
-- **Code paths** under each section — where the system lives, folder-level mostly,
-  a file where it pinpoints. Enough to trace doc → code, not exhaustive. This is
-  the only place code names belong.
-- **Honest, not aspirational.** State what actually works today, including when
-  that's thin or blocked. A thin system written as thin is the point; a blocker
-  named is worth more than a blocker hidden.
-- **Handoffs where systems meet** — name the neighbor and point to its doc. A focused
-  operator or interface reference does not need a mechanical Handoffs section.
-- **Deferred only for known gaps** — bind each item to a _trigger_ ("when recovery
-  ships," "before real users"), never a stage number. Omit the section when the page
-  owns no known gap.
-- A footer: `_Last verified: <date>._` — when the doc was last checked against code.
+## Keep one source, and keep it current
 
-## The map
+These pages describe the system as it is now. When a feature changes or is removed, correct the page in the same change. A page that still describes deleted machinery is a bug. History belongs to git. Current judgment belongs on the Ticket that owns the work. A page is not a build log and does not narrate how a change was staged.
 
-`README.md` is the entry point — the list of systems and how they connect. Read it
-first to find which doc owns a question. It names the systems; this convention
-file does not (that rots).
+Write a page when the why or the shape is not already visible in the page that owns the topic. When a fact is explained in one place, point to it. Do not restate it. Duplication rots, and the copies drift.
 
-## Cross-cutting rules
+`DESIGN.md` remains the visual principle list. `docs/design.md` is how those principles show up. `CONTEXT.md` remains the word list. `PRINCIPLES.md` remains the engineering rules. Do not copy them into a second essay.
 
-- **Duplication rots.** Pick the one location that best fits the reader and delete
-  the rest.
-- **Triggers, not stages.** Deferred items bind to conditions, never to stage numbers.
-- **Diagrams must be ASCII.**
-- **Length is not a goal.** Shorter is better, but never at the cost of a
-  load-bearing claim. Cut what doesn't survive the bar; keep what does.
+## Craft
 
-## Delete a doc when
+- Plain language and the product’s own words. Code names, routes, and commands appear where an operator or an agent must use them, and again as pointers at the end. They are not a substitute for the explanation.
+- An ASCII diagram when shape is the point: a flow, a ladder, who stands above whom. Do not force one into a page that is clearer without it. Do not use a call graph of function names. Mermaid does not display here.
+- Honest about what works today, including when that is thin or blocked.
+- Name the neighbor and link to its page when two systems meet.
+- A known gap binds to a condition, never to a stage number. Omit the section when the page has no known gap.
+- End with `_Last verified: <date>._` when the page was checked against the code.
 
-- Its system was removed (correct or delete — never leave it describing a ghost).
-- Its content moved wholesale into code, a docstring, or a sharper doc.
-- It duplicates a fact another doc now owns better.
+## Delete a page when
+
+- Its system was removed.
+- Its content now lives in a sharper page, and the old one would compete.
+- It duplicates a fact another page owns better.
+
+_Last verified: 2026-10-30._

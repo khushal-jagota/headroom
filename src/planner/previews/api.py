@@ -1,231 +1,101 @@
-"""Ticket-scoped ingress to loopback development servers.
-
-The port is deliberately part of the URL rather than Panels state: a worker may
-start and stop several short-lived servers during one Ticket without creating a
-durable resource for any of them.
-"""
+"""Own-Ticket registration and tailnet-only application transport routes."""
 
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import Callable
-from contextlib import AsyncExitStack
-from typing import cast
-from urllib.parse import urlsplit
+from dataclasses import asdict
+from typing import Any, cast
 
-import httpx
-from fastapi import APIRouter, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request, WebSocket
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from planner.core.authctx import request_context
+from planner.core.contracts import PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.previews.configuration import HTTP_CONNECT_TIMEOUT_SECONDS, HTTP_IDLE_TIMEOUT_SECONDS
-from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TicketLocale
+from planner.core.trusted_ingress import require_preview_ingress, trusted_ingress_config
+from planner.previews.contracts import PreviewError, PreviewRecord
+from planner.previews.transport import PreviewTransport
 
-_BROWSER_HTTP_METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-_HOP_BY_HOP_HEADERS = frozenset(
-    {
-        b"connection",
-        b"keep-alive",
-        b"proxy-authenticate",
-        b"proxy-authorization",
-        b"te",
-        b"trailer",
-        b"transfer-encoding",
-        b"upgrade",
-    }
-)
-_PANELS_CREDENTIAL_REQUEST_HEADERS = frozenset(
-    {
-        b"authorization",
-        b"cookie",
-        b"cookie2",
-        b"tailscale-user-login",
-        b"x-plan-actor",
-        b"x-plan-ticket-id",
-    }
-)
-_ORIGIN_STATE_RESPONSE_HEADERS = frozenset(
-    {
-        b"authentication-info",
-        b"clear-site-data",
-        b"set-cookie",
-        b"set-cookie2",
-        b"www-authenticate",
-    }
-)
+router = APIRouter()
 
 
-def _connection_header_names(raw_headers: list[tuple[bytes, bytes]]) -> set[bytes]:
-    names: set[bytes] = set()
-    for name, value in raw_headers:
-        if name.lower() == b"connection":
-            names.update(part.strip().lower() for part in value.split(b",") if part.strip())
-    return names
-
-
-def _forwarded_request_headers(request: Request) -> list[tuple[bytes, bytes]]:
-    raw_headers = list(request.headers.raw)
-    excluded = (
-        _HOP_BY_HOP_HEADERS
-        | _PANELS_CREDENTIAL_REQUEST_HEADERS
-        | _connection_header_names(raw_headers)
-        | {b"host", b"content-length"}
-    )
-    return [
-        (name, value)
-        for name, value in raw_headers
-        if name.lower() not in excluded and not name.lower().startswith((b"x-plan-", b"tailscale-"))
-    ]
-
-
-def _proxy_prefix(ticket_id: str, port: int) -> str:
-    return f"/dev/tickets/{ticket_id}/{port}"
-
-
-def _rewrite_location(location: str, *, ticket_id: str, port: int) -> str:
-    prefix = _proxy_prefix(ticket_id, port)
-    if location.startswith("/") and not location.startswith("//"):
-        return f"{prefix}{location}"
-
-    try:
-        parsed = urlsplit(location)
-        location_port = parsed.port
-    except ValueError:
-        return location
-    if parsed.scheme == "http" and location_port is None:
-        location_port = 80
-    if (
-        (parsed.scheme == "http" or (not parsed.scheme and location.startswith("//")))
-        and parsed.hostname in {"127.0.0.1", "localhost"}
-        and location_port == port
-    ):
-        path = parsed.path if parsed.path.startswith("/") else f"/{parsed.path}"
-        suffix = path
-        if parsed.query:
-            suffix += f"?{parsed.query}"
-        if parsed.fragment:
-            suffix += f"#{parsed.fragment}"
-        return f"{prefix}{suffix}"
-    return location
-
-
-def _forwarded_response_headers(
-    upstream_response: httpx.Response,
-    *,
-    ticket_id: str,
-    port: int,
-) -> list[tuple[bytes, bytes]]:
-    raw_headers = list(upstream_response.headers.raw)
-    excluded = (
-        _HOP_BY_HOP_HEADERS | _ORIGIN_STATE_RESPONSE_HEADERS | _connection_header_names(raw_headers)
-    )
-    forwarded: list[tuple[bytes, bytes]] = []
-    for name, value in raw_headers:
-        lowered = name.lower()
-        if lowered in excluded:
-            continue
-        if lowered == b"location":
-            value = _rewrite_location(
-                value.decode("latin-1"), ticket_id=ticket_id, port=port
-            ).encode("latin-1")
-        forwarded.append((name, value))
-    return forwarded
-
-
-def _upstream_url(request: Request, port: int) -> httpx.URL:
-    raw_path = cast(bytes, request.scope.get("raw_path", request.url.path.encode("utf-8")))
-    # The route has five slash-delimited components before the catch-all path.
-    parts = raw_path.split(b"/", 5)
-    upstream_path = b"/" + parts[5] if len(parts) == 6 else b"/"
-    query = cast(bytes, request.scope.get("query_string", b""))
-    if query:
-        upstream_path += b"?" + query
-    return httpx.URL(f"http://127.0.0.1:{port}").copy_with(raw_path=upstream_path)
-
-
-def build_preview_router(*, transport: httpx.AsyncBaseTransport | None = None) -> APIRouter:
-    router = APIRouter()
-
-    @router.api_route(
-        "/dev/tickets/{ticket_id}/{port}/{path:path}",
-        methods=list(_BROWSER_HTTP_METHODS),
-    )
-    async def proxy_ticket_dev_server(
-        request: Request,
-        ticket_id: str,
-        port: str,
-        path: str,
-    ) -> Response:
-        del path  # The raw path from the ASGI scope preserves its exact encoding.
-        conn_factory = cast(Callable[[], sqlite3.Connection], request.app.state.conn_factory)
-        conn = conn_factory()
-        try:
-            ticket = tickets_data.read_ticket(conn, ticket_id)
-        finally:
-            conn.close()
-
-        normalized_port = port.lstrip("0")
-        port_number = (
-            int(normalized_port)
-            if port.isascii() and port.isdecimal() and 0 < len(normalized_port) <= 5
-            else 0
+def _ticket(request: Request) -> str:
+    principal = request_context(request).principal
+    if principal.kind is not PrincipalKind.ticket:
+        raise PlannerError(
+            ErrorCode.agent_forbidden, "preview commands require your Ticket Worker identity", {}
         )
-        if not 1 <= port_number <= 65535:
-            raise PlannerError(
-                ErrorCode.validation,
-                "invalid dev server port",
-                {"ticket_id": ticket_id, "port": port},
-            )
+    return principal.id
 
-        if ticket.locale == TicketLocale.macos:
-            return HTMLResponse(
-                "<!doctype html><title>Application preview unavailable</title>"
-                "<h1>Application preview unavailable</h1>"
-                "<p>Previews are unavailable for Mac runs.</p>",
-                status_code=503,
-            )
 
-        try:
-            async with AsyncExitStack() as stack:
-                client = await stack.enter_async_context(
-                    httpx.AsyncClient(
-                        transport=transport,
-                        timeout=httpx.Timeout(
-                            HTTP_IDLE_TIMEOUT_SECONDS, connect=HTTP_CONNECT_TIMEOUT_SECONDS
-                        ),
-                        trust_env=False,
-                    )
-                )
-                headers = _forwarded_request_headers(request)
-                headers.append((b"host", f"127.0.0.1:{port_number}".encode("ascii")))
-                upstream_response = await stack.enter_async_context(
-                    client.stream(
-                        request.method,
-                        _upstream_url(request, port_number),
-                        headers=headers,
-                        content=await request.body(),
-                    )
-                )
-                # Finish the upstream body before committing browser response headers.
-                # A read failure, including after headers, must produce gateway_offline.
-                body = (
-                    upstream_response.content
-                    if upstream_response.is_stream_consumed
-                    else b"".join([chunk async for chunk in upstream_response.aiter_raw()])
-                )
-                response = Response(content=body, status_code=upstream_response.status_code)
-                response.raw_headers = _forwarded_response_headers(
-                    upstream_response,
-                    ticket_id=ticket_id,
-                    port=port_number,
-                )
-                return response
-        except (httpx.TransportError, ConnectionError, TimeoutError, OSError) as error:
-            raise PlannerError(
-                ErrorCode.gateway_offline,
-                "ticket dev server is unavailable",
-                {"ticket_id": ticket_id, "port": port_number},
-            ) from error
+def _result(record: PreviewRecord | None) -> dict[str, Any]:
+    if record is None:
+        return {"preview": None}
+    return {**asdict(record), "base_path": record.base_path, "url": record.url}
 
-    return router
+
+@router.post("/api/previews/prepare")
+async def prepare(request: Request) -> dict[str, Any]:
+    return _result(await request.app.state.previews.prepare(_ticket(request)))
+
+
+@router.post("/api/previews/register")
+async def register(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    ticket_id = _ticket(request)
+    port = body.get("port")
+    if set(body) != {"port"} or type(port) is not int:
+        raise PlannerError(ErrorCode.validation, "register requires one integer port", {})
+    return _result(await request.app.state.previews.register(ticket_id, port))
+
+
+@router.get("/api/previews")
+async def show(request: Request) -> dict[str, Any]:
+    return _result(await request.app.state.previews.show(_ticket(request)))
+
+
+@router.delete("/api/previews")
+async def stop(request: Request) -> dict[str, Any]:
+    record = await request.app.state.previews.stop(_ticket(request))
+    if record is not None:
+        await request.app.state.preview_transport.revoke(record.generation)
+    return _result(record)
+
+
+@router.api_route(
+    "/dev/tickets/{ticket_id}/{generation}/{path:path}",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+async def application(request: Request, ticket_id: str, generation: str, path: str) -> Response:
+    require_preview_ingress(dict(request.scope), trusted_ingress_config(request.app.state.config))
+    return await cast(PreviewTransport, request.app.state.preview_transport).http(
+        request, ticket_id, generation
+    )
+
+
+@router.websocket("/dev/tickets/{ticket_id}/{generation}/{path:path}")
+async def application_socket(
+    websocket: WebSocket, ticket_id: str, generation: str, path: str
+) -> None:
+    try:
+        require_preview_ingress(
+            dict(websocket.scope), trusted_ingress_config(websocket.app.state.config)
+        )
+    except (PlannerError, PreviewError) as exc:
+        await websocket.close(code=1008, reason=str(exc)[:120])
+        return
+    await websocket.app.state.preview_transport.websocket(websocket, ticket_id, generation)
+
+
+async def handle_preview_error(request: Request, exc: Exception) -> Response:
+    import html
+
+    assert isinstance(exc, PreviewError)
+    if request.url.path.startswith("/dev/tickets/"):
+        return HTMLResponse(
+            "<!doctype html><title>Application preview unavailable</title>"
+            "<h1>Application preview unavailable</h1><p>" + html.escape(str(exc)) + "</p>",
+            status_code=exc.status_code,
+        )
+    return JSONResponse(
+        {"error": {"code": "preview_unavailable", "message": str(exc), "detail": {}}},
+        status_code=exc.status_code,
+    )

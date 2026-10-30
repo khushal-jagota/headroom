@@ -258,7 +258,14 @@ def app_deploy(
 ) -> None:
     """Hard-cut over the deployed app with a verified snapshot and full recovery."""
     if (lifecycle_path is None) != (deployment_id is None):
-        raise click.ClickException("--lifecycle-path and --deployment-id must be supplied together")
+        raise click.ClickException(
+            "--lifecycle-path and --deployment-id must be supplied together"
+        )
+    # Refuse self-stop before entering the handler that records deployment failures.
+    try:
+        service = SubprocessServiceController(service_manager, service_name)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
     lifecycle_store = (
         DeploymentLifecycleStore(lifecycle_path) if lifecycle_path is not None else None
     )
@@ -288,8 +295,9 @@ def app_deploy(
         from planner.environments.deployment_gate import read_gate_evidence
 
         evidence = read_gate_evidence(gate_evidence)
-        if evidence["observation"]["health_url"] != health_url:
-            raise ValueError("gate evidence health URL differs from deployment health URL")
+        if "publication_run_id" not in evidence:
+            if evidence["observation"]["health_url"] != health_url:
+                raise ValueError("gate evidence health URL differs from deployment health URL")
         result = deploy_app(
             gate_evidence=evidence,
             deployment_id=deployment_id,
@@ -302,7 +310,7 @@ def app_deploy(
             restore=lambda snapshot: restore_database_snapshot(
                 snapshot, source_db, live_stopped=True
             ),
-            service=SubprocessServiceController(service_manager, service_name),
+            service=service,
             health=HttpHealthClient(health_url),
             lock_path=lock_path,
             executor_launch_configuration=launch_configuration,

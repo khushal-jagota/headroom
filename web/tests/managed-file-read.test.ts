@@ -120,31 +120,14 @@ describe("reading a managed file", () => {
     void read.catch(() => undefined);
   });
 
-  it("a preview arriving right after the last one left starts a clean read", async () => {
-    // The race the old shape would lose: the leaving reader aborts, and the entry is
-    // still in the map until its rejection lands. An arrival in that window must not be
-    // handed the request that is on its way out.
-    const { calls, gates } = stubFetch();
-    const leaving = reader();
-    const abandoned = readManagedFile("/f/g.md", leaving.signal);
-    leaving.abort();
-
-    const arriving = readManagedFile("/f/g.md", reader().signal);
-    expect(calls).toHaveLength(2);
-    expect(calls[1].signal.aborted).toBe(false);
-
-    gates[0].fail(new DOMException("aborted", "AbortError"));
-    gates[1].settle(answer("read for the new preview"));
-    expect(await arriving).toBe("read for the new preview");
-    void abandoned.catch(() => undefined);
-  });
-
   it("the abandoned read does not evict the one that replaced it", async () => {
-    const { gates } = stubFetch();
+    const { calls, gates } = stubFetch();
     const leaving = reader();
     const abandoned = readManagedFile("/f/h.md", leaving.signal);
     leaving.abort();
     const arriving = readManagedFile("/f/h.md", reader().signal);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].signal.aborted).toBe(false);
 
     gates[0].fail(new DOMException("aborted", "AbortError"));
     await Promise.resolve();
