@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy, tick } from "svelte";
+  import type { RegisterManagedArtifactFrame } from "../lib/managedArtifactPress";
+  import ManagedHtmlDocument from "./ManagedHtmlDocument.svelte";
   import SkeletonRegion from "./SkeletonRegion.svelte";
   /** One managed file, at full size, filling whatever box the host gives it.
    *
@@ -17,42 +18,40 @@
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import type { FilePreviewTarget } from "../lib/filePreview";
   import {
-    MANAGED_HTML_PREVIEW_SANDBOX,
-    prepareManagedHtmlPreviewDocument,
     resolvePreview
   } from "../lib/filePreview";
 
   let {
     target,
-    reloadSignal = 0
-  }: { target: FilePreviewTarget; reloadSignal?: number } = $props();
+    reloadSignal = 0,
+    registerArtifactFrame,
+    retainWhileSelected = false
+  }: { target: FilePreviewTarget; reloadSignal?: number; registerArtifactFrame?: RegisterManagedArtifactFrame; retainWhileSelected?: boolean } = $props();
 
   let visible = $state(false);
+  let selectedAdmitted = $state(false);
+  let mounted = $derived(visible || retainWhileSelected && selectedAdmitted);
   let host: HTMLElement;
   function visibility(element: HTMLElement, _identity: string) {
-    const stop = observeVisibleContent(element, next => { visible = next; }, { canRetain: () => !error });
+    const stop = observeVisibleContent(element, next => { visible = next; if (next) selectedAdmitted = true; }, { canRetain: () => !error });
     return { destroy: stop, update() { resetVisibleContentHeight(element); } };
   }
   let resolved = $derived(resolvePreview(target));
-  let htmlFrameHref = $state<string | null>(null);
   let markdownSource = $state<string | null>(null);
   let error = $state("");
   let markdownVisited = $derived(resolved.kind === "markdown" ? [resolved.href] : []);
 
   let displayedIdentity = "";
-  let objectUrl: string | null = null;
   $effect(() => {
     const current = resolved;
     const currentReloadSignal = reloadSignal;
     const identity = `${current.kind}/${current.href}`;
-    const retained = visible && displayedIdentity === identity;
+    const retained = mounted && displayedIdentity === identity;
     if (!retained) {
-      htmlFrameHref = null;
       markdownSource = null;
-      if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
     }
     error = "";
-    if (!visible || (current.kind !== "html" && current.kind !== "markdown")) return;
+    if (!mounted || current.kind !== "markdown") return;
 
     const controller = new AbortController();
     fetch(current.href, {
@@ -66,15 +65,7 @@
       .then((body) => {
         if (controller.signal.aborted) return;
         if (retained) holdVisibleContentHeight(host);
-        if (current.kind === "html") {
-          const documentBody = prepareManagedHtmlPreviewDocument(body, current.href);
-          const previousUrl = objectUrl;
-          objectUrl = URL.createObjectURL(new Blob([documentBody], { type: "text/html" }));
-          htmlFrameHref = objectUrl;
-          if (previousUrl) void tick().then(() => URL.revokeObjectURL(previousUrl));
-        } else {
-          markdownSource = body;
-        }
+        markdownSource = body;
         displayedIdentity = identity;
       })
       .catch((err) => {
@@ -83,28 +74,14 @@
 
     return () => controller.abort();
   });
-  onDestroy(() => { if (objectUrl) URL.revokeObjectURL(objectUrl); });
 
 </script>
 
 <div class="visible-file-document" bind:this={host} use:visibility={`${resolved.kind}/${resolved.href}`} data-visible-content-failed={Boolean(error) || undefined}>
-{#if !visible}
+{#if !mounted}
   <div aria-hidden="true"></div>
 {:else if resolved.kind === "html"}
-  <SkeletonRegion shape="document" layout="fill" loading={!error && !htmlFrameHref} loadingText="Loading preview...">
-  {#if error}
-    <div class="quiet-line">{error}</div>
-  {/if}
-  {#if htmlFrameHref}
-    <iframe
-      class="file-preview-document-frame"
-      data-file-preview-html
-      src={htmlFrameHref}
-      sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
-      title={resolved.label}
-    ></iframe>
-  {/if}
-  </SkeletonRegion>
+  <ManagedHtmlDocument href={resolved.href} label={resolved.label} active={mounted} {reloadSignal} {registerArtifactFrame} full />
 {:else if resolved.kind === "markdown"}
   <SkeletonRegion shape="document" layout="fill" loading={!error && markdownSource === null} loadingText="Loading preview...">
   {#if error}

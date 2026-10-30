@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from sqlite3 import Connection
 
 import pytest
 
+from planner.core import authority
+from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
 from planner.core.clock import Clock
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
@@ -18,7 +21,7 @@ from planner.core.contracts import (
 from planner.core.errors import ErrorCode, PlannerError
 from planner.managers import data as managers_data
 from planner.tickets import data, revision_feedback, views
-from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
+from planner.tickets.contracts import TITLE_MAX_CHARS, ReviewTransferNotice, Ticket, TicketEdit
 
 
 def _park(
@@ -136,14 +139,14 @@ def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(
         worker_type="coding",
         brief=None,
     )
-    data.create_ticket(
-        tmp_db,
-        title="Held",
-        principal=Principal(PrincipalKind.ticket, holder.id),
-        now=11,
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="coding",
-        brief=None,
+    held = data.create_ticket(
+        tmp_db, title="Historical held", principal=OWNER_PRINCIPAL, now=11,
+        title_max_chars=TITLE_MAX_CHARS, worker_type="coding", brief=None,
+    )
+    # Old records remain readable and keep referential deletion protection.
+    tmp_db.execute(
+        "UPDATE tickets SET ceiling_holder=? WHERE id=?",
+        (json.dumps({"kind": "ticket", "id": holder.id}), held.id),
     )
     with pytest.raises(PlannerError, match="holds another Ticket ceiling"):
         data.delete_ticket(tmp_db, holder.id, principal=OWNER_PRINCIPAL, now=12)
@@ -199,13 +202,18 @@ def _park_under(conn: Connection, manager_id: str, *, now: int = 10) -> Ticket:
     )
 
 
+@pytest.mark.parametrize("previous_holder", ["manager", "chief"])
 def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
-    tmp_db: Connection, fake_clock: Clock
+    tmp_db: Connection, fake_clock: Clock, previous_holder: str
 ) -> None:
     """The whole complaint, end to end: parked, moved, and nobody coming."""
     left = _manager(tmp_db, "Inbox triage", fake_clock)
     joined = _manager(tmp_db, "Sprint hygiene", fake_clock)
-    ticket = _park_under(tmp_db, left)
+    ticket = (
+        _park_under(tmp_db, left)
+        if previous_holder == "manager" else _park(tmp_db, CHIEF_PRINCIPAL)
+    )
+    notices: list[ReviewTransferNotice] = []
     assert views.review_view(tmp_db)["items"] == []
 
     tmp_db.execute(
@@ -239,12 +247,23 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
         title_max_chars=TITLE_MAX_CHARS,
         principal=OWNER_PRINCIPAL,
         now=30,
+        review_transfer_notices=notices,
     )
 
     moved = data.read_ticket(tmp_db, ticket.id)
     assert moved.ceiling_holder == OWNER_PRINCIPAL
     assert moved.pending_proposal == ticket.pending_proposal
     assert moved.updated_at == 30
+    assert moved.ceiling == ticket.ceiling
+    assert len(notices) == 1
+    assert notices[0].previous_holder == ticket.ceiling_holder
+    assert notices[0].new_holder == OWNER_PRINCIPAL
+    assert notices[0].notify_previous_holder is False
+    attention = tmp_db.execute(
+        "SELECT active FROM notification_attention_state "
+        "WHERE subject_id=? AND notification_type='awaiting_approval'", (ticket.id,),
+    ).fetchone()
+    assert attention is not None and attention[0] == 1
     review = views.review_view(tmp_db)
     assert [item["ticket_id"] for item in review["items"]] == [ticket.id]
     tmp_db.set_authorizer(None)
@@ -266,3 +285,135 @@ def test_a_backlogged_ticket_is_excluded_from_the_review_queue(tmp_db: Connectio
     ticket_ids = [item["ticket_id"] for item in views.review_view(tmp_db)["items"]]
     assert visible.id in ticket_ids
     assert backlogged.id not in ticket_ids
+
+
+def test_invalid_holder_edits_refuse_before_or_after_a_manager_move(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    left = _manager(tmp_db, "Old Manager", fake_clock)
+    joined = _manager(tmp_db, "New Manager", fake_clock)
+    ticket = _park_under(tmp_db, left)
+    before = tuple(tmp_db.iterdump())
+    notices: list[ReviewTransferNotice] = []
+    for edit in (
+        TicketEdit(ceiling_holder=Principal(PrincipalKind.manager, joined)),
+        TicketEdit(manager_id=joined, ceiling_holder=ticket.ceiling_holder),
+    ):
+        with pytest.raises(PlannerError, match="must be the user or") as error:
+            data.edit_ticket(
+                tmp_db,
+                ticket.id,
+                edit=edit,
+                title_max_chars=TITLE_MAX_CHARS,
+                principal=OWNER_PRINCIPAL,
+                now=30,
+                review_transfer_notices=notices,
+            )
+        assert error.value.code is ErrorCode.validation
+        assert tuple(tmp_db.iterdump()) == before
+        assert notices == []
+
+
+@pytest.mark.parametrize("repair", ["edit", "accept"])
+def test_historical_invalid_holders_remain_editable_and_repairable(
+    tmp_db: Connection, fake_clock: Clock, repair: str
+) -> None:
+    ticket = _park(tmp_db, OWNER_PRINCIPAL)
+    stranger = Principal(PrincipalKind.manager, _manager(tmp_db, "Unrelated Manager", fake_clock))
+    # Historical relations remain loadable; new explicit writes must not recreate them.
+    tmp_db.execute(
+        "UPDATE tickets SET ceiling_holder=? WHERE id=?",
+        (json.dumps({"kind": stranger.kind.value, "id": stranger.id}), ticket.id),
+    )
+    historical = data.read_ticket(tmp_db, ticket.id)
+    assert historical.ceiling_holder == stranger
+    edited = data.edit_ticket(
+        tmp_db, ticket.id, edit=TicketEdit(recap="Unrelated authorized update"),
+        title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=20,
+    )
+    assert edited.recap == "Unrelated authorized update"
+    assert edited.ceiling_holder == stranger
+    unchanged = data.edit_ticket(
+        tmp_db, ticket.id, edit=TicketEdit(manager_id=historical.manager_id),
+        title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=21,
+    )
+    assert unchanged.ceiling_holder == stranger
+    before = tuple(tmp_db.iterdump())
+    with pytest.raises(PlannerError, match="must be the user or"):
+        data.edit_ticket(
+            tmp_db, ticket.id, edit=TicketEdit(ceiling_holder=stranger),
+            title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=22,
+        )
+    assert tuple(tmp_db.iterdump()) == before
+    if repair == "edit":
+        repaired = data.edit_ticket(
+            tmp_db, ticket.id, edit=TicketEdit(ceiling_holder=OWNER_PRINCIPAL),
+            title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=23,
+        )
+        assert repaired.pending_proposal == ticket.pending_proposal
+    else:
+        repaired = data.accept_proposal(
+            tmp_db, ticket.id, field="success_condition", principal=OWNER_PRINCIPAL,
+            now=23, next_ceiling="needs_what_changes", next_holder=OWNER_PRINCIPAL,
+        )
+        assert repaired.field_values["success_condition"] == "Success proposal"
+        assert repaired.pending_proposal is None
+    assert repaired.ceiling_holder == OWNER_PRINCIPAL
+
+
+def test_declared_ticket_authority_never_admits_a_review_holder(
+    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reviewer = _park(tmp_db, OWNER_PRINCIPAL)
+    holder = Principal(PrincipalKind.ticket, reviewer.id)
+    monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "coding", (authority.ticket("*"),))
+    target = _park(tmp_db, OWNER_PRINCIPAL, now=20)
+    assert authority.is_above(tmp_db, holder, authority.ticket(target.id))
+    before = tuple(tmp_db.iterdump())
+    for operation in ("create", "edit", "accept"):
+        with pytest.raises(PlannerError, match="must be the user or"):
+            if operation == "create":
+                data.create_ticket(
+                    tmp_db, title="Declared reviewer", worker_type="coding", brief="Kickoff",
+                    stated_ceiling="needs_success_condition", stated_holder=holder,
+                    principal=OWNER_PRINCIPAL, now=30, title_max_chars=TITLE_MAX_CHARS,
+                )
+            elif operation == "edit":
+                data.edit_ticket(
+                    tmp_db, target.id, edit=TicketEdit(ceiling_holder=holder),
+                    title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=30,
+                )
+            else:
+                data.accept_proposal(
+                    tmp_db, target.id, field="success_condition", principal=OWNER_PRINCIPAL,
+                    now=30, next_ceiling="needs_what_changes", next_holder=holder,
+                )
+        assert tuple(tmp_db.iterdump()) == before
+
+
+def test_implicit_creator_holder_is_validated_against_assignment(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    manager_id = _manager(tmp_db, "Direct Manager", fake_clock)
+    manager = Principal(PrincipalKind.manager, manager_id)
+    worker = _park(tmp_db, OWNER_PRINCIPAL)
+    before = tuple(tmp_db.iterdump())
+    for creator, assignment in (
+        (CHIEF_PRINCIPAL, manager_id),
+        (manager, None),
+        (Principal(PrincipalKind.ticket, worker.id), None),
+    ):
+        with pytest.raises(PlannerError, match="must be the user or"):
+            data.create_ticket(
+                tmp_db, title="Invalid implicit holder", worker_type="coding",
+                brief="Kickoff", principal=creator, manager_id=assignment,
+                now=30, title_max_chars=TITLE_MAX_CHARS,
+            )
+        assert tuple(tmp_db.iterdump()) == before
+    created = data.create_ticket(
+        tmp_db, title="Chief delegates to Manager", worker_type="coding", brief="Kickoff",
+        principal=CHIEF_PRINCIPAL, manager_id=manager_id, stated_holder=manager,
+        now=31, title_max_chars=TITLE_MAX_CHARS,
+    )
+    assert created.manager_id == manager_id
+    assert created.ceiling_holder == manager

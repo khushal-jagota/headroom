@@ -212,6 +212,7 @@ def build_conversation_runtime(
     remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
     cleanup: AsyncExitStack | None = None,
     signal_composition: SignalRuntimeComposition | None = None,
+    defer_view_cleanup: bool = False,
 ) -> ConversationRuntime:
     """Compose the conversation system, its record, the files it keeps, and the tail."""
     store = ConversationStore(
@@ -270,7 +271,8 @@ def build_conversation_runtime(
     # A later component constructor can fail after ownership transfers to system.
     if cleanup is not None:
         cleanup.push_async_callback(shutdown_composed_runtime)
-    live_tail.views.cleanup_stale_epochs()
+    if not defer_view_cleanup:
+        live_tail.views.cleanup_stale_epochs()
     runtime = ConversationRuntime(
         store=store,
         system=system,

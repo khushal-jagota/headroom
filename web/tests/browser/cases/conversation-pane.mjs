@@ -14,11 +14,35 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   await writeFile(
     hostPath,
     String.raw`<script lang="ts">
-  import { tick } from "svelte";
+  import { tick, flushSync } from "svelte";
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
   import {installConversationViewReaderFixture} from "../tests/support/conversationViewReaderFixture";
+  import {ConversationViewReader} from "../src/lib/conversation/view/reader.svelte";
+  const intentOnly=new URLSearchParams(window.location.search).has("intent");
+  const intentLoads: ((admitted:boolean)=>void)[]=[];
+  function makeIntentReader() {
+    const value=new ConversationViewReader('same-conversation','focus',true);
+    value.pages=[{scope:{kind:'timeline',key:null},older:null,newer:null,
+      items:Array.from({length:30},(_,index)=>({kind:'row' as const,key:'intent-'+index,
+        row_kind:'agent_message' as const,order:{sequence:index,slot:0},source_sequence:index,
+        sender_message_id:null,changed_through_sequence:index,created_at:index,
+        turn_key:null,work_group_key:null,fold_rule:'never' as const,
+        body:{kind:'inline' as const,value:{kind:'agent_message' as const,to_owner:true,
+          content:[{piece:'text' as const,text:('Intent row '+index+'. ').repeat(30)}]}}}))}];
+    // This synthetic reader already owns its initial admitted content.
+    value.entryPhase='complete';
+    value.load=(_scope,_cursor,_direction,replace)=>replace
+      ?new Promise<boolean>(resolve=>intentLoads.push(resolve)):Promise.resolve(false);
+    return value;
+  }
+  let intentReader=$state.raw(makeIntentReader());
+  (window as any).__intentProbe={loads:intentLoads,
+    finish:(index:number,admitted:boolean)=>intentLoads[index](admitted),
+    swap:()=>{intentReader=makeIntentReader();},
+    swapSynchronously:()=>flushSync(()=>{intentReader=makeIntentReader();})};
   const readerOnly=new URLSearchParams(window.location.search).has("reader");
-  let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":"opened");
+  const readerPeek=new URLSearchParams(window.location.search).has("reader-peek");
+  let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":readerPeek?"opened":"opened");
   if(readerOnly)installConversationViewReaderFixture();
   (window as any).__readerState=(state:typeof readerState)=>readerState=state;
 
@@ -26,6 +50,183 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   import FilePreview from "../src/components/FilePreview.svelte";
   import FileDocument from "../src/components/FileDocument.svelte";
   import VisibleMessageImage from "../src/components/conversation/VisibleMessageImage.svelte";
+  import { observeVisibleContent } from "../src/lib/visibleContent";
+  import { presentationReady } from "../src/components/conversation/viewport/placement";
+  // Detached native DOM isolates readiness from viewport admission and network timing.
+  function presentationReadinessProof() {
+    const started = performance.now();
+    const rows: {name:string, expected:boolean, actual:boolean, pass:boolean}[] = [];
+    const record = (name:string, element:Element, expected:boolean) => {
+      const actual = presentationReady(element);
+      rows.push({name, expected, actual, pass:actual === expected});
+    };
+    for (const marker of ["aria-busy", "data-markdown-rendering"]) {
+      const root = document.createElement("div");
+      record(marker + "/empty", root, true);
+      root.setAttribute(marker, "true");
+      record(marker + "/unmanaged-root", root, false);
+      root.removeAttribute(marker);
+      const busy = document.createElement("div");
+      busy.setAttribute(marker, "true");
+      root.append(busy);
+      record(marker + "/unmanaged-descendant", root, false);
+      for (const dormant of ["released", "retained"]) {
+        const ancestor = document.createElement("section");
+        ancestor.dataset.visibleContentState = dormant;
+        ancestor.append(root);
+        // The queried root itself can inherit dormancy from outside its subtree.
+        root.dataset.visibleContentState = "active";
+        record(marker + "/" + dormant + "/nested-active", root, true);
+        record(marker + "/" + dormant + "/busy-root-inherits", busy, true);
+        root.removeAttribute("data-visible-content-state");
+        root.remove();
+        busy.dataset.visibleContentState = dormant;
+        record(marker + "/" + dormant + "/busy-self", root, true);
+        record(marker + "/" + dormant + "/queried-busy-self", busy, true);
+        busy.dataset.visibleContentState = "active";
+        record(marker + "/" + dormant + "/active-busy", root, false);
+        busy.removeAttribute(marker);
+        record(marker + "/" + dormant + "/active-clear", root, true);
+        busy.setAttribute(marker, "true");
+        busy.removeAttribute("data-visible-content-state");
+      }
+    }
+    return {rows, milliseconds:performance.now()-started, newHosts:0, newNavigations:0};
+  }
+  // Queue delivery is controlled only for this marked leaf. Every other native
+  // observer target on the existing preview page keeps its ordinary deliveries.
+  (window as any).__visibilityQueueProof = async () => {
+    const NativeObserver = window.IntersectionObserver;
+    const rows: any[] = [];
+    const started = performance.now();
+    const text = "Exact queued visibility text — preserved.";
+    let target: HTMLElement | null = null;
+    let callback: IntersectionObserverCallback | null = null;
+    let observer: IntersectionObserver | null = null;
+    let cleanup: (() => void) | null = null;
+    let stateObserver: MutationObserver | null = null;
+    let updates: boolean[] = [];
+    let states: (string | null)[] = [];
+    let mounts = 0;
+    let originalNode: Node | null = null;
+    let scheduled = 0;
+    const drain = (records: MutationRecord[]) => {
+      for (const record of records) states.push(record.oldValue);
+    };
+    const snapshot = () => {
+      if (stateObserver) drain(stateObserver.takeRecords());
+      return {state:target?.getAttribute("data-visible-content-state") ?? null,
+        text:target?.textContent ?? "", updates:[...updates], mounts,
+        states:[...states], sameNode:originalNode !== null && target?.firstChild === originalNode};
+    };
+    const dispose = () => {
+      cleanup?.(); cleanup = null;
+      stateObserver?.disconnect(); stateObserver = null;
+      target?.remove(); target = null;
+    };
+    const fresh = () => {
+      dispose();
+      target = document.createElement("div");
+      target.dataset.visibilityQueueProof = "";
+      target.style.cssText = "position:fixed;left:0;top:0;width:220px;height:32px;pointer-events:none";
+      document.body.append(target);
+      updates = []; states = []; mounts = 0; originalNode = null;
+      cleanup = observeVisibleContent(target, visible => {
+        updates.push(visible);
+        if (visible && !target!.firstChild) {
+          originalNode = document.createTextNode(text); target!.append(originalNode); mounts++;
+        } else if (!visible) target!.replaceChildren();
+      });
+      stateObserver = new MutationObserver(drain);
+      stateObserver.observe(target, {attributes:true, attributeOldValue:true,
+        attributeFilter:["data-visible-content-state"]});
+    };
+    const foreign = document.createElement("div");
+    const entry = (inside:boolean, time:number, element:Element = target!) =>
+      ({target:element, isIntersecting:inside, time} as IntersectionObserverEntry);
+    const deliver = (entries:IntersectionObserverEntry[]) => callback!(entries, observer!);
+    const record = (name:string, expected:string, pass:boolean, details:any) =>
+      rows.push({name, expected, pass, ...details});
+    window.IntersectionObserver = class extends NativeObserver {
+      constructor(receive:IntersectionObserverCallback, options?:IntersectionObserverInit) {
+        super((entries, instance) => {
+          const native = entries.filter(value => !value.target.hasAttribute("data-visibility-queue-proof"));
+          if (native.length) receive(native, instance);
+        }, options);
+        const nativeObserve = this.observe.bind(this);
+        this.observe = (element:Element) => {
+          if (element.hasAttribute("data-visibility-queue-proof")) { callback = receive; observer = this; }
+          nativeObserve(element);
+        };
+      }
+    };
+    try {
+      for (const equalTimes of [false, true]) {
+        const lastTime = equalTimes ? 10 : 20;
+        fresh();
+        deliver([entry(false,10), entry(true,lastTime)]);
+        const admission = snapshot();
+        record("outside-to-inside"+(equalTimes?"-equal-time":""), "active with exact native text",
+          admission.state === "active" && admission.text === text && admission.mounts === 1,
+          {equalTimes, actual:admission});
+        // Independent admission makes the reverse failure observable even when
+        // the old consumer failed the preceding direction in this same run.
+        fresh(); deliver([entry(true,1)]);
+        const admitted = snapshot();
+        deliver([entry(true,10), entry(false,lastTime)]);
+        const retained = snapshot();
+        record("inside-to-outside"+(equalTimes?"-equal-time":""), "retained with identical native text node",
+          admitted.state === "active" && retained.state === "retained" && retained.sameNode && retained.text === text && retained.updates.length === 1,
+          {equalTimes, actual:retained});
+      }
+      fresh();
+      deliver([entry(true,1), entry(false,2)]);
+      const transient = snapshot();
+      record("released-final-outside", "released without transient admission or mount",
+        transient.state === "released" && transient.updates.length === 0 && transient.mounts === 0 && !transient.states.includes("active"), {actual:transient});
+      fresh();
+      deliver([entry(false,0,foreign), entry(false,1), entry(true,2), entry(false,3,foreign)]);
+      const matched = snapshot();
+      record("target-identity", "active using the final matching target",
+        matched.state === "active" && matched.text === text && matched.mounts === 1, {actual:matched});
+      fresh(); deliver([entry(true,1)]);
+      for (const state of ["active", "retained"]) {
+        if (state === "retained") deliver([entry(false,2)]);
+        for (const [name, batch] of [["empty", []], ["foreign-only", [entry(true,3,foreign),entry(false,4,foreign)]]] as const) {
+          const before = snapshot();
+          deliver([...batch]);
+          const after = snapshot();
+          record(state+"-"+name, "no publication, updates, or node replacement",
+            before.state === state && after.state === state && after.sameNode && after.text === text &&
+            after.updates.length === before.updates.length && after.states.length === before.states.length,
+            {before, actual:after});
+        }
+      }
+      const saved = callback!;
+      cleanup!(); cleanup = null;
+      target!.replaceChildren();
+      const beforeCleanupDelivery = snapshot();
+      const nativeFrame = window.requestAnimationFrame;
+      const nativeTimeout = window.setTimeout;
+      try {
+        window.requestAnimationFrame = (action:FrameRequestCallback) => { scheduled++; return nativeFrame.call(window,action); };
+        window.setTimeout = ((...args:any[]) => { scheduled++; return (nativeTimeout as any).apply(window,args); }) as typeof window.setTimeout;
+        saved([entry(true,5)],observer!);
+      } finally { window.requestAnimationFrame = nativeFrame; window.setTimeout = nativeTimeout; }
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const destroyed = snapshot();
+      record("destroyed-queued-callback", "no state, mount, update, or scheduled work after cleanup",
+        destroyed.state === null && destroyed.text === "" && destroyed.updates.length === beforeCleanupDelivery.updates.length &&
+        destroyed.mounts === beforeCleanupDelivery.mounts && destroyed.states.length === beforeCleanupDelivery.states.length && scheduled === 0,
+        {before:beforeCleanupDelivery, actual:destroyed, scheduled});
+    } finally {
+      try { dispose(); } finally { window.IntersectionObserver = NativeObserver; }
+    }
+    return {rows, readiness:presentationReadinessProof(), seconds:(performance.now()-started)/1000, newHosts:0, newNavigations:0,
+      nativeObserverRestored:window.IntersectionObserver === NativeObserver};
+  };
   import { VISIBLE_CONTENT_INACTIVE_LIMIT } from "../src/lib/visibleContent/config";
   (window as any).__inactiveLimit=VISIBLE_CONTENT_INACTIVE_LIMIT;
   let retainedKind=$state('preview');
@@ -50,8 +251,21 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let catalogSelected=$state<string|null>(null);
   let catalogOwner=$state("t_catalog");
   (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
+  import ManagerHeader from "../src/components/ManagerHeader.svelte";
+  import InlineEdit from "../src/components/InlineEdit.svelte";
+  import { workspaceHeaderDomMatches } from "../src/lib/managerWorkspaceDom";
+  const managerLayoutOnly=new URLSearchParams(window.location.search).has("manager-layout");
+  let layoutRecap=$state("The recap belongs below the title.");
+  const headerFacts={project:"Panels",title:"Workspace clarity",settled:false,conversation_id:null};
+  (window as any).__layoutUpdate=(recap:string)=>{layoutRecap=recap;};
+  (window as any).__layoutHeaderMatches=()=>workspaceHeaderDomMatches(document.querySelector('[data-layout-proof]')!,headerFacts);
   import ManagerFrame from "../src/components/ManagerFrame.svelte";
-  import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
+  import { conversationDock } from "../src/lib/conversation/layout/dock";
+  import { createConversationDismissal } from "../src/lib/conversation/dismissal";
+  import ArtifactPreview from "../src/components/ArtifactPreview.svelte";
+  const cardArtifact = new URLSearchParams(location.search).has("card-artifact");
+  let artifactClicks = $state(0);
+  (window as any).__artifactClicks = () => artifactClicks;
   const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import { discardHeldPrompt, promoteHeldPrompt } from "../src/lib/conversation/wire";
@@ -73,10 +287,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let scrollReplacementGeneration = 0;
   let running = $state(false);
   let ownerReadThroughSequence = $state(0);
+  (window as any).__setReadWatermark=(value:number)=>{ownerReadThroughSequence=value;};
+  (window as any).__appendLabelTools=()=>{rows=[...rows,...[29,30].map(sequence=>({key:'label-tool-'+sequence,kind:'tool_call',sequence,createdAt:sequence,toolCallId:'label-tool-'+sequence,title:'Unread tool '+sequence,toolKind:'read',detail:null,startedDetail:null,status:'completed',progress:null}))];};
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
   let outgoingMessages = $state<any[]>([]);
   let composerDisabled = $state(false);
+  let fixturePlaceholder=$state<string|undefined>(undefined);
+  (window as any).__fixturePlaceholder=(value:string|undefined)=>fixturePlaceholder=value;
   let ask = $state<any>(null);
 
   // The connected test proves real writers and automatic SSE. This former E2E
@@ -88,9 +306,19 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     heldPromptRows = await response.json();
   }
   async function actOnQueueMatrix(heldPromptId: string, mode: "discard" | "steer" | "send_now"): Promise<void> {
+    const promoted = heldPromptRows.find(row => row.heldPromptId === heldPromptId);
     if (mode === "discard") await discardHeldPrompt("browser-fixture", heldPromptId);
     else await promoteHeldPrompt("browser-fixture", heldPromptId, mode);
     await refreshQueueMatrix();
+    if ((window as any).__recordingFlow && mode !== "discard" && promoted) {
+      // Promotion refreshes durable history; it is not a new local composer send.
+      const sequence = Math.max(0, ...rows.map(row => row.sequence)) + 1;
+      const prompt = {key:"promoted-"+heldPromptId, kind:"prompt", sequence,
+        createdAt:Date.now(), content:promoted.content, senderLabel:"owner", mode,
+        sentAtUnixMilliseconds:Date.now()};
+      rows = [...rows, prompt];
+      if (visibleRows !== null) visibleRows = [...visibleRows, prompt];
+    }
   }
   document.addEventListener("visibilitychange", () => { void refreshQueueMatrix(); });
   (window as any).__loadQueueMatrix = async () => {
@@ -126,6 +354,12 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
     (window as any).__sentModes = [...((window as any).__sentModes ?? []), mode];
     (window as any).__sentRuns = [...((window as any).__sentRuns ?? []), picked];
+    if ((window as any).__recordingFlow) {
+      outgoingMessages = [{messageId:"recording-refused-steer",content,senderLabel:"owner",mode,
+        sentAtUnixMilliseconds:Date.now(),knownFate:"nothing_yet"}];
+      await new Promise(resolve=>setTimeout(resolve,850));
+      outgoingMessages=[];
+    }
     heldPromptRows = [{
       key: "composer-fallback",
       heldPromptId: "composer-fallback",
@@ -138,9 +372,8 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
 
   // The Ticket layout uses the same production predicate as TicketRoute. The
   // manager below mounts its actual production workspace and handlers.
-  function dismissTicketOnPointerDown(event: PointerEvent): void {
-    if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
-  }
+  const ticketDismissal = createConversationDismissal(() => { conversationState = "rest"; });
+  const dismissTicketOutside = ticketDismissal.surface;
   (window as any).__setConversationState = (state: ConversationState) => conversationState = state;
 
   (window as any).__appendConversationLine = () => {
@@ -159,7 +392,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   // Controlled content replay. Responses stay pending while the reader chooses a
   // position, then browser-owned image/Markdown completion changes the same rows.
   (window as any).__setupScrollRegression = (kind: string, mode = "scrollback") => {
-    conversationState = "peeked";
+    conversationState = "opened";
     lens = "full";
     running = false;
     const paragraphs = Array.from({ length: 32 }, (_, index) =>
@@ -189,7 +422,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__sendScrollRegression = (moveLayer: boolean) => {
     outgoingMessages = [{messageId: "scroll-send", content: [{piece: "text", text: "Regression prompt"}],
-      senderLabel: "owner", mode: "queue", sentAtUnixMilliseconds: 20_000, knownFate: "nothing_yet"}];
+      senderLabel: "owner", mode: "queue", sentAtUnixMilliseconds: 20_000, knownFate: "nothing_yet", accepted: true}];
     if (moveLayer) conversationState = "opened";
   };
   (window as any).__answerScrollRegression = (paragraphCount: number) => {
@@ -270,15 +503,11 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__showUnansweredSend = () => {
     supportsSteer = true;
-    heldPromptRows = [{
-      key: "local:sent-into-the-dark",
-      heldPromptId: null,
-      senderMessageId: "sent-into-the-dark",
-      content: [{ piece: "text", text: "did this arrive" }],
-      senderLabel: "owner",
-      sentAtUnixMilliseconds: 10,
-      state: "unknown",
-      queueReason: null
+    heldPromptRows = [];
+    outgoingMessages = [{
+      messageId: "sent-into-the-dark", content: [{piece:"text",text:"did this arrive"}],
+      senderLabel: "owner", mode:"steer", sentAtUnixMilliseconds:10,
+      knownFate:"answer_never_came_back"
     }];
   };
   (window as any).__setComposerDisabled = (disabled: boolean) => {
@@ -505,7 +734,28 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 </script>
 
-{#if readerOnly}
+{#if managerLayoutOnly}
+<QueryClientProvider client={catalogClient}>
+  <main class="manager-column" style="max-width:768px;margin:auto;padding:0 32px" data-layout-proof>
+    <ManagerHeader recap={layoutRecap} onSaveRecap={async(value)=>{layoutRecap=value;}}>
+      {#snippet eyebrow()}<div class="page-eyebrow"><span>Panels</span><button class="page-settle" aria-label="Settle Workspace clarity">Settle</button></div>{/snippet}
+      {#snippet title()}<InlineEdit value={headerFacts.title} ariaLabel="Manager title" onSave={async()=>{}} />{/snippet}
+    </ManagerHeader>
+  </main>
+</QueryClientProvider>
+{:else if intentOnly}
+  <div style="height:700px;width:700px;display:flex;flex-direction:column">
+    <ConversationPane conversationId="same-conversation" conversationExists conversationState="opened"
+      reader={intentReader} rows={[]} lens="focus" running={false} />
+  </div>
+{:else if readerOnly && readerPeek}
+  <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
+    <ManagerFrame bind:conversationState={readerState}>
+      <p>Conversation document</p>
+      {#snippet conversation()}<LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>{/snippet}
+    </ManagerFrame>
+  </div>
+{:else if readerOnly}
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
   </div>
@@ -587,29 +837,39 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         {outgoingMessages}
         ownSenderLabel="owner"
         composerDisabled={composerDisabled}
+        composerPlaceholder={fixturePlaceholder}
         {composerCatalog}
         onSend={captureSend}
         onDiscardHeldPrompt={(heldPromptId: string) => actOnQueueMatrix(heldPromptId, "discard")}
         onPromoteHeldPrompt={(heldPromptId: string, mode: "steer" | "send_now") => actOnQueueMatrix(heldPromptId, mode)}
         onStopDrawingHeldPrompt={(senderMessageId: string) => {
           (window as any).__stoppedDrawing = senderMessageId;
+          outgoingMessages=outgoingMessages.filter(message=>message.messageId!==senderMessageId);
         }}
         onSendHeldPromptAgain={(senderMessageId: string) => {
           (window as any).__sentAgain = senderMessageId;
         }}
       />
 {/snippet}
-<div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
+<div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled || ticketGestures}>
   {#if ticketGestures}
-    <main class="ticket-doc fixture-document" onpointerdowncapture={dismissTicketOnPointerDown}>
-      <button type="button" data-ticket-behind>Ticket content</button>
+    <div class="ticket-page" use:conversationDock use:dismissTicketOutside>
+    <div class="ticket-reading">
+    <main class="ticket-doc fixture-document">
+      <button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button>
     </main>
-    <section class="conversation-layer" onpointerdowncapture={dismissTicketOnPointerDown}>
+    {#if cardArtifact}<ArtifactPreview target={{kind:"ticket-file", ticketId:"t_cardmotion",path:"artifact.html"}}
+      registerArtifactFrame={ticketDismissal.registerArtifactFrame} onRefresh={() => artifactClicks += 1} onClose={() => artifactClicks += 1} />{/if}
+    </div>
+    <section class="conversation-layer">
       <div class="conversation-column">{@render conversationPane()}</div>
     </section>
+    </div>
   {:else}
-    <ManagerFrame bind:conversationState>
-      <button type="button" data-ticket-behind>Ticket content</button>
+    <ManagerFrame bind:conversationState
+      openedFile={cardArtifact ? {kind:"ticket-file",ticketId:"t_cardmotion",path:"artifact.html"} : null}
+      onOpenFile={() => artifactClicks += 1}>
+      <button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button>
       {#snippet conversation()}{@render conversationPane()}{/snippet}
     </ManagerFrame>
   {/if}
@@ -641,10 +901,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   .fixture-ticket :global(.conversation-layer) {
     align-items: center;
   }
-  .fixture-ticket:not(.ticket-screen) :global(.conversation-column) {
-    box-sizing: border-box;
-    width: min(680px, calc(100% - 96px));
-  }
+
   .fixture-ticket.ticket-screen {
     height: 100%;
     padding: 0;
@@ -667,5 +924,6 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   );
 
 
-  return {inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./conversation-pane.py", import.meta.url))};
+  return {resources: [{path:"/files/tickets/t_cardmotion/artifact.html",contentType:"text/html",body:
+    '<!doctype html><html><head><script>window.addEventListener("pointerdown",event=>{if(event.isPrimary&&event.button===0)parent.postMessage({cardTimingPress:performance.timeOrigin+performance.now()},"*")},true)</script></head><body><button id="artifact-button" onclick="document.body.dataset.clicked=String(true)">Artifact control</button></body></html>'}], inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./conversation-pane.py", import.meta.url))};
 }

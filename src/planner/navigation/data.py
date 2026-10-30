@@ -474,6 +474,8 @@ def _derive(
             version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
             if version >= 3:
                 value.update(created_at=t["created_at"])
+                if version >= PREPARED_SCHEMA_VERSION:
+                    value["updated_at"] = t["updated_at"]
                 if version < PREPARED_SCHEMA_VERSION:
                     value["priority"] = t["priority"]
             if version >= 4:
@@ -537,6 +539,12 @@ def _derive(
                 "latest_agent_activity_at",
             )
         }
+        first_unread = conn.execute(
+            "SELECT created_at FROM conversation_events WHERE conversation_id=? "
+            "AND kind='message_to_owner' AND sequence>? ORDER BY sequence LIMIT 1",
+            (identity, c["owner_read_through_sequence"]),
+        ).fetchone()
+        value["first_unread_owner_message_at"] = None if first_unread is None else first_unread[0]
         ack = conn.execute(
             "SELECT through_sequence FROM conversation_error_acknowledgements "
             "WHERE conversation_id=?",

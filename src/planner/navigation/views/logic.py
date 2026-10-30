@@ -50,7 +50,7 @@ def project(
                 "id": record["id"],
                 "value": {
                     name: value[name]
-                    for name in ("title", "created_at", "settled", "conversation_id")
+                    for name in ("title", "created_at", "updated_at", "settled", "conversation_id")
                 },
             },
         )
@@ -59,6 +59,7 @@ def project(
             name: value[name]
             for name in (
                 "owner_read_through_sequence",
+                "first_unread_owner_message_at",
                 "error_acknowledged_through_sequence",
                 "attention",
             )
@@ -90,6 +91,8 @@ def group(value: dict[str, Any], attention: dict[str, Any] | None, *, rail: bool
         return "assigned"
     if not rail and attention and attention["signal"]["message_for_owner"]:
         return "awaiting_reply"
+    if value["blocked"] or value["ticket_status"] == "blocked":
+        return "blocked"
     working = bool(attention and attention["signal"]["working"])
     failed = bool(attention and attention["last_turn_failed"])
     if not working and (value["ticket_status"] == "errored" or failed and value["stage"] != "done"):
@@ -100,8 +103,6 @@ def group(value: dict[str, Any], attention: dict[str, Any] | None, *, rail: bool
         return "waiting_to_closeout"
     if parked and not owner:
         return "status_awaiting_approval"
-    if value["ticket_status"] == "blocked":
-        return "blocked"
     if value["stage"] == "done":
         return "done"
     return "empty"

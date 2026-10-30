@@ -19,10 +19,21 @@ commits stay distinct even when one wake-up covers them. Ticket creation capture
 initial flags before commit. Blocker, proposal, assignment, conversation link, and read
 changes capture their flags in the same transaction.
 
+A permission or input request awaits an answer only while its turn remains open.
+A recorded completion, failure, or interruption clears all unanswered requests from
+that turn. The next request can then create a new notification edge. A prompt or steer
+alone does not close a request. Unread messages and failure attention remain separate.
+
 The delivery poll consumes those saved edges. It does not scan conversation history.
 A Ticket without a conversation has no conversation attention. The process that owns
 the polling lock reconciles imported state once before it starts the loops. Repeated
 startup reconciliation creates no duplicate edges. A startup failure releases the lock.
+
+Startup reconciliation also clears stale request attention when the conversation records
+that the turn ended. This correction preserves the generation and past deliveries, and
+creates no edge. A later conversation write can also correct the stale flag.
+Neither path replays missed historical edges. Recovery after a crash without a recorded
+turn ending remains outside this correction.
 
 One policy function is the only door from an edge to a notification. It reads the saved
 choice for that type and either suppresses the edge or creates the privacy-safe title,
@@ -62,14 +73,25 @@ notifications coalesce at the operating system.
 
 ## Review transfer notices
 
-When a parked review changes holder, Panels attempts a courtesy message to the previous
-holder. The message identifies the Ticket and names the new holder. A holder change
-without a parked proposal sends no message. An unchanged final holder sends no message.
+When a parked review changes holder, Panels attempts a courtesy message to the new
+holder if that holder is an agent. The message identifies the Ticket and names the
+mover, when known. Khushal receives no arrival message when a review moves to him.
+That transfer starts no conversation solely for an arrival notice.
 
-The Chief and managers receive the message through their existing conversation
-routes. The user receives it in the Ticket conversation as a Panels message. The notice
-requests no reply and grants no credit for a worker reply. Existing approval attention
-and proposal delivery to the new holder keep their current behavior.
+If a third party moves the review, Panels also attempts a message to the previous
+holder. This message names the Ticket, the mover, and the new holder. The mover and
+the new holder receive no previous-holder message. A holder change without a parked
+proposal sends no message. An unchanged final holder sends no message.
+
+The Chief, Managers, and holder Tickets receive notices through their conversation
+routes. If Khushal is the previous holder, he still receives the departure notice in
+the affected Ticket conversation. The notice requests no reply and grants no credit
+for a worker reply. Existing approval attention and proposal delivery to the new
+holder keep their current behavior.
+
+Khushal keeps the departure notice because he asked only to remove arrival notices.
+His review queue shows what he holds now, rather than what left it. A move by
+someone else can be unexpected, so the departure notice explains that change.
 
 This notice uses one best-effort send after the transfer commits. A failed send does not
 fail or repeat the transfer. A process failure before send or before a queued notice
@@ -116,4 +138,4 @@ Code paths: `src/planner/notifications/`, the notification tables in the baselin
 `static/service-worker.js`, and
 `web/src/routes/NotificationsRoute.svelte`.
 
-_Last verified: 2026-09-20._
+_Last verified: 2026-10-22._

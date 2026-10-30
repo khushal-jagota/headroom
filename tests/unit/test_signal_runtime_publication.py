@@ -194,6 +194,9 @@ def test_actual_turn_pending_answer_and_end_share_source_boundary(
             await controlled._start(runtime)
             await runtime.system.send("c", text_message_content("work"), sender_label="owner")
             assert _latest_attention(batches).signal["working"]
+            assert await runtime.system.is_running("c")
+            assert not await runtime.system.has_pending_permission_ask("c")
+            assert not await runtime.system.has_pending_user_input("c")
             permission = await runtime.raise_permission_ask("c")
             request = await runtime.request_user_input("c")
             assert _latest_attention(batches).awaiting_answer
@@ -222,11 +225,45 @@ def test_actual_turn_pending_answer_and_end_share_source_boundary(
                 ),
             )
             assert not _latest_attention(batches).awaiting_answer
+            assert not await runtime.system.has_pending_permission_ask("c")
+            assert not await runtime.system.has_pending_user_input("c")
             await runtime.complete_turn("c")
             attention = _latest_attention(batches)
             assert not attention.signal["working"] and not attention.awaiting_answer
             assert state.running_turn is None
+            assert not await runtime.system.is_running("c")
             attachment.validate(attachment.capture_permit())
+
+        asyncio.run(asyncio.wait_for(exercise(), 8))
+
+
+def test_status_reads_retain_signal_and_runtime_ownership_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+
+        async def exercise() -> None:
+            await controlled._start(runtime)
+            coordinator.invalidate()
+            for conversation_id in ("c", "missing"):
+                for read in (
+                    runtime.system.is_running,
+                    runtime.system.has_pending_permission_ask,
+                    runtime.system.has_pending_user_input,
+                ):
+                    with pytest.raises(SignalUnavailable):
+                        await read(conversation_id)
+
+            await runtime.system.shutdown()
+            assert runtime.system._runtime_ownership.closed
+            for conversation_id in ("c", "missing"):
+                for read in (
+                    runtime.system.is_running,
+                    runtime.system.has_pending_permission_ask,
+                    runtime.system.has_pending_user_input,
+                ):
+                    with pytest.raises(RuntimeError, match="the conversation runtime is shut down"):
+                        await read(conversation_id)
 
         asyncio.run(asyncio.wait_for(exercise(), 8))
 

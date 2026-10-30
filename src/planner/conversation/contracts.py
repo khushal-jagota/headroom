@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Final, Literal, Protocol, TypedDict
 
 from planner.conversation.message_content import MessageContent
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
@@ -502,6 +503,34 @@ class PromptDeliveryRefusalReason(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class DeploymentRecoveryReference:
+    """Internal capability naming immutable interrupted work and its selected stage."""
+
+    interruption_id: str
+    expected_stage: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDispatchDecision:
+    """One exact sender's final admission, after preparation and before backend I/O.
+
+    A missing suppression reason means allow. Notice eligibility belongs to its domain.
+    Ordinary messages pass through with ``is_manager_notice=False``.
+    """
+
+    sender_message_id: str | None
+    suppression_reason: str | None = None
+    is_manager_notice: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDeliverySuppressed:
+    """An intentional pre-wire discard, durably recorded for this sender identity."""
+
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class PromptDeliveryStarted:
     """The prompt request was written to the wire of a live backend process, under a
     valid bound session, before this call returned. The turn is now running.
@@ -588,6 +617,7 @@ type PromptDeliveryFate = (
     | PromptDeliveryInjected
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
+    | PromptDeliverySuppressed
 )
 
 
@@ -610,6 +640,7 @@ type HeldPromptPromotionFate = (
     | PromptDeliveryInjected
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
+    | PromptDeliverySuppressed
 )
 
 
@@ -665,6 +696,21 @@ class ConversationSystem(Protocol):
     locking, so all four are awaited.
     """
 
+    @property
+    def workspace_admission(self) -> WorkspaceAdmission:
+        """Shared admission for background starts and conversation operations."""
+        ...
+
+    def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
+        """Return complete workspace activity without admitting new work."""
+        ...
+
+    async def run_with_workspace_admission(
+        self, operation: Callable[[], None], *, require_idle: bool,
+    ) -> bool:
+        """Atomically recheck activity, claim adoption, and close start/send admission."""
+        ...
+
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         """Run a synchronous canonical write under the conversation admission lock.
 
@@ -699,6 +745,7 @@ class ConversationSystem(Protocol):
         content: MessageContent,
         *,
         sender_label: str,
+        owner_read_through_sequence: int | None = None,
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
@@ -707,6 +754,7 @@ class ConversationSystem(Protocol):
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -753,6 +801,7 @@ class ConversationSystem(Protocol):
         content: MessageContent,
         *,
         sender_label: str,
+        owner_read_through_sequence: int | None = None,
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
@@ -761,6 +810,7 @@ class ConversationSystem(Protocol):
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Run the canonical send and expose replay freshness to addressed-send wiring.

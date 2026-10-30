@@ -49,7 +49,7 @@ they do not change how transcript content is generated.
 The notebook keeps completed receipts. A separate conversation-owned source keeps
 version 1 facts about turns, external attempts, and requests. These facts contain
 identities and outcomes, without message content, process handles, or callbacks.
-Turn numbers come from a database transaction and do not repeat after a restart.
+Turn numbers come from a database transaction. Durable occurrence identifiers also distinguish turns across a deployment rollback.
 Public request IDs include that durable turn identity. A live runtime maps them to
 the provider's request IDs. An old answer cannot address a later request that reuses
 the same provider ID.
@@ -86,10 +86,25 @@ It creates no provider ending, answer, or missing-reply marker. Historical noteb
 rows remain unchanged. Old databases have no recoverable live identities, so migration
 adds no invented lifecycle facts. An absent fact does not establish capability.
 
-Restart restores no queue content or callbacks. It sends no prompt or answer and resumes
-no interrupted work. Queue persistence, replay, and automatic continuation remain separate
-product decisions. The source contract lives in `conversation/lifecycle.py` and its
-transaction and terminal-transition rules live beside the conversation store.
+Lifecycle reconciliation restores no queue content or callbacks. It sends no prompt or answer.
+Deployment recovery runs separately after runtime admission, as described below.
+The source contract lives in `conversation/lifecycle.py`. Its transaction and terminal-transition rules live beside the conversation store.
+
+## Sessions that a deploy ends
+
+A deploy leaves a durable account of the sessions that it interrupts. The account stays outside the application backup and restore set. A rollback therefore keeps evidence from both the old application and its replacement. Missing evidence means that the account is unavailable. It never means that no sessions were interrupted.
+
+After runtime admission, Panels resumes each eligible interrupted conversation through the ordinary send path. This includes Worker, Manager, Chief, and unowned conversations. Both interruption displays and their read API are removed.
+
+Recovery checks current ownership before dispatch. Worker recovery also checks the current claim, stage, ceiling, backlog, blockers, and pending proposal. A changed link or claim cannot authorize recovery of its replacement. Recovery never raises a ceiling or accepts a proposal.
+
+The recovery prompt explains that the prior turn ended and external actions can remain uncertain. The agent must inspect current work before it repeats an action. Panels never replays an unknown prompt or permission answer.
+
+A durable delivery intent prevents another restart from sending the same uncertain recovery again. A queued receipt does not count as resumption. Only a started turn with the notice in its actual prompt counts. Refusal or uncertain delivery receives no automatic retry.
+
+A genuine Worker delivery failure leaves its exact claim errored. The existing Errored group and Ticket attention carry that failure. Other conversations use their existing transcript rows: “not delivered” or “delivery uncertain · do not resend.” In the Chief conversation, Khushal sees that existing one-line row in his chat with Chief. Recovery adds no other owner-facing surface.
+
+An authorized supervisor or Khushal can still use Restart Worker or the existing composer. Those actions retain their ordinary admission rules.
 
 ## Exercising permission requests
 
@@ -184,6 +199,20 @@ While an active lens is open, the owner read position advances through the newes
 row. Runtime-only rows can clear an unread mark because each lens displays every result that
 needs the owner's attention.
 
+Stream progress alone does not earn read credit. The browser keeps a separate safe read
+position, established when an admitted newest timeline page survives retention. Initial
+entry uses newest content without a destination from the owner-read watermark.
+Replacing newest with history, refusing a new timeline row, or losing the newest edge
+freezes further credit. Hidden rows and status updates cannot restore that evidence.
+Older rows can leave retention without stopping credit while the newest edge remains held.
+Expanded turn and work-group pages cannot establish conversation-wide read credit.
+
+Latest, ordinary paging that reaches newest, or a fresh newest snapshot can establish new
+delivery evidence. A page read earns credit only through the stream position captured
+when the queued read actually starts; replay checks subsequent writes separately. Failed,
+canceled, and obsolete reads earn nothing. This prevents future false credit. It does not
+lower an existing saved read position or restore unread state cleared before the repair.
+
 An open conversation is handed each new row directly, so it never has to be told to
 come and look. That is why most rows are written quietly: a historical agent-message row, a tool
 call starting or finishing, a plan, a token count, and a compaction are shown only
@@ -204,6 +233,13 @@ Each Worker, Manager, and Chief exposes the same `conversation_signal` from its 
 conversation. `working` means that its runtime is running. `message_for_owner` means that
 an explicit `message_to_owner` row is newer than the owner read position. Both can be true
 at once. A conversation with neither fact exposes two false values.
+
+The three boolean runtime checks — whether a turn is running, a permission ask is
+pending, or user input is pending — inspect existing live state without reading a stored
+record or waiting for a conversation lock. A conversation absent from this runtime has
+no live work or pending answers. Opening or sending still loads its stored record when
+needed. These checks still reject reads when the runtime has shut down or Signal is
+unavailable.
 
 Each conversation shows one indicator: an unread message dot takes precedence over the
 working spinner. Reading the latest message reveals the spinner if work is still running.
@@ -232,7 +268,7 @@ stream refresh as the individual marks.
 
 A message is not a piece of text. It is a run of pieces, in the order they were
 put in, and there are three kinds of piece: written words, a picture, and an
-attached document or data file.
+attached document, data file, or video.
 
 There is deliberately no sound. A voice note becomes words by speech-to-text
 before anything reaches a message, so nothing here ever sees one.
@@ -261,7 +297,7 @@ opens a conversation, so large bytes there would be read again every time. The b
 stay in a managed file under their conversation, and the row names that file.
 
 The same managed value serves the notebook, browser, and backend. Images retain their
-native routes. Hermes receives an ACP resource link for a document or data file. Codex
+native routes. Hermes receives an ACP resource link for a document, data file, or video. Codex
 and Claude receive explicit attachment context with the managed local path.
 
 A message's pictures total at most 3 MiB of raw bytes and each is a structurally
@@ -281,6 +317,38 @@ Documents and data files have a separate 10 MiB raw-byte limit per message. Pane
 accepts PDF, UTF-8 plain text, Markdown, CSV, TSV, JSON, and JSONL. The server derives
 the type from the safe file name and validates the content before it keeps any bytes.
 Archives, executables, unknown formats, and audio are refused.
+
+Videos use a separate upload beneath the same attachment interaction. Selecting an MP4,
+MOV, or WebM starts transfer while the person types. One message can carry one video,
+up to 250 MiB. Progress appears on the attachment. An early Send captures the message
+locally and shows it as pending until transfer and validation finish. Completion sends
+that requested message once. Selecting a video without Send never submits a draft.
+
+Failure preserves the text and offers Retry or Remove video. Retry restarts the transfer.
+For a pending message, it also completes the requested send after validation. Cancel
+returns the message for edits. Closing the tab interrupts transfer. Reload restores text,
+but an interrupted upload requires file selection and Send again. Video bytes do not
+enter browser session storage.
+
+The server reserves video capacity before transfer and checks actual bytes during it.
+The initial video budget is 10 GiB, including temporary files and concurrent reservations.
+It also preserves a 5 GiB free-disk reserve. At capacity, new video uploads fail rather
+than delete older attachments. These limits live in the video configuration module.
+
+Unlike images and documents, video bytes can arrive before their message. A completed,
+validated upload stays bound to its destination. Send claims it before delivery, so
+cleanup cannot remove a message's video. Unused uploads expire after 24 hours. A reset
+or competing first conversation can invalidate an attachment rather than redirect it.
+Uncertain send outcomes retain their files until safe recovery establishes the outcome.
+
+Local validation requires `ffprobe`. It checks the container and a video stream with
+bounded runtime and output. It does not prove that every frame decodes. Playback uses
+native controls and byte-range responses, with a download link for unsupported codecs.
+Panels does not convert videos or promise that an agent understands their contents.
+Normal Panels backups exclude uploads, including videos. See [backups](backups.md).
+
+_Code paths:_ `src/planner/conversation/video_uploads/`, the shared intake in
+`src/planner/conversation/api.py`, and the composer and video helpers under `web/src/`.
 
 Those files last as long as the notebook does, which is forever. Nothing in
 Panels deletes a conversation. Reset stops the active conversation and clears its active
@@ -397,11 +465,14 @@ reply requirement and agent conversations cannot form an acknowledgement loop.
 
 The owner can also ask an agent for a fresh recap. That ask is one route taking a Ticket,
 manager, or Chief principal. It empties the recap being replaced and steers the same
-fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
-keep it short and top level." Only the owner may ask, and the owner is the only principal
-it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
-the agent writes rather than words it sends back. This system message carries no reply
-requirement and leaves no missing-reply marker.
+fixed text into that agent's conversation:
+
+> File a short, top-level recap with your recap tool. Do not send the user a message.
+> Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. Chief: `PUT /api/workers/chief-of-staff/recap`.
+
+Only the owner can ask for a recap. The owner keeps no recap, so the request cannot address
+the owner. The answer is the recap that the agent writes. This system message carries no
+reply requirement and leaves no missing-reply marker.
 
 Automatic manager startup sends the exact saved goal as a queued Panels message.
 Its answer is the work the manager does. It requires no explicit reply to its
@@ -435,8 +506,9 @@ started by a failure notice cannot create another failure notice.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
-travel with words or form the whole message. There is no separate upload conversation
-or attachment record.
+travel with words or form the whole message. Video transfer uses a temporary upload
+record before Send, without a separate upload conversation. Other attachments keep
+their existing bytes-with-message intake.
 
 The command accepts `--mode steer|queue|send_now`. Steer is the default for command sends.
 Steer asks the current turn to admit the message. Queue holds behind active work. Send now
@@ -472,8 +544,33 @@ exact pending operation and accepted ownership. Operator inspection through
 `recording_failures` exposes the actual error. `resume_recording` resumes persistence
 explicitly after repair. This in-memory seam does not survive process loss.
 
-Prompt/model/attention/skill receipts remain one atomic transaction. Ancillary notice
-classification occurs before dispatch. After commit, local state uses the returned rows.
+Prompt/model/attention/skill receipts remain one atomic transaction. Internal proposal
+review notices receive final admission after model and session preparation, immediately
+before prompt composition or steering. The notice domain checks current revision and
+effective reviewer in the same SQLite write transaction that records any discard. This
+commit orders admission against canonical proposal writes; no database transaction spans
+backend I/O. Admission wins if resolution commits later.
+
+Admission uses durable conversation and sender message identity, never notice wording or
+sender labels. Each queued message is checked before survivors are combined. Reply
+obligations and automatic-notice classification are composed from survivors only. A
+replacement session gets a fresh check before its write. If no message survives, no turn
+starts, and a newly prepared replacement child is released without changing the durable
+model or effort.
+
+A suppressed delivery is an intentional pre-wire outcome, with its reason on the exact
+`prompt_discarded` receipt. Its attempt ends as `suppressed`; it is neither accepted work
+nor a failed backend write. Repeating the sender identity returns that same suppressed
+outcome without another write or a new explicit reply acknowledgment. The notice audit
+also preserves each obsolete source's original and current review facts and reason in
+`manager_wake_suppressions`, so operators can count what stopped and inspect why.
+
+Recovery settles exact durable receipts first. Known-held work receives admission on its
+next departure. A crash after admission without a receipt remains uncertain; historical
+dispatching or uncertain work is never reclassified as safely unsent or replayed merely
+because its proposal has since changed.
+
+After commit, local state uses the returned rows.
 A live-tail publication error does not invalidate the receipt or append it again.
 
 Historical uncertainty remains in the notebook. Reviewed, message-specific provider
@@ -642,13 +739,14 @@ gets. Showing them is not choosing them: a picker nobody touched still sends
 nothing, and the message that makes the conversation is created on those values
 because they are what the server resolves again when it arrives.
 
-Nobody waits for the network to see what they typed or attached. The browser gives a message
-its own name and stamps the moment the person pressed send, draws it in the
-composer stack there and then, and empties the box. Those two stamps travel with
-the message and are kept on its row, so the shared held snapshot and the eventual
-notebook row can recognize the same message. If the message turns out to have got
-nowhere, the copy goes and its exact words, pictures and pending run choices come
-back to the box, unless something else has been composed there since.
+The browser gives each send its own identity and timestamp before the network answers.
+Messages drawn in the conversation retain one display slot through record admission.
+A receipt can release persistence before the matching row body arrives. The visible
+copy remains until that body replaces its contents. Explicit composer-stack and
+server-held messages still belong above the input.
+
+A durable refusal or uncertain outcome stays on the same bubble. A transport
+rejection without a recorded outcome returns the draft through the existing recovery path.
 
 Queue changes also travel on the conversation's live connection as a contentless
 wake. Every open binder then reads the shared snapshot again. The wake carries no
@@ -672,15 +770,14 @@ have disappears from the screen as soon as the record is read again. Waiting too
 little would put a frightening sentence on a message that was about to turn out
 fine.
 
-A message nobody answered for does not stay in the thread. The thread draws these
-copies after every row the conversation has, so one left there would sit under
-every later turn for as long as the tab stayed open, looking like the newest thing
-said. It moves up to the composer, with the other messages that have not landed,
-and it says that no answer came. Two things can be done with it there, and both
-belong to the browser rather than the record: stop showing it, or send the same
-words again. Sending again is a new message with a new name, so if the first one
-did arrive after all there are two — that is the person's call to make, and
-nothing guesses it for them.
+An unanswered send stays where it first appeared and says “no answer came”.
+Its bubble offers Stop showing this message and Send again at opposite ends.
+A resend uses a new transport identity but retains the display slot. If the resend
+fails before a durable outcome, the old copy returns. A recorded refusal or uncertain
+outcome replaces it in place. Historical rows still follow server chronology after reload.
+
+A dismissed local bubble fades for 160ms, then its space closes over 240ms.
+History eviction does not use this exit effect.
 
 None of that is a guess about whether the message arrived, and the question stays
 open until the record answers it. Most of the time the record already has the
@@ -688,14 +785,39 @@ answer and this browser simply missed it, so a conversation holding a send nobod
 answered for reads the record again the moment the server is reachable. If the row
 is there, the copy goes, the ordinary way.
 
-Sending also decides where the thread sits. The message that was just sent
-settles near the top of the view with the rest of it kept for the answer, and
+Acceptance also decides where the thread sits. The accepted message
+settles 32px below the top of the view with the rest of it kept for the answer, and
 then nothing moves for as long as the answer fits in that space. Once the turn
-outgrows the view the thread follows, by the least it can while keeping the
-newest line in sight, and never backwards. Scrolling away is read from the
+outgrows the view, new streaming text advances one line per 120ms step when the
+reader already follows newest. A multi-line chunk can take several steps, bounded
+by the height of the arriving text. Layout changes and entry do not use this path. An accepted
+send uses one precomputed destination over 240ms with linear timing. Fresh opens
+and lens switches establish their position before reveal. Later layout changes
+retain the bottom or held message without animated catch-up. Scrolling away is read from the
 person — a wheel, a finger, a hand on the scrollbar — so nothing the thread does
 to itself is mistaken for them; while they are reading elsewhere nothing moves
 them, and the jump button is the way back.
+
+Manual navigation also ends the accepted send’s right to reserve answer space.
+The viewport keeps only the tail that supports the current visible line. Upward
+navigation and reply growth reduce that tail. They cannot restore retired space.
+The tail includes its gap and disappears completely at zero. The viewport retains
+the send’s top inset until an anchor-preserving change fits the available range.
+
+A visible newest line does not grant automatic follow after manual navigation.
+Latest remains available while residual support exists. It admits actual newest
+history, moves once, and drains support as each planned position fits. Arrival
+restores ordinary follow. A fresh gesture or accepted send cancels the old move.
+Genuine navigation to actual newest also restores follow after the tail reaches zero.
+Layout notifications and native anchor corrections cannot grant follow.
+
+Returning to a browser tab restores the line the person left and its offset in the
+view, even if they were at the newest message. The existing logical anchor carries
+that position. Content that arrived while the tab was hidden stays below it and
+does not start live follow. The reader restores a bounded neighborhood around the
+anchor before the viewport places it. If restoration fails, the reader retires the
+saved target and admits the newest content before automatic bottom placement.
+Visible live text keeps its normal line-by-line follow.
 
 ## Reading a turn
 
@@ -707,12 +829,20 @@ from zero, and a long wait for the agent to start is counted rather than lost.
 Where the sender minted no such moment, or minted one its own row cannot be
 reconciled with, the whole second the row was written in is counted from instead.
 
-The newest plan is conversation status, not thread history. At rest, an active plan
-step shows its position, its text, and the elapsed time. The position opens the whole
-checklist on pointer hover or keyboard focus. A permission request still replaces this
-line because it needs the person. Without an active step, the line keeps its normal
-elapsed time and newest tool call. In peeked and opened states, the same checklist sits
-in a centered 34-pixel strip between the thread and composer while unfinished work runs.
+The dock places activity and the latest unread owner preview above its rounded input.
+Activity uses the conversation typeface and shows no elapsed timer. Requests and delivery
+failures keep their own controls and feedback. The input keeps its complete border,
+recessed fill, spacing, and shape in both docked and full conversation.
+
+Hover outside the input changes the conversation surface color. Hover inside the input
+returns that surface to its resting color. Hover does not open the conversation.
+The preview button opens it through a click, Enter, or Space. A primary click on the
+surrounding surface also opens it when the press starts at rest and does not become a drag.
+An outside press that dismisses full conversation cannot reopen it on the same click.
+The input and its controls remain usable without opening the conversation.
+
+The newest plan is conversation status, not thread history. In full conversation,
+the checklist sits between the thread and composer while unfinished work runs.
 The plan never appears under the turn that first stated it.
 
 Full shows every message and tool call. Its turn and work groups expand
@@ -762,6 +892,36 @@ All of this is read from what the notebook already holds, so conversations
 recorded before any of it existed read the same way as new ones.
 
 ### Scrolling back, and what is known about it
+
+When the reader leaves a tab, the browser retains a location inside visible message text
+and its line offset. A return restores that text after delayed Markdown presentation.
+The address stays local to this browser. It includes the message piece, exact content
+identity, logical text path, and character offset. Nested preview text supplies no address
+for its parent message.
+
+Restoration admits the target Markdown host and group through the existing bounded
+presentation policy. Placeholder geometry cannot replace the saved destination. The
+conversation waits for the actual character and relevant geometry before it reveals the
+restored position. Each attempt gets five seconds while the tab is visible and the
+conversation is open. History and text presentation share this budget. Hidden tabs and
+the dock pause it. Later layout changes preserve a successfully restored character until
+the reader navigates.
+
+Saved-position restoration displays no notice, progress text, warning, or restoration controls.
+Ordinary Latest navigation remains available when content lies below the current position.
+Failure, unavailable text, or an exhausted budget
+retires the saved target and automatically admits the newest conversation page.
+The viewport then places the actual final content at the bottom, without a warning,
+restoration Retry control, or focus change. Request capacity delays this operation
+until a slot becomes available. A failed newest fetch preserves readable content,
+real errors, and ordinary Latest access without an automatic retry loop.
+
+Late results cannot reclaim a retired attempt. Explicit movement, navigation, reader
+replacement, a newer Latest command, or an accepted send cancels automatic recovery.
+Cancellation preserves shared ordinary reader requests. Changed, deleted, or expired
+text produces an unavailable result. If settled text cannot fit its saved offset,
+automatic recovery starts immediately. Successful text restoration retains its exact
+character and line offset. Reader replacement and navigation release target demand.
 
 Scrolling back asks for one page at a time. Before each page the browser closes its live
 stream and re-opens it once the page has arrived. That looks wasteful and is not: a
@@ -1124,17 +1284,13 @@ Tickets. Hermes still offers no Panels reasoning control.
 Panels does not ask Hermes for update advice and does not offer a Hermes update action.
 Hermes version and model catalogue discovery remain available.
 
-Panels keeps the last successful allowance reading for each backend in its database.
-Ordinary allowance reads use that stored answer without a provider request.
-The Usage page's Refresh starts provider allowance reads and the separate local record
-import in parallel. Allowance reads use ordinary backend snapshots. They do not force
-model catalogues, versions, identities, or update advice to refresh.
+Panels keeps the last successful backend allowance reading in its database.
+The shared model picker's explicit Refresh can read provider allowances through the
+backend methods below. These reads do not refresh model catalogues or update advice.
 
-Codex and Claude allowance reads start independently. A failure leaves that backend's
-prior reading in place and preserves the other backend's new answer. The page first
-shows an ordinary backend snapshot. Catalogue and supported update advice refresh in
-the background, while cached reads remain available. The shared model picker's Refresh
-reads provider allowances only.
+The Usage page uses a separate local-history source. Its Refresh updates the price
+table, then completes the requested transcript scan. It does not start a backend,
+request provider allowance, or use the native-local refresh operation.
 
 Codex starts one short-lived app-server child and asks its native
 `account/rateLimits/read` method. The request does not start a thread, run a model turn,
@@ -1172,79 +1328,54 @@ the concrete model used for each turn.
 
 ### Recorded local usage
 
-Tokens and Cost describe local Codex and Claude records on this server. They include
-CLI activity outside Panels. They do not describe a complete account bill or allowance
-history. Hermes has no source for these historical charts.
+Usage follows T3 Code's module layout and scan design. Tokens and Cost describe local
+Codex and Claude history on this server, including CLI activity outside Panels.
+They describe API-equivalent token cost, not the complete account bill.
 
-Opening the page, changing its period, or receiving a change signal reads stored usage.
-Only an explicit Refresh imports native files. Each request reads at most 256 MiB
-and cooperatively yields during source reads or parsing after 15 seconds or 2,000 file
-visits. Loading stored snapshots, merging records, serialization, and price refresh
-occur outside that deadline. It is not a hard HTTP response timeout.
-The next request resumes the stored
-queue. Small slices alternate providers and files. Large files and large JSON lines
-remain eligible. The streaming reader discards message and tool bodies as it reads.
-Its checkpoints contain syntax and selected usage fields. Complete block checks detect
-interior rewrites before a candidate replaces verified records. Source changes restart
-that candidate and preserve earlier records. Native files remain read-only.
+A summary request completes the requested scan. The service selects files with T3's
+modification-time slack. It reuses parsed records when provider, size and modification
+time match. A grown file resumes after a 64-byte guard check. Parser state and
+provisional tail records preserve the same duplicate rules across that boundary.
+A replaced file or failed guard takes T3's full-parse path.
 
-The queue covers source files modified within 90 days. Directory discovery has a
-100,000-entry and request-time limit. An unreadable or bounded inventory reports partial
-coverage. Progress describes this finite local read, not complete account history.
-SQLite commits the cursor and data together, so a restart resumes the same work.
-Append-only growth preserves the frozen prefix and its read progress. Every metadata
-generation change restarts block verification. A file that changes before every request
-needs a quiet verification window before its candidate enters the totals. Other files
-continue fairly, and its earlier verified records remain visible with partial coverage.
-A verified prefix can enter stored totals before its file finishes. An observed unread
-tail stays in the queue, and its byte count extends the progress total. Files first
-found during a pass wait for the next finite pass. Known pending files keep coverage
-partial and `more_work` true until a later request reads them.
-The same rule covers a completed member whose identity, size, or metadata changes in
-the latest inventory. Progress counts that file once and defers its new version to the
-next pass. Ready means that this latest bounded inventory has no known unvisited work.
+Concurrent requests for the same window share a scan. A client disconnect does not
+cancel its completion. The service persists the scan cache in the app's own state
+directory. It does not leave a bounded import queue for another manual Refresh.
 
-Copied records count once across files. Codex counts each stable completed response
-identity once. It keeps the response's original thread and session, even when another
-file contains a copy. Repeated counter updates and cumulative turn or thread totals do
-not add consumption. Old counter records need verified changes. Their producer history
-remains uncertain.
+The parsers, scan cache, aggregation, pricing and source-limit modules retain their
+T3 names. The browser copies the compatible TypeScript merge, format and chart-data
+files. Other modules adapt the language and framework without a different scan design.
+T3's test cases accompany the copy. Its MIT notice and pinned revision are retained.
 
-Claude uses message and request identities. Overlapping or conflicting identities
-remain excluded with partial coverage. Conversation events and allowance snapshots do
-not become extra chart records.
+The Usage page's Limits tab reads selected allowance fields from local history.
+Codex observations supply the main account windows and actual observation times.
+A separate companion cache preserves those observations on warm scans and restarts.
+Model-specific observations do not replace the main account windows. If Claude's
+local history lacks an allowance observation, the page reports it as unavailable.
+No provider request or credential read fills that gap.
 
-Missing required token counts remain unknown. As in T3 Code, an omitted optional Codex
-cache category means zero. An explicit null or invalid category remains unknown.
-The producer reports cache categories separately within inclusive input. A missing
-reasoning breakdown remains unknown and never adds another charge to output.
-A valid zero remains zero. Token totals with an
-unknown contributing value remain unknown. Cost follows T3 Code's price calculation.
-It uses source-reported USD when present. Otherwise it prices uncached input, cache reads,
-cache writes and output from the stored LiteLLM table. Reasoning remains part of output.
-Published fast and ultrafast rates apply to the recorded service tier. A tier without
-published rates uses its standard rates, as in T3 Code.
+Subscription reset credits and a provider credit balance are different values.
+The local adapter does not map a balance into T3's reset-credit field or label it as
+currency. It leaves values unfilled when the target contract has no matching field.
 
-The full external price document and fetch time remain in SQLite. Summary reads never
-fetch prices. Explicit Refresh can update the table, with T3's 60-second refresh floor,
-24-hour ordinary cache lifetime, a 10-second request timeout and a 16 MiB response bound.
-An unavailable source leaves the stored table available. Unknown model rates remain
-unpriced. Exact names and unambiguous aliases match the table. Bare family names do not
-select an invented generation.
+T3's exact rolling bounds define the 24-hour view. Its merge logic supplies totals,
+source ownership and distinct session counts. Its chart data fills absent periods
+with zero. Source status and unpriced records remain explicit. Pricing prefers a
+reported USD value unless a custom override applies. Otherwise it uses the stored
+LiteLLM rates with T3's model aliases and cache categories. Reasoning stays inside
+output and does not add another charge.
 
-Known cost subtotals remain visible with an Unpriced record count. The data contract
-keeps table-calculated and source-reported USD separate. This value does not establish
-actual account charges. Cost categories, cache savings and speed premiums use the same
-price rules as T3 Code. A source-reported total scales the category split proportionally.
+The price table and transcript caches belong to this app's state directory.
+The pricing-only refresh retains T3's 60-second floor and 24-hour ordinary cache life.
+A missing rate leaves the record unpriced. A failed price fetch can use the stored table.
 
-Input already includes cache tokens, and output includes reasoning tokens. Neither
-subset is added twice. Charts show observed periods and leave unrecorded intervals as gaps.
-
-_Code paths:_ `src/planner/conversation/usage/` owns the contract, native adapters,
-bounded import, storage, and summaries. Its `api.py` exposes
-`GET /api/conversation/usage/summary` for stored reads and
-`POST /api/conversation/usage/refresh` for explicit imports. The refresh accepts no
-browser-supplied source paths or credentials.
+_Code paths:_ `src/planner/conversation/usage/` contains `UsageService`,
+`usageTranscriptReader`, `usageTranscripts`, `usageScanCache`, `usageAggregation`,
+`usagePricing`, `UsageLimitSources`, and `cliproxyApi`. The approved local extension is
+`localUsageLimits`. `GET /api/conversation/usage/summary` accepts T3's explicit window
+and returns its bucket contract. `GET /api/conversation/usage/limits` returns local
+allowance windows. `POST /api/conversation/usage/rates/refresh` refreshes prices only.
+The old `POST /api/conversation/usage/refresh` import route is removed.
 
 ## The composer catalog
 

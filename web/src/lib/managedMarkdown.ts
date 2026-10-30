@@ -1,3 +1,4 @@
+import type { MarkdownPresentationController } from "./markdown/textLocation";
 import { mount, unmount } from "svelte";
 import FilePreview from "../components/FilePreview.svelte";
 import ManagedMarkdownRegion from "../components/ManagedMarkdownRegion.svelte";
@@ -51,7 +52,7 @@ const SOURCE_UNSET = Symbol("source-unset");
 
 export function createManagedMarkdownSurface(
   host: HTMLElement,
-  options: { mode: "read-only" }
+  options: { mode: "read-only"; onRendered?: () => void; presentation?: MarkdownPresentationController }
 ): ReadOnlyManagedMarkdownSurface;
 
 export function createManagedMarkdownSurface(
@@ -61,7 +62,7 @@ export function createManagedMarkdownSurface(
 
 export function createManagedMarkdownSurface(
   host: HTMLElement,
-  options: { mode: ManagedMarkdownMode }
+  options: { mode: ManagedMarkdownMode; onRendered?: () => void; presentation?: MarkdownPresentationController }
 ): ReadOnlyManagedMarkdownSurface | EditableManagedMarkdownSurface {
   const mode = options.mode;
   const previews = new Map<HTMLElement, MountedPreview>();
@@ -75,6 +76,8 @@ export function createManagedMarkdownSurface(
   let parsing: AbortController | null = null;
   let stopVirtualDocument: (() => void) | null = null;
   let renderGeneration = 0;
+  let rendering = false;
+  function rendered(): void { rendering = false; options.onRendered?.(); options.presentation?.rendered(); }
   let documentRegion: ReturnType<typeof ManagedMarkdownRegion> | null = null;
 
   function cancelReadOnlyWork(): void {
@@ -89,7 +92,8 @@ export function createManagedMarkdownSurface(
     const root = globalThis.document.createElement("div");
     root.className = "markdown markdown-block";
     target.appendChild(root);
-    const groups: { element: HTMLElement; nodes: MarkdownTreeNode[]; mounted: boolean }[] = [];
+    const groups: { element: HTMLElement; nodes: MarkdownTreeNode[]; mounted: boolean; start: number; end: number }[] = [];
+    let blockIndex = 0;
     const stops: (() => void)[] = [];
     let pending: MarkdownTreeNode[] = []; let weight = 0;
     const admit = () => {
@@ -99,16 +103,18 @@ export function createManagedMarkdownSurface(
       element.dataset.markdownWindow = "";
       element.style.minHeight = `${Math.max(24, Math.ceil(size / 100) * 20)}px`;
       root.appendChild(element);
-      const group = { element, nodes, mounted: false }; groups.push(group);
+      const group = { element, nodes, mounted: false, start: blockIndex, end: blockIndex + nodes.length }; groups.push(group);
+      blockIndex += nodes.length;
       stops.push(registerMarkdownCopyRange(element, () => group.mounted ? null : nodes.map(markdownText).join("")));
       stops.push(observeVisibleContent(element, visible => {
         if (group.mounted === visible || destroyed) return;
         group.mounted = visible;
         if (visible) {
-          const rendered = renderParsedMarkdown({ children: nodes, definitions: document.definitions });
+          const rendered = renderParsedMarkdown({ children: nodes, definitions: document.definitions }, options.presentation?.mapText, group.start);
           mountRenderedPreviews(rendered, presentation.depth, presentation.visited);
           if (!element.hasAttribute("data-visible-content-restoring")) element.style.minHeight = "";
           element.replaceChildren(rendered);
+          options.presentation?.prune();
         } else {
           for (const preview of [...previews.values()]) {
             if (element.contains(preview.slot)) unmountPreview(preview);
@@ -117,6 +123,7 @@ export function createManagedMarkdownSurface(
             if (element.contains(image)) { stop(); imageObservers.delete(image); }
           }
           element.replaceChildren();
+          options.presentation?.prune();
         }
       }));
     };
@@ -126,6 +133,7 @@ export function createManagedMarkdownSurface(
       pending.push(node); weight += size;
     }
     admit();
+    options.presentation?.setGroups(groups);
     stopVirtualDocument = () => {
       stops.forEach(stop => stop());
       groups.length = 0;
@@ -133,10 +141,13 @@ export function createManagedMarkdownSurface(
   }
 
   function updateReadOnly(next: ReadOnlyRenderInput): void {
+    rendering = true;
+    options.presentation?.begin();
     if (next.source.length < MARKDOWN_WORKER_THRESHOLD) {
       cancelReadOnlyWork();
       resetVisibleContentHeight(host);
       repaint(next.source, next);
+      rendered();
       return;
     }
     // A source refresh keeps its painted document while the replacement parses.
@@ -162,6 +173,7 @@ export function createManagedMarkdownSurface(
       documentRegion?.reveal(target => {
         if (destroyed || generation !== renderGeneration) return;
         render(target);
+        rendered();
       });
     }
     parseMarkdownInWorker(next.source, controller.signal).then(document => {
@@ -171,13 +183,14 @@ export function createManagedMarkdownSurface(
     }).catch(error => {
       if (destroyed || controller.signal.aborted || generation !== renderGeneration) return;
       parsing = null;
+      options.presentation?.failed();
       // Keep available text on a failed refresh. The error remains visible and
       // causes a later viewport departure to release this failed view for retry.
       const message = globalThis.document.createElement("div");
       message.className = "quiet-line";
       message.dataset.visibleContentFailed = "";
       message.textContent = error instanceof Error ? error.message : "Text could not load.";
-      if (painted) host.appendChild(message);
+      if (painted) { host.appendChild(message); rendered(); }
       else reveal(target => target.appendChild(message));
     });
   }
@@ -326,7 +339,7 @@ export function createManagedMarkdownSurface(
       return;
     }
 
-    const rendered = renderMarkdownToElement(source);
+    const rendered = renderMarkdownToElement(source, options.presentation?.mapText);
     rendered.classList.add("markdown-block");
     mountRenderedPreviews(
       rendered,
@@ -334,6 +347,8 @@ export function createManagedMarkdownSurface(
       presentation?.visited || []
     );
     host.appendChild(rendered);
+    options.presentation?.setGroups([{ element: host, start: 0, end: rendered.childNodes.length }]);
+    options.presentation?.prune();
 
     if (mode === "editable") {
       setEmptyState(source);
@@ -345,6 +360,7 @@ export function createManagedMarkdownSurface(
     if (destroyed) return;
     destroyed = true;
     cancelReadOnlyWork();
+    options.presentation?.begin();
     if (mode === "editable") host.removeEventListener("input", onEditableInput);
     disconnectObserver();
     observer = null;
@@ -365,7 +381,7 @@ export function createManagedMarkdownSurface(
           depth: input.depth,
           visited: [...input.visited]
         };
-        if (sameReadOnlyInput(lastReadOnlyInput, next)) return;
+        if (sameReadOnlyInput(lastReadOnlyInput, next)) { if (!rendering) rendered(); return; }
         updateReadOnly(next);
         lastReadOnlyInput = next;
       },

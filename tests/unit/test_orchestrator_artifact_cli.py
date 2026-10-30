@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterator
-from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,7 +17,7 @@ from planner.cli.main import main
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.db import connect, create_schema
+from planner.core.db import connect
 from planner.core.server import create_app
 
 
@@ -31,8 +30,6 @@ def artifact_cli(
             monkeypatch.delenv(key)
     db_path = tmp_path / "data" / "planning.db"
     db_path.parent.mkdir()
-    with closing(connect(str(db_path))) as conn:
-        create_schema(conn)
     config = load_config(
         path=None,
         env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
@@ -18,6 +19,12 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.scheduled_tickets import data as schedules_data
+from planner.scheduled_tickets.contracts import (
+    OccurrenceOutcome,
+    ScheduleCadence,
+    ScheduledTicketTemplate,
+)
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -244,15 +251,40 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
         assert unchanged["manager_id"] == vylo_item["id"]
         assert unchanged["project_id"] == "project_vylo"
 
+        with connect(str(db_path)) as conn:
+            before_invalid_holder = tuple(conn.iterdump())
+        for holder in (
+            {"kind": "manager", "id": vylo_item["id"]},
+            {"kind": "chief", "id": "chief"},
+        ):
+            invalid_holder = client.patch(
+                f"/api/tickets/{ticket_id}",
+                json={
+                    "manager": {"kind": "manager", "id": personal_item["id"]},
+                    "ceiling_holder": holder,
+                    "recap": "Must not persist",
+                },
+            )
+            assert invalid_holder.status_code == 400, invalid_holder.text
+            assert invalid_holder.json()["error"]["code"] == "validation"
+            assert invalid_holder.json()["error"]["message"] == (
+                "ceiling holder must be the user or the Ticket's direct manager; "
+                "name an eligible holder explicitly"
+            )
+            with connect(str(db_path)) as conn:
+                assert tuple(conn.iterdump()) == before_invalid_holder
+
         moved = client.patch(
             f"/api/tickets/{ticket_id}",
             json={
                 "manager": {"kind": "manager", "id": personal_item["id"]},
                 "project_id": "project_personal",
+                "ceiling_holder": {"kind": "manager", "id": personal_item["id"]},
             },
         )
         assert moved.status_code == 200, moved.text
         assert moved.json()["project_id"] == "project_personal"
+        assert moved.json()["ceiling_holder"] == {"kind": "manager", "id": personal_item["id"]}
         with connect(str(db_path)) as conn:
             assert (
                 conn.execute("SELECT project_id FROM tickets WHERE id=?", (ticket_id,)).fetchone()[
@@ -292,6 +324,61 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
                 ]
                 == "project_vylo"
             )
+
+        # A Manager's authorized Project edit keeps only its attached schedule
+        # Projects consistent. It grants no control over schedule configuration.
+        with connect(str(db_path)) as conn:
+            for index, manager in enumerate((personal_item, personal_item, vylo_item)):
+                schedule = schedules_data.create_schedule(
+                    conn,
+                    enabled=index == 0,
+                    cadence=ScheduleCadence.daily,
+                    local_time="14:30",
+                    template=ScheduledTicketTemplate(
+                        title=f"Preserved schedule {index}",
+                        worker_type="coding",
+                        kickoff_note="Preserve this instruction.",
+                        deadline="2026-07-31",
+                        project_id=manager["project_id"],
+                        manager_id=manager["id"],
+                        manager_kind="manager",
+                        employee_backend="claude",
+                        employee_launch_model="sonnet",
+                        blocked_by_ticket_ids=(ticket_id,),
+                    ),
+                    now=1,
+                )
+                schedules_data.insert_occurrence(
+                    conn,
+                    schedule_id=schedule.id,
+                    occurrence_key="2026-07-09T14:30",
+                    target_date="2026-07-09",
+                    outcome=OccurrenceOutcome.suppressed,
+                    ticket_id=None,
+                    error="Historical receipt",
+                    now=1,
+                )
+            before = schedules_data.list_schedules(conn)
+            receipts = {row.id: schedules_data.list_occurrences(conn, row.id) for row in before}
+        changed_project = client.patch(
+            f"/api/managers/{personal_item['id']}",
+            json={"project_id": "project_other"},
+            headers={"X-Plan-Actor": "manager", "X-Plan-Manager-ID": personal_item["id"]},
+        )
+        assert changed_project.status_code == 200, changed_project.text
+        with connect(str(db_path)) as conn:
+            for original in before:
+                current = schedules_data.read_schedule(conn, original.id)
+                if original.template.manager_id == personal_item["id"]:
+                    assert current.updated_at > original.updated_at
+                    assert current == replace(
+                        original,
+                        template=replace(original.template, project_id="project_other"),
+                        updated_at=current.updated_at,
+                    )
+                else:
+                    assert current == original
+                assert schedules_data.list_occurrences(conn, original.id) == receipts[original.id]
 
 
 def _backend_snapshot(

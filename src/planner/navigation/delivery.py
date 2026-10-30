@@ -112,7 +112,9 @@ def read_page(
             continuity: Continuity = {
                 "scope": scope,
                 "schema_version": schema,
-                "semantics": cast(Literal["attention-knowledge-v8-manager"], SUPPORTED_SEMANTICS),
+                "semantics": cast(
+                    Literal["attention-knowledge-v9-review-messages"], SUPPORTED_SEMANTICS
+                ),
                 "epoch": epoch,
                 "revision": str(current),
             }

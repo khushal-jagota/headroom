@@ -1,175 +1,93 @@
+/** Framework-boundary checks for the mechanical T3 Svelte translation. */
 import { describe, expect, it, vi } from "vitest";
 import { render } from "svelte/server";
-import type { PeriodUsageMetrics, ProviderUsageMetrics, UsageMetrics, UsageSummary } from "../src/lib/conversation/recordedUsageWire";
-import { refreshRecordedUsage } from "../src/lib/conversation/recordedUsageWire";
-import { chartPointerIndex, chartSegments, combineMetrics, formatCost, formatTokens, selectedTotals, tokenSegments } from "../src/components/usage/usagePresentation";
-import { remainingPercent } from "../src/lib/conversation/usagePresentation";
+import { UsageDay, USAGE_CONTRACT_VERSION, type UsageSummary, type UsageSummaryInput } from "../src/lib/usage/contracts";
 import RecordedUsage from "../src/components/usage/RecordedUsage.svelte";
-import AllowanceWindows from "../src/components/usage/AllowanceWindows.svelte";
+import UsageLimits from "../src/components/usage/UsageLimits.svelte";
 import UsageHeader from "../src/components/usage/UsageHeader.svelte";
 import { prefixHref } from "../src/lib/utilityAddress";
-import { usageBackends } from "../src/components/usage/usageProviders";
+import * as wire from "../src/lib/conversation/recordedUsageWire";
+import { refreshUsage } from "../src/lib/usage/usage";
+import { readUsageSummary, readUsageLimits } from "../src/lib/conversation/recordedUsageWire";
 
-function metrics(overrides:Partial<UsageMetrics>={}):UsageMetrics {
-  return { input_tokens:100,uncached_input_tokens:40,cached_input_tokens:50,cache_creation_tokens:10,
-    output_tokens:20,reasoning_tokens:5,total_tokens:120,reported_cost_usd:null,
-    cost_usd:null,estimated_cost_usd:null,provider_reported_cost_usd:null,
-    category_cost_usd:null,speed_cost_usd:null,cache_savings_usd:null,speed_premium_usd:null,
-    unpriced_records:1,model_priced_records:0,provider_reported_records:0,
-    record_count:1,session_count:1,unknown_records:0,unknown_cost_records:1,...overrides };
-}
-const codex:ProviderUsageMetrics={...metrics(),provider:"codex"};
-const claude:ProviderUsageMetrics={...metrics({input_tokens:null,total_tokens:null,uncached_input_tokens:12,cached_input_tokens:null,unknown_records:1}),provider:"claude"};
-function period(hour:number,providers:ProviderUsageMetrics[]=[codex]):PeriodUsageMetrics {
-  return {...combineMetrics(providers),start:`2026-10-16T${String(hour).padStart(2,"0")}:00:00Z`,end:`2026-10-16T${String(hour+1).padStart(2,"0")}:00:00Z`,label:`${hour}:00`,providers};
-}
-function summary(overrides:Partial<UsageSummary>={}):UsageSummary {
-  return {scope:"local_cli",days:1,timezone:"UTC",since:"2026-10-15T22:00:00Z",until:"2026-10-16T22:00:00Z",observed_at:"2026-10-16T12:00:00Z",
-    pricing:{status:"unavailable",source:"https://example.test/prices",fetched_at:null,known_models:0},
-    totals:combineMetrics([codex,claude]),providers:[codex,claude],models:[{...codex,model:"model-a"},{...claude,model:null}],
-    periods:[period(10),period(12,[claude])],sources:[{provider:"codex",state:"partial",observed_at:"2026-10-16T12:00:00Z",files_scanned:2,record_count:1,issues:["Read limit reached"],duplicates:1,progress:null}],...overrides};
+const input: UsageSummaryInput = {
+  sinceDay: UsageDay.make("2026-10-28"), untilDay: UsageDay.make("2026-10-29"), timeZone: "UTC", resolution: "hour",
+  sinceTime: "2026-10-28T12:37:00.000Z", untilTime: "2026-10-29T12:37:00.000Z",
+};
+function summary(): UsageSummary {
+  return {
+    contractVersion: USAGE_CONTRACT_VERSION, readAt: "2026-10-29T12:37:00.000Z", timeZone: "UTC", sinceDay: input.sinceDay, untilDay: input.untilDay,
+    buckets: [{ day: input.sinceDay, hourStart: input.sinceTime, provider: "codex", model: "example-model",
+      totals: { uncachedInputTokens: 100, cachedInputTokens: 200, cacheCreationTokens: 10, outputTokens: 50, reasoningTokens: 20 },
+      costUsd: 7, cacheSavingsUsd: 2, costSource: "modelPriced", records: 2, unpricedRecords: 1, sessions: 1 }],
+    sources: [{ fingerprint: { hostId: "test", provider: "codex", resolvedHomePath: "/test/codex", volumeId: "1:2" },
+      status: "ok", scannedFiles: 1, skippedFiles: 0, malformedRecords: 0, distinctSessions: 1, message: null }],
+    pricing: { status: "cached", source: "https://example.test/prices", fetchedAt: null, knownModels: 1 }, scanDurationMs: 12,
+  };
 }
 
-describe("recorded usage unknown values and filters",()=>{
-  it("keeps an unknown total without losing independently known categories",()=>{
-    const total=combineMetrics([codex,claude]);
-    expect(total.total_tokens).toBeNull();
-    expect(total.input_tokens).toBeNull();
-    expect(total.uncached_input_tokens).toBe(52);
-    expect(total.output_tokens).toBe(40);
-    expect(total.unknown_records).toBe(1);
-    expect(total.reported_cost_usd).toBeNull();
+describe("T3 Svelte presentation", () => {
+  it("renders copied merge totals and zero-filled 24-hour columns through Svelte", () => {
+    const body = render(RecordedUsage, { props: { summary: summary(), input, providers: ["codex"], metric: "tokens" } }).body;
+    expect(body).toContain("360");
+    expect(body).toContain("Across 1 sessions");
+    expect(body.match(/data-usage-period=/g)).toHaveLength(24);
+    expect(body.match(/data-usage-value="0"/g)).toHaveLength(23);
+    expect(body).toContain("example-model");
+    expect(body).toContain("1 files");
   });
-  it("keeps empty records unknown and a known zero distinct",()=>{
-    expect(combineMetrics([]).total_tokens).toBeNull();
-    expect(combineMetrics([]).reported_cost_usd).toBeNull();
-    expect(formatTokens(null)).toBe("—");
-    expect(formatTokens(0)).toBe("0");
-    expect(formatCost(null)).toBe("—");
-    expect(formatCost(0)).not.toBe("—");
+  it("renders the T3 API-equivalent cost label and unpriced share", () => {
+    const body = render(RecordedUsage, { props: { summary: summary(), input, providers: ["codex"], metric: "cost" } }).body;
+    for (const text of ["Raw token cost", "$7.00*", "* if billed at full API rate", "Cache savings", "$2.00", "50.0%", "of records, excluded from cost"])
+      expect(body).toContain(text);
   });
-  it("uses authoritative totals for all providers and only selected provider values otherwise",()=>{
-    const s=summary({totals:metrics({session_count:1})});
-    expect(selectedTotals(s,["codex","claude"])).toBe(s.totals);
-    expect(selectedTotals(s,["codex"]).total_tokens).toBe(120);
-    expect(selectedTotals(s,[]).total_tokens).toBeNull();
+  it("filters source and bucket data together before the copied merge", () => {
+    const body = render(RecordedUsage, { props: { summary: summary(), input, providers: [], metric: "tokens" } }).body;
+    expect(body).toContain("No activity in this window.");
+    expect(body).not.toContain("example-model");
+    expect(body).toContain("Across 0 sessions");
   });
-  it("does not add cache subsets or reasoning twice",()=>{
-    const parts=tokenSegments(metrics());
-    expect(parts.map(part=>part.label)).toEqual(["Input","Cached input","Cache write","Output"]);
-    expect(parts.reduce((sum,part)=>sum+part.value,0)).toBe(120);
-    expect(parts.some(part=>part.label==="Reasoning")).toBe(false);
-    expect(combineMetrics([metrics(),metrics()]).total_tokens).toBe(240);
+  it("renders actual zero allowance, observation and reset without a credit-balance conversion", () => {
+    const body = render(UsageLimits, { props: { providers: ["codex", "claude"], now: Date.parse("2026-10-29T12:00:00Z"), limits: {
+      codex: { checkedAt: "2026-10-29T11:59:00Z", windows: [{ id: "secondary", kind: "weekly", label: "Weekly", usedPercent: 100, windowDurationMins: 10080, resetsAt: "2026-11-04T06:35:00Z" }] },
+      claude: { checkedAt: "2026-10-29T11:59:00Z", windows: [], unavailable: { reason: "probeFailed", message: "No valid local allowance observation." } },
+    } } }).body;
+    expect(body).toContain("0%");
+    expect(body).toContain("Weekly");
+    expect(body).toContain("2026-10-29T11:59:00Z");
+    expect(body).toContain("2026-11-04T06:35:00Z");
+    expect(body).toContain("No valid local allowance observation.");
+    expect(body).not.toContain("reset credits banked");
   });
-  it("does not fabricate category shares for partial or inconsistent counters",()=>{
-    expect(tokenSegments(metrics({cached_input_tokens:null}))).toEqual([]);
-    expect(tokenSegments(metrics({total_tokens:130}))).toEqual([]);
-  });
-});
-
-describe("observed-only usage chart",()=>{
-  it("selects a later recorded period from the first touch coordinate without a move",()=>{
-    const periods=[period(10),period(11),period(14)];
-    const bounds={left:100,width:300};
-    expect(chartPointerIndex(periods,399,bounds)).toBe(2);
-    expect(chartPointerIndex(periods,175,bounds)).toBe(1);
-    expect(chartPointerIndex(periods,80,bounds)).toBe(0);
-    expect(chartPointerIndex(periods,450,bounds)).toBe(2);
-    expect(chartPointerIndex([],399,bounds)).toBeNull();
-    expect(chartPointerIndex(periods,399,{left:100,width:0})).toBeNull();
-  });
-  it("joins adjacent observed periods",()=>{
-    expect(chartSegments([period(10),period(11)],"codex","tokens").map(segment=>segment.map(point=>point.value))).toEqual([[120,120]]);
-  });
-  it("breaks the line across an omitted interval",()=>{
-    expect(chartSegments([period(10),period(12)],"codex","tokens").map(segment=>segment.length)).toEqual([1,1]);
-  });
-  it("breaks the line at missing provider and null metric values instead of inserting zero",()=>{
-    const unknown={...codex,total_tokens:null};
-    expect(chartSegments([period(10),period(11,[]),period(12),period(13,[unknown]),period(14)],"codex","tokens").map(segment=>segment.map(point=>point.index))).toEqual([[0],[2],[4]]);
-  });
-  it("keeps a reported zero and excludes unknown costs",()=>{
-    const known={...codex,reported_cost_usd:0,cost_usd:0};
-    expect(chartSegments([period(10,[known]),period(11)],"codex","cost").map(segment=>segment.map(point=>point.value))).toEqual([[0]]);
-  });
-});
-
-describe("usage surfaces",()=>{
-  it("keeps unknown prices unavailable and exposes source coverage",()=>{
-    const body=render(RecordedUsage,{props:{summary:summary(),providers:["codex","claude"],metric:"cost"}}).body;
-    expect(body).toContain("includes activity outside Panels");
-    expect(body).toContain("partial history");
-    expect(body).toContain("Read limit reached");
-    expect(body).toContain("No recorded cost values");
-    expect(body).toContain("Unpriced");
-    expect(body).not.toContain("$0.00");
-    expect(body).not.toContain("API estimate");
-  });
-  it("keeps token detail values known independently of the unknown combined total",()=>{
-    const body=render(RecordedUsage,{props:{summary:summary(),providers:["codex","claude"],metric:"tokens"}}).body;
-    expect(body).toContain("Unknown model");
-    expect(body).toContain("52");
-    expect(body).toContain("data-usage-total");
-    expect(body).toContain("Unrecorded intervals remain gaps");
-  });
-  it("labels expired allowance snapshots instead of current remaining allowance",()=>{
-    const body=render(AllowanceWindows,{props:{windows:[{kind:"seven_day",model_id:null,used_percent:32,resets_at:"2026-10-11T13:32:16Z"}],observedAt:"2026-10-04T21:31:35Z",now:Date.parse("2026-10-16T18:00:00Z")}}).body;
-    expect(body).toContain("68%");
-    expect(body).toContain("cached");
-    expect(body).toContain("Reset passed");
-    expect(body).toContain("Current allowance unavailable");
-    expect(body).toContain("Left at observation");
-  });
-  it("shares the same remaining clamp with conversation rings",()=>{
-    expect(remainingPercent(-4)).toBe(100);
-    expect(remainingPercent(130)).toBe(0);
-    expect(remainingPercent(32)).toBe(68);
-  });
-  it("keeps Config inside the Usage tab strip and includes every approved period",()=>{
-    const body=render(UsageHeader,{props:{tab:"limits",href:prefixHref("#/backends"),days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
+  it("keeps the ordinary Config address and disables the period only on Limits", () => {
+    const body = render(UsageHeader, { props: { tab: "limits", href: prefixHref("#/backends"), days: 1,
+      providerKeys: ["codex"], selectedProviders: ["codex"], busy: false, onDays: () => {}, onProviders: () => {}, onRefresh: () => {} } }).body;
     expect(body).toContain('href="#/backends/config"');
-    expect(body).not.toContain('href="#/settings/config"');
-    for(const label of ["24h","7d","30d","90d"])expect(body).toContain(label);
-    expect(body).toMatch(/href="#\/backends\/limits"[^>]*aria-current="page"/);
-    expect(body).toContain('aria-pressed="true"');
-    // The same strip embedded in the Workspace pane addresses the pane, not the page.
-    const inPane=render(UsageHeader,{props:{tab:"limits",href:(segments:string[])=>`#/workspace/utility/usage/${segments.join("/")}?view=managers`,days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
-    expect(inPane).toContain('href="#/workspace/utility/usage/cost?view=managers"');
-    expect(inPane).not.toContain('href="#/backends');
-  });
-  it("keeps the Config tab active without usage-only controls or an external marker",()=>{
-    const body=render(UsageHeader,{props:{tab:"config",href:prefixHref("#/backends"),days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
-    expect(body).toMatch(/href="#\/backends\/config"[^>]*aria-current="page"/);
-    for(const value of ["tokens","cost","limits"])expect(body).toContain(`href="#/backends/${value}"`);
-    expect(body).not.toContain("Usage period");
-    expect(body).not.toContain("provider-filter");
-    expect(body).not.toContain("data-backends-refresh");
-    expect(body).not.toContain("↗");
-  });
-  it("excludes Hermes from the Usage provider, allowance, and model collections",()=>{
-    const all=[{backend_key:"hermes",available_models:["hermes-model"]},{backend_key:"codex",available_models:["codex-model"]},{backend_key:"claude",available_models:["claude-model"]}];
-    const visible=usageBackends(all);
-    expect(visible).toEqual([all[1],all[2]]);
-    const keys=visible.map(backend=>backend.backend_key);
-    const body=render(UsageHeader,{props:{tab:"limits",href:prefixHref("#/backends"),days:1,providerKeys:keys,selectedProviders:keys,busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
-    expect(body).toContain("Codex");
-    expect(body).toContain("Claude");
-    expect(body).not.toContain("Hermes");
-    expect(all).toHaveLength(3);
+    expect(body).toContain("24h");
+    expect(body).toContain("disabled");
   });
 });
 
-describe("explicit native usage refresh",()=>{
-  it("sends only the explicit POST without browser-supplied source paths",async()=>{
-    const request=vi.fn().mockResolvedValue(new Response(JSON.stringify({sources:[]})));
-    vi.stubGlobal("fetch",request);
-    await expect(refreshRecordedUsage()).resolves.toEqual({sources:[]});
-    expect(request).toHaveBeenCalledOnce();
-    expect(request).toHaveBeenCalledWith("/api/conversation/usage/refresh",expect.objectContaining({method:"POST"}));
-    expect(request.mock.calls[0][1].body).toBeUndefined();
+describe("local usage HTTP boundary", () => {
+  it("uses exact T3 window query fields and GET-only local limits", async () => {
+    const fetch = vi.fn().mockImplementation(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    await readUsageSummary(input);
+    await readUsageLimits();
+    const url = new URL(fetch.mock.calls[0][0], "http://test.local");
+    expect(url.pathname).toBe("/api/conversation/usage/summary");
+    expect(Object.fromEntries(url.searchParams)).toEqual(input);
+    expect(fetch.mock.calls[1][0]).toBe("/api/conversation/usage/limits");
+    for (const call of fetch.mock.calls) expect(call[1]?.method ?? "GET").toBe("GET");
   });
-  it("propagates a refresh failure without inventing an empty successful reading",async()=>{
-    vi.stubGlobal("fetch",vi.fn().mockRejectedValue(new Error("offline")));
-    await expect(refreshRecordedUsage()).rejects.toThrow("network error");
+  it("still invalidates and rescans after a pricing refresh failure, in T3 order", async () => {
+    const calls: string[] = [];
+    vi.spyOn(wire, "refreshUsageRates").mockImplementation(async () => {
+      calls.push("rates");
+      throw new Error("pricing unavailable");
+    });
+    await refreshUsage(async () => { calls.push("summary"); });
+    expect(calls).toEqual(["rates", "summary"]);
   });
+
 });

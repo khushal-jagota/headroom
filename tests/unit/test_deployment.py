@@ -202,8 +202,6 @@ def test_recovery_failure_reports_every_existing_continuation_path(tmp_path: Pat
     assert (retained[0] / "new").is_file()
 
 
-
-
 def test_deployment_uses_operator_owned_interprocess_lock(tmp_path: Path) -> None:
     lock = tmp_path / "deploy.lock"
     ready = tmp_path / "ready"
@@ -279,6 +277,12 @@ def _app(
     (root / "agent_backends" / "node_modules" / ".package-lock.json").write_text(
         "{}\n", encoding="utf-8"
     )
+    from planner.environments.runtime_contracts import RuntimeContract, runtime_bytes_digest
+    inventory = b'{"native_files": []}'
+    contract = RuntimeContract("3.12.12", runtime_bytes_digest(inventory))
+    (root / "runtime").mkdir()
+    (root / "runtime/inventory.json").write_bytes(inventory)
+    (root / "runtime/contract.json").write_text(json.dumps(contract.as_dict()))
     (root / "manifest.json").write_text(
         json.dumps(
             {
@@ -286,6 +290,7 @@ def _app(
                 "app_sha": sha,
                 "source_digest": digest_app_source(root),
                 "artifact_digest": digest_app_artifact(root),
+                "runtime_contract": contract.as_dict(),
             }
         ),
         encoding="utf-8",
@@ -362,6 +367,76 @@ def test_gate_refuses_changed_proof_before_service_or_backup(
             service=FakeService(events),
             health=FakeHealth(events, {SHA_B}),
             gate_evidence=evidence,
+            before_stop=lambda: events.append("claim"),
         )
     assert events == []
     assert not list(current.glob(".app-*"))
+
+
+def test_capture_failure_never_vetoes_cutover_or_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.environments import deployment
+
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old", include_cli=False)
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    database = _database(current)
+    events: list[str] = []
+    captured_deployments: list[str] = []
+
+    def failed_capture(source: Path, deployment_id: str) -> None:
+        assert source == database
+        assert events[-1] == "stop"
+        captured_deployments.append(deployment_id)
+        raise OSError("diagnostic volume unavailable")
+
+    monkeypatch.setattr(deployment, "capture_after_stop", failed_capture)
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=database,
+        backup=_recording_backup(events, tmp_path / "snapshot"),
+        restore=lambda _: events.append("restore"),
+        service=FakeService(events),
+        health=FakeHealth(events, {SHA_A}),
+        deployment_id="operator-release",
+    )
+    assert result.status == "rolled_back"
+    assert captured_deployments == ["operator-release", "operator-release"]
+    assert events.count("stop") == 2
+    assert (current / "app" / "old").exists()
+    events.clear()
+    captured_deployments.clear()
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=database,
+        backup=_recording_backup(events, tmp_path / "snapshot"),
+        restore=lambda _: events.append("restore"),
+        service=FakeService(events),
+        health=FakeHealth(events, {SHA_B}),
+        deployment_id="operator-release-two",
+    )
+    assert result.status == "succeeded"
+    assert captured_deployments == ["operator-release-two"]
+    captured_deployments.clear()
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=database,
+        backup=_recording_backup(events, tmp_path / "snapshot"),
+        restore=lambda _: events.append("restore"),
+        service=FakeService(events),
+        health=FakeHealth(events, {SHA_B}),
+        deployment_id="unchanged-release",
+    )
+    assert result.status == "unchanged"
+    assert captured_deployments == []
+
+
+@pytest.fixture(autouse=True)
+def synthetic_runtime_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Transaction tests use shell stubs. Real admission has separate focused tests.
+    monkeypatch.setattr("planner.environments.deployment.admit_runtime", lambda *args: None)

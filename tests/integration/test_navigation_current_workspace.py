@@ -121,8 +121,8 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
     assert_prepared_rejected(path)
     with current_navigation_database(path) as conn:
         current = snapshot(conn)
-        assert current["schema_version"] == 8
-        assert current["semantics"] == "attention-knowledge-v8-manager"
+        assert current["schema_version"] == 9
+        assert current["semantics"] == "attention-knowledge-v9-review-messages"
         assert current["scope"] == old["scope"]
         assert current["epoch"] != old["epoch"]
         assert source_facts(conn)["events"] == original["source"]["events"]
@@ -130,3 +130,50 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
         assert all("priority" not in record["value"] for record in current["records"])
     with pytest.raises(ResetRequired, match="incompatible_continuity"):
         read_page(path, old_cursor, DeliveryConfig())
+
+
+@pytest.mark.parametrize(
+    ("revision", "schema_version", "projection_version"),
+    [("automatic_deployment_recovery", 8, 4), ("review_messages", 9, 5)],
+)
+def test_review_projection_upgrade_resets_old_cursors_without_granting_authority(
+    tmp_path: Path,
+    revision: str,
+    schema_version: int,
+    projection_version: int,
+) -> None:
+    """Installed older Review memberships must reset without granting current authority."""
+    path = tmp_path / "review-upgrade.db"
+    with current_navigation_database(path) as conn:
+        before = snapshot(conn)
+        conn.execute("BEGIN")
+        # Remove both empty synthetic tables before rewinding their migration marker.
+        assert conn.execute("SELECT COUNT(*) FROM ticket_application_previews").fetchone()[0] == 0
+        conn.execute("DROP TABLE ticket_application_previews")
+        assert conn.execute("SELECT COUNT(*) FROM conversation_video_uploads").fetchone()[0] == 0
+        conn.execute("DROP TABLE conversation_video_uploads")
+        conn.execute("UPDATE alembic_version SET version_num=?", (revision,))
+        conn.execute("UPDATE navigation_meta SET schema_version=?", (schema_version,))
+        conn.execute(
+            "UPDATE navigation_view_meta SET projection_version=?,ordering_generation='review-v2'",
+            (projection_version,),
+        )
+        conn.commit()
+    engine = _migration_engine(str(path), 1000)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_alembic_config(connection), "head")
+    finally:
+        engine.dispose()
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 7
+        assert conn.execute("SELECT epoch FROM navigation_meta").fetchone()[0] != before["epoch"]
+        with pytest.raises(RuntimeError, match="current schema"):
+            snapshot(conn)
+    with current_navigation_database(path) as conn:
+        assert snapshot(conn)["schema_version"] == 9
+        assert (
+            conn.execute("SELECT ordering_generation FROM navigation_view_meta")
+            .fetchone()[0]
+            .endswith("review-v4")
+        )

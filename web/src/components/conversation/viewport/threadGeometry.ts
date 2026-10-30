@@ -24,17 +24,30 @@ export type ThreadGeometry = {
   elementAtTheTopScrollTop(element: Element): number;
   answerRoomMessage(): Element | null;
   answerRoomPixels(message: Element): number;
+  baseHeight(): number;
+  gap(): number;
   sentMessageScrollTop(message: Element): number;
 };
+
+/** The browser exposes an integer scroll extent, even for fractional content. */
+export function retirementGeometry(top: number, height: number, base: number, budget: number, insetDelta = 0): { top: number; tail: number; insetDelta: number } | null {
+  const oldMaximum = Math.max(0, Math.round(base + budget) - height);
+  // An inset change near either edge can otherwise race native clamping.
+  const safeInset = top + insetDelta >= 0 && top < oldMaximum - Math.abs(insetDelta) ? insetDelta : 0;
+  const preserved = top + safeInset;
+  const targetBase = base + safeInset;
+  const tail = preserved <= Math.max(0, Math.round(targetBase) - height)
+    ? 0 : Math.max(0, Math.ceil(preserved + height) - targetBase);
+  if (tail > budget + .001) return null;
+  return { top: preserved, tail: Math.min(tail, budget), insetDelta: safeInset };
+}
 
 /** A live, read-only view of where things are in one conversation thread. */
 export function threadGeometry(
   thread: HTMLDivElement,
   reservedSpaceElement: HTMLDivElement | null
 ): ThreadGeometry {
-  /** Where the thread must be for this element to sit at the top, clear of the fade.
-   *  A message you have just sent and a request still waiting on you want the same
-   *  thing, so they ask for it the same way. */
+  /** Where a sent message sits at the top, clear of the fade. */
   function elementAtTheTopScrollTop(element: Element): number {
     return Math.max(0, topWithin(element) - SENT_MESSAGE_TOP_GAP_PIXELS);
   }
@@ -137,9 +150,7 @@ export function threadGeometry(
       const drawn = Array.from(
         thread.querySelectorAll<HTMLElement>("[data-conversation-outgoing]")
       ).find((element) => element.dataset.conversationOutgoing === messageId);
-      if (drawn !== undefined) return drawn;
-      const recorded = thread.querySelectorAll('[data-conversation-row="prompt"]');
-      return recorded[recorded.length - 1] ?? null;
+      return drawn ?? null;
     },
 
     answerRoomMessage(): Element | null {
@@ -148,15 +159,25 @@ export function threadGeometry(
       return drawn[drawn.length - 1] ?? recorded[recorded.length - 1] ?? null;
     },
 
+    gap(): number { return Number.parseFloat(getComputedStyle(thread).rowGap) || 0; },
+    baseHeight(): number {
+      const style = getComputedStyle(thread);
+      return Math.max(newestLineBottom(), Number.parseFloat(style.paddingTop) || 0)
+        + (Number.parseFloat(style.paddingBottom) || 0);
+    },
     answerRoomPixels(message: Element): number {
-      return Math.max(
+      const gap = Number.parseFloat(getComputedStyle(thread).rowGap) || 0;
+      const space = Math.max(
         0,
         Math.ceil(
           thread.clientHeight
           - (newestLineBottom() - topWithin(message))
           - SENT_MESSAGE_TOP_GAP_PIXELS
+          - NEWEST_LINE_BOTTOM_GAP_PIXELS
+          - (Number.parseFloat(getComputedStyle(thread).rowGap) || 0)
         )
       );
+      return space > 0 ? space + gap : 0;
     },
 
     elementAtTheTopScrollTop,

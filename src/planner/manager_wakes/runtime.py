@@ -8,7 +8,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from time import monotonic
 from uuid import uuid4
 
@@ -16,9 +16,11 @@ from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryMode,
     PromptDeliveryRefused,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.contracts import PrincipalKind
 from planner.core.db import connect
@@ -46,9 +48,7 @@ def reconcile_batch_outcomes(conn: sqlite3.Connection, *, now: int) -> int:
     for batch in data.batches_waiting_for_outcome(conn):
         if batch.conversation_id is None:
             continue
-        outcome = data.delivery_outcome_kind(
-            conn, batch.conversation_id, batch.sender_message_id
-        )
+        outcome = data.delivery_outcome_kind(conn, batch.conversation_id, batch.sender_message_id)
         if outcome == "prompt":
             data.close_delivered_batch(conn, batch.id, now=now)
             settled += 1
@@ -71,8 +71,7 @@ def reconcile_batch_outcomes(conn: sqlite3.Connection, *, now: int) -> int:
             )
             settled += 1
         elif (
-            outcome == "prompt_delivery_uncertain"
-            and batch.status is not WakeBatchStatus.uncertain
+            outcome == "prompt_delivery_uncertain" and batch.status is not WakeBatchStatus.uncertain
         ):
             data.record_batch_uncertain(
                 conn,
@@ -87,6 +86,27 @@ def reconcile_batch_outcomes(conn: sqlite3.Connection, *, now: int) -> int:
 
 
 async def deliver_batch(
+    batch: WakeBatch,
+    *,
+    connect_database: Callable[[], sqlite3.Connection],
+    conversation_system: ConversationSystem,
+    process_token: str,
+    now: Callable[[], int],
+) -> bool:
+    admission = getattr(conversation_system, "workspace_admission", None)
+    with admission.operation() if admission is not None else nullcontext(True) as admitted:
+        if not admitted:
+            return False
+        return await _admitted_deliver_batch(
+            batch,
+            connect_database=connect_database,
+            conversation_system=conversation_system,
+            process_token=process_token,
+            now=now,
+        )
+
+
+async def _admitted_deliver_batch(
     batch: WakeBatch,
     *,
     connect_database: Callable[[], sqlite3.Connection],
@@ -198,12 +218,16 @@ async def deliver_batch(
                         now=now(),
                     )
                     return False
+                if isinstance(delivered.fate, PromptDeliverySuppressed):
+                    # Final admission already wrote the exact discard receipt and
+                    # retired obsolete sources. Do not reinterpret it as acceptance.
+                    reconcile_batch_outcomes(conn, now=now())
+                    return False
                 if isinstance(delivered.fate, PromptDeliveryUncertain):
                     data.record_batch_uncertain(
                         conn,
                         batch.id,
-                        conversation_id=delivered.conversation_id
-                        or intended_conversation_id,
+                        conversation_id=delivered.conversation_id or intended_conversation_id,
                         process_token=process_token,
                         now=now(),
                     )
@@ -234,7 +258,9 @@ class ManagerWakeLoop:
         conversation_system: ConversationSystem,
         asyncio_loop: asyncio.AbstractEventLoop,
         busy_timeout_ms: int = 5000,
+        workspace_admission: WorkspaceAdmission | None = None,
     ) -> None:
+        self._workspace_admission = workspace_admission
         self._db_path = db_path
         self._clock = clock
         self._conversation_system = conversation_system
@@ -251,31 +277,36 @@ class ManagerWakeLoop:
         self._wake.set()
 
     def poll_once(self) -> list[int]:
-        conn = connect(self._db_path, self._busy_timeout_ms)
-        try:
-            now = self._clock.now_unix()
-            reconcile_batch_outcomes(conn, now=now)
-            data.preserve_interrupted_dispatches(
-                conn, process_token=self._process_token, now=now
-            )
-            data.recover_accepted_batches_from_other_processes(
-                conn, process_token=self._process_token, now=now
-            )
-            batches = list(data.pending_batches(conn))
-            attempted_targets = {batch.target for batch in batches}
-            while True:
-                batch = data.claim_next_batch(
+        with (
+            self._workspace_admission.operation()
+            if self._workspace_admission
+            else nullcontext(True) as admitted
+        ):
+            if not admitted:
+                return []
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            try:
+                now = self._clock.now_unix()
+                reconcile_batch_outcomes(conn, now=now)
+                data.preserve_interrupted_dispatches(
                     conn, process_token=self._process_token, now=now
                 )
-                if batch is None:
-                    break
-                if batch.target in attempted_targets:
-                    break
-                attempted_targets.add(batch.target)
-                batches.append(batch)
-        finally:
-            conn.close()
-        return [batch.id for batch in batches if self._schedule(batch)]
+                data.recover_accepted_batches_from_other_processes(
+                    conn, process_token=self._process_token, now=now
+                )
+                batches = list(data.pending_batches(conn))
+                attempted_targets = {batch.target for batch in batches}
+                while True:
+                    batch = data.claim_next_batch(conn, process_token=self._process_token, now=now)
+                    if batch is None:
+                        break
+                    if batch.target in attempted_targets:
+                        break
+                    attempted_targets.add(batch.target)
+                    batches.append(batch)
+            finally:
+                conn.close()
+            return [batch.id for batch in batches if self._schedule(batch)]
 
     def _schedule(self, batch: WakeBatch) -> bool:
         with self._in_flight_lock:

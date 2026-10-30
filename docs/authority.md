@@ -88,10 +88,43 @@ Chief, and the Manager the Ticket will sit under can state them. A Worker that s
 Ticket cannot, so the new Ticket gets its Worker type's ordinary ceiling and parks its first
 field instead of running to the end.
 
-Who holds a ceiling is an address, not a permission. A Ticket can be addressed to its own
-Worker, to a Manager, or to Khushal, and holding one grants nothing: the approval door
-asks the rule again, of whoever turns up. So the question at creation is only who may
-choose that address, and the answer is the one above.
+Who holds a ceiling is an address, not a permission. **Only Khushal or the Ticket's
+direct manager may hold its review.** Chief may hold a Chief-assigned Ticket's review;
+an ordinary Manager may hold only its own Tickets' reviews. A Ticket cannot hold a
+review. Chief's general authority to create, assign, edit and approve remains unchanged.
+For example, Chief can create a Ticket under a Manager with that Manager holding it.
+
+The caller must have authority to select a holder, and the selected holder must satisfy
+this separate review rule. Creation checks the resulting holder even when it defaults
+to the creator. An ineligible default is refused: the creator must name an eligible
+holder explicitly. Holder edits and approval's next holder take the same check. A
+combined assignment and holder edit uses the resulting assignment, even when the
+explicit holder is unchanged.
+
+The approval door still asks general authority of whoever turns up. Existing records
+remain readable; historical approvals and holders are not rewritten. A live ineligible
+holder can be repaired through an ordinary authorized holder edit. An assignment move
+without an explicit holder returns the ceiling to Khushal if the old holder no longer
+satisfies the review rule. Chief therefore loses a held review when its Ticket moves
+under an ordinary Manager, even though Chief still stands above the Ticket.
+
+## Control of schedules
+
+Schedules are owner-controlled configuration. Only the owner and Chief can create or
+explicitly edit them. The shared authority rule enforces this at the API and canonical
+actions, including enable, disable, and template edits. Schedule assignment grants no
+control to a Manager or Worker. Their direct Ticket creation rights remain unchanged.
+
+An authorized Manager Project edit also synchronizes the Project of schedules already
+assigned to that Manager. Only the Project and normal update timestamp change. This
+derived update grants no explicit schedule control. It cannot change assignment,
+cadence, enabled state, or other template fields.
+
+Due execution uses trusted scheduler authority, as described in
+[Scheduled Ticket creation](scheduled-tickets.md). The mutation checks close future
+admission. They do not certify historical schedule authorship or change existing rows
+and receipts. Retired schedules remain disable-only. There is no new grant or approval
+flow for schedule activation.
 
 ## What this is not
 
@@ -107,4 +140,4 @@ _Code paths:_ `src/planner/core/authority/` (the rule and the explicit assignmen
 
 ---
 
-_Last verified: 2026-09-21._
+_Last verified: 2026-10-28._

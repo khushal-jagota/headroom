@@ -6,11 +6,12 @@ import json
 import sqlite3
 import time
 from collections.abc import Iterator
-from contextlib import closing
+from contextlib import AsyncExitStack, ExitStack, closing
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.unit.test_db import _migration_tree_through
 
 from planner.conversation.lifecycle_storage import (
     ConversationRuntimeAlreadyOwned,
@@ -77,6 +78,8 @@ def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         "_require_no_backend_activity",
         lambda database, **options: scanner(database, proc=proc, **options),
     )
+    # The offline writer deliberately refuses later, unreviewed schema revisions.
+    _migration_tree_through(tmp_path, monkeypatch, "owner_message_preview")
     database = tmp_path / "archive.db"
     seed_archive(database)
     yield database
@@ -456,12 +459,23 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     copied = tmp_path / "post-expiry.db"
     with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
         source.backup(target)
-    harness = _Harness(copied)
-    harness.app.include_router(router, prefix=CONVERSATION_PREFIX)
-    harness.app.add_exception_handler(PlannerError, handle_planner_error)
 
     async def exercise() -> None:
-        try:
+        async with AsyncExitStack() as cleanup:
+            composition = SignalRuntimeComposition(str(copied), 1000)
+            cleanup.callback(composition.close)
+            composition.bootstrap()
+            publication_cleanup = cleanup.enter_context(ExitStack())
+            harness = _Harness(copied, signal_composition=composition, cleanup=cleanup)
+            composition.initialize()
+            attachment = composition.coordinator.attach_signal_publication(
+                install=lambda connection, snapshot: None,
+                participate=lambda connection, batch: None,
+                unavailable=lambda reason: None,
+            )
+            publication_cleanup.callback(attachment.close)
+            harness.app.include_router(router, prefix=CONVERSATION_PREFIX)
+            harness.app.add_exception_handler(PlannerError, handle_planner_error)
             async with harness.client() as client:
                 path = f"{CONVERSATION_PREFIX}/conversations/supervisor"
                 snapshot = (await client.get(path + "/view", params={"lens": "full"})).json()
@@ -499,7 +513,5 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
                         name, event = await stream.next_named_frame()
                         assert name == COMMITTED_EVENT_STREAM_NAME
                         assert event["sequence"] == sequence
-        finally:
-            await harness.runtime.shutdown()
 
     _run(exercise)

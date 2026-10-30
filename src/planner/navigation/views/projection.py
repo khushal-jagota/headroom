@@ -7,10 +7,16 @@ import sqlite3
 from typing import Any, cast
 
 from planner.navigation.contracts import SCHEMA_VERSION, NavigationRecord, RecordKey
+from planner.navigation.review import (
+    canonical_review_address,
+    review_message_items,
+)
+from planner.navigation.review_logic import message_owner_is_live
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.logic import GROUPS, compact, digest, group, project, section_key
 from planner.navigation.views.ordering import ORDERING_GENERATION, sort_key
 from planner.navigation.views.schema import prepared
+from planner.tickets.logic.review import eligible_for_owner_review
 
 Key = tuple[str, str]
 Member = tuple[str, str, str, str, str, int, bytes, bytes]
@@ -42,14 +48,14 @@ def _metadata(
     )
     attention = value["attention"] if kind == "conversation" else _attention(conn, conversation)
     current = attention and attention["current"]
-    review = (
-        kind == "ticket"
-        and value["ticket_status"] == "awaiting_approval"
-        and value["ceiling_holder"] == {"kind": "owner", "id": "owner"}
-        and all(
-            value[name] is not None
-            for name in ("gating_field", "proposal_field", "proposal_created_at")
-        )
+    review = kind == "ticket" and eligible_for_owner_review(
+        ticket_status=value["ticket_status"],
+        is_backlogged=value["is_backlogged"],
+        holder_is_owner=value["ceiling_holder"] == {"kind": "owner", "id": "owner"},
+        has_gating_field=value["gating_field"] is not None,
+        has_proposal=all(
+            value[name] is not None for name in ("proposal_field", "proposal_created_at")
+        ),
     )
     unread = (
         kind == "address"
@@ -83,6 +89,7 @@ def _members(
     result: set[Member] = set()
     parent = (str(metadata[4]), str(metadata[5]))
     attention = _attention(conn, value.get("conversation_id"))
+    messages = review_message_items(conn, ticket_id=identity) if kind == "ticket" else []
     for profile in ("current", "durable"):
         signal = (
             None
@@ -131,7 +138,9 @@ def _members(
                 add(
                     "settled" if value["settled"] else "rail_parents",
                     None,
-                    rank=int(value["created_at"]),
+                    rank=-int(value["updated_at"])
+                    if value["settled"]
+                    else int(value["created_at"]),
                     title_key=b"",
                 )
             elif kind == "ticket":
@@ -190,15 +199,35 @@ def _members(
                             8, "big"
                         ) + title
                         add("rail_tickets", parent, grouping, rank=rank, title_key=ordered_title)
-                if metadata[11]:
+                if metadata[11] or messages:
+                    waiting = [int(message["waiting_since"]) for message in messages]
+                    if metadata[11]:
+                        waiting.append(int(value["proposal_created_at"]))
                     add(
                         "review",
                         None,
-                        rank=int(value["proposal_created_at"]),
-                        title_key=b"",
+                        rank=min(waiting),
+                        title_key=b"ticket",
                         id_key=identity.encode(),
                     )
             elif kind == "address" and metadata[12]:
+                conversation_id = str(value["conversation_id"])
+                owner_value = record(conn, (value["owner_kind"], value["owner_id"]))
+                if (
+                    owner_value is not None
+                    and value["owner_kind"] != "ticket"
+                    and message_owner_is_live(value["owner_kind"], owner_value)
+                    and canonical_review_address(conn, conversation_id) == identity
+                ):
+                    conversation = record(conn, ("conversation", conversation_id))
+                    assert conversation is not None
+                    add(
+                        "review",
+                        None,
+                        rank=int(conversation["first_unread_owner_message_at"]),
+                        title_key=b"message",
+                        id_key=conversation_id.encode(),
+                    )
                 # One canonical address per owner/conversation. Preserve current-first order.
                 add("unread", None, rank=-int(value["current"]), title_key=b"")
                 owner = (str(value["owner_kind"]), str(value["owner_id"]))
@@ -290,6 +319,41 @@ def update(
                     (identity,),
                 )
             )
+    # Re-evaluate every competing address when its selected owner/address disappears.
+    # Source records are already final here; the old index preserves deleted pointers.
+    address_conversations: set[str] = set()
+    for key in affected:
+        if key[0] != "address":
+            continue
+        value = record(conn, key)
+        old_pointer = conn.execute(
+            "SELECT conversation_id FROM navigation_view_index WHERE kind=? AND id=?", key
+        ).fetchone()
+        if value:
+            address_conversations.add(str(value["conversation_id"]))
+        if old_pointer and old_pointer[0]:
+            address_conversations.add(str(old_pointer[0]))
+    for conversation_id in address_conversations:
+        affected.update(
+            ("address", str(row[0]))
+            for row in conn.execute(
+                "SELECT id FROM navigation_records WHERE kind='address' "
+                "AND json_extract(value,'$.conversation_id')=?",
+                (conversation_id,),
+            )
+        )
+    # A Ticket card depends on historical addresses as well as its current pointer.
+    # Old index rows retain owners when an address moves or disappears.
+    for key in list(affected):
+        if key[0] != "address":
+            continue
+        value = record(conn, key)
+        old_owner = conn.execute(
+            "SELECT owner_kind,owner_id FROM navigation_view_index WHERE kind=? AND id=?", key
+        ).fetchone()
+        for owner in (old_owner, (value["owner_kind"], value["owner_id"]) if value else None):
+            if owner and owner[0] == "ticket":
+                affected.add(("ticket", str(owner[1])))
     sections: set[str] = set()
     pointer_ids: set[str] = {identity for kind, identity in changed if kind == "conversation"}
     globals_changed = False
@@ -327,6 +391,10 @@ def update(
             )
         }
         new_members = set() if new is None else _members(conn, key, value, new, config)  # type: ignore[arg-type]
+        # Republish card dependencies even when a constituent leaves its rank unchanged.
+        review_section = section_key("review", None)
+        if any(member[0] == review_section for member in old_members | new_members):
+            sections.add(review_section)
         for member in old_members - new_members:
             conn.execute(
                 "DELETE FROM navigation_view_memberships WHERE section_key=? AND "
@@ -341,7 +409,7 @@ def update(
             )
             _delta(conn, "navigation_view_counts", member[:3], 1)
             sections.add(member[0])
-        for name, column in (("out_claims", 10), ("review", 11), ("settled", 13)):
+        for name, column in (("out_claims", 10), ("settled", 13)):
             difference = (new[column] if new else 0) - (old[column] if old else 0)
             _delta(conn, "navigation_view_globals", (name,), difference)
             globals_changed |= difference != 0
@@ -404,6 +472,20 @@ def update(
                 "DELETE FROM navigation_view_current_conversations WHERE conversation_id=?",
                 (identity,),
             )
+    # Review counts cards. Ordinary unread counts distinct conversations independently.
+    review_count = conn.execute(
+        "SELECT value FROM navigation_view_counts WHERE section_key=? AND profile='current' "
+        "AND locale=?",
+        (section_key("review", None), config.locales[0]),
+    ).fetchone()
+    review_total = int(review_count[0]) if review_count else 0
+    previous_review = conn.execute(
+        "SELECT value FROM navigation_view_globals WHERE name='review'"
+    ).fetchone()
+    globals_changed |= previous_review is None or previous_review[0] != review_total
+    conn.execute(
+        "INSERT OR REPLACE INTO navigation_view_globals VALUES('review',?)", (review_total,)
+    )
     conn.execute(
         "INSERT OR REPLACE INTO navigation_view_changes VALUES(?,?)",
         (

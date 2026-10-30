@@ -29,7 +29,7 @@ from planner.navigation.views.contracts import (
     ViewRequest,
     ViewSnapshot,
 )
-from planner.navigation.views.logic import compact, digest
+from planner.navigation.views.logic import compact, digest, section_key
 from planner.navigation.views.ordering import ORDERING_GENERATION
 from planner.navigation.views.read import continuity, identity, read_content, window_key
 
@@ -39,6 +39,7 @@ class Subscription:
     keys: set[tuple[str, str]]
     sections: set[str]
     event: asyncio.Event = field(default_factory=asyncio.Event)
+    review_context: bool = False
     reading: bool = True
     dirty: bool = False
     reset: bool = False
@@ -202,6 +203,8 @@ class ScopedDeliveryRuntime:
                             or (subscription.reading and bool(keys or sections))
                             or bool(subscription.keys & keys)
                             or bool(subscription.sections & sections)
+                            or subscription.review_context
+                            and any(kind == "address" for kind, _ in keys)
                         )
                         subscription.event.set()
             except (DeliveryUnavailable, RuntimeError, ValueError, sqlite3.Error):
@@ -290,7 +293,17 @@ class ScopedDeliveryRuntime:
         value: ViewRequest,
         captured: tuple[SignalAvailability, DeliveryAccess, CurrentAuthority | DegradedAuthority],
     ) -> AsyncIterator[bytes]:
-        subscription = Subscription(set(), {window_key(window) for window in value["windows"]})
+        subscription = Subscription(
+            set(),
+            {window_key(window) for window in value["windows"]},
+            review_context=bool(
+                value["review_conversation_ids"]
+                or value["review_skipped_keys"]
+                or value["review_priority_keys"]
+            ),
+        )
+        if value["review_skipped_keys"] or value["review_priority_keys"]:
+            subscription.sections.add(section_key("review", None))
         self._subscriptions.add(subscription)  # Before initial read, so a wake cannot be lost.
         closed = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -381,6 +394,8 @@ def difference(previous: ViewSnapshot, current: ViewSnapshot) -> dict[str, Any]:
         "evictions": [{"kind": kind, "id": identity} for kind, identity in old.keys() - new.keys()],
         "windows": current["content"]["windows"],
         "counts": current["content"]["counts"],
+        "review_context": current["content"]["review_context"],
+        "review_summary": current["content"]["review_summary"],
     }
 
 

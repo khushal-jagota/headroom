@@ -1,17 +1,39 @@
 # Production deployment
 
-Production runs one Git-free application as the existing UID-1000 `vps` user:
+Panels publishes checked applications separately from their installation. A push to
+`main` creates a retained release on a disposable hosted runner. An owner update
+request sends that exact release to the existing deployment runner.
+
+[Executable archive runtime](archive-runtime.md) defines the supported host contract,
+sealed target proof, and compatibility refusal before service actions.
+
+```text
+main → complete checks → build once → seal archive → smoke → disposable rehearsal
+                                                               ↓
+                                                   retained archive and proof
+                                                               ↓
+owner request → dedicated runner → stop → verified backup → replace → health
+                                                               ↓
+                                             admit work → skills → published HTTP/2
+```
+
+Production runs one Git-free application as the existing `vps` user:
 
 ```text
 ~/Deployments/Panels/current/
-├── app/     deployed executable application
-├── data/    database, managed files, configuration, deployment lifecycle, and runtime state
+├── app/     executable application
+├── data/    database, configuration, managed files, and deployment records
 └── logs/    application logs
 ```
 
-Only `app` changes during deployment. `data` and `logs` remain in place through code
-changes, failed deployments, and code rollback. Serving, deployment, rollback, backup,
-and user-service control need no sudo.
+Only `app` changes during replacement. Persistent data and logs remain in place.
+New backups contain the database and existing managed configuration roots. They
+exclude uploads and Ticket artifacts under `data/files`. See [backups](backups.md).
+
+[Owner-controlled updates](updates.md) describes the buttons, authorization,
+configuration, retained releases, and startup admission boundary.
+
+Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/`.
 
 ## Recover an older database with cancelled Tickets
 
@@ -50,426 +72,336 @@ After successful recovery, retry the upgrade and restart the service. The upgrad
 obsolete retirement fields from the remaining Tickets. It does not change their Stage,
 ordinary fields, proposals, or approval ownership.
 
-## Services and runner
+## Services and host prerequisites
 
-Linux uses systemd user services. `panels-live.service` launches the deployed app,
-`panels-deployment-runner.service` owns the dedicated GitHub Actions runner used by the
-deployment workflow, and the backup timer invokes the deployed app's backup command.
-The `vps` user controls them with `systemctl --user`.
+Linux uses systemd user services. `panels-live.service` launches the deployed app.
+`panels-deployment-runner.service` owns the dedicated GitHub Actions runner.
+The backup timer invokes the deployed application's backup command.
+The `vps` user controls them with `systemctl --user`; these operations need no sudo.
 
-On Linux, a supervisor whose launch parent is systemd accepts SIGINT and SIGTERM
-only from that verified manager. A foreign signal produces a refusal on the
-server's stderr and does not request shutdown. The diagnostic names the sender
-and gives exact-PID SIGKILL guidance. Parent or manager identity failures also
-cause refusal. The guard never silently changes to ordinary shutdown behavior.
+The installer must run outside the service it replaces. Service control refuses an
+installer in the target unit's cgroup before it can change deployment state. `nohup`
+and shell backgrounding do not leave that cgroup. Owner adoption uses a separate
+`panels-adoption-<run>-<attempt>` user unit, so stopping Panels cannot kill its installer.
 
-The operator still stops the live unit with `systemctl --user stop panels-live.service`.
-If a supervisor cannot verify that request or cannot exit,
-systemd applies the unit's stop timeout and final kill policy. Check the effective
-`TimeoutStopUSec`, `SendSIGKILL`, `FinalKillSignal`, and `KillMode` properties rather
-than assuming their defaults. The live unit's verified values on October 20, 2026
-were 90 seconds, true, 9, and `control-group`. A refused legitimate stop can
-therefore take 90 seconds before SIGKILL stops all processes in that unit.
+Development worktrees must never link dependencies into the deployed application.
+Development and verification run in independent worktrees, never in the installed tree.
+Matching lockfiles do not make a shared directory safe: test and build tools write
+caches into `node_modules`, invalidating the deployed app's integrity proof. Use a
+development-owned dependency tree. Use the guarded development commands below.
 
-The first deployment with this guard is its first test against the actual live
-service. If manager identification fails during that deployment, the stop waits
-for the unit timeout and then systemd uses SIGKILL. This failure delays shutdown.
-The guard does not prevent the replacement service from starting. The operator
-owns this first live stop check.
+The operator establishes the filesystem layout, units, runner, and private route
+before adoption. The workflow does not provision the host or change Tailscale Serve.
+It keeps these existing paths:
 
-Lifecycle tests use disposable units, isolated state, and unique process markers.
-They prove manager shutdown, visible foreign-signal refusal, and timeout
-escalation. A live-service stop check belongs to the operator. Workers never run
-that check against the service that hosts them.
+- Application root: `~/Deployments/Panels/current`.
+- Database: `current/data/planner.db`.
+- Backups: `current/data/backups`.
+- Lifecycle record: `current/data/deployment-lifecycle.json`.
+- Health: `http://127.0.0.1:8767/api/health`.
+- Managed skills: `current/data/skills`.
+- Agent homes: `~/.hermes`, `~/.codex`, and `~/.claude`.
 
-The live service receives provider secrets from protected environment files outside the
-deployment root. Voice transcription uses a mode-`0600` file at
-`~/.config/panels/panels-live.env`, loaded by a `panels-live.service` drop-in. The file
-contains `PLAN_GROQ_API_KEY` and persists when a deployment replaces `current/app`.
+Video attachment requires `ffprobe` on the host's executable path. Its absence
+refuses new video uploads without preventing ordinary application use.
+Provider secrets remain in protected service environment files outside the app.
+The existing transcription configuration uses `~/.config/panels/panels-live.env`.
+Replacing `current/app` does not replace that file.
 
-macOS retains its launchd path. Both service controllers operate in the signed-in
-user's service-manager domain, and both preserve the user's normal Hermes, Codex, and
-Claude homes.
+A systemd-launched supervisor accepts ordinary shutdown signals only from its
+verified manager. The operator stops the unit through `systemctl --user`.
+If shutdown cannot finish, the unit's stop timeout and kill policy apply.
+Check its effective timeout and kill properties before an operator recovery.
+Workers never stop the service that hosts them.
 
-## Exact commit path
+The direct operator tools retain their Linux systemd and macOS launchd controllers.
+The owner-update workflow uses the existing Linux deployment runner.
 
-A push to `main` deploys `${{ github.sha }}`. The owner-triggered workflow input accepts
-one lowercase, full 40-character SHA, including an earlier commit selected for rollback.
-Both routes use the same transaction:
+Code paths: `ops/panels-environments/`, `src/planner/environments/deployment.py`,
+`src/planner/environments/deployment.py`.
 
-```text
-workflow checkout
-        ▼
-publish Preparing for the requested SHA
-        │
-        ▼
-exact temporary checkout → prove requested HEAD
-        │
-        ▼
-observe served release → select and run related source checks
-        │
-        ▼
-build candidate once → isolated installed-launcher smoke → seal digest proof
-        │ stage candidate while production remains live
-        ▼
-stop service → create verified database + managed-files snapshot
-        │ hard cutover
-        ▼
-replace current/app → restart + prove requested SHA
-        │
-        ▼
-app healthy → require HTTP/2 from the published route
-        │
-        ▼
-reconcile managed skills into Hermes, Codex, and Claude homes
-        │
-        ▼
-publish workflow success
+## Publication checks and exact archive
 
-or stop candidate → restore snapshot + prior app → prove prior SHA
-```
+Publication uses GitHub-hosted Ubuntu, Python 3.12, and Node 22. It runs full Ruff,
+mypy, Svelte checks, typechecked Vitest, and the complete browser catalog.
+A preparation job resolves the exact requested SHA and records the complete selection.
+Unit, integration, E2E, and browser suites run on four separate hosted runners.
+The matrix lets every suite finish when another fails. Each runner checks the same
+requested SHA and selection, creates its own dependencies, and uses the same sandbox
+mounts. Integration provisions the pinned offline Hermes core and ACP prerequisite;
+E2E uses a real systemd user manager. Its runner explicitly starts the user DBus
+service and waits for manager credentials to match the system user unit's PID and UID.
+The bounded check records the initial executable lookup and DBus response in `e2e.log`;
+a readiness timeout fails the suite. No service or candidate moves between runners.
+Nested test directories participate. Documentation-only changes use the same checks.
+The requested checkout supplies its dependencies, test configuration, and source.
+The trusted workflow checkout supplies the orchestration and report validators.
 
-The self-hosted runner proves Python is at least 3.12 and Node is version 22. It builds
-under runner-temporary storage and removes that state when the job ends. The resulting
-app contains no Git metadata and carries a validated identity for the requested commit.
-Runtime validation requires both executable entrypoints: `bin/panels` is the
-root-relative interactive CLI that preserves caller context, while
-`bin/panels-launcher` is the isolated launcher for services and other managed runtime
-operations.
+The existing report checks reject empty proof, failures, and unexpected skips.
+Named paid-provider opt-ins receive no default coverage credit.
+The temporary Codex setup follows the requested source's exact CLI pin.
+It provisions no provider credentials.
 
-The workflow uses the fixed VPS contract:
+Connected checks use the existing bubblewrap shadow for deployment artifacts.
+The source, reports, and temporary tools remain reachable through explicit mounts.
+Browser entries share the existing build, static server, and Chromium process.
+Cases retain separate contexts. Their receipts bind the requested revision,
+invocation, entries, and required cases. No unisolated fallback exists.
 
-- current root: `~/Deployments/Panels/current`
-- live database: `~/Deployments/Panels/current/data/planner.db`
-- backups: `~/Deployments/Panels/current/data/backups`
-- deployment lifecycle: `~/Deployments/Panels/current/data/deployment-lifecycle.json`
-- health: loopback port 8767
-- service manager: `systemctl`
-- service: `panels-live.service`
-- managed skills: `~/Deployments/Panels/current/data/skills`
-- agent homes: `~/.hermes`, `~/.codex`, and `~/.claude`
+Each suite uploads an explicitly named artifact for the current run attempt. It
+contains the existing report, all browser evidence including hidden files, and a
+record of the source and workflow revisions, run, attempt, selection, and file hashes.
+Publication downloads each artifact separately. It checks the complete inventory,
+hashes, safe paths, and destination collisions before restoring original report paths.
+Missing reports, foreign evidence, symlinks, failed jobs, and skipped prerequisites
+fail publication. Available checked diagnostics remain in the proof artifact.
 
-The server puts the deployed app SHA in each root document and requires that document
-to revalidate. A retained installed app checks `/api/meta` without cache reuse. If the
-running SHA changes, the app offers a user-controlled page update. This path does not
-replace the push-only service worker or its subscriptions.
+The publication job runs its collection gate even after a suite fails. A failed gate
+stops Hermes setup, the baseline runtime, candidate construction, and the receipt.
+On success it repeats the report validators against the requested source catalog and
+rechecks the complete selection before building.
 
-After the app deployment succeeds, the current workflow deployment tool invokes
-`environment provision-skills` with all four paths explicitly. Using the workflow tool
-means an intentional rollback to an older app still applies the current skill-retirement
-policy. The command reconciles Panels skills into each agent home, removes explicitly
-retired Panels skills, and leaves unrelated custom skills in place. This post-deploy step
-is idempotent. If it fails after app cutover, the app remains deployed and the workflow
-reports failure; rerunning the deployment safely retries skill reconciliation.
+Publication builds the target application once. It seals `panels-app.tar.gz` before
+smoke starts. Smoke and rehearsal each extract that same archive into separate trees.
+Extraction checks the archive hash, safe paths and links, Unix modes, manifest,
+application tree, executable entrypoints, and installed Python runtime.
+Smoke checks exact-SHA health, built assets, and an initialized API with fresh state.
+It receives an explicit environment without provider credentials.
+A hosted runtime failure fails publication. It does not trigger a candidate rebuild.
 
-## Published route protocol check
+The release contains an interactive CLI and a service launcher. Their paths resolve
+relative to the application root. The executable archive contains no Git metadata.
+The proof receipt binds its source SHA, manifest digest, archive hash, schema floor,
+publication run, artifact identity, and expiry. It does not bind a future installation
+to the live SHA observed during publication.
 
-Production deployment checks the published route after `Deploy exact app`.
-`Recover private route` checks it after `Restore private HTTPS route`.
-Both workflows use `scripts/check_published_http2.py` from their control checkout.
-Recovery checks out the repository with the same pinned checkout action as deployment.
+Publication uploads one executable archive and a separate proof artifact, both with
+30-day retention. Reports include separate JUnit files, Vitest and browser receipts,
+smoke evidence, rehearsal evidence, and workflow timing observations.
+The final job duration remains available in GitHub after the last timing snapshot.
+These reports describe their own execution. Local implementation checks do not prove
+that a hosted publication or production installation succeeded.
 
-Chief must set the repository Actions variable `PANELS_PUBLISHED_ORIGIN` to
-`https://panels-vps.tail687c57.ts.net` before the production check can pass.
-The workflows pass `${{ vars.PANELS_PUBLISHED_ORIGIN }}` explicitly.
-The helper refuses an absent value, a non-HTTPS URL, credentials, or any path other than `/`.
-It has no default origin.
+Code paths: `.github/workflows/deploy.yml`, `scripts/publication_checks.py`,
+`scripts/update_publication.py`,
+`scripts/deployment_check_report.py`, `src/planner/environments/update_artifacts.py`,
+`src/planner/environments/deployment_gate.py`.
 
-The helper requests `/api/meta` with `curl --http2` and normal certificate validation.
-It ignores user curl configuration, permits no redirect, and sets connection and total
-timeouts of five and ten seconds. It reports the target, response status, and negotiated
-HTTP version. Only curl success with negotiated version exactly `2` passes.
-An HTTP/1.1 downgrade, TLS error, timeout, or unavailable curl HTTP/2 support fails the workflow.
-The status remains evidence. Existing health checks own application readiness.
-A failure after app cutover leaves the app in place and reports workflow failure through
-the deployment lifecycle finalizer.
+## Disposable rehearsal
 
-The disposable rehearsal omits this check because its VM cannot reach the published origin.
-A real published-origin HTTP/2 pass and a forced HTTP/1.1 rejection provide separate live proof.
-The rejection uses a temporary curl wrapper that replaces `--http2` with `--http1.1`.
-Chief configures the variable before that proof.
+Publication rehearses replacement on a disposable hosted VM. Manual publication also
+accepts `rehearsal: true`; this input cannot select the production runner.
+The default baseline is the pinned source
+`2c0e05cefc82de100bfc576c1a8f3eda7a931f2d`, whose schema head is
+`video_upload_ledger`. A manual rehearsal can name another distinct baseline.
+The baseline builds separately; the target still builds once.
 
-## Related checks before deployment
+The VM receives its own user service, home, ports, database, files, and lifecycle.
+It uses synthetic records and sentinel files only. Before and after evidence records
+schema revisions, the synthetic Project, and hashes for excluded uploads and artifacts.
+The rehearsal uses the existing backup, replacement, health, and recovery boundaries.
+It adds no failure-injection rehearsal or broader rollback system.
 
-Pull requests into staging and main run the complete mypy check against GitHub's
-proposed merge commit. The check also runs for draft pull requests and pull requests
-that change their target branch.
-It uses a fresh Python 3.12 environment and this tree's pinned dependencies on a hosted
-Ubuntu runner. It receives no service credentials and uses no production state.
-The logs record the checked revision, tree, and event base and head revisions.
+Hosted prerequisites include bubblewrap, FFmpeg, a systemd user manager, and browser
+runtime dependencies. Offline Hermes packaging uses its pinned core and ACP package
+in a separate temporary interpreter. It enables no paid-provider tests.
+Cleanup removes the temporary service, worktrees, interpreters, and state after
+proof collection. The published-route HTTP/2 check stays outside this private VM.
 
-This pre-merge check covers types only. Ruff, pytest, Svelte, Vitest, and browser checks
-remain release-only in GitHub Actions. A type pass does not prove release readiness.
-Before those checks move before merge, decide the runner, browser prerequisites,
-coverage selection, and sandbox isolation. The deployment gate needs its served baseline
-and isolated browser setup. A pull request cannot assume that production context.
-Agents still run focused checks before a push. Staging pushes do not start a suite workflow.
-
-Repository enforcement is a separate owner action. Until the owner activates the required
-check for both branches, a failed type check does not prevent merge. The settings request
-must use the exact context and app identity from a real pull request check. Its intended
-job name is `mypy (merged tree)`. A new commit on the target branch alone does not start this
-workflow. After the owner enables strict freshness, an advanced target requires an update
-to the pull request head and a fresh check of the proposed merge commit.
-The request adds no bypass actors or extra approval requirement.
-
-If a required check never arrives or prevents a repair, the owner must change the
-repository ruleset through GitHub Settings, Rules, Rulesets. Correct its check context
-or temporarily remove that required check, merge the repair, and restore the checked rule.
-Without bypass actors, a Worker cannot override that requirement through a merge.
-Existing protections must remain effective during recovery.
-
-Code path: `.github/workflows/typecheck.yml`.
-
-Deployment runs related checks before any app transaction.
-The current workflow revision supplies control tooling. The requested checkout supplies
-its own editable Python environment, pinned dependencies, source, and test configuration.
-Both Node lockfiles supply build prerequisites. A rollback uses these same boundaries.
-
-Before checks, the gate records the installed manifest and exact health response. A
-baseline is trustworthy only when the manifest and `/api/health?expected_sha=<SHA>`
-agree. The selector compares that served commit with the requested commit across the
-whole release. Deleted and renamed paths, changed tests, accumulated releases, and
-rollback all affect selection. The checked-in domain map expands related coverage into
-explicit existing test files and browser hosts. Default scheduling API/CLI checks and
-HTTP authority checks remain required for their affected domains.
-
-An unavailable baseline, shared or unknown path, or change to selection/dependencies
-selects broad default coverage. Missing mapped historical coverage broadens or stops.
-Documentation-only and empty diffs omit source suites but still require candidate proof.
-The selection records its control revision, requested SHA, baseline, paths, and reasons.
-
-Ruff, mypy, three separate pytest processes, Svelte checks, and typechecked Vitest
-run as separate checks. Selected browser entries share one multi-entry Vite build,
-static server, and Chromium process. Independent cases retain fresh contexts. Check steps report
-failures even when another check fails. Missing tools, empty selected collection, and
-unexpected required skips fail the gate. Seven named paid-provider opt-ins remain visible
-without default coverage credit. No provider opt-in is enabled by this workflow.
-Before pytest, the workflow resolves the exact Codex CLI pin from the requested source's
-installed Python package. It checks PATH and the user's local CLI, then installs that
-exact npm version into run-temporary tools only if neither matches. It logs the required
-version, selected executable and actual version, publishes its directory through
-`GITHUB_PATH`, and verifies it again before every selected pytest suite. No credentials
-are provisioned and provider opt-ins stay disabled. Rollbacks read the requested source's
-pin while using the current workflow's setup helper.
-
-The required bwrap mount redirects deployment artifacts into temporary storage for
-E2E and Node browser hosts. The source, dedicated report directory, and temporary Codex
-tools are rebound after that shadow mount. Thus a runner directory nested beneath the
-deployment path still writes the E2E report to the same host-visible file that the
-strict report checker reads. There is no unisolated fallback.
-
-After source checks pass, the workflow builds one exact candidate. Its installed launcher
-starts with fresh state, dispatch disabled, and no provider credentials. Smoke checks
-prove exact-SHA health, the root document and its built assets, and an initialized API
-read. The smoke process and state are removed on exit. The gate revalidates candidate
-bytes and records their digest with the served-base observation.
-
-The deployment transaction requires this evidence. Under its lock it rechecks the
-requested SHA, artifact digest, and exact baseline observations. It also checks copied
-candidate bytes against the pinned digest before service stop or installation. A
-changed baseline or candidate refuses deployment before production mutation, including
-first-install and same-SHA paths. Existing backup and recovery behavior remains in place.
-
-The workflow removes temporary source, environments, candidates, gate reports, and
-artifact shadows on every outcome. The lifecycle finalizer reports failures from checks,
-selection, build, smoke, cutover, or provisioning through the existing record.
-
-Repository landing on staging does not activate a changed production workflow. The
-owner must merge the reviewed revision to main. No production dispatch is required to
-review these checks. Any required-check setting must retain effective protection until
-the replacement is available. Production deployment and restart remain owner actions.
-
-
-### Shared browser selection and receipts
-
-`npm --prefix web run test:browser -- workspace` runs one selected entry. Omit the entry
-name to run the eight-entry catalog. Multiple entry names share one Vite build, HTTP
-server, and Chromium process. Each case retains its own context and network fixtures.
-The catalog lives in `web/tests/browser/catalog.json`.
-
-The deploy selector reads capability from the tracked requested-source catalog. It
-runs all selected entries in one invocation. The control checkout validates that
-invocation's receipt against the requested-source catalog and exact revision. Missing
-entries, duplicate identities, absent cases, empty proof, skips, and failures refuse
-release admission. A receipt from another revision or invocation also refuses admission.
-Workspace motion additionally requires the Node projection cases and the compiler for
-the TypeScript test project. A successful browser process cannot replace that proof.
-
-Rollback source without the catalog retains the original independent commands and exit
-checks. That older format has no per-case receipt obligation. A source that declares the
-new catalog never falls back after a missing, malformed, or failed receipt. An old
-control checkout discovers the new entry wrappers through its existing file inventory.
-The retained direct rail alias can repeat workspace under old control. This is a
-compatibility cost, not a ninth catalog entry.
-
-Unknown impact and a missing selector map broaden to all default suites. Invalid
-catalog declarations refuse admission. Required local tools, including bubblewrap for
-browser selections, remain mandatory. Only the exact provider opt-in skip allowlist
-excludes paid proof. Gate changes require the disposable hosted rehearsal before
-integration into the release branch.
-
-The integration bootstrap case remains. It runs the requested revision's builder
-with real dependencies and checks its installed result. The release gate uses the
-control revision's builder. These can differ during rollback, so the actual candidate
-smoke does not replace that source-builder proof.
-
-
-## Disposable workflow rehearsal
-
-The same `Deploy exact commit` workflow accepts `rehearsal: true` on manual dispatch.
-Supply `commit_sha` and an explicit known-good `baseline_sha`; both are full SHAs and
-must differ. The rehearsal runs on a fresh GitHub-hosted Ubuntu VM with its own
-concurrency group. Production runs remain on the dedicated self-hosted runner and only
-accept the workflow control revision from `main`.
-
-The hosted setup installs Python 3.12, Node 22, Chromium's runtime dependencies,
-bubblewrap, FFmpeg, and a real systemd user manager and bus. The required offline Hermes
-extension-packaging checks use a separate interpreter in the runner's home, provisioned
-from official `NousResearch/hermes-agent` revision
-`76d832d3857551a029c4b39c23945eb47c16fe5b` (Hermes 0.20.0), with only its core and ACP
-extra. This matches the deployed Hermes source used to validate that packaging boundary;
-it enables no provider tests and receives no credentials. Installation logs and the exact
-revision are retained with the rehearsal proof, and cleanup removes that interpreter.
-This test prerequisite is separate from the disposable app's private agent homes. It creates a unique user service,
-available loopback port, private home, fresh database with dispatch disabled, backup
-root and agent homes. No production secrets or private-network access are used.
-Temporary paths deliberately sit below `/home/vps/Deployments/Panels` to exercise the
-report-shadow collision rather than avoid it.
-
-The setup builds and serves the exact baseline app before observation and selection.
-The normal source checks, candidate build, installed-launcher smoke, digest evidence,
-`app-deploy`, real backup/replacement and exact-SHA health checks, and skill provisioning
-then run against those disposable paths. They use the same fail-closed gates as
-production. An unchanged baseline/candidate pair is refused so the rehearsal proves
-replacement and backup rather than only the same-SHA fast path.
-
-On every outcome, the workflow first finalizes the lifecycle and collects reports,
-gate evidence, baseline and final health, deployed manifest, backup metadata, service
-unit and logs into an Actions artifact. It then stops and removes the temporary service
-and removes worktrees and temporary state. The artifact remains available after the VM
-is discarded. Production runs do not upload deployment data.
-
-## Test admission and coordinated guidance
-
-`PRINCIPLES.md` holds the standing admission policy. `AGENTS.md` references it during
-existing plan and implementation review. The operational paragraph also lives in the
-managed `panels-worker-coding` skill and its repository fresh-install seed at
-`src/planner/skills/panels-worker-coding/SKILL.md`.
-
-Chief confirmed the live rule at 02:13:38Z. Coding Workers read it on their next step,
-without a service deployment. Repository policy applies when checkout agents use the
-revision that contains it. The seed supplies fresh installations. Provisioning copies
-the database-managed rule outward to agent homes and does not replace it from the seed.
-Future revisions must supply Chief exact corresponding wording for the live skill,
-`PRINCIPLES.md`, and the seed, plus the `AGENTS.md` reference. These are coordinated
-revision destinations. Repository edits do not authorize managed-store writes.
-
-The prior instructions required focused execution, material E2E risk, cheapest faithful
-layers, and small connected proofs. They did not require every added test to name its
-incremental coverage gap, reuse hosts, replace duplicate matrices, or record connected
-cost. That gap permits individually justified tests to repeat existing proof. It does
-not establish the cause of all historical growth. Existing review now checks admission
-against the suite cut's retained proofs and intentional retirements.
-
-The cut at `f9849945` is the comparison baseline: 22 E2E cases and 20 frontend hosts.
-Its reported combined browser time changed from 516.9 to 356.6 seconds (160.3 seconds,
-31.0%) in one comparison. The earlier result included three failures. Its coverage
-ledger records replacements and intentional retirements. This deployment change adds
-no browser host or browser E2E case. New checks must document distinct risks and costs
-under the admission policy.
-
-Coverage savings and runner capacity remain separate evidence. Related suites run during
-deployment. The separate pull request workflow checks the complete proposed tree with
-mypy only. No rolling-run capacity setting exists. Main workflow activation remains
-separate from staging landing.
-
-## Deployment status evidence
-
-The runner owns one small versioned lifecycle file in persistent `current/data`.
-Checkout is the unavoidable bootstrap because it supplies the canonical stdlib-only
-writer. Immediately after checkout, the workflow reads the current deployment ID and
-starts the new record before proving or building the requested source. A checkout
-failure and a requested value that is not a lowercase full SHA therefore cannot be
-recorded; later Git proof, runtime, build, deployment, and provisioning failures can.
-The app-deploy transaction advances the same deployment ID
-through restart, exact-SHA verification, app health, and rollback. The workflow records
-success only after app deployment, the published HTTP/2 check, and production skill
-provisioning complete. Its finalizer turns interrupted work into a public-safe failure
-and does not overwrite a proved rollback.
-
-Writes are serialized beside the record. Starting a run compares the deployment ID the
-runner read—including an explicit expectation that no readable ID existed—with the ID
-observed while holding the write lock. Transitions compare their own deployment ID.
-A stale runner therefore cannot overwrite a newer deployment. Each bounded JSON record is written
-to a same-directory temporary file, synced, atomically replaced, and followed by a
-directory sync. Panels rejects links, non-regular files, oversized files, unsupported
-versions, malformed fields, and invalid SHAs rather than guessing.
-
-`GET /api/deployment-status` projects that evidence into `idle`, `preparing`,
-`restarting`, `back_up`, `problem`, or `unknown`. Preparation and restart evidence
-expires if the runner disappears. A proved success appears as `back_up` only briefly
-and only when the running app SHA exactly matches the requested SHA. Failure and
-rollback remain problems until a later deployment supersedes them. The server watches
-the lifecycle path and sends the existing contentless change signal after create,
-replace, change, or deletion, so connected browsers re-read the canonical file.
-
-An app deployed before this lifecycle feature cannot expose the new status endpoints or
-observe runner updates while that old app is serving. The current workflow tool and
-finalizer still record the rollback durably. The status becomes visible again when a
-compatible app is restored or deployed; this is the bootstrap limitation when crossing
-the feature boundary.
+Code paths: `scripts/deployment_rehearsal.py`, `.github/workflows/deploy.yml`.
 
 ## Replacement and recovery
 
-Deployment is serialized. It fully stages and validates the candidate while production
-remains live, then stops the service and runs the deployed application's
-`backup-current` command. That command publishes a verified snapshot containing both
-the database and managed files. Deployment then retains the prior app as a temporary
-fallback, installs the candidate at `current/app`, restarts Panels, and requires health
-to report the requested commit.
+The deployment runner downloads the pinned archive and proof. It does not rebuild
+the target or rerun publication suites. It validates retained identity and schema
+ancestry before downtime. The existing deployment lock serializes installation.
+Current-root, candidate, snapshot, and final request admission checks still apply.
+Legacy direct operator tools retain their observation-bound gate evidence.
 
-Each health proof gets 300 seconds after the service restart command returns.
-The live service uses `Type=simple`, so its first schema migration and remaining
-application startup share this window. Build and backup time precede it.
-The workspace projection upgrade measured 98.3 seconds on a production-size copy.
-With approximately 14 seconds for remaining startup, the estimated margin is 187.7
-seconds. This is an estimate from separate observations, not an end-to-end deployment
-measurement. The explicit deployment timeout parameter still overrides the default.
-Exact-SHA readiness and verified rollback requirements remain unchanged.
+The runner stages the candidate while production remains live. It then stops old
+service writers and creates a verified database and configuration snapshot.
+Only after that snapshot succeeds does it retain the prior app and replace `app`.
+Uploads and Ticket artifacts stay outside this snapshot and replacement path.
+Legacy snapshots can contain additional roots; their recorded restore contract remains.
 
-The workflow's control checkout supplies this budget. Deployments controlled by an
-older checkout retain that checkout's budget even when the candidate is newer.
-The separate 45-second installed-candidate smoke check uses fresh state. It does not
-measure migration of the production archive.
+The candidate starts with health and status available while ordinary work stays closed.
+Startup migrations and controlled initialization remain allowed. Normal HTTP and CLI
+work, conversation recovery, background dispatch, tail writers, and cleanup wait for
+the matching runner commit. See [startup admission](updates.md#startup-admission-and-runner-loss).
 
-Every candidate, including its staged copy, must contain the complete current runtime
-and both executable entrypoints. The existing app still receives manifest, artifact,
-and safe-tree validation, but it may predate the interactive `bin/panels` entrypoint.
-This allows an intact older production app to upgrade while still rejecting a tampered
-one before downtime, backup, restart, or filesystem replacement begins.
+Each requested-app and prior-app health proof receives the existing 300-second budget
+after the service restart command returns. The separate installed smoke budget is
+45 seconds with fresh state. Neither budget promises a maximum outage.
 
-If replacement, restart, or health proof fails, deployment stops the candidate, restores
-the verified database-and-files snapshot, restores the fallback app, restarts it, and
-proves the prior SHA healthy. If recovery cannot be completed and proved, the error
-reports the exact retained filesystem paths for operator continuation. A successful
-transaction removes the fallback.
+Before local commit, replacement or health failure uses the existing recovery path:
+stop candidate, restore the verified snapshot and fallback app, restart, and prove
+the prior SHA. Restore occurs only while normal candidate work remains closed.
+A failed recovery reports retained paths for explicit operator continuation.
+The runner never reports an unproved recovery as success.
 
-Code rollback uses the same workflow with an earlier full SHA. Because database
-migrations may be destructive, automatic failure recovery restores the pre-cutover
-snapshot; a later intentional rollback deploy does not independently rewind data.
+After local commit, normal work opens. Later lifecycle, skill, or HTTP/2 failures
+report the installed SHA and incomplete workflow. They never restore the database.
+An intentional later code rollback does not independently rewind database contents.
+The update workflow accepts retained, pinned publications through an owner request.
+It does not expose an arbitrary-SHA rollback button.
 
-## Existing-host precondition
+Code paths: `src/planner/environments/deployment.py`,
+`src/planner/environments/update_runner.py`, `src/planner/environments/backup.py`.
 
-The operator must establish the single-user filesystem layout, user units, runner, and
-persistent paths before enabling automatic deployment. Repository deployment does not
-perform that host setup or change the existing Tailscale Serve route.
+## Lifecycle and post-health checks
 
-Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
-`src/planner/environments/deployment.py`,
-`src/planner/environments/deployment_lifecycle.py`,
-`src/planner/environments/cli.py`, and `src/planner/skill_sources.py`.
+The runner owns a versioned lifecycle file outside the application replacement tree.
+Its deployment identity prevents an old runner from overwriting a newer record.
+Atomic writes and a lock protect the record. Status reads do not grant permission
+to restart, restore, or admit work.
+
+The local commit records application health. Skill reconciliation and published-route
+HTTP/2 follow that commit. Workflow success requires those post-health steps.
+An always-run finalizer records success or failure with the actual serving SHA.
+It preserves a proved rollback. If finalization itself fails, the saved evidence
+remains authoritative and the workflow reports failure.
+
+The application observes the lifecycle file through the existing change signal.
+Fresh success produces a brief deployment confirmation. A changed app SHA offers
+an explicit browser refresh. It does not replace the push service worker.
+Expired unfinished evidence requires operator review; expiry never opens startup work.
+
+The publication rehearsal retains its existing foreground command supervisor and
+renewal receipts after lifecycle activation. The adoption runner owns its local
+transaction and finalization. If that runner disappears, see the explicit recovery
+limits in [owner-controlled updates](updates.md#startup-admission-and-runner-loss).
+
+Code paths: `src/planner/environments/deployment_lifecycle.py`,
+`scripts/deployment_progress.py`, `.github/workflows/deploy.yml`.
+
+## Published route protocol check
+
+After local adoption and skill reconciliation, the workflow checks the published route.
+The operator sets the repository Actions variable `PANELS_PUBLISHED_ORIGIN` to the
+private HTTPS origin. The helper has no default. It rejects absent values,
+credentials, non-HTTPS URLs, and paths other than `/`.
+
+The helper requests `/api/meta` with `curl --http2`, normal certificate validation,
+no redirects, and bounded connection and total timeouts. Only negotiated HTTP/2 passes.
+The application health check remains separate. A post-commit route failure leaves the
+locally healthy app installed and records an incomplete deployment.
+The private-route recovery workflow uses the same helper.
+
+Code paths: `scripts/check_published_http2.py`, `.github/workflows/deploy.yml`,
+`.github/workflows/recover-private-route.yml`.
+
+## Interrupted agent sessions
+
+The existing read-only helper captures unresolved turns after a replacement or
+recovery stop. Its bounded capture does not initialize or migrate the stopped database.
+Capture failure leaves the ordinary backup, health, and recovery checks intact.
+Missing evidence never means that no turns stopped.
+
+Interruption evidence stays outside the application and snapshot restore set.
+After runtime admission, eligible interrupted conversations use the ordinary send path.
+Durable delivery intents prevent automatic replay of an uncertain send.
+[The conversation system](conversation-system.md#sessions-that-a-deploy-ends) owns the
+warning, admission rules, and visible failure records.
+
+Code paths: `src/planner/environments/`, `src/planner/conversation/`.
+
+## Pull request checks and operator authority
+
+### Development dependency safety
+
+Run setup from a new worktree with Python 3.12 or newer and Node 22 available:
+
+```sh
+scripts/dev setup
+scripts/dev npm --prefix web ci
+scripts/dev npm --prefix agent_backends ci
+scripts/dev npm --prefix web run check
+scripts/dev pytest tests/unit/test_instrument.py
+scripts/dev mypy scripts/tree_environment.py
+scripts/dev python -m pytest tests/unit/test_instrument.py
+scripts/dev .venv/bin/pytest tests/unit/test_instrument.py
+```
+
+Use a clean development shell. If `PYTHONPATH` or `PYTHONHOME` points into a deployed
+runtime, remove that lookup before setup:
+
+```sh
+env -u PYTHONPATH -u PYTHONHOME scripts/dev setup
+```
+
+Use the same clean environment for later commands. This removes the shared lookup
+path, and the guard still checks the resulting dependencies.
+
+The launcher checks dependency storage before npm, pytest, or mypy starts.
+Setup requires absent `.venv` and package dependency directories. It refuses existing
+destinations without deleting them. It installs the pinned requirements, an editable
+Python package, and both Node dependency trees.
+Supported npm commands cover install, ci, and registered scripts for `web/` and
+`agent_backends/`. Python commands use the worktree's virtualenv. Console and
+`python -m` forms receive the same check. Setup creates independent dependencies
+and uses a path-only editable Python installation.
+
+The check compares resolved paths, filesystem identities, and Linux mount mappings.
+It examines nested links and Python package paths. The normal protected root comes
+from the account home and `Deployments/Panels/current`. Explicit deployment context
+adds protected roots. It never replaces that normal root.
+
+A refusal distinguishes detected sharing from unavailable safety evidence.
+It names the command, examined path, resolved path, protected path, and signal.
+Mount evidence includes the device, mount point, and backing path. Missing evidence
+includes the operation that failed and its reason. Preserve this diagnostic for repair.
+
+If storage sharing is real, create a fresh worktree and run `scripts/dev setup` there.
+Preserve the suspect dependencies until their links or mounts receive deliberate repair.
+Never delete dependencies through an unresolved link or mount.
+
+If independent dependencies receive a false refusal, fix the detector and add a
+regression check. Do not restructure valid dependencies around the detector error.
+If evidence is unavailable, restore it or fix its acquisition before retry.
+No flag, environment variable, or approval disables these checks.
+
+Every web script also checks before its dependency executable starts. Native pytest
+and mypy hooks check before existing environment identity and dependency-pin checks.
+Those hooks run after the tool starts, so they cannot replace the launcher's earlier check.
+Ruff and arbitrary direct Python or Node commands remain outside this coverage.
+
+Direct commands outside guarded entry points can still use shared dependencies and
+write into the deployed application. General prevention remains uncommissioned.
+No other Ticket closes that gap. Startup checks do not provide race-free filesystem
+containment or containment of arbitrary startup code. They do not contain a process
+that is already running and cannot prevent a write after the check.
+General cache writes, Ruff, and other direct tools remain uncommissioned gaps.
+
+The artifact digest detects damage after a write. It does not prevent the write.
+These checks do not add cache exclusions or change the digest rules.
+If a write reaches the installed tree, report it and leave it in place.
+Do not clean the installed tree to make an installation proceed. Preserve the evidence.
+
+Review or merge does not install these checks. Establish installed enforcement from
+the deployed revision separately from source checks and environment admission.
+
+The focused dependency safety workflow checks the proposed merge on an `ubuntu-24.04`
+hosted runner. It records environment evidence, admits independent dependencies, and
+checks refusal with disposable aliases, including a real bind mount. An unavailable
+mount namespace fails that proof. Host evidence and hosted evidence remain separate.
+Neither result proves installed enforcement. The check starts no browser or server.
+
+Code paths: `scripts/dev`, `scripts/development_safety/`,
+`.github/workflows/dependency-safety.yml`.
+
+### Release checks
+
+The separate pull request workflow checks the complete proposed merge tree with mypy.
+It does not replace publication checks. Focused local checks still follow each change.
+Follow the branch and merge procedure in `AGENTS.md`. Publication workflow changes
+reach the active release path only after their reviewed revision reaches `main`.
+
+Host setup, protected credentials, service control, and production adoption remain
+operator actions or the explicitly authorized owner-request runner path.
+Workers receive no dispatch credential or authorized restart operation.
+
+Code paths: `.github/workflows/typecheck.yml`, `AGENTS.md`.
 
 ---
 
-_Last verified: 2026-10-18 (local gate implementation; main activation remains separate)._
+_Last verified: 2026-10-28 against source. No hosted publication or production adoption claimed._

@@ -22,18 +22,40 @@ One screen per part of the system:
 
 - **Removed calendar screens** — Day and date-range Sprint screens no longer exist.
   Old dated links use the unavailable-route view. A bare former Home address opens Chief.
-- **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
-  walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
-  Proposal items add their labelled recap, ask, approval, and send-back controls.
-  A proposal routed to a Manager also creates a durable manager wake. Other
-  non-owner holders inspect canonical Ticket state through the normal Chief and Ticket views.
-  Keyboard shortcuts drive the actions that apply to the current item when the
-  cursor is not in a text field, and each item fades in as it arrives. A proposal's
-  approve button sends the next ceiling and owner holder together. Send-back
-  stores the owner's exact attributed comment for the next worker-step prompt while
-  clearing the proposal and returning the Ticket to its resting control status.
-  A reply in the Ticket conversation leaves the proposal in
-  Review until a decision.
+- **Review** — one oldest-first queue holds owner-addressed proposals and eligible unread conversations.
+  A Ticket gets one card with its proposal and unread conversation sections. Each card counts once.
+  Manager and Chief conversation cards keep their existing identities.
+  Ticket messages qualify while the Ticket is neither done nor backlogged.
+  Manager messages qualify while that Manager is not settled. Chief always remains live.
+  A settled Manager does not exclude its live Tickets. Each Ticket uses its own state.
+  Proposal eligibility stays unchanged. Ordinary unread discovery still includes excluded Review messages.
+  A live Worker's progress messages remain eligible, even while the Worker continues work.
+  Existing messages use their owner's current state. State reversals restore eligible rows.
+  Each Ticket card takes the earliest timestamp among its proposal and unread conversations.
+  This deliberately moves a new proposal to its older unread message's queue position.
+  Grouping happens before pagination and counts. Proposal identity retains its original timestamp and revision.
+  One Ticket title and recap introduce its proposal and conversation sections.
+  Each conversation keeps its exact address and complete unread run. Mini bars separate messages.
+  Linked artifacts appear where the message links them.
+  The reply field holds paperclip, microphone, and send controls. Mark read sits below it.
+  Opening Review does not acknowledge a message. Mark read or an accepted reply clears only
+  the messages displayed when the owner acts. Later messages remain unread.
+  A failed reply keeps its words and attachments. An uncertain send retains its identity until its recorded outcome resolves it.
+  Drafts survive Skip and navigation refresh. Historical replies retain the existing refusal guard and draft.
+  Open conversation names the exact conversation. Approval and send-back act only on the proposal.
+  Each action leaves the card's other pending parts intact.
+  Other proposal controls, keyboard shortcuts, and approval routing retain their existing behavior.
+  When the queue ends, Review shows the Settled final screen and the existing reply input for Chief.
+  This screen stays in place after a send or an arrival, even with no draft.
+  New work changes the status to the current count of items that await review.
+  Skip postpones a card for this visit. The final screen counts only skipped cards that still await review.
+  If only skipped cards remain, the return control says Back to skipped items. Otherwise it says Back to review.
+  Return starts a fresh pass: new cards come first, then previously skipped cards, across every page.
+  A failed return keeps the final screen and Chief draft. If the accumulated skip history exceeds the request limit,
+  Review shows that refusal on the final screen and retains the complete history and Chief draft. It does not retry automatically.
+  A fresh visit starts the normal queue order.
+  The return action uses the existing Approve style when work waits and the quiet Mark read style at zero.
+  The Chief form sends through the normal Chief endpoint. It never loads a transcript or advances a read watermark.
 - **Workspace** — an adjustable rail of manager cards beside the selected conversation
   or Worker. Chief leads, keeps its portrait, and never settles. Ordinary managers
   have Project and Settle above the title. Only the owner settles or reopens one.
@@ -44,8 +66,10 @@ One screen per part of the system:
   Awaiting an agent's approval, then Other. Other is the sidebar name for the shared Empty
   group. Done, Backlog, and Blocked stay outside this list, even if they carry
   attention facts. Unread alone does not change a row’s category, order, or tone.
-  The rail omits the Messages group. The sidebar preserves all facts, global unread
-  discovery, and the shared classifier on other surfaces.
+  The rail and complete Manager and Chief pages use one work grouping rule and initial
+  ticket order. Classification ignores unread replies; original records and unread
+  counts remain intact. The sidebar applies its own exclusions before grouping.
+  Global Messages keeps its separate reply classification and discovery.
 
   Attention rows are bright. Ongoing rows and their working spinners are dim.
   Unread message dots stay bright and take precedence over working spinners.
@@ -88,20 +112,41 @@ One screen per part of the system:
   stage stay visible. Dense list rows retain their concise recap preview.
 
   The recessed recap also holds the ask for a fresh one, under the line it replaces.
-  Pressing it empties that line, so the popup closes the space and the agent's working
-  mark is what says a new recap is coming. Where there is no room for a recap at all,
-  only the ask remains.
+  Pressing it empties that line. While a fine pointer rests on the panel, the recap
+  space retains its largest height for that visit. A shorter reply leaves empty space.
+  A taller reply grows the space. The floor survives the animation's 260 millisecond
+  settle and releases on pointer exit, panel closure, or a change of target.
+  The next visit starts from the current content. Keyboard focus and touch alone do
+  not hold the height. Other recap surfaces retain their ordinary resize animation.
+  The agent's working mark says that a new recap is coming. Where there is no room
+  for a recap at all, only the ask remains.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group
-  moves take 360–560 milliseconds according to distance. A new row opens space before
+  moves without a card size change take 360–560 milliseconds according to distance. A new row opens space before
   its fade. An exit fades before its space closes. Each moving surface uses its effective
   background before motion starts. Its opaque edge uses the surrounding background,
   so an active row keeps its shape. Selected cards keep their accent border through motion.
   The travelling row and its card stay above their neighbors. Row and spinner colors blend
   across group changes. Structural updates wait while a pointer rests on a Worker row.
   Exact conversation signals and their conversation IDs stay live during that wait.
+  Each card sits in a nonvisual slot. When a surviving card changes height, its slot
+  reserves the final space. The real card border and neighboring positions share one
+  340 millisecond beat, including header changes without new Workers. Text keeps its
+  natural size, and rows travel without clipping. Temporary heights clear after the
+  beat, cancellation, reduced motion, or controller disposal.
   Updates stay serial and retain the latest pending answer. Reduced motion stops CSS
   animation and scripted travel, including travel already in progress.
+
+  Active rail pages restore a visible row only after an explicit page request.
+  The requested cursor, direction, and anchor stay with that request. Publication
+  identity and window metadata travel with the displayed rows through the motion queue.
+  Restoration waits for that rendered page and checks its displayed membership.
+  It runs before the controller measures final geometry, without a later restore callback.
+  When parent and card requests share a scroller, an eligible parent goes first.
+  The card retains its request for the next measured phase. Missing anchors retire
+  their requests. Scripted restoration resets every action's scroll baseline.
+  Ordinary rail updates do not restore scroll. Native wheel, touch, and keyboard
+  navigation remain available. Settled and ManagerChildren keep their existing policy.
 
   The rail defaults to `clamp(17rem, 22vw, 20rem)`. Its edge resizes from 232 to 520
   pixels with a pointer or arrow keys. Double click resets it. The preference persists
@@ -112,9 +157,14 @@ One screen per part of the system:
   upward within half the space above those controls. Its header stays visible while
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
+  Both lists scroll vertically only. Long Settled titles and rail project labels wrap
+  within their available width, with room for the Reopen and Settle controls.
   Manual fold toggles respond immediately, independently of queued rail updates. Height,
   chevron, and body fade share one 340 millisecond beat. Late rows mount directly without
-  another arrival animation. Closing returns focus to the header when necessary.
+  another row arrival animation. The section resizes from its visible height when those
+  rows arrive, even after the original fold beat ends. A content refresh retargets that
+  resize to the new height within the existing cap. Each resize uses the same 340
+  millisecond timing and easing. Closing returns focus to the header when necessary.
   Reduced motion skips that beat. Settle/Reopen retains its separate row choreography.
 
   Settling fades the active card and its rows out over 160 milliseconds before
@@ -123,8 +173,15 @@ One screen per part of the system:
   first, then its Workers. Layout changes share the existing 340 millisecond
   space adjustment. A closed Settled section stays closed and its count crossfades.
   Manual fold requests bypass that structural queue. Coherent settled page updates
-  do not restart the fold animation. The latest manual choice wins during rapid reversal.
+  do not restart the chevron or body fade. The latest manual choice wins during rapid reversal.
 
+  Manager and Chief pages give Tickets blocked by dependencies or by their status a distinct
+  Blocked header.
+  Backlog and owner approval, answer, and assignment retain precedence; Blocked wins
+  over worker errors, ongoing work, and closeout fallback. A dependency can block an
+  Agent Ticket even while its conversation is idle. Removing the dependency restores
+  ordinary grouping unless its status still says blocked. Blocked keeps its existing
+  group order before Done. Group collapse choices remain presentation rules.
   Manager pages show active groups first, then Backlogged and Done headers.
   Backlogged contains unfinished deferred Tickets. Done contains every completed Ticket,
   including completed Tickets that retain a backlog flag. Both headers start closed.
@@ -188,7 +245,7 @@ One screen per part of the system:
   inheriting the old conversation's reading. A failed advance over-shows attention rather
   than hiding a reply.
 
-  On screens wider than 960px, the right side starts with a quiet invitation. An Item
+  On screens wider than 720px, the right side starts with a quiet invitation. An Item
   title opens the existing Manager workspace at `#/workspace/item/<item-id>`.
   A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. A Ticket
   opened from inside an Item, in the rail or in the Item workspace, writes
@@ -196,8 +253,8 @@ One screen per part of the system:
   Which of the two views the rail shows rides along as `?view=tickets` or `?view=items`,
   and only when the reader asked for the view the selection does not already imply. All
   of these addresses survive refresh, sharing, and browser history. A stale Item drops
-  out of the address, keeping a Ticket that was open beside it. At 960px or less, an
-  Item workspace or a Worker replaces the rail. Its inline eyebrow supplies the way back.
+  out of the address, keeping a Ticket that was open beside it. At 720px or less, an
+  Item workspace or a Worker replaces the rail. The Workspace action in the bottom bar supplies the way back.
 
   A Ticket never opens as a full-screen page. Every Ticket link in the app, including
   the ones in manager views and Review, uses the Workspace address. The old
@@ -213,7 +270,9 @@ One screen per part of the system:
   one editable ceiling/reviewer picker that opens directly with one click. A ceiling choice followed by a reviewer choice completes the gesture. An explicit raise past the visible pending stage accepts that exact
   submission through atomic Accept, with the selected onward ceiling and reviewer.
   Same/lower scope preserves the proposal. Reviewer-only changes reroute it without
-  approval. Approve is a direct entry to the same picker and approval action. Send it back opens
+  approval. At an earlier gate, Approve opens the same picker and approval action.
+  At the last gate, Approve immediately accepts the visible proposal, including local
+  edits, with no further ceiling and the saved reviewer. It opens no picker. Send it back opens
   a note and uses the existing revision action. Pristine Kickoff keeps the existing
   Review exception: edit its proposal before approval instead of sending revision
   guidance to a Worker that does not yet have a conversation. A running step states its approved
@@ -226,19 +285,23 @@ One screen per part of the system:
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
   Backlog and Resume remain the deferral controls.
-- **Manager** — project and parent navigation, title, goal, labelled recap, the ask
+- **Manager** — project and parent navigation, title, recap, the ask
   for a fresh recap, and a Settle control
   above grouped Workers. Worker rows show title and an exact-conversation dot.
   Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
   and order, including exceptional states. The local page omits only the duplicate
   Messages group: unread Workers appear in their ordinary group with their own dot.
   Global Messages and rail discovery remain unchanged. Closed group headers include
-  distinct unread-conversation counts as text. Artifacts occupy their own closed band
-  below the Workers. Chief shares the same header, reading column, and conversation layer.
+  distinct unread-conversation counts as text. The recap sits directly under the title,
+  without a label, at 17px with the same clamp and edit controls as before.
+  Goal and Artifacts form two adjacent bands below the Workers, both closed by default.
+  Goal opens its editable Markdown in full, without a clamp or a separate surface.
+  The bands share their summary style, right-aligned indicator, and one border between them.
+  Chief shares the same header, reading column, and conversation layer. Chief has no Goal band.
   Chief keeps an editable recap in its managed settings, through the same header control.
   Chief cannot settle and has no Project or parent navigation.
 - **Chief children** — the Chief and ordinary Managers show one scoped Worker list.
-  Active groups stay visible. Backlogged and Done have independent collapsible headers.
+  Active groups stay visible. Backlogged, Blocked, and Done have independent collapsible headers.
   Each Chief section retains its own bounded pages and reader choices. Ordinary
   managers retain exact group counts and independent reader choices. Open groups
   request bounded scrolling windows; closed groups request counts without row bodies.
@@ -280,17 +343,47 @@ One screen per part of the system:
 The workspace keeps its resize handle within its own visual layer. Open shell menus
 cover that handle and receive pointer actions above it. The handle keeps its pointer
 and keyboard controls when unobscured.
+The handle shows no painted line at rest. A short, rounded neutral bar appears at its
+center on hover and keyboard focus, then strengthens during a drag. Reduced motion removes
+the reveal animation. The full-height hit area stays intact.
 
-The shell retains Review and Workspace navigation. The Workspace footer supplies Settings,
-Ideas, Feedback, and Usage/Backends icons. Each has an accessible name, tooltip, and keyboard
-focus. Feedback retains its count. More supplies fallback destinations when the footer is
-absent, including compact selected panes. A visible footer suppresses duplicate More links.
-Settings replaces separate Config, Scheduled tasks, and Notifications entries.
+Every destination shares one persistent Workspace rail and one pane. The rail keeps its
+scroll, width preference, Settled section, and running conversations while the pane changes.
+The former top bar and mobile title are gone. Review, Usage, Ideas, Feedback, VPS, and
+Settings appear in that order at the foot of the rail, with labels on hover or keyboard
+focus. Only Review carries a queue count. VPS is a placeholder for its separate screen.
+Settings groups Config, Scheduled tasks, and Notifications. Existing links, including
+Workspace utility aliases, continue to open the same details.
 
-The Feedback control is the last item in the status strip on every page. It opens a
-desktop popover or a phone sheet and saves a text note with optional page context. A
-device-local draft survives a close. The Feedback page and agent CLI read the durable
-record from the server.
+At 720px and below, the selected pane replaces the rail above a bottom bar containing
+Review, Workspace, and More. Workspace returns to the rail. More groups Ideas and
+Feedback under Work, and Usage, VPS, and Settings under System. Inner pane and
+conversation layouts keep their own breakpoints.
+
+A filled status card sits above the destination icons or compact bar. It says Deploying
+for fresh preparation and restart, Reconnecting for connection loss or expired progress,
+and Problem for failure or rollback. Failure takes precedence over connection loss.
+Healthy operation and successful recovery show no card. The card opens space before
+arriving and leaves before that space closes; reduced motion removes the animation.
+
+Navigation health occupies a separate row in this card. A lost navigation stream says
+**Navigation reconnecting**. Degraded server availability says **Navigation degraded**
+and shows the supplied reason as wrapping text. This row remains visible beside
+deployment problems and update controls. It sits outside the page-refresh button.
+If no other status applies, navigation health occupies the card alone.
+
+Existing retries keep their timing. The degraded reason survives a deliberate retry.
+Only accepted current data for the demanded navigation scope clears the warning.
+Panel errors report their own data failures. Navigation health does not authorize stale data
+or remove local drafts.
+
+The rail's Feedback icon and More's Feedback item open the same persistent composer.
+It appears above the complete foot, including its status card, outside the rail's clipped
+content. On phones it uses a sheet above the bar and visible keyboard. Saving records
+a text note with optional page context. A device-local draft survives dismissal and
+navigation. Closing returns keyboard focus to the visible Feedback control, or More on
+phones. The composer count link and save notification open the Feedback pane. The
+Feedback page and agent CLI read the durable record from the server.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -300,13 +393,21 @@ share.
 
 The root document carries the deployed app SHA that booted the browser. The browser
 checks `/api/meta` without cache reuse when it loads and when a retained page resumes.
-If the server reports a different SHA, Panels shows an **Update now** action. Panels
-never reloads for a new release without that action.
+If the server reports a different SHA, the deploy status card reads **New version
+ready** with an **Update** action. Panels never reloads for a new release without that
+action.
+
+The card is one slot with one occupant, because the deploy it narrates is what produces
+the release. A failed deploy shows **Problem** and displaces the update, since a rolled
+back release still differs from the booted one. Otherwise a waiting update outranks
+Deploying, Deployed and Reconnecting. One monitor serves the whole app, so the card
+reports the same update at both breakpoints.
 
 Conversation composers publish `panels:composition-state` on `document`, with an
 `active` boolean. If the user requests an update during active composition, Panels
-waits. It checks the server identity again when composition becomes inactive, then
-applies the requested update. The push-only service worker and its subscription remain
+waits, and the card reads **Update applies when this message is safe**. It checks the
+server identity again when composition becomes inactive, then applies the requested
+update. The push-only service worker and its subscription remain
 in place across this page reload.
 
 **Usage** at `#/backends` offers Tokens, Cost, Limits, and Config as tabs. The explicit
@@ -494,48 +595,58 @@ or locale produces identical arbitrary-text ordering.
   stays an ordinary link: a same-page anchor is still an anchor, one
   of this app's own routes still navigates inside the app, and an off-site address still
   goes off-site. An image sitting inside such a link is left alone with it.
-  A preview shows the thing itself, softly rounded, with nothing drawn around it. An image
-  is an image, SVG among them; a video is its own player; audio is its own control. None of
-  the three carries a title, a caption, or anything to click.
-  Markdown and HTML are the only two that keep a header, and the header sits above the
-  document rather than around it: a strip curving over the top, carrying one accent-coloured
-  link that reads "Open plan.md", with the document scrolling underneath it. Markdown renders
-  inline through the same markdown renderer, including nested managed links until a fixed
-  depth or self-link bound turns them into that same "Open" line on its own. HTML renders in
-  a fetched `srcdoc` iframe whose sandbox permits the file's scripts but does not grant
-  same-origin or other host-page privileges. Before HTML enters either iframe lifecycle, the
-  shared preview helper anchors the document's base URL to that HTML file's absolute managed
-  URL, so relative stylesheet, script, image, and root-relative managed-file
-  references resolve as they would if the file were opened from its `/files/...` URL.
-  Every other kind is a line of text in the accent colour, drawn where it was written: a
-  managed file of no recognized kind is "Download archive.bin", and a bare URL handed to the
-  component by a caller with nothing else to show — an agent's resource link — is "Open" that
-  link, unless the address names an image, video, or audio file, in which case it is shown
-  like any other. A markdown or HTML file that turns out not to be there is also a line,
-  saying what the fetch found; nothing else is fetched, so nothing else can say. One file
-  extension names one kind, so no file is offered as two.
-  The header link opens the Panels preview route, whose targets are
-  `#/preview?source=ticket&ticket=<id>&path=<path>`. Wherever that document is drawn, HTML
-  is fetched and given to a sandboxed iframe through a short-lived Blob URL, revoked when
-  the file changes or unmounts, and fills the space it is given. Markdown is fetched as
-  source and rendered directly through `MarkdownBlock`, so managed links keep the same
-  nested-preview and self-link bounds as embedded Markdown, with no header of its own.
-  ACP message and tool links also use the shared generic/Ticket preview adapter.
-  Conversation images and files use conversation-owned managed bytes. Images render
-  inline. Supported documents and data files render as named cards with preview and
-  download actions. PDF uses a document frame. Text and data use a bounded text preview.
-- **On a Ticket or Manager screen, that link opens the file in place.** A managed
-  file clicked inside either reading area does not go to the preview address. The screen catches the click
-  and draws the file over its own reading area, with a strip carrying the file's name and
-  a way out. The Ticket keeps its layout and its scroll place underneath, so closing gives
-  back the page the reader left, and the conversation keeps its own section at the bottom
-  of the page — the artifact and the worker are on screen together, which is the point.
-  An opened conversation is the whole page, so opening a file steps it back to peeked.
-  Escape closes the file. This is the same on every screen width. A click asking for a
-  new tab or window is left alone. On the Workspace the open file rides in the address
-  beside the Ticket, so a reload, Back, and a shared link all show it. The
-  `#/preview` address remains the way in from anywhere else — a shared link, a
-  notification, or another screen — and it draws the same document.
+  Embedded documents share a rounded card with a recessed content plane and an identity
+  band below it. The band carries the file name, kind, and any size the host already knows.
+  Conversation documents also carry a separate Download link. The name link covers the
+  card. HTML and PDF keep their own frame interactions, so their name link covers only
+  the band. Markdown and text clip without an internal scrollbar. A dissolve appears
+  only where the content exceeds the window. The skeleton retains the same band and
+  uses its own dissolve. The card stays visible on phones with smaller padding.
+  Markdown uses the same renderer and retains its nested-preview and self-link bounds.
+  Its embedded body is inert beneath the name link, so the keyboard opens the file
+  through its name instead of entering clipped content.
+  Images retain their own shape, with the larger preview radius and the existing chat
+  height cap. Video starts as an empty frame with a Play button. No poster or duration
+  is invented, and no media request starts before Play. Play mounts the native video
+  controls. Audio uses a custom Play/Pause button and a seek slider with pointer and
+  keyboard controls. Its duration stays unknown until playback supplies metadata.
+  Video and audio keep their name link above the control, without an identity band.
+  Download-only files, external links, and Markdown at its expansion bound remain lines.
+  Errors include the file name and message. Existing visibility admission, fetch
+  cancellation, path checks, and test hooks apply to every embedded preview.
+  The name link opens the Panels preview route, whose targets are
+  `#/preview?source=ticket&ticket=<id>&path=<path>`. Full-size rendering remains separate.
+  HTML uses a sandboxed iframe through a short-lived Blob URL, revoked when the file
+  changes or unmounts. The sandbox allows scripts without same-origin privileges.
+  The shared helper anchors the document's base URL to the managed HTML URL, so sibling
+  assets resolve relative to that file. Full-size Markdown renders directly through
+  `MarkdownBlock`, with the same nested-preview bounds and no preview identity band.
+  ACP message and tool links use the shared generic/Ticket preview adapter.
+  Conversation files use conversation-owned managed bytes. Their existing MIME video
+  branch shares the embedded video control without changing the file resolver.
+- **Wherever a conversation is shown, that link opens the file in place.** A Ticket
+  screen, a Manager's pane and the Chief's pane each catch the click across the whole
+  pane, the conversation included. A managed file clicked in any of them does not go to
+  the preview address. The pane draws the file over its own reading area, with a strip
+  carrying the file's name and a way out. The pane keeps its layout and its scroll place
+  underneath, so closing gives back the page the reader left, and the conversation the
+  file was named in stays on the screen beside it — which is the point, because a file
+  named in a conversation is usually some other Ticket's. The conversation dock reserves
+  space below the artifact. Full conversation conceals the same mounted artifact and
+  preserves its viewport size and state. An opened conversation is the whole page, so a
+  file link returns to the dock. Escape closes the file, unless the conversation is open
+  over it: then Escape is the conversation's, because one press belongs to one thing and
+  the thing on top answers for it. The keyboard follows the reading: the file takes it
+  once the pane will let it, which is after a full conversation has returned to its bar,
+  and closing gives it back to the link it was opened from. A link read in the
+  conversation leaves the screen with the transcript, so the conversation's own bar takes
+  the keyboard instead and the reader is one press from the words the file was named in. This is the same on every screen width. A click asking
+  for a new tab or window is left alone, and so is a link marked as a download or one
+  whose format has nothing to show. On the Workspace the open file rides in the address
+  beside the Ticket and beside the Chief, so a reload, Back, and a shared link all show
+  it; a Manager's pane keeps its own. The `#/preview` address remains the way in from
+  anywhere else — a shared link, a notification, or another screen — and it draws the
+  same document.
 - **Artifact strips use one component.** Managers list their files newest first.
   Tickets list only managed files linked from their lifecycle fields and pending proposal.
   A chip shows the file name without its extension and then the file type. Matching names
@@ -583,16 +694,27 @@ hand-rolling the same shapes per screen. Each does one job:
 - **StageMark** — the single stage dot showing a field's progress.
 - **WorkerProposalCard** — the single approval card on both the Ticket and Review
   screens: editable proposal, reviewer heading, Approve, and send-back action. Approve
-  opens the existing compact ceiling/reviewer rail directly; there is no adjacent
-  ceiling control. The reviewer heading opens the same picker for reviewer-only
+  opens the compact ceiling/reviewer rail at earlier gates. When the manifest marks
+  the actual next Stage terminal, it directly approves with no further ceiling and
+  the saved reviewer. The final Approve is an ordinary button: Enter and Space
+  activate it; arrow keys open nothing. There is no adjacent ceiling control.
+  The reviewer heading opens the same picker for reviewer-only
   routing. A Ticket reviewer is labelled Worker, distinct from its assigned Manager.
   A new proposal revision resets the draft; an unrelated refresh preserves it.
   Review supplies its existing voice revision box through the card.
-- **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
+- **ReviewProposalCard** — one waiting proposal, also embedded inside a combined Ticket card: the ticket's title and recap,
   the approval control and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen mounts it.
+- **ReviewMessageCard** — the complete unread run for one conversation, standalone or embedded in a Ticket card, read from its
+  durable watermark. It reuses message rendering, file previews, voice capture, and durable
+  composer storage. The card acknowledges only explicit Mark read or bounded reply acceptance.
+  Navigation publications carry identity and recap facts, never message bodies.
+- **ReviewReplyInput** — the existing Review input, shared by message cards and the final-screen Chief form.
+  It keeps the attachment, microphone, and send controls. Each parent retains its own delivery and acknowledgement behavior.
+- **ReviewFinalState** — the shared Settled screen at the end of Review, with a stable Chief form and an explicit queue return.
+- **ReviewChiefMessage** — the final-screen Chief send adapter. It retains drafts and correlated attempts without a transcript or read acknowledgement.
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given
@@ -654,7 +776,7 @@ hand-rolling the same shapes per screen. Each does one job:
   names why Panels queued a steer fallback.
 
   The textarea grows with its content up to six whole lines, then scrolls internally.
-  The same cap applies at rest, peeked, and opened. Pane height and focus do not change it.
+  The same cap applies in the dock and full conversation. Pane height and focus do not change it.
   A hidden textarea measures each draft with the same text layout and scrollbar width.
   Only the final height and overflow reach the visible input. A same-line edit therefore
   keeps the transcript in place without a temporary collapse of the composer.
@@ -670,39 +792,73 @@ hand-rolling the same shapes per screen. Each does one job:
   is read only: the actions go, the picker stays, and it is the way back to the current
   conversation.
 
-  The transcript uses native browser scroll behavior. A reader who follows the end
-  keeps the newest content in sight. A reader who scrolls back leaves that mode.
-  The browser holds the top line when it can. If content above or within the view
-  grows, text below it can move. Panels does not restore an exact paragraph offset.
-  Opening the conversation, sending a message, and Latest each place the view once.
-  An explicit send places the sent prompt near the top, even during a layer resize.
-  If a shorter transcript clamps the view to the end, later content follows the end.
-  Latest reflects the actual content, separately from the answer room below a sent
-  message. Reply content consumes that room. A resize counts the reply already present
-  and cannot recreate exhausted room. Exact text preservation during image growth
-  is not a requirement for this release. Further conversation refinement is separate work.
+  The transcript retains native browser anchoring for ordinary history prepends.
+  Internal motion writes sizes and scroll position in the same animation frame,
+  over 240ms with linear timing. Card state travel uses a separate 150ms duration. Reader navigation
+  cancels automatic travel. Replies consume reserved answer room. A new streaming
+  line can advance over 120ms when new text arrives and the reader already follows
+  newest. A multi-line chunk advances one line per step, bounded by the height
+  of the text that arrived. Layout changes and entry never enter this stream path.
+  Other deliberate moves use one computed destination.
+  The newest line has a 12px bottom gap. A held top line sits 32px below the edge,
+  clear of the 20px fade. The bottom fade appears only when content remains below.
 
-  On the Ticket screen the conversation is a layer along the bottom of the page rather
-  than a column beside it, and it has **three states**. At **rest** it is the composer and
-  one line above it saying what happened last — whoever produced it, so your own message
-  can be that line, and so can a request waiting on you. Clicking the input **peeks** it
-  open: a card over the page, with the line gone because the transcript now says the same
-  thing. A control takes it **opened**, the full height of the page, and the same control
-  brings it back. Clicking the ticket behind it, or pressing Escape, drops it one state.
+  A fresh conversation opens at the actual newest content. Live requests and the
+  owner-read watermark do not choose its destination. Entry commits its position
+  before the transcript appears. Deferred body and Markdown presentation must be
+  ready at the destination. Later layout changes retain the bottom without animated
+  catch-up. Reader navigation takes control, including while entry settles.
+  Saved text and row positions still restore on tab return and lens changes.
+  Connection failures expose an error and Retry in the existing busy region.
 
-  Three things are true of all three. Nothing moves it but a person — a request arriving
-  or a turn starting never opens it, which is why the line at rest has to carry that news.
-  It is a layer and never a mode: nothing is locked, and the ticket underneath stays
-  readable and scrollable. And it is one conversation at three heights, never three
-  screens. A move between peeked and opened keeps the reader's place in the transcript.
-  Reopening from rest lands on the newest unanswered request or the end of the conversation.
-  Every state keeps whatever the person had half-typed.
+  Latest uses confirmed page admission and retains its reader identity through layout
+  and focus. It returns focus to the Conversation region after its button disappears,
+  unless the person moves focus elsewhere. The centered pill counts distinct unread
+  messages below the view against the owner's read watermark. Read history shows
+  Latest. Tools and structural rows do not increase the count.
 
-  The Chief and ordinary Managers share one layout with this layer and the same
-  outside-click dismissal. Dismissal uses the start of a primary pointer gesture.
-  A text selection that starts inside the conversation can end outside without dismissal.
-  Ticket views use the same rule. Both start at rest. The person controls rest, peeked, and
-  opened states, and a refresh keeps that choice.
+  The textarea mirror measures one empty line. Draft growth increases the dock row.
+  Full conversation gives the transcript the space above the same composer. The composer cap and
+  visible-viewport bounds remain separate constraints. Sent messages retain one keyed
+  bubble through delivery outcomes, with applicable recovery actions in place.
+  A running agent does not place a new send in the queue. Confirmed queue membership
+  places it there. Acceptance or a correlated record places it in the transcript.
+  Unresolved sends remain durable without a provisional destination. An unanswered
+  or terminal outcome retains its recovery behavior without false acceptance.
+  Focus excludes tools throughout the turn. Settled turn heads have no disclosure controls.
+
+  Ticket, Manager, and Chief screens share a recessed conversation dock. The dock reserves
+  its own row below the document or selected artifact. It has two states: rest and opened.
+  Only the up arrow opens full conversation. Focus, typing, and hover keep the dock closed.
+  The down arrow, Escape, and existing dismissal paths return directly to the dock.
+
+  The dock activity line reports Working or Worker idle, Manager idle, or Chief idle.
+  Requests, delivery failures, interrupted turns, and connection uncertainty keep separate feedback.
+  An unread owner reply appears below activity as plain text, limited to three lines.
+  Its bounded source comes from canonical status, independently of later tools and the lens.
+  There is no unread dot or badge. The preview does not acknowledge a reply as read.
+
+  The document, composer, and transcript share a centered channel at most 720px wide.
+  The dock and sidebar use the recessed surface. Hover and full conversation use the page surface.
+  A fixed 24px fade ends document text above the dock. Artifacts omit that fade.
+  Full conversation expands upward in 260ms while the composer stays at the bottom.
+  Reversals use current rendered geometry and shade. Reduced motion completes immediately.
+  Touch returns to the recessed surface without a retained hover shade.
+
+  Full conversation conceals and disables the reader while preserving its pixel height.
+  The selected artifact and its document remain mounted, including the active HTML frame.
+  Return restores scroll, local form values, selection, and nested artifact navigation.
+  Close and navigation release the selected artifact. Explicit Refresh still reloads it.
+  Standalone and inline previews retain their existing lazy load and retention limits.
+  Chief artifact selection uses its existing workspace address and shared artifact controls.
+  Plain managed links in its document and transcript open the same viewer.
+
+  The host intersects its rectangle with the visual viewport, including keyboard displacement.
+  Oversized composer questions and held prompts scroll within that bound. Ordinary menus float
+  above the composer. A menu that cannot fit one control joins the composer's scroll flow.
+  The same draft, attachments, requests, history, and voice controls survive both states.
+  Null state still means a full-container conversation. Existing initial and explicit conversation
+  requests keep their startup behavior.
 - **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
   `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and
   plugins. The list narrows as text is typed. A choice inserts its exact catalog text
@@ -713,8 +869,8 @@ hand-rolling the same shapes per screen. Each does one job:
 - **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
   may go, and who reviews it — sit in a rail on the left, so either can be edited on its
   own. A half-finished choice stays in the open panel: dismissing it writes nothing and
-  leaves nothing behind, and only a completed pair reaches the Ticket. The running-step card keeps its own trigger. In a pending proposal, Approve and
-  the reviewer heading are the entry points to that same picker.
+  leaves nothing behind, and only a completed pair reaches the Ticket. The running-step card keeps its own trigger. In a pending proposal, the reviewer heading
+  opens that picker. Approve also opens it when the next Stage is not terminal.
 - **PickerRail**, **PickerRailRow** — the left rail a picker panel uses to name the parts
   of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.
@@ -732,9 +888,13 @@ Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.
 remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
 has loaded. Shared date helpers format the ordinary dates that remain.
 
-**The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
-diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not
-restated here.
+**Typography.** Every screen uses the shared system sans stack for content and
+controls. The owner's size-preservation guidance keeps former serif 18px prose,
+28px display titles, and 30px hero figures through shared sans tokens. Smaller body
+text uses 15px and section titles use 20px. These retained sizes are an explicit
+exception to the five-size limit. Existing sans sizes and the composer's touch-safe
+input size remain as they are. Code, diffs, and tool output keep monospace for
+alignment. `DESIGN.md` defines the typography and visual hierarchy.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces),
@@ -789,7 +949,7 @@ unhashed assets revalidate so the next load sees the current deployment.
 
 ---
 
-_Last verified: 2026-10-21._
+_Last verified: 2026-10-28._
 
 
 ## Frontend test commands

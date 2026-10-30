@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path, PurePosixPath
+from urllib.parse import unquote, urlsplit
 
 from planner.files.contracts import ManagerFile, TicketFile
 
@@ -108,3 +109,49 @@ def _validate_relative_path(relative_path: str) -> None:
     for part in parsed.parts:
         if part in ("", ".", ".."):
             raise ValueError("unsafe managed file segment")
+
+
+def html_navigation_owner(href: str) -> tuple[str, str, str]:
+    """Decode a managed URL once; reject ambiguous URL and path syntax."""
+    if any(ord(char) < 32 for char in href) or "\\" in href:
+        raise ValueError("unsafe managed URL")
+    url = urlsplit(href)
+    if url.scheme or url.netloc or url.query or url.fragment or not href.startswith("/files/"):
+        raise ValueError("unsafe managed URL")
+    if _ENCODED_UNSAFE_RE.search(url.path):
+        raise ValueError("encoded managed traversal or separator")
+    path = unquote(url.path, errors="strict")
+    parts = path.split("/", 4)
+    if len(parts) != 5 or parts[2] not in ("tickets", "managers", "sprint-items"):
+        raise ValueError("unsafe managed URL")
+    kind = "tickets" if parts[2] == "tickets" else "managers"
+    _validate_safe_id(parts[3], "managed owner")
+    _validate_relative_path(parts[4])
+    if "\x00" in parts[4] or Path(parts[4]).suffix.lower() not in (".html", ".htm"):
+        raise ValueError("not an HTML artifact")
+    return kind, parts[3], parts[4]
+
+
+def resolve_html_navigation(db_path: str | Path, root_href: str, candidate_href: str) -> Path:
+    """Confine a read to the original artifact directory, including real symlink targets.
+
+    The root directory is resolved once. Both lexical and resolved candidate paths
+    must remain inside it. The ordinary file routes keep their delivery policy.
+    This read-only check does not lock out concurrent filesystem writers.
+    """
+    kind, owner, root_relative = html_navigation_owner(root_href)
+    candidate_kind, candidate_owner, candidate_relative = html_navigation_owner(candidate_href)
+    if (kind, owner) != (candidate_kind, candidate_owner):
+        raise ValueError("different managed owner")
+    logical_root = PurePosixPath(root_relative).parent
+    PurePosixPath(candidate_relative).relative_to(logical_root)
+    resolver = resolve_ticket_file if kind == "tickets" else resolve_manager_file
+    # Resolve the lexical parent itself, not the resolved root document's parent:
+    # a root document can itself be a symlink to another directory.
+    owner_root = (ticket_files_root(db_path) if kind == "tickets" else manager_files_root(db_path))
+    artifact_root = (owner_root / owner / logical_root).resolve(strict=True)
+    root_file = resolver(db_path, owner, root_relative)
+    root_file.absolute_path.relative_to(artifact_root)
+    candidate = resolver(db_path, owner, candidate_relative)
+    candidate.absolute_path.relative_to(artifact_root)
+    return candidate.absolute_path

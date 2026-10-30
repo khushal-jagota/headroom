@@ -12,6 +12,7 @@ import pytest
 from planner.core.commit_observers import CommitObserver
 from planner.core.db import ChangeSignallingConnection, commit_without_change_signal, connect
 from planner.navigation import proof
+from planner.navigation.contracts import SCHEMA_VERSION
 
 
 def fixture_database(path: Path) -> ChangeSignallingConnection:
@@ -21,7 +22,6 @@ def fixture_database(path: Path) -> ChangeSignallingConnection:
     for sql in (
         "CREATE TABLE navigation_meta(singleton INTEGER,scope TEXT,schema_version INTEGER,"
         "epoch TEXT,revision INTEGER)",
-        "INSERT INTO navigation_meta VALUES(1,'workspace',8,'epoch-one',0)",
         "CREATE TABLE navigation_dirty(kind TEXT,id TEXT)",
         "CREATE TABLE navigation_commit_witnesses(sequence INTEGER PRIMARY KEY AUTOINCREMENT,"
         "identity TEXT NOT NULL UNIQUE)",
@@ -32,6 +32,10 @@ def fixture_database(path: Path) -> ChangeSignallingConnection:
         "INSERT INTO navigation_dirty VALUES('source','one'); END",
     ):
         conn.execute(sql)
+    conn.execute(
+        "INSERT INTO navigation_meta VALUES(1,'workspace',?,'epoch-one',0)",
+        (SCHEMA_VERSION,),
+    )
     install(conn)
     return conn
 

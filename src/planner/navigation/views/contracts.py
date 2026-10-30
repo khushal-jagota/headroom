@@ -22,7 +22,7 @@ from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuth
 from planner.navigation.proof_contracts import ProofResult
 
 VIEW_WIRE_VERSION = 3
-VIEW_PROJECTION_VERSION = 3
+VIEW_PROJECTION_VERSION = 7
 
 ViewSection = Literal["rail_parents", "rail_tickets", "children", "settled", "unread", "review"]
 ViewGroup = Literal[
@@ -65,12 +65,27 @@ class ViewWindowRequest(TypedDict):
     limit: int
 
 
+class ReviewHistoryKey(TypedDict):
+    kind: Literal["ticket", "conversation"]
+    id: str
+
+
+class ReviewSummary(TypedDict):
+    skipped: int
+    new: int
+
+
 class ViewRequest(TypedDict):
-    projection_version: Literal[3]
+    projection_version: Literal[7]
     scope_generation: int
     locale: str
     selected: ViewOwner | None
     selected_conversation_id: str | None
+    # Exact painted Review conversations whose canonical owners must stay visible
+    # while a bounded reply outcome resolves, even after unread membership clears.
+    review_conversation_ids: list[str]
+    review_skipped_keys: list[ReviewHistoryKey]
+    review_priority_keys: list[ReviewHistoryKey]
     windows: list[ViewWindowRequest]
 
 
@@ -97,11 +112,13 @@ class ViewSettledManagerValue(TypedDict):
 
     title: str
     created_at: int
+    updated_at: int
     settled: Literal[True]
     conversation_id: str | None
 
 
 class ViewConversationValue(TypedDict):
+    first_unread_owner_message_at: int | None
     owner_read_through_sequence: int
     error_acknowledged_through_sequence: int
     attention: AttentionKnowledge
@@ -163,15 +180,22 @@ class ViewCounts(TypedDict):
     settled: int
 
 
+class ReviewConversationContext(TypedDict):
+    conversation_id: str
+    canonical_address_id: str | None
+
+
 class ViewContent(TypedDict):
     records: list[ViewRecord]
     windows: list[ViewWindow]
     counts: ViewCounts
+    review_context: list[ReviewConversationContext]
+    review_summary: ReviewSummary
 
 
 class ViewIdentity(TypedDict):
     wire_version: Literal[3]
-    projection_version: Literal[3]
+    projection_version: Literal[7]
     view_id: str
     scope_generation: int
     ordering_generation: str
@@ -209,6 +233,8 @@ class ViewPatch(ViewIdentity):
     # Eviction is absence from this scope, never a claim of canonical deletion.
     windows: list[ViewWindow]
     counts: ViewCounts
+    review_context: list[ReviewConversationContext]
+    review_summary: ReviewSummary
 
 
 class ViewCheckpoint(ViewIdentity):

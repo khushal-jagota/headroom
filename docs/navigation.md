@@ -2,7 +2,39 @@
 
 Navigation is a derived view of canonical database facts. It does not own Ticket or conversation state.
 
-The public contract uses schema 6 and `attention-knowledge-v6-recap` semantics. It contains Ticket metadata, canonical status, assignment, approval references, manager metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
+The public contract uses schema 9 and `attention-knowledge-v9-review-messages` semantics. It contains Ticket metadata, canonical status, assignment, approval references, manager metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
+
+Review has one card per Ticket, with an optional owner-addressed proposal and all eligible unread conversations.
+Manager and Chief conversations retain standalone message cards. Canonical address selection remains current-first, then stable address identity.
+After address selection, a Ticket's messages qualify while it is neither done nor backlogged.
+A Manager's messages qualify while that Manager is not settled. Chief remains live.
+A settled Manager does not exclude live child Tickets. No message content enters this rule.
+
+A Ticket card takes the earliest constituent timestamp. This deliberately moves a new proposal to an older unread message's queue position.
+The nested proposal retains its own timestamp and revision for approval identity checks.
+Each conversation retains its exact address, unread boundary, and ordinary unread visibility.
+Message bodies stay outside navigation and come from the conversation API.
+
+The Review global count comes from grouped membership, independently of ordinary unread counts of distinct conversations.
+Review windows use Ticket keys even for message-only Tickets, and address keys for Manager and Chief cards.
+A Ticket's complete address and conversation closure enters the page atomically under the existing budgets.
+State reversals and constituent changes refresh membership and publication, including changes that preserve the earliest timestamp.
+Review keeps temporary skip history for the current visit. The server compares that history with the whole current queue,
+so a removed card does not count and a card outside the current page still counts.
+Each return fixes the previously skipped cohort for that pass. New work precedes that cohort across continuation pages.
+A new skip changes the next return's history, without moving that card into the current pass again.
+Ticket identities and standalone conversation identities remain distinct. This history never changes unread or approval state.
+Painted Review conversations request bounded canonical-owner context while a reply or read resolves.
+The server supplies the canonical address and owner even when unread membership clears or that owner becomes excluded.
+An explicit null address records absence. A missing address in an unrelated page does not establish canonical removal.
+This context preserves uncertain reply attempts without retaining a conversation after its canonical owner becomes excluded.
+It includes only the requested conversation identities and follows existing record, byte, and request budgets.
+
+Scoped projection version 7 and the review-v4 ordering generation include skip summaries and the return cohort in bounded Review delivery.
+The forward review_work_cards migration rebuilds derived state from source and rotates its epoch.
+Old cursors reset through existing snapshot recovery. Runtime Signal activation alone grants current authority.
+No message rows or unread watermarks change. A normal reopen does not rebuild either projection.
+
 
 Conversation attention comes from the accepted Signal producer. Each conversation carries complete current attention or explicitly unavailable runtime knowledge, plus independently durable message and failure facts. Raw lifecycle counters, read positions, and Ticket status never substitute for that source. Consumer adoption is in progress. Complete production parity, render proof, recovery, and performance acceptance remain open.
 
@@ -65,7 +97,7 @@ All records have `kind`, `id`, and `value`. `navigation/contracts.py` declares a
 | Tag | Value fields |
 | --- | --- |
 | `ticket` | `title`, `recap`, `recap_preview`, `worker_type`, `stage`, `ticket_status`, `deadline`, effective `project_id`, `manager_kind`, `manager_id`, `conversation_id`, `is_backlogged`, `ceiling`, `ceiling_holder`, `proposal_field`, `proposal_revision`, `proposal_created_at`, `updated_at`, `created_at`, `worker_step_claim_out`, `blocked`, `stage_ownership`, `gating_field`, `terminal`, `locale` |
-| `manager` | `title`, `recap`, `recap_preview`, `created_at`, `project_id`, `settled`, current `conversation_id` |
+| `manager` | `title`, `recap`, `recap_preview`, `created_at`, `updated_at`, `project_id`, `settled`, current `conversation_id` |
 | `chief` | `label`, current `conversation_id` |
 | `project` | `name` |
 | `conversation` | raw `latest_sequence`, `owner_read_through_sequence`, `latest_agent_activity_sequence`, `latest_agent_activity_at`, `error_acknowledged_through_sequence`, `lifecycle_summary`, `attention` |
@@ -82,7 +114,7 @@ The character bound is not a byte or memory bound. UTF-8 and JSON escaping chang
 
 Ticket `created_at` comes from exact stored `tickets.created_at`. This required integer was introduced in schema4 and remains in schema6. Existing Chief children use filtered creation-time/identity order before their 30-row page and grouping. Navigation does not substitute update time or conversation activity for that order.
 
-Schema 3 introduced six required source facts. Manager `priority` and `created_at` come from the corresponding `managers` columns. Ticket `updated_at` comes from its stored timestamp. `proposal_created_at` comes from the strict canonical proposal decoder and is null exactly when no proposal exists. `worker_step_claim_out` is true exactly when the stored claim is `out`. Summing that flag across all Ticket records matches the existing unfiltered Worker claim count, including terminal, blocked, and backlogged Tickets. Schema6 removes the priority fields to match current staging. Managers retain creation-time/identity ordering. Grouped child rows retain activity/title/identity ordering; the Chief child page retains creation-time/identity ordering. Ticket update time and proposal creation time remain independent. Conversation activity never substitutes for these values.
+Schema 3 introduced six required source facts. Manager `priority` and `created_at` come from the corresponding `managers` columns. Ticket `updated_at` comes from its stored timestamp. `proposal_created_at` comes from the strict canonical proposal decoder and is null exactly when no proposal exists. `worker_step_claim_out` is true exactly when the stored claim is `out`. Summing that flag across all Ticket records matches the existing unfiltered Worker claim count, including terminal, blocked, and backlogged Tickets. Schema6 removes the priority fields to match current staging. Active Managers retain creation-time/identity order. Settled Managers use descending stored update time, then identity. Grouped child rows retain activity/title/identity ordering; the Chief child page retains creation-time/identity ordering. Ticket update time and proposal creation time remain independent. Conversation activity never substitutes for these values.
 
 Ticket `blocked` is the canonical live-blocker predicate, independently of status precedence. A proposal, an outstanding claim, or an errored claim can mask the blocked status without clearing this fact. Existing dependency capture handles edge changes and blocker completion, reopening, or deletion in the same source transaction. No blocker identities or names enter navigation.
 
@@ -190,7 +222,7 @@ Code paths: `navigation/proof.py`, `navigation/proof_contracts.py`, `navigation/
 
 ## Browser synchronization boundary
 
-The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary Manager headers and children, Chief child pagination, Review queue, shell work count, Ticket masthead and current-stage section, and Chief conversation pointer use it. Ordinary manager content and exact-identity proposal bodies remain separate detail reads.
+The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary Manager headers and children, Chief child pagination, Review queue, Ticket masthead and current-stage section, and Chief conversation pointer use it. Ordinary manager content and exact-identity proposal bodies remain separate detail reads.
 
 One presentation result belongs to each effective view identity. Shared indexes supply parent membership, identity joins, addresses, and Review facts. Knowledge changes invalidate the result even without a new publication. Feature modules own DOM assertions and dependency checks. The application captures relevant mounted observers before each command and retains bounded visibility evidence independently of the domain result.
 
@@ -198,7 +230,13 @@ The current-stage section admits detail only when public identity, control facts
 
 Ticket masthead Project names follow the existing parent-or-own Project rule. The masthead never rewrites the full detail object used by actions, fields, proposals, blockers, and configuration. Missing source membership cannot credit a retained masthead as current. Shared read errors appear once in a composed workspace. Distinct failed content or detail reads retain their own error lines.
 
-The Review and shell count deduplicates current Ticket, Chief, and existing manager conversation pointers. Historical-only and unlinked conversations do not contribute. The exact unfiltered Worker out-claim count remains a separate fact. Unknown runtime count is null and omits the runtime mark or count line. Known zero preserves the existing behavior.
+The shared browser API `navigationWorkingAgentCount(view)` returns the workspace-wide number of agents at work. It returns `null` when the view is absent or runtime authority is unavailable. For a scoped view, it uses the server's exact global total, including zero or `null`. It does not count the limited records resident in the browser. Filters, pagination, and record eviction do not reduce the total.
+
+For a complete publication, the API deduplicates current Ticket, Chief, and Manager conversation pointers. It counts fresh `working: true` facts and returns `null` if any current pointer lacks a fresh working fact. Historical-only and unlinked conversations do not contribute. Unread messages do not affect the count. The existing Review count delegates to this API. The exact unfiltered Worker out-claim count remains separate. This API adds no display or placement.
+
+The proposal review queue contains active Tickets that await owner approval and have a stage gate and a pending proposal. Backlogged Tickets do not contribute to this queue or its count, even when another selected surface loads their records. The Ticket API, navigation index, and browser presentation use this eligibility rule. Backlog preserves the proposal. Resume restores an otherwise eligible Ticket to the queue.
+
+After the operator deploys this fix and starts Panels, the existing complete Signal installation rebuilds navigation records and view indexes before delivery starts. This rebuild removes retained review membership and counts for backlogged Tickets without a new migration or a wire version change. It preserves canonical Tickets and proposals.
 
 ```text
 complete snapshot / revision batches
@@ -236,7 +274,7 @@ Existing frontend browser hosts exercise the converted consumers with strict syn
 
 Code paths: `web/src/lib/navigation/`, `web/tests/navigation-*`, and `scripts/navigation_browser_harness.py`.
 
-_Last verified: 2026-10-18._
+_Last verified: 2026-10-28._
 
 ## Signal installation and delivery
 
@@ -313,12 +351,12 @@ not turn that commit into an uncertain result.
 
 ## Lean Settled view records
 
-Scoped navigation accepts only projection version 2 over wire version 3. Old tabs
+Scoped navigation accepts only projection version 4 over wire version 3. Old tabs
 require a manual reload. The uncached root document selects the current bundle,
-which creates a fresh navigation owner. There is no version 1 response path.
-Canonical schema 6 and physical view-index version 1 stay unchanged.
+which creates a fresh navigation owner. There is no older projection response path.
+Canonical schema 8, prepared schema 7, and physical view-index version 1 stay unchanged.
 
-Settled-only manager records carry title, creation time, settled state, and
+Settled-only manager records carry title, creation time, update time, settled state, and
 conversation identity. Their conversation dependency preserves exact signals.
 They omit recap text, preview, body reference, Project identity, and Project closure.
 The browser keeps lean rail rows separate from full manager indexes.
@@ -334,3 +372,15 @@ Parent-scoped unread windows keep their indexed membership, exact address totals
 and pagination. Shared browser indexes resolve row membership once per publication.
 Conversation deduplication, historical aliases, backlog exclusion, and read updates
 retain their existing rules. Global unread paging does not replace parent windows.
+
+Settled windows use the exact `managers.updated_at` value. They sort newest first,
+with the existing identity comparison for equal timestamps. Active Manager windows
+retain creation-time order. Conversation activity does not supply a Manager update time.
+The Settled list contains Manager rows without message rows. Manager signals, selection,
+and Reopen retain their existing behavior. Other surfaces retain their unread messages.
+
+The required Manager timestamp changes the canonical semantics to
+`attention-knowledge-v8-manager-updated-at`. Canonical Signal installation rebuilds
+stored navigation records and membership indexes before publication. The rebuild resets
+the source epoch, so existing cursors rebase to the start of their requested windows.
+No source timestamp or database schema changes. The comparator generation stays unchanged.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import re
 import shutil
@@ -13,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TextIO
+from uuid import uuid4
 
 import httpx
 
@@ -21,6 +23,9 @@ from planner.environments.backup import SNAPSHOT_METADATA_NAME, is_verified_snap
 from planner.environments.deployment_configuration import DEPLOYMENT_HEALTH_TIMEOUT_SECONDS
 from planner.environments.deployment_gate import verify_gate_evidence
 from planner.environments.deployment_gate_contracts import GateEvidence
+from planner.environments.interruption_capture import capture_after_stop
+from planner.environments.runtime_admission import admit_runtime
+from planner.environments.service_execution import require_external_service_execution
 
 
 class DeploymentError(RuntimeError):
@@ -46,6 +51,9 @@ LifecycleTransition = Callable[..., None]
 class SubprocessServiceController:
     manager: str
     service_name: str
+
+    def __post_init__(self) -> None:
+        require_external_service_execution(self.manager, self.service_name)
 
     def stop(self) -> None:
         if self.manager == "systemctl":
@@ -228,6 +236,8 @@ def deploy_app(
     lock_path: Path | None = None,
     lifecycle_transition: LifecycleTransition | None = None,
     gate_evidence: GateEvidence | None = None,
+    deployment_id: str | None = None,
+    before_stop: Callable[[], None] | None = None,
 ) -> DeploymentResult:
     """Replace only ``current/app`` and recover the prior app on post-move failure."""
     if health_timeout_seconds <= 0:
@@ -248,6 +258,7 @@ def deploy_app(
         candidate_manifest = _validate_app(
             candidate_app, "candidate app", require_runtime=True
         )
+        _admit_candidate(candidate_app, candidate_manifest)
         prior_manifest = _validate_optional_current_app(current_app)
         if prior_manifest is None:
             if _persistent_state_exists(root):
@@ -287,6 +298,7 @@ def deploy_app(
         fallback = root / f".app-fallback-{os.getpid()}"
         _require_unused(staged)
         _require_unused(fallback)
+        capture_deployment_id = deployment_id or uuid4().hex
         try:
             shutil.copytree(candidate_app, staged, symlinks=True)
             staged_manifest = _validate_app(
@@ -300,6 +312,13 @@ def deploy_app(
                 and staged_manifest.artifact_digest != gate_evidence["artifact_digest"]
             ):
                 raise DeploymentError("copied candidate differs from checked artifact")
+            if staged_manifest != candidate_manifest:
+                raise DeploymentError("copied candidate differs from admitted manifest")
+            _admit_candidate(staged, staged_manifest)
+            # Admission closes only after staging succeeds. A refused claim exits
+            # through staging cleanup without entering stop/recovery handling.
+            if before_stop is not None:
+                before_stop()
             try:
                 _publish_lifecycle(lifecycle_transition, "restarting")
                 service.stop()
@@ -333,6 +352,7 @@ def deploy_app(
                 raise DeploymentError(
                     "service stop failed; current app was unchanged, restarted, and verified"
                 ) from exc
+            _capture_stopped_sessions(source_db, capture_deployment_id)
             try:
                 snapshot = backup(prior_manifest.app_sha)
             except BaseException as exc:
@@ -404,14 +424,11 @@ def deploy_app(
                     deadline=now() + health_timeout_seconds,
                 ):
                     raise DeploymentError("candidate app did not become healthy before cutoff")
-                _publish_lifecycle(
-                    lifecycle_transition,
-                    "app_healthy",
-                    serving_sha=candidate_manifest.app_sha,
-                )
             except BaseException as exc:
                 detail = _restore_fallback(
                     current_app=current_app,
+                    source_db=source_db,
+                    deployment_id=capture_deployment_id,
                     fallback=fallback,
                     snapshot=snapshot,
                     restore=restore,
@@ -431,6 +448,13 @@ def deploy_app(
                     prior_manifest.app_sha,
                     str(exc),
                 )
+            # This publication can expose admission before its directory fsync fails.
+            # No database restoration is allowed after this boundary.
+            _publish_lifecycle(
+                lifecycle_transition,
+                "app_healthy",
+                serving_sha=candidate_manifest.app_sha,
+            )
             try:
                 shutil.rmtree(fallback)
             except OSError as exc:
@@ -478,6 +502,9 @@ def _install_first_app(
         )
         if expected_digest and staged_manifest.artifact_digest != expected_digest:
             raise DeploymentError("copied candidate differs from checked artifact")
+        if staged_manifest != candidate_manifest:
+            raise DeploymentError("copied candidate differs from admitted manifest")
+        _admit_candidate(staged, staged_manifest)
         os.replace(staged, current_app)
         try:
             _publish_lifecycle(lifecycle_transition, "restarting")
@@ -487,11 +514,6 @@ def _install_first_app(
                 candidate_manifest.app_sha, deadline=now() + health_timeout_seconds
             ):
                 raise DeploymentError("initial app did not become healthy before cutoff")
-            _publish_lifecycle(
-                lifecycle_transition,
-                "app_healthy",
-                serving_sha=candidate_manifest.app_sha,
-            )
         except BaseException as exc:
             if current_app.exists() and not current_app.is_symlink():
                 shutil.rmtree(current_app)
@@ -507,6 +529,9 @@ def _install_first_app(
                 None,
                 f"{exc}; validated candidate remains at: {candidate_app}",
             )
+        _publish_lifecycle(
+            lifecycle_transition, "app_healthy", serving_sha=candidate_manifest.app_sha
+        )
         return DeploymentResult("succeeded", candidate_manifest.app_sha, None, None)
     finally:
         if staged.exists() and not staged.is_symlink():
@@ -569,6 +594,8 @@ def _require_unused(path: Path) -> None:
 def _restore_fallback(
     *,
     current_app: Path,
+    source_db: Path,
+    deployment_id: str,
     fallback: Path,
     snapshot: Path,
     restore: Restore,
@@ -584,6 +611,7 @@ def _restore_fallback(
     try:
         _publish_lifecycle(lifecycle_transition, "restarting")
         service.stop()
+        _capture_stopped_sessions(source_db, deployment_id)
         restore(snapshot)
         _require_unused(failed)
         if current_app.exists() or current_app.is_symlink():
@@ -634,3 +662,26 @@ def _publish_lifecycle(
 ) -> None:
     if transition is not None:
         transition(phase, serving_sha=serving_sha, detail=detail, code=code)
+
+
+def _capture_stopped_sessions(source_db: Path, deployment_id: str) -> None:
+    # Diagnostics cannot change backup, health, rollback, or release success.
+    try:
+        capture_after_stop(source_db, deployment_id)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Deployment %s interruption capture failed; release gates remain unchanged",
+            deployment_id,
+        )
+
+
+def _admit_candidate(app: Path, manifest: AppManifest) -> None:
+    try:
+        admit_runtime(app, manifest)
+        verified = validate_app_manifest(
+            app / "manifest.json", expected_sha=manifest.app_sha, require_runtime=True
+        )
+        if verified != manifest:
+            raise AppValidationError("candidate manifest changed during runtime admission")
+    except AppValidationError as exc:
+        raise DeploymentError(f"candidate runtime admission refused: {exc}") from exc

@@ -18,7 +18,6 @@
   import ManagerHeader from "./ManagerHeader.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
-  import ErrorLine from "./ErrorLine.svelte";
   import ManagerChildren from "./ManagerChildren.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { mutateJson } from "../lib/mutate";
@@ -30,7 +29,8 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
 
-  let { showRequestErrorLine = true }: { showRequestErrorLine?: boolean } = $props();
+  import type { ManagedFileTarget } from "../lib/filePreview";
+  let { requestedConversationId = null, openedFile = null, onOpenFile }: { requestedConversationId?: string | null; openedFile?: ManagedFileTarget | null; onOpenFile?: (file: ManagedFileTarget | null) => void } = $props();
   const navigation = (() => {
     const value = navigationApplication();
     if (!value) throw new Error("Chief conversation requires the application navigation owner");
@@ -45,10 +45,19 @@
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let chief = $derived(displayed ? navigation.presentationFor(displayed).chief : null);
-  $effect(()=>navigation.owner.setDemand('chief',{selected:{kind:'chief',id:'chief'},windows:[]}));
+  $effect(()=>navigation.owner.setDemand('chief',{selected:{kind:'chief',id:'chief'},selected_conversation_id:selectedPastConversationId,windows:[]}));
   onDestroy(()=>navigation.owner.setDemand('chief',undefined));
   let conversationState = $state<ConversationState>("rest");
   let conversationId = $state<string | null>(null);
+  let selectedPastConversationId = $state<string | null>(null);
+  let shownConversationId = $derived(selectedPastConversationId ?? conversationId);
+  let requestedConversationApplied: string | null | undefined;
+  $effect(() => {
+    if (!chief || requestedConversationApplied === requestedConversationId) return;
+    requestedConversationApplied = requestedConversationId;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== chief.conversation_id ? requestedConversationId : null;
+    if (requestedConversationId) conversationState = "opened";
+  });
   let observedPointer: string | undefined = $state();
   let backends = $state<readonly BackendSnapshot[]>([]);
   // What a conversation for the Chief would start on. It is a query rather than a read on
@@ -70,16 +79,16 @@
     const generation = navigation.state.generation;
     const element = root;
     const source = chief;
-    const localPointer = conversationId;
-    if (!effective?.runtimeCurrent || !element || !source || source.conversation_id !== localPointer) return;
+    const localPointer = shownConversationId;
+    if (!effective?.runtimeCurrent || !element || !source || (selectedPastConversationId === null && source.conversation_id !== localPointer)) return;
     const publication = effective.publication;
     const observation = observer.observeSelectors(publication,generation);
     let obsolete = false;
     void tick().then(() => {
       if (obsolete || !element.isConnected || navigation.selectors.effective !== effective
-        || navigation.state.generation !== generation || conversationId !== source.conversation_id) return;
+        || navigation.state.generation !== generation || shownConversationId !== localPointer) return;
       const pane = element.querySelector('[data-conversation-pane]');
-      if (pane?.getAttribute('data-conversation-id') !== (source.conversation_id ?? '')) return;
+      if (pane?.getAttribute('data-conversation-id') !== (localPointer ?? '')) return;
       const region=element.querySelector('.manager-workspace-title');
       if(JSON.stringify(region ? actualMark(region) : [null,null]) !== JSON.stringify(expectedMark(source.conversation_signal,source.conversation_id))) return;
       observer.acknowledgeRender(publication,observation);
@@ -114,36 +123,23 @@
 </script>
 
 <div class="chief-workspace-host" bind:this={root}>
-<ManagerFrame class="chief-workspace" bind:conversationState>
+<ManagerFrame class="chief-workspace" bind:conversationState {openedFile} {onOpenFile}>
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
   <section class="manager-workers" aria-label="Workers">
-    <ManagerChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} />
+    <ManagerChildren principal={{ kind: "chief", id: "chief" }} />
   </section>
   {#snippet conversation()}
-<!-- A failed read is a line next to the conversation, not a screen in place of it.
-     Replacing it takes the transcript, and takes words somebody typed and has not
-     sent with it - which no amount of retrying brings back. -->
-{#if navigation.state.error}
-  <div class="chief-conversation-resource" data-chief-conversation-error>
-    {#if showRequestErrorLine}<ErrorLine error={navigation.state.error} />{/if}
-    <button
-      type="button"
-      class="button button--quiet"
-      data-chief-conversation-retry
-      onclick={() => navigation.owner.recover().catch(() => undefined)}
-    >
-      Retry
-    </button>
-  </div>
-{/if}
   <LiveConversation
     ownerLoading={!chief}
     bind:conversationState
-    {conversationId}
+    conversationId={shownConversationId}
+    bind:selectedPastConversationId
+    readOnly={selectedPastConversationId !== null}
     persistenceKey="owner:chief"
+    uploadOwner={{kind:"chief",id:"chief"}}
     label="Chief of Staff"
     bind:backends
     startValues={startValues.data ?? null}

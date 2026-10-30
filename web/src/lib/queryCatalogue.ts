@@ -3,7 +3,7 @@ import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
 import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
 import type { ConversationStartValues } from "./conversation/wire";
-import type { UsageDays, UsageSummary } from "./conversation/recordedUsageWire";
+import { usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BoardResponse,
@@ -53,11 +53,9 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
-  recordedUsage: (days: UsageDays, timezone: string) =>
-    jsonQuery<UsageSummary>(
-      ["recorded-usage", { days, timezone }],
-      `/api/conversation/usage/summary?days=${days}&timezone=${encodeURIComponent(timezone)}`
-    ),
+  updates: () => jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
+  recordedUsage: (input: UsageSummaryInput) =>
+    jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
   deploymentStatus: () =>
     versionedJsonQuery<DeploymentStatus>(["deployment-status"], "/api/deployment-status"),
   vpsStatusSummary: () =>
@@ -96,7 +94,7 @@ export const queries = {
     versionedJsonQuery<import("./ticketWorkspace/contracts").WorkspaceFieldBody>(["ticket", ticketId, "workspace", "field", field], `/api/tickets/${encodeURIComponent(ticketId)}/workspace/fields/${encodeURIComponent(field)}`),
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets?detail=full&id=${encodeURIComponent(ticketId)}`),
-  reviewProposal: (item: import('./types').NavigationReviewItem) =>
+  reviewProposal: (item: import('./types').NavigationReviewProposalItem) =>
     versionedJsonQuery<import("./ticketWorkspace/contracts").WorkspaceTicket>(["ticket",item.ticket_id,"proposal",item.field,item.proposal_field,item.waiting_since,item.proposal_revision],
       `/api/tickets/${encodeURIComponent(item.ticket_id)}/workspace`),
   // What a conversation started right now would run on, for each owner that starts one.

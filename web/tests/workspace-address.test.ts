@@ -101,3 +101,21 @@ it("decodes old Item links and emits canonical Manager paths and view queries", 
   expect(workspaceAddress(old!.selection, old!.view)).toBe("#/workspace/manager/si_existing/t_existing");
   expect(workspaceAddress({kind:"none"}, old!.view)).toBe("#/workspace?view=managers");
 });
+
+it("keeps the exact conversation when review opens a historical message", () => {
+  const href = workspaceAddress({kind:"ticket",id:"t_history"}, undefined, null, "old/conversation");
+  const address = parseWorkspaceAddress(href)!;
+  expect(address.selection).toEqual({kind:"ticket",id:"t_history"});
+  expect(address.selectedConversationId).toBe("old/conversation");
+  expect(workspaceAddress(address.selection,address.view,address.openFile,address.selectedConversationId)).toBe(href);
+});
+
+it("retains a Chief artifact and selected conversation through reload and close", () => {
+  const file = {kind:"ticket-file" as const,ticketId:"t_artifact",path:"artifacts/report.html"};
+  const href = workspaceAddress({kind:"chief"}, "tickets", file, "chief-history");
+  const address = parseWorkspaceAddress(href)!;
+  expect(address.openFile).toEqual(file);
+  expect(address.selectedConversationId).toBe("chief-history");
+  expect(workspaceAddress(address.selection,address.view,address.openFile,address.selectedConversationId)).toBe(href);
+  expect(parseWorkspaceAddress(workspaceAddress(address.selection,address.view,null,address.selectedConversationId))?.openFile).toBeNull();
+});

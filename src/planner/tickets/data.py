@@ -22,6 +22,7 @@ from planner.conversation.contracts import require_conversation_backend_key
 from planner.conversation.model_resolution.contracts import ModelResolutionUnavailable
 from planner.conversation.model_resolution.service import resolve_cached_model
 from planner.core import authority, ticket_blocks
+from planner.core.authority.logic import can_hold_review
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
@@ -125,6 +126,28 @@ def _validate_ceiling_holder(
         )
 
 
+def _validate_review_holder(
+    conn: sqlite3.Connection,
+    holder: Principal,
+    *,
+    ticket_id: str,
+    manager_kind: str,
+    manager_id: str | None,
+) -> None:
+    """Validate a selected or default address against the resulting assignment."""
+    _validate_ceiling_holder(conn, holder, ticket_id=ticket_id)
+    if not can_hold_review(holder, manager_kind=manager_kind, manager_id=manager_id):
+        raise PlannerError(
+            ErrorCode.validation,
+            "ceiling holder must be the user or the Ticket's direct manager; "
+            "name an eligible holder explicitly",
+            {
+                "holder": {"kind": holder.kind.value, "id": holder.id},
+                "ticket_id": ticket_id,
+            },
+        )
+
+
 @contextmanager
 def _txn(conn: sqlite3.Connection) -> Iterator[None]:
     if conn.in_transaction:
@@ -146,6 +169,21 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
         raise
     else:
         conn.execute("COMMIT")
+
+
+@contextmanager
+def _txn_without_nested_savepoint(conn: sqlite3.Connection) -> Iterator[None]:
+    """Join the caller's transaction whole, or own one when there is none.
+
+    Worker-step claim writes also run inside Signal-guarded conversation writes, and
+    those forbid a nested savepoint once a runtime candidate is applied. A failure here
+    propagates, so the caller rolls its transaction back as one unit.
+    """
+    if conn.in_transaction:
+        yield
+        return
+    with _txn(conn):
+        yield
 
 
 def _validate_ticket_creation_placement(
@@ -622,6 +660,8 @@ def _write_worker_step_claim(
     ticket_id: str,
     worker_step_claim: WorkerStepClaim,
     now: int,
+    *,
+    notify_manager: bool = True,
 ) -> None:
     before = conn.execute(
         "SELECT worker_step_claim,worker_step_claim_revision,manager_id,title "
@@ -640,7 +680,8 @@ def _write_worker_step_claim(
         ),
     )
     if (
-        before is not None
+        notify_manager
+        and before is not None
         and str(before["worker_step_claim"]) != worker_step_claim.value
         and worker_step_claim is WorkerStepClaim.errored
         and before["manager_id"] is not None
@@ -998,6 +1039,13 @@ def create_ticket(
             authority.require_above_a_ticket_being_created(
                 conn, principal, ticket_id=ticket_id, parent_manager_id=manager_id
             )
+        _validate_review_holder(
+            conn,
+            ceiling_holder,
+            ticket_id=ticket_id,
+            manager_kind=manager_kind,
+            manager_id=manager_id,
+        )
         ceiling = (
             default_ceiling
             if stated_ceiling is None
@@ -1216,7 +1264,7 @@ def release_worker_step_claim(
 
     Reports whether the release actually fired.
     """
-    with _txn(conn):
+    with _txn_without_nested_savepoint(conn):
         row = conn.execute(
             "SELECT worker_step_claim, worker_step_claim_revision FROM tickets WHERE id = ?",
             (ticket_id,),
@@ -1238,6 +1286,7 @@ def mark_worker_step_claim_errored(
     expected_claim: WorkerStepClaim,
     expected_claim_revision: int,
     now: int,
+    notify_manager: bool = True,
 ) -> bool:
     """Expose one failed claim, unless a later claim transition replaced it.
 
@@ -1246,14 +1295,37 @@ def mark_worker_step_claim_errored(
     the existing Manager restart route.  The exact claim identity prevents an old
     delivery result from overwriting a newer worker-step transition.
     """
-    with _txn(conn):
+    with _txn_without_nested_savepoint(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
         if ticket.worker_step_claim is not expected_claim:
             return False
         if ticket.worker_step_claim_revision != expected_claim_revision:
             return False
-        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.errored, now)
+        _write_worker_step_claim(
+            conn, ticket_id, WorkerStepClaim.errored, now, notify_manager=notify_manager
+        )
         return True
+
+
+def restore_interrupted_worker_step_claim(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    conversation_id: str,
+    expected_claim_revision: int,
+    now: int,
+) -> int | None:
+    """Rearm only the exact errored claim reconciled from an interrupted occurrence."""
+    with _txn_without_nested_savepoint(conn):
+        ticket = _load_ticket_for_write(conn, ticket_id)
+        if (
+            ticket.conversation_id != conversation_id
+            or ticket.worker_step_claim is not WorkerStepClaim.errored
+            or ticket.worker_step_claim_revision != expected_claim_revision
+        ):
+            return None
+        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.out, now)
+        return expected_claim_revision + 1
 
 
 def mark_ticket_errored(
@@ -1386,6 +1458,13 @@ def accept_proposal(
             next_holder,
             worker_type_definition=worker_type_definition,
             approval=_explicit_approval(conn, principal),
+        )
+        _validate_review_holder(
+            conn,
+            next_holder,
+            ticket_id=ticket.id,
+            manager_kind=ticket.manager_kind,
+            manager_id=ticket.manager_id,
         )
         updated = _apply_decision(conn, ticket, decision, now)
         _give_back_worker_step_claim(conn, updated, now=now)
@@ -1610,17 +1689,11 @@ def _release_a_holder_the_move_left_below(
     *,
     now: int,
 ) -> None:
-    """Return the ceiling to Khushal when a move leaves its holder no longer above.
+    """Return the ceiling to Khushal when a move leaves its holder ineligible.
 
-    Authority is derived from the Ticket's current Manager and the ceiling holder is a
-    stored address, so a move can leave the two disagreeing: the Ticket goes on asking a
-    holder that every write door now refuses, and nothing says so. Khushal stands above
-    everything, so the ceiling always has somewhere valid to go, and only Khushal or the
-    Chief can make this move in the first place.
-
-    The rule is re-asked rather than restated. This does not test whether the holder was
-    the Manager just left: it asks whether the holder still stands above the Ticket as the
-    Ticket now is. A holder that does keeps the ceiling, whatever kind of thing it is.
+    The stored address is checked against the Ticket's new assignment using the review
+    rule, rather than general authority. This catches Chief as well as an old Manager
+    when a Ticket moves under another Manager. Khushal can always hold the review.
 
     Asked on every move, not only while a proposal is parked. A wrong address is wrong
     before anything arrives at it.
@@ -1631,7 +1704,7 @@ def _release_a_holder_the_move_left_below(
     # Read back rather than trust the Ticket loaded before the move: one edit can set the
     # holder and move the Manager together, and the holder that matters is the stored one.
     holder = _principal_from_json(str(row["ceiling_holder"]))
-    if authority.is_above(conn, holder, authority.ticket(ticket_id)):
+    if authority.can_hold_review(conn, holder, ticket_id):
         return
     conn.execute(
         "UPDATE tickets SET ceiling_holder = ?, updated_at = ? WHERE id = ?",
@@ -1828,8 +1901,14 @@ def edit_ticket(
 
         if "ceiling_holder" in edit:
             holder_decision = resolution.decide_set_ceiling_holder(ticket, edit["ceiling_holder"])
+            _validate_review_holder(
+                conn,
+                holder_decision.ceiling_holder,
+                ticket_id=ticket.id,
+                manager_kind=manager_kind,
+                manager_id=manager_id,
+            )
             if holder_decision.ceiling_holder != ticket.ceiling_holder:
-                _validate_ceiling_holder(conn, holder_decision.ceiling_holder, ticket_id=ticket.id)
                 changes.append(
                     (
                         "ceiling_holder",
@@ -1869,7 +1948,7 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
-        if any(change[0] == "manager_id" for change in changes):
+        if "ceiling_holder" not in edit and any(change[0] == "manager_id" for change in changes):
             _release_a_holder_the_move_left_below(
                 conn,
                 ticket_id,

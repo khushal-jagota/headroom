@@ -22,7 +22,11 @@ from planner.core.contracts import JsonDict
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import manager_files
-from planner.files.logic.paths import resolve_manager_file, resolve_ticket_file
+from planner.files.logic.paths import (
+    resolve_html_navigation,
+    resolve_manager_file,
+    resolve_ticket_file,
+)
 from planner.files.logic.reuse import (
     holds_the_current_copy,
     is_played_with_ranges,
@@ -66,22 +70,32 @@ _INLINE_MEDIA_TYPES = _INLINE_IMAGE_TYPES | frozenset(
 async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> Response:
     _reject_raw_encoded_unsafe_path(request)
     try:
-        ticket_file = resolve_ticket_file(request.app.state.config.db_path, ticket_id, file_path)
-    except ValueError as exc:
+        ticket_file = (
+            resolve_html_navigation(
+                request.app.state.config.db_path,
+                request.headers["x-panels-artifact-root"],
+                request.scope["raw_path"].decode("ascii"),
+            )
+            if "x-panels-artifact-root" in request.headers
+            else resolve_ticket_file(
+                request.app.state.config.db_path, ticket_id, file_path
+            ).absolute_path
+        )
+    except (ValueError, OSError, RuntimeError, UnicodeError) as exc:
         raise PlannerError(ErrorCode.not_found, "ticket file not found") from exc
 
     media_type = (
-        mimetypes.guess_type(ticket_file.absolute_path.name)[0] or "application/octet-stream"
+        mimetypes.guess_type(ticket_file.name)[0] or "application/octet-stream"
     )
     disposition = "inline" if _may_inline(media_type) else "attachment"
     response = FileResponse(
-        ticket_file.absolute_path,
+        ticket_file,
         media_type=media_type,
-        filename=ticket_file.absolute_path.name,
+        filename=ticket_file.name,
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    return await _reusable(request, response, ticket_file.absolute_path, media_type)
+    return await _reusable(request, response, ticket_file, media_type)
 
 
 @router.get("/files/sprint-items/{manager_id}/{file_path:path}", include_in_schema=False)
@@ -95,23 +109,31 @@ async def get_manager_file(
             conn, request_context(request).principal, authority.manager(manager_id)
         )
     try:
-        managed_file = resolve_manager_file(
-            request.app.state.config.db_path, manager_id, file_path
+        managed_file = (
+            resolve_html_navigation(
+                request.app.state.config.db_path,
+                request.headers["x-panels-artifact-root"],
+                request.scope["raw_path"].decode("ascii"),
+            )
+            if "x-panels-artifact-root" in request.headers
+            else resolve_manager_file(
+                request.app.state.config.db_path, manager_id, file_path
+            ).absolute_path
         )
-    except ValueError as exc:
+    except (ValueError, OSError, RuntimeError, UnicodeError) as exc:
         raise PlannerError(ErrorCode.not_found, "Manager file not found") from exc
     media_type = (
-        mimetypes.guess_type(managed_file.absolute_path.name)[0] or "application/octet-stream"
+        mimetypes.guess_type(managed_file.name)[0] or "application/octet-stream"
     )
     disposition = "inline" if _may_inline(media_type) else "attachment"
     response = FileResponse(
-        managed_file.absolute_path,
+        managed_file,
         media_type=media_type,
-        filename=managed_file.absolute_path.name,
+        filename=managed_file.name,
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    return await _reusable(request, response, managed_file.absolute_path, media_type)
+    return await _reusable(request, response, managed_file, media_type)
 
 
 async def _reusable(

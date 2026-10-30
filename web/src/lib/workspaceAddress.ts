@@ -17,14 +17,13 @@ export type WorkspaceSelection =
   | { kind: "ticket"; id: string; openedFromManagerId?: string }
   | { kind: "manager"; id: string };
 
-// The whole address: what the pane shows, which list the rail shows, and the artifact a
-// Ticket has open. Nothing else decides any of them.
+// The whole address: what the pane shows, which list the rail shows, and the artifact its reader has open. Nothing else decides any of them.
 export type WorkspaceAddress = {
   selection: WorkspaceSelection;
   view: WorkspaceView;
-  // The file the open Ticket is showing in place of its document. Only a Ticket can have
-  // one, so it is dropped from any other address.
+  // The file that the selected Ticket or Chief reader shows in place of its document.
   openFile: ManagedFileTarget | null;
+  selectedConversationId?: string | null;
 };
 
 // What the rail draws, read off the address alone.
@@ -99,19 +98,22 @@ export function parseWorkspaceAddress(hash: string): WorkspaceAddress | null {
   const params = new URLSearchParams(query);
   const asked = params.get("view");
   const view = asked === "items" ? "managers" : asked === "tickets" || asked === "managers" ? asked : null;
-  const openFile = selection.kind === "ticket" ? targetFromPreviewQuery(params) : null;
-  return { selection, view: view ?? impliedWorkspaceView(selection), openFile };
+  const openFile = selection.kind === "ticket" || selection.kind === "chief" ? targetFromPreviewQuery(params) : null;
+  return { selection, view: view ?? impliedWorkspaceView(selection), openFile,
+    ...(params.get("conversation") ? {selectedConversationId: params.get("conversation")} : {}) };
 }
 
 export function workspaceAddress(
   selection: WorkspaceSelection,
   view?: WorkspaceView,
-  openFile?: ManagedFileTarget | null
+  openFile?: ManagedFileTarget | null,
+  selectedConversationId?: string | null
 ): string {
   const path = selectionPath(selection);
   const parts: string[] = [];
+  if (selectedConversationId) parts.push(`conversation=${encodeURIComponent(selectedConversationId)}`);
   if (view && view !== impliedWorkspaceView(selection)) parts.push(`view=${view}`);
-  if (openFile && selection.kind === "ticket") parts.push(previewQuery(openFile));
+  if (openFile && (selection.kind === "ticket" || selection.kind === "chief")) parts.push(previewQuery(openFile));
   return parts.length === 0 ? path : `${path}?${parts.join("&")}`;
 }
 

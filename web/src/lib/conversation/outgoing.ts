@@ -1,16 +1,8 @@
-/** A message this browser has sent that the record does not have yet.
- *
- * Sending is not a round trip a person should have to watch. The message exists the
- * moment Enter is pressed — this browser has the text, and it mints the message's id and
- * the instant it was sent right there — so it is drawn straight away and the network work
- * happens underneath it.
- *
- * That leaves one question, and it is the only thing this module decides: when has the
- * record caught up? A sent message becomes exactly one of three rows — delivered, refused,
- * or discarded — and each of them carries back the id this browser minted. So the answer
- * is "when a row carrying its id arrives", whichever of the three that row is. At that
- * point the local copy simply stops being drawn: the row is the message now, and it is
- * drawn where the record puts it rather than being swapped into place.
+/** A send remains durable while transport resolves its destination. Unresolved sends
+ * draw neither a provisional thread bubble nor a queue row. Confirmed acceptance
+ * commits one transcript display slot; confirmed queue membership uses the tray.
+ * A correlated record row replaces the contents of that same mounted slot. Recovery
+ * outcomes stay visible without claiming that the agent accepted the message.
  */
 
 import type { ConversationEvent, PromptDeliveryMode, SentMessagePiece } from "./wire";
@@ -43,9 +35,19 @@ export type OutgoingMessageKnownFate =
   | "answer_never_came_back";
 
 export type OutgoingMessage = {
+  /** Immutable displayed read boundary for an explicit review reply. */
+  ownerReadThroughSequence?: number;
   /** What this browser called the message. It rides out with the send and comes back on
    *  the message's row, which is what lets the two be recognised as one message. */
   messageId: string;
+  /** The mounted bubble retains this identity when its words are sent again. */
+  displayMessageId?: string;
+  /** Transport or a correlated prompt receipt accepted this send; retains placement before the record body.
+   * This is not authority for backend history admission. */
+  accepted?: boolean;
+  /** Viewport intent only: recalled content does not request fresh send placement.
+   * Set on recall, ignored by the storage decoder. */
+  restored?: boolean;
   /** The message as it will be sent, which is what this browser has until the record
    *  answers for it. A message on its way names no kept file, because nothing has kept
    *  anything yet — it holds what it is about to hand over. */
@@ -148,7 +150,7 @@ const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
   nothing_yet: null,
   sent_before_this_page: null,
   waiting_for_the_agent: "waiting for the agent to be free",
-  answer_never_came_back: "the server never said whether this arrived"
+  answer_never_came_back: "no answer came"
 };
 
 /** What a message on its way says about itself, or nothing when there is nothing to say. */
@@ -314,35 +316,46 @@ export function anOutgoingMessageIsWaitingOnTheRecord(
   );
 }
 
-/** Where each message this browser is still drawing belongs.
- *
- * The thread draws these after every row the record has, so a copy left there is claiming
- * to be the newest thing in the conversation. For a send on its way that is true, and it
- * is the whole point: the message exists the moment Enter is pressed and it belongs in the
- * thread from then on.
- *
- * It stops being true the moment nothing is coming. A send nobody answered for has no row
- * on the way, so left in the thread it would sit under every later turn for as long as the
- * tab lives, and reading the conversation would never clear it. It belongs with the other
- * messages that have not landed, above the composer, where there is room to say what is
- * known and to offer something to do about it.
- */
+/** A transport in flight has no rendered destination. Acceptance or a record commits
+ * the thread; confirmed queue membership commits the tray. Recovery remains visible. */
 export function outgoingMessagesByPlace(
   outgoing: readonly OutgoingMessage[],
   where: {
     composerStackMessageIds: readonly string[];
     serverHeldSenderMessageIds: ReadonlySet<string>;
+    recordedSenderMessageIds?: ReadonlySet<string>;
   }
 ): { thread: readonly OutgoingMessage[]; composerStack: readonly OutgoingMessage[] } {
+  const recorded = (message: OutgoingMessage): boolean =>
+    where.recordedSenderMessageIds?.has(message.messageId) ?? false;
   const aboveTheComposer = (message: OutgoingMessage): boolean =>
-    where.composerStackMessageIds.includes(message.messageId)
-    || where.serverHeldSenderMessageIds.has(message.messageId)
-    || message.knownFate === "waiting_for_the_agent"
-    || message.knownFate === "answer_never_came_back";
+    !message.accepted && !recorded(message) && (
+      where.composerStackMessageIds.includes(message.messageId)
+      || where.serverHeldSenderMessageIds.has(message.messageId)
+      || message.knownFate === "waiting_for_the_agent"
+    );
   return {
-    thread: outgoing.filter((message) => !aboveTheComposer(message)),
+    thread: outgoing.filter(message => !aboveTheComposer(message) && (
+      message.accepted || recorded(message) || message.knownFate === "answer_never_came_back"
+    )),
     composerStack: outgoing.filter(aboveTheComposer)
   };
+}
+
+/** Receipt lookup is for unresolved identities, separate from mounted presentation.
+ * Batch every candidate once so neither acknowledged nor unanswered older IDs starve later sends. */
+export function outgoingReceiptBatches(outgoing: readonly OutgoingMessage[], acknowledged: ReadonlySet<string>): string[][] {
+  const ids = outgoing.filter(message => !acknowledged.has(message.messageId)).map(message => message.messageId);
+  const batches: string[][] = [];
+  for (let offset = 0; offset < ids.length; offset += 64) batches.push(ids.slice(offset, offset + 64));
+  return batches;
+}
+
+/** Definitive receipts release durable copies. Only a bounded visible presentation
+ * waits for row admission; a resting reader needs no local presentation at all. */
+export function retainOutgoingPresentations(outgoing: readonly OutgoingMessage[], acknowledged: ReadonlySet<string>, admitted: ReadonlySet<string>, transcript: boolean): readonly OutgoingMessage[] {
+  const retained = new Set(transcript ? outgoing.filter(message => acknowledged.has(message.messageId) && !admitted.has(message.messageId)).slice(-300).map(message => message.messageId) : []);
+  return outgoing.filter(message => !acknowledged.has(message.messageId) || retained.has(message.messageId));
 }
 
 // --- surviving a reload ---------------------------------------------------------------------
@@ -570,9 +583,7 @@ export async function recallOutgoingMessages(conversationId: string): Promise<Ou
   includeRememberedMessagesInReservations();
   await rememberTails.get(conversationId);
   return (await outgoingMessagesStoredUnder(conversationId)).map((message) =>
-    message.knownFate === "nothing_yet"
-      ? { ...message, knownFate: "sent_before_this_page" as const }
-      : message
+    ({ ...message, restored: true, knownFate: message.knownFate === "nothing_yet" ? "sent_before_this_page" as const : message.knownFate })
   );
 }
 
@@ -672,6 +683,12 @@ function includeRememberedMessagesInReservations(): void {
   try {
     for (let index = 0; index < window.sessionStorage.length; index += 1) {
       const key = window.sessionStorage.key(index);
+      if (key?.startsWith("panels:composer-local-sends:") && !key.startsWith("panels:composer-local-sends:video:")) {
+        for (const reservation of localComposerReservations(safelyReadSessionValue(key))) {
+          outgoingImageReservations.set(reservation.message_id, reservation.image_bytes);
+          outgoingFileReservations.set(reservation.message_id, reservation.file_bytes);
+        }
+      }
       if (key === null || !key.startsWith(`${REMEMBERED_OUTGOING_MESSAGES}.`)) continue;
       for (const reservation of rememberedReservationsFromStored(window.sessionStorage.getItem(key))) {
         outgoingImageReservations.set(reservation.message_id, reservation.image_bytes);
@@ -683,10 +700,24 @@ function includeRememberedMessagesInReservations(): void {
   }
 }
 
+function localComposerReservations(stored: string | null): RememberedMessageReservation[] {
+  try {
+    const entries: unknown = JSON.parse(stored ?? "[]");
+    if (!Array.isArray(entries)) return [];
+    return entries.flatMap(entry => {
+      if (typeof entry?.context?.messageId !== "string" || !Array.isArray(entry?.attempt?.content)) return [];
+      const pieces = entry.attempt.content.flatMap((value: unknown) => { const piece = sentMessagePieceFrom(value); return piece ? [piece] : []; });
+      const message = mintOutgoingMessage({content: pieces, senderLabel: "owner", mode: "queue"});
+      return [{message_id: entry.context.messageId, image_bytes: outgoingMessageImageBytes(message), file_bytes: outgoingMessageFileBytes(message)}];
+    });
+  } catch { return []; }
+}
+
 function messageIsRememberedAnywhere(messageId: string): boolean {
   try {
     for (let index = 0; index < window.sessionStorage.length; index += 1) {
       const key = window.sessionStorage.key(index);
+      if (key?.startsWith("panels:composer-local-sends:") && localComposerReservations(safelyReadSessionValue(key)).some(entry => entry.message_id === messageId)) return true;
       if (key === null || !key.startsWith(`${REMEMBERED_OUTGOING_MESSAGES}.`)) continue;
       if (rememberedReservationsFromStored(window.sessionStorage.getItem(key))
         .some((reservation) => reservation.message_id === messageId)) {
@@ -750,6 +781,9 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   return {
     messageId,
     content: pieces,
+    ...(held.accepted === true ? { accepted: true } : {}),
+    ...(typeof held.ownerReadThroughSequence === "number" && Number.isSafeInteger(held.ownerReadThroughSequence) && held.ownerReadThroughSequence >= 0 ? { ownerReadThroughSequence: held.ownerReadThroughSequence } : {}),
+    ...(typeof held.displayMessageId === "string" ? { displayMessageId: held.displayMessageId } : {}),
     senderLabel,
     mode: decodedMode as PromptDeliveryMode,
     sentAtUnixMilliseconds,
@@ -762,6 +796,9 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
 function sentMessagePieceFrom(value: unknown): SentMessagePiece | null {
   if (value === null || typeof value !== "object") return null;
   const piece = value as Record<string, unknown>;
+  if (piece.piece === "video_upload" && typeof piece.upload_id === "string" && piece.upload_id !== "") {
+    return { piece: "video_upload", upload_id: piece.upload_id };
+  }
   if (piece.piece === "text") {
     return typeof piece.text === "string" ? { piece: "text", text: piece.text } : null;
   }

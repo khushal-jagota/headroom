@@ -163,6 +163,7 @@ async def _turn(
     await sink.wait_for_the_turn_to_end()
 
 
+@pytest.mark.real_provider_homes
 @real_codex_only
 def test_real_codex_consumes_a_guarded_steer_in_the_incumbent_turn(tmp_path: Path) -> None:
     async def exercise() -> None:
@@ -217,6 +218,7 @@ def test_real_codex_consumes_a_guarded_steer_in_the_incumbent_turn(tmp_path: Pat
     _run(exercise)
 
 
+@pytest.mark.real_provider_homes
 @real_codex_only
 def test_real_codex_rejects_an_ended_steer_without_consuming_its_nonce(
     tmp_path: Path,
@@ -271,6 +273,7 @@ def test_real_codex_rejects_an_ended_steer_without_consuming_its_nonce(
     _run(exercise)
 
 
+@pytest.mark.real_provider_homes
 @real_codex_only
 def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
     tmp_path: Path,
@@ -333,6 +336,7 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
     _run(exercise)
 
 
+@pytest.mark.real_provider_homes
 @real_codex_only
 def test_real_codex_honours_the_model_and_the_effort_a_turn_carries(tmp_path: Path) -> None:
     """The evidence that a carried change lands: codex refuses a value it does not have.
@@ -415,6 +419,7 @@ async def _turn_with_effort(
     await sink.wait_for_the_turn_to_end()
 
 
+@pytest.mark.real_provider_homes
 @real_codex_only
 def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path) -> None:
     """A conversation whose child was stopped picks up again, remembering what was said."""

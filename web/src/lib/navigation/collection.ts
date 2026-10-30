@@ -11,7 +11,7 @@ export interface NavigationPublication {
   readonly mode: SnapshotResponse['mode'];
   readonly authority: SnapshotResponse['authority'];
   readonly records: readonly (NavigationRecord | ViewRecord)[];
-  readonly view?: { readonly id: string; readonly scopeGeneration: number; readonly contentVersion: string; readonly orderingGeneration: string; readonly windows: readonly ViewWindow[]; readonly counts: ViewCounts };
+  readonly view?: { readonly id: string; readonly scopeGeneration: number; readonly contentVersion: string; readonly orderingGeneration: string; readonly windows: readonly ViewWindow[]; readonly counts: ViewCounts; readonly reviewSummary?: import("./contracts").ReviewSummary; readonly reviewContext?: readonly import('./contracts').ReviewConversationContext[] };
 }
 type PublicationMetadata = Omit<NavigationPublication, 'records'>;
 export type NavigationRow = { key: string; type: 'record'; record: NavigationRecord }

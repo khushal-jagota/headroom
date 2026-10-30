@@ -70,15 +70,7 @@
 </script>
 
 {#snippet body()}
-  <span class="acp-step-icon" aria-hidden="true">
-    <svg viewBox="0 0 24 24">
-      {#each presentation.iconPaths as path}<path d={path} />{/each}
-    </svg>
-  </span>
-  <span class="acp-step-title">{presentation.title}</span>
-  {#if presentation.summary}
-    <span class="c2-tool-summary" data-conversation-tool-summary>{presentation.summary}</span>
-  {/if}
+  <span class="acp-step-title">{presentation.title}{#if presentation.summary}{" "}<span data-conversation-tool-summary>{presentation.summary}</span>{/if}</span>
   {#if row.status === "completed"}
     <span class="acp-step-mark acp-mark-ok" role="img" aria-label="Completed">✓</span>
   {:else if row.status === "failed"}
@@ -124,16 +116,15 @@
 {/if}
 
 <style>
-  .c2-tool-summary {
+  .acp-step {
     min-width: 0;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    padding: 2px 0;
     color: var(--text-faintest);
-    font-family: var(--font-mono);
     font-size: var(--type-xs);
+    letter-spacing: var(--tracking-mono);
   }
+  .acp-step-title { color: inherit; font-size: inherit; }
+  .acp-step-mark, .acp-spin { margin-inline-start: 0; }
   /* One shape for the line and what it opens onto, so opening a row grows it rather than
      putting a second thing underneath it. The wash is on the whole shape, including the
      part that is only there when it is open. */
@@ -145,12 +136,9 @@
     transition: background var(--motion-fast) var(--motion-ease);
   }
   .c2-tool:hover { background-image: var(--interaction-hover); }
-  /* What happened is the brighter half of the line; which call it was is the quieter one. */
-  .c2-tool :global(.acp-step-title) { color: var(--text-default); }
-  /* Indented past the icon so it hangs off the line it belongs to, behind a rule rather
-     than in a box — the box is what made it read as a separate thing. */
+  /* Details hang from the plain tool line, behind a rule. */
   .c2-tool-body {
-    margin-inline-start: calc(var(--space-4) + var(--space-2));
+    margin-inline-start: 0;
     padding: 0 0 var(--space-2) var(--space-3);
     border-inline-start: var(--border-hairline) solid var(--border-color);
   }

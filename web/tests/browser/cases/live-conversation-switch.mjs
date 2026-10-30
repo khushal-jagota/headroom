@@ -29,7 +29,7 @@ const indexPath = join(scratchRoot, `live-switch-index-${process.pid}.html`);
   };
 
   let conversationId = $state("conversation-a");
-  let conversationState = $state<"rest" | "peeked" | "opened">("opened");
+  let conversationState = $state<"rest" | "opened">("opened");
   (window as any).__setConversationState = (state: typeof conversationState) => conversationState = state;
   (window as any).__switchConversation = (id: string) => (conversationId = id);
 
@@ -137,10 +137,10 @@ let releaseNavigation: (()=>void) | undefined;
     const continuity = {scope: "workspace", schema_version: SCHEMA_VERSION,
       semantics: SUPPORTED_SEMANTICS, epoch: "read-fixture", revision: String((globalThis as any).__navigationSnapshots)};
     const request=JSON.parse(new URL(url,location.origin).searchParams.get('view')!);
-    const records=[conversation("conversation-a",navigationBoundaries["conversation-a"]),conversation("conversation-b",navigationBoundaries["conversation-b"])].map(row=>({kind:row.kind,id:row.id,value:{attention:row.value.attention,owner_read_through_sequence:row.value.owner_read_through_sequence,error_acknowledged_through_sequence:row.value.error_acknowledged_through_sequence}}));
-    return Response.json({event:'snapshot',wire_version:3,projection_version:3,mode:'current',authority:authority(),
+    const records=[conversation("conversation-a",navigationBoundaries["conversation-a"]),conversation("conversation-b",navigationBoundaries["conversation-b"])].map(row=>({kind:row.kind,id:row.id,value:{first_unread_owner_message_at:row.value.first_unread_owner_message_at,attention:row.value.attention,owner_read_through_sequence:row.value.owner_read_through_sequence,error_acknowledged_through_sequence:row.value.error_acknowledged_through_sequence}}));
+    return Response.json({event:'snapshot',wire_version:3,projection_version:7,mode:'current',authority:authority(),
       view_id:'read-fixture',scope_generation:request.scope_generation,ordering_generation:'fixture',coverage:continuity,
-      content_version:JSON.stringify(records),content:{records,windows:[],counts:{running_conversations:2,out_claims:0,review:0,unread:2,settled:0}},proof:null});
+      content_version:JSON.stringify(records),content:{review_summary:{skipped:0,new:0},review_context:[],records,windows:[],counts:{running_conversations:2,out_claims:0,review:0,unread:2,settled:0}},proof:null});
   }
   const ownerReadMatch = url.match(/conversations\/(conversation-[ab])\/owner-read$/);
   if (ownerReadMatch) {

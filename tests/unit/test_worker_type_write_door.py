@@ -6,6 +6,7 @@ it is now a write, and that the write is guarded where the import-time check use
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import closing
@@ -320,7 +321,7 @@ def test_one_type_reads_back_exactly_what_the_whole_list_said(
     assert unknown.json()["error"]["detail"] == {"worker_type": "not-a-worker"}
 
 
-def test_reviewed_skill_batch_has_owner_authority_even_when_chief_can_edit_other_skills(
+def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
     client: tuple[TestClient, Path],
 ) -> None:
     test_client, _db_path = client
@@ -328,7 +329,6 @@ def test_reviewed_skill_batch_has_owner_authority_even_when_chief_can_edit_other
     payload = {"skills": [{"name": "batch-role", "source_text": source, "expected_sha256": None}]}
     before = test_client.get("/api/skills").json()
     for headers in (
-        {"X-Plan-Actor": "chief"},
         {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
         {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
         {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
@@ -340,3 +340,16 @@ def test_reviewed_skill_batch_has_owner_authority_even_when_chief_can_edit_other
     accepted = test_client.post("/api/skills/apply", json=payload)
     assert accepted.status_code == 200, accepted.text
     assert test_client.get("/api/skills/batch-role").json()["source_text"] == source
+    chief_source = source.replace("Exact owner instructions.", "Exact Chief instructions.")
+    chief_payload = {
+        "skills": [{
+            "name": "batch-role",
+            "source_text": chief_source,
+            "expected_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        }]
+    }
+    accepted = test_client.post(
+        "/api/skills/apply", json=chief_payload, headers={"X-Plan-Actor": "chief"}
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert test_client.get("/api/skills/batch-role").json()["source_text"] == chief_source

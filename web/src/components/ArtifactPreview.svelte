@@ -1,16 +1,19 @@
 <script lang="ts">
+  import type { RegisterManagedArtifactFrame } from "../lib/managedArtifactPress";
   import { resolvePreview, type ManagedFileTarget } from "../lib/filePreview";
   import FileDocument from "./FileDocument.svelte";
 
   let {
     target,
     reloadSignal = 0,
+    registerArtifactFrame,
     element = $bindable(),
     onRefresh,
     onClose
   }: {
     target: ManagedFileTarget;
     reloadSignal?: number;
+    registerArtifactFrame?: RegisterManagedArtifactFrame;
     element?: HTMLElement | null;
     onRefresh: () => void;
     onClose: () => void;
@@ -35,6 +38,8 @@
     </div>
   </div>
   <div class="ticket-artifact-body">
-    <FileDocument {target} {reloadSignal} />
+    <div class="ticket-artifact-slot">
+      <FileDocument retainWhileSelected {target} {reloadSignal} {registerArtifactFrame} />
+    </div>
   </div>
 </aside>

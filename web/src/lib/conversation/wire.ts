@@ -1,3 +1,4 @@
+import { mutationHeaders } from "../releaseMonitor";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
@@ -263,7 +264,7 @@ export type ConversationEvent =
     >
   | Row<
       "prompt_discarded",
-      StoredMessageContent & { sender_label: string; sender_message_id?: string }
+      StoredMessageContent & { sender_label: string; sender_message_id?: string; suppression_reason?: string | null }
         & AddressedMessageFields
     >
   | Row<
@@ -354,7 +355,8 @@ export type PromptDeliveryFate =
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
   | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
-  | { fate: "uncertain" };
+  | { fate: "uncertain" }
+  | { fate: "suppressed"; reason: string };
 
 export type HeldPromptPromotionResult =
   | { promoted: false }
@@ -363,6 +365,7 @@ export type HeldPromptPromotionResult =
       | { fate: "injected" }
       | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
       | { fate: "uncertain" }
+      | { fate: "suppressed"; reason: string }
     ));
 
 export type BackendIdentity = {
@@ -462,7 +465,8 @@ export type BackendModelEnablementResult = {
 export type SentMessagePiece =
   | { piece: "text"; text: string }
   | { piece: "image"; data: string; media_type: string; file_name?: string }
-  | { piece: "file"; data: string; media_type: string; file_name: string };
+  | { piece: "file"; data: string; media_type: string; file_name: string }
+  | { piece: "video_upload"; upload_id: string };
 
 export type SendPromptBody = {
   content: SentMessagePiece[];
@@ -479,6 +483,7 @@ export type SendPromptBody = {
  * to a conversation that does not exist yet they are what to create it on.
  */
 export type OwnerSendBody = {
+  owner_read_through_sequence?: number;
   conversation_id: string | null;
   backend_key?: string;
   model?: string;
@@ -532,6 +537,9 @@ export class ConversationWireError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  if (init?.method && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase())) {
+    init = { ...init, headers: await mutationHeaders(init.headers) };
+  }
   let response: Response;
   try {
     response = await fetch(`${CONVERSATION_BASE}${path}`, init);

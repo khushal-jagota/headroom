@@ -9,6 +9,7 @@ from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryMode,
     PromptDeliveryRefused,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
@@ -18,6 +19,7 @@ from planner.managers import service as managers_service
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import ReviewTransferNotice
+from planner.tickets.logic.review_transfer import notify_new_review_holder
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 _LOG = logging.getLogger(__name__)
@@ -45,19 +47,20 @@ async def _notify_review_transfer(
     *,
     now: int,
 ) -> None:
-    new_holder_text = (
-        f"{notice.mover_name} moved the review of {notice.ticket_title} to you."
-        if notice.mover_name is not None
-        else f"You now hold the review of {notice.ticket_title}."
-    )
-    await _deliver(
-        system,
-        conn,
-        notice.ticket_id,
-        notice.new_holder,
-        text_message_content(new_holder_text),
-        now=now,
-    )
+    if notify_new_review_holder(notice.new_holder):
+        new_holder_text = (
+            f"{notice.mover_name} moved the review of {notice.ticket_title} to you."
+            if notice.mover_name is not None
+            else f"You now hold the review of {notice.ticket_title}."
+        )
+        await _deliver(
+            system,
+            conn,
+            notice.ticket_id,
+            notice.new_holder,
+            text_message_content(new_holder_text),
+            now=now,
+        )
     if notice.notify_previous_holder:
         await _deliver(
             system,
@@ -153,6 +156,13 @@ async def _deliver(
                 mode=PromptDeliveryMode.queue,
                 reply_requested=False,
             )
+    if isinstance(delivered.fate, PromptDeliverySuppressed):
+        _LOG.info(
+            "review transfer notice suppressed (ticket=%s reason=%s)",
+            ticket_id,
+            delivered.fate.reason,
+        )
+        return
     if isinstance(delivered.fate, (PromptDeliveryRefused, PromptDeliveryUncertain)):
         _LOG.warning(
             "review transfer notice did not reach its holder (ticket=%s, fate=%s)",

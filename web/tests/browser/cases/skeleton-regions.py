@@ -1,7 +1,10 @@
 """Browser-only proof of immediate ready content, wait cancellation and layout ownership."""
 import json
 import os
+import re
 from pathlib import Path
+
+from playwright.sync_api import expect
 
 
 def run(browser, urls):
@@ -314,5 +317,560 @@ def run(browser, urls):
     )
     assert page.evaluate('window.__workers.at(-1).terminated')
     assert fixture.locator('[data-markdown-window]').count() == 0
+    # Reuse this browser host for frame identity, visibility and failure retention.
+    # These risks need a real WindowProxy and sandbox, but no backend connection.
+    page.set_viewport_size({"width": 1100, "height": 900})
+    page.evaluate("""() => {
+      window.__htmlFetches = 0;
+      window.__htmlNavigationMessages = 0;
+      window.addEventListener('message', event => {
+        if (event.data?.type === 'panels-html-navigation') window.__htmlNavigationMessages++;
+      });
+      const originalFetch = window.fetch;
+      window.fetch = (...args) => {
+        if (String(args[0]).includes('/files/tickets/t_owner/')) window.__htmlFetches++;
+        if (String(args[0]).endsWith('/slow.html')) return new Promise(resolve => {
+          window.__resolveSlowHtml = () => resolve(new Response('<h1>Obsolete response</h1>'));
+        });
+        return originalFetch(...args);
+      };
+    }""")
+    reads = []
+    def serve_html(route):
+        path = route.request.url.split("?", 1)[0].split("/files/", 1)[1]
+        reads.append(path)
+        if path.endswith("missing.html"):
+            route.fulfill(status=404, body="not found")
+            return
+        title = "Child" if path.endswith("child.html") else "Index"
+        route.fulfill(status=200, content_type="text/html", body=f"""<!doctype html><html><head>
+          <base href="https://evil.example/"></head><body><h1>{title}</h1>
+          <script>window.controlCounts=[0,0,0];window.controlPrevented=[];</script>
+          <a id="empty-control" href=""
+            onclick="window.controlCounts[0]++;window.controlPrevented.push(event.defaultPrevented);
+            event.preventDefault()">Empty control</a>
+          <a id="hash-control" href="#"
+            onclick="window.controlCounts[1]++;window.controlPrevented.push(event.defaultPrevented);
+            event.preventDefault()">Hash control</a>
+          <a id="no-href-control"
+            onclick="window.controlCounts[2]++;window.controlPrevented.push(event.defaultPrevented);
+            event.preventDefault()">No href control</a>
+          <a id="child" href="nested/child.html">Child</a>
+          <a id="missing" href="missing.html">Missing</a>
+          <a id="escape" href="../outside.html">Outside</a>
+          <a id="fragment" href="#detail">Detail</a>
+          <div style="height:1400px"></div><p id="detail">Detail content</p>
+          </body></html>""")
+    page.route("**/files/tickets/t_owner/**", serve_html)
+    original_url = page.url
+    for mode in ["full", "embedded"]:
+        page.evaluate("mode => window.__html(mode)", mode)
+        html = page.locator('[data-html-fixture]')
+        html.scroll_into_view_if_needed()
+        frame = html.frame_locator('[data-file-preview-html]')
+        expect(frame.locator('h1')).to_have_text('Index')
+        initial_src = html.locator('iframe').get_attribute('src')
+        before_controls = page.evaluate("[window.__htmlFetches,window.__htmlNavigationMessages]")
+        for control in ['empty-control', 'hash-control', 'no-href-control']:
+            frame.locator('#' + control).click()
+        assert frame.locator('body').evaluate("() => window.controlCounts") == [1, 1, 1]
+        assert frame.locator('body').evaluate("() => window.controlPrevented") == [False] * 3
+        assert page.evaluate(
+            "[window.__htmlFetches,window.__htmlNavigationMessages]"
+        ) == before_controls
+        assert html.locator('iframe').get_attribute('src') == initial_src
+        expect(html.locator('[data-html-back]')).to_have_count(0)
+        page.evaluate("""() => {
+          const frame=document.querySelector('[data-html-fixture] iframe');
+          window.__oldHtmlWindow=frame.contentWindow;
+        }""")
+        frame.locator('#child').click()
+        expect(frame.locator('h1')).to_have_text('Child')
+        assert page.url == original_url
+        page.evaluate("""() => window.dispatchEvent(new MessageEvent('message', {
+          source:window.__oldHtmlWindow,
+          data:{type:'panels-html-navigation',generation:'stale',href:'missing.html'}
+        }))""")
+        # Current source with an obsolete generation also has no authority.
+        page.evaluate("""() => window.dispatchEvent(new MessageEvent('message', {
+          source:document.querySelector('[data-html-fixture] iframe').contentWindow,
+          data:{type:'panels-html-navigation',generation:'obsolete',href:'missing.html'}
+        }))""")
+        frame.locator('#fragment').click()
+        expect(frame.locator('h1')).to_have_text('Child')
+        frame.locator('body').evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(resolve))"
+        )
+        assert frame.locator('body').evaluate("() => window.scrollY") > 1000
+        assert frame.locator('#detail').evaluate("node => node.getBoundingClientRect().top") < 500
+        assert html.locator('[data-html-navigation-notice]').count() == 0
+        html.locator('[data-html-back]').click()  # Fragment history.
+        successful_src = html.locator('iframe').get_attribute('src')
+        frame.locator('#missing').click()
+        expect(html.locator('[data-html-navigation-notice]')).to_have_text(
+            'file fetch failed: 404'
+        )
+        expect(frame.locator('h1')).to_have_text('Child')
+        assert html.locator('iframe').get_attribute('src') == successful_src
+        expect(html.locator('[data-visible-content-failed]')).to_have_count(0)
+        frame.locator('#escape').click()  # Resolves inside the original site directory.
+        expect(frame.locator('h1')).to_have_text('Index')
+        html.locator('[data-html-back]').click()
+        expect(frame.locator('h1')).to_have_text('Child')
+        html.locator('[data-html-back]').click()
+        expect(frame.locator('h1')).to_have_text('Index')
+        frame.locator('#escape').click()
+        expect(html.locator('[data-html-navigation-notice]')).to_have_text(
+            'This link cannot be opened in the artifact viewer.'
+        )
+        assert not any(path.endswith('outside.html') and '/site/' not in path for path in reads)
+        generation = frame.locator('head script').first.evaluate(
+            "node => JSON.parse(node.textContent.match(/const generation = ([^;]+);/)[1])"
+        )
+        before = page.evaluate("window.__htmlFetches")
+        page.evaluate("""generation => {
+          const other=document.createElement('iframe');
+          document.body.append(other);
+          window.dispatchEvent(new MessageEvent('message', {source:other.contentWindow,
+            data:{type:'panels-html-navigation',generation,href:'missing.html'}}));
+          other.remove();
+        }""", generation)
+        page.evaluate("""generation => {
+          const host=document.querySelector('[data-html-fixture]');
+          host.style.visibility='hidden';
+          const frame=host.querySelector('iframe');
+          window.dispatchEvent(new MessageEvent('message', {source:frame.contentWindow,
+            data:{type:'panels-html-navigation',generation,href:'missing.html'}}));
+          host.style.visibility='';
+        }""", generation)
+        assert page.evaluate("window.__htmlFetches") == before
+        clipped = page.evaluate("""generation => {
+          const host=document.querySelector('[data-html-fixture]');
+          const wrapper=document.createElement('div');
+          wrapper.style.cssText='height:20px;overflow:auto;position:relative';
+          host.replaceWith(wrapper); wrapper.append(host);
+          host.style.transform='translateY(40px)';
+          const rect=host.getBoundingClientRect();
+          window.dispatchEvent(new MessageEvent('message', {
+            source:host.querySelector('iframe').contentWindow,
+            data:{type:'panels-html-navigation',generation,href:'missing.html'}}));
+          host.style.transform=''; wrapper.replaceWith(host);
+          return {top:rect.top,bottom:rect.bottom,reads:window.__htmlFetches};
+        }""", generation)
+        assert 0 <= clipped['top'] < 900, clipped
+        assert clipped['reads'] == before, clipped
+        # A request starts while visible, then its frame becomes clipped before success.
+        page.evaluate("""generation => {
+          const host=document.querySelector('[data-html-fixture]');
+          window.dispatchEvent(new MessageEvent('message', {
+            source:host.querySelector('iframe').contentWindow,
+            data:{type:'panels-html-navigation',generation,href:'slow.html'}}));
+          const wrapper=document.createElement('div');
+          wrapper.style.cssText='height:20px;overflow:auto;position:relative';
+          host.replaceWith(wrapper); wrapper.append(host);
+          host.style.transform='translateY(40px)';
+          window.__restoreHtml = () => {host.style.transform='';wrapper.replaceWith(host);};
+          window.__resolveSlowHtml();
+        }""", generation)
+        page.evaluate("""() => new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)))""")
+        expect(frame.locator('h1')).to_have_text('Index')
+        page.evaluate("window.__restoreHtml()")
+        page.evaluate("""generation => window.dispatchEvent(new MessageEvent('message', {
+          source:document.querySelector('[data-html-fixture] iframe').contentWindow,
+          data:{type:'panels-html-navigation',generation,href:'slow.html'}
+        }))""", generation)
+        frame.locator('#child').click()
+        expect(frame.locator('h1')).to_have_text('Child')
+        page.evaluate("window.__resolveSlowHtml()")
+        page.evaluate("""() => new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)))""")
+        expect(frame.locator('h1')).to_have_text('Child')
+        html.locator('[data-html-back]').click()
+        expect(frame.locator('h1')).to_have_text('Index')
+        frame.locator('#missing').click()
+        expect(html.locator('[data-html-navigation-notice]')).to_have_text('file fetch failed: 404')
+        page.evaluate("window.__html('')")
+
+    # --- The embedded preview holds one box from first paint --------------------
+    # Risk: the box changes size between mount, skeleton, drawn frame and settled
+    # state, so the text under the preview moves. The cases above prove frame
+    # identity, navigation and failure retention. None of them measures the box.
+    # The artifact below queues its animation frames, so the bridge's paint report
+    # arrives only when this test releases it.
+    page.evaluate("""() => {
+      const originalFetch = window.fetch;
+      window.__heldPending = 0;
+      window.fetch = (...args) => {
+        if (String(args[0]).endsWith('/held.html')) {
+          window.__heldPending += 1;
+          return new Promise(resolve => {
+            window.__releaseHeld = body => {
+              window.__heldPending -= 1;
+              resolve(new Response(body, {headers: {'Content-Type': 'text/html'}}));
+            };
+          });
+        }
+        return originalFetch(...args);
+      };
+      window.__frameBox = () => {
+        const region = document.querySelector('[data-html-fixture] [data-shape="frame"]');
+        return {height: Math.round(region.getBoundingClientRect().height),
+          busy: region.getAttribute('aria-busy'),
+          skeletons: region.querySelectorAll('.skeleton--frame').length,
+          below: Math.round(document.querySelector('header').getBoundingClientRect().top)};
+      };
+      window.__mountHeld = path => {
+        window.__html('');
+        window.__releaseHeld = null;
+        window.__html('embedded', path);
+        document.querySelector('[data-html-fixture]').style.height = 'auto';
+        window.__skeletonMounts = 0;
+        const counter = new MutationObserver(records => records.forEach(record =>
+          record.addedNodes.forEach(node => {
+            if (node.classList?.contains('skeleton--frame')) window.__skeletonMounts++;
+          })));
+        counter.observe(document.querySelector('[data-html-fixture]'),
+          {subtree: true, childList: true});
+        return window.__frameBox();
+      };
+    }""")
+    held = (
+        "<!doctype html><html><head><script>window.__queued=[];"
+        "window.requestAnimationFrame=callback=>{window.__queued.push(callback);return 0;};"
+        "window.__paint=()=>window.__queued.splice(0).forEach(callback=>callback(0));"
+        "</script></head><body><h1>Held artifact</h1></body></html>"
+    )
+    first = page.evaluate("path => window.__mountHeld(path)", 'site/held.html')
+    # 18rem, reserved by CSS before the preview is admitted and before any fetch.
+    assert first['height'] == 288 and first['skeletons'] == 0, first
+    settled = first['below']
+    page.wait_for_function("() => window.__frameBox().busy === 'true'")
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'true', 'skeletons': 0, 'below': settled}
+    page.wait_for_function("() => window.__frameBox().skeletons === 1")
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'true', 'skeletons': 1, 'below': settled}
+    html = page.locator('[data-html-fixture]')
+    frame = html.frame_locator('[data-file-preview-html]')
+    page.wait_for_function("() => window.__heldPending > 0")
+    page.evaluate("body => window.__releaseHeld(body)", held)
+    expect(frame.locator('h1')).to_have_text('Held artifact')
+    # The artifact is drawn and unreported. Blob creation alone does not reveal it.
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'true', 'skeletons': 1, 'below': settled}
+    frame.locator('body').evaluate("() => {window.__paint(); window.__paint();}")
+    page.wait_for_function("() => window.__frameBox().busy === 'false'")
+    # Both layers exist for the crossfade, and the box never moved.
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 1, 'below': settled}
+    page.wait_for_function("() => window.__frameBox().skeletons === 0")
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+
+    # An artifact that never reports still reveals, because the limit always fires.
+    page.evaluate("path => window.__mountHeld(path)", 'site/held.html')
+    page.wait_for_function("() => window.__heldPending > 0")
+    page.evaluate("body => window.__releaseHeld(body)", held)
+    expect(frame.locator('h1')).to_have_text('Held artifact')
+    page.wait_for_function("() => window.__frameBox().busy === 'false'", timeout=4000)
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 1, 'below': settled}
+
+    # A file that arrives inside the grace draws no skeleton at all.
+    assert page.evaluate("path => window.__mountHeld(path)", 'site/index.html')['height'] == 288
+    expect(frame.locator('h1')).to_have_text('Index')
+    page.wait_for_function("() => window.__frameBox().busy === 'false'")
+    assert page.evaluate("window.__skeletonMounts") == 0
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+
+    # An embedded failure names the file and collapses to a line.
+    assert page.evaluate("path => window.__mountHeld(path)", 'site/missing.html')['height'] == 288
+    expect(html.locator('[data-html-fetch-notice]')).to_have_text(
+        'missing.html — file fetch failed: 404'
+    )
+    assert html.locator('[data-html-navigation-notice]').count() == 0
+    assert html.locator('[data-shape=frame]').count() == 0
+    assert html.locator('[data-file-preview]').evaluate(
+        'node => node.getBoundingClientRect().height'
+    ) < 60
+    page.evaluate("window.__html('full','site/missing.html')")
+    expect(html.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 404')
+    page.evaluate("window.__html('')")
+    _preview_cards(page)
     assert not errors, errors
     page.close()
+
+
+def _preview_cards(page):
+    """Existing host proves real layout clipping, keyboard focus and media engine wiring.
+
+    No connected server is needed: route/range playback remains in its existing E2E.
+    """
+    import io
+    import wave
+
+    page.route(
+        "**/files/tickets/t_card/proof.md",
+        lambda route: route.fulfill(
+            content_type="text/markdown",
+            body="[Inner link](https://example.test) " + "Readable words " * 60,
+        ),
+    )
+    page.route(
+        "**/files/tickets/t_card/proof-long.md",
+        lambda route: route.fulfill(
+            content_type="text/markdown",
+            body="# The preview card\n\n"
+            + "A document is a card with its identity at the floor. " * 200,
+        ),
+    )
+    page.route("**/files/tickets/t_card/missing.md", lambda route: route.fulfill(status=404))
+    page.route(
+        "**/api/conversation/conversations/proof/files/proof.txt",
+        lambda route: route.fulfill(content_type="text/plain", body="Small attachment"),
+    )
+    page.route(
+        "**/files/tickets/t_card/proof.png",
+        lambda route: route.fulfill(
+            content_type="image/svg+xml",
+            body=(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640">'
+                '<rect width="640" height="640"/></svg>'
+            ),
+        ),
+    )
+    audio = io.BytesIO()
+    with wave.open(audio, "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(8000)
+        stream.writeframes(b"\0\0" * 8000 * 8)
+    clip_file = Path(__file__).resolve().parents[4] / "tests/e2e/fixtures/playable_clip.mp4"
+    page.route(
+        "**/files/tickets/t_card/proof.mp4",
+        lambda route: route.fulfill(content_type="video/mp4", body=clip_file.read_bytes()),
+    )
+    proof_directory = os.environ.get("PANELS_UI_PROOF_DIR")
+
+    def screenshot(name):
+        if proof_directory:
+            directory = Path(proof_directory)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.locator("[data-card-fixture]").screenshot(path=str(directory / name))
+
+    audio_requests = []
+
+    def serve_audio(route):
+        audio_requests.append(route.request.url)
+        body = audio.getvalue()
+        range_header = route.request.headers.get("range")
+        if range_header:
+            start_text, end_text = range_header.removeprefix("bytes=").split("-", 1)
+            start = int(start_text or 0)
+            end = min(int(end_text) if end_text else len(body) - 1, len(body) - 1)
+            route.fulfill(
+                status=206,
+                content_type="audio/wav",
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Range": f"bytes {start}-{end}/{len(body)}",
+                },
+                body=body[start : end + 1],
+            )
+        else:
+            route.fulfill(content_type="audio/wav", headers={"Accept-Ranges": "bytes"}, body=body)
+
+    page.route("**/files/tickets/t_card/proof.wav", serve_audio)
+    page.route(
+        "**/files/tickets/t_card/invalid.wav",
+        lambda route: route.fulfill(content_type="audio/wav", body=b"not an audio resource"),
+    )
+    page.set_viewport_size({"width": 1100, "height": 900})
+    page.evaluate("window.__preview('proof.md')")
+    fixture = page.locator("[data-card-fixture]")
+    fixture.scroll_into_view_if_needed()
+    expect(fixture.locator(".markdown-block")).to_contain_text("Readable words")
+    clip = fixture.locator(".file-preview-clip")
+    expect(clip).not_to_have_class(re.compile("file-preview-clip--cut"))
+    fixture.evaluate("node => node.style.width='240px'")
+    expect(clip).to_have_class(re.compile("file-preview-clip--cut"))
+    fixture.evaluate("node => node.style.width='800px'")
+    page.evaluate("window.__preview('proof-long.md')")
+    expect(fixture.locator(".markdown-block")).to_contain_text("A document is a card")
+    expect(clip).to_have_class(re.compile("file-preview-clip--cut"))
+    screenshot("preview-markdown-clipped-desktop.png")
+    assert clip.evaluate("node => getComputedStyle(node).overflowY") in ("hidden", "clip")
+    fixture.evaluate("node => node.style.width='1000px'")
+    page.evaluate("window.__preview('proof.md')")
+    expect(clip).not_to_have_class(re.compile("file-preview-clip--cut"))
+    screenshot("preview-markdown-desktop.png")
+    name = fixture.locator(".pv-name")
+    name.focus()
+    expect(name).to_be_focused()
+    assert (
+        fixture.locator(".file-preview-card").evaluate(
+            "node => getComputedStyle(node).outlineStyle"
+        )
+        == "solid"
+    )
+    name.press("Tab")
+    assert not fixture.locator(".markdown-block a").evaluate_all(
+        "nodes=>nodes.includes(document.activeElement)"
+    )
+    assert (
+        fixture.locator(".file-preview-card").evaluate(
+            "node => getComputedStyle(node).borderTopWidth"
+        )
+        == "1px"
+    )
+    page.evaluate("window.__preview('proof.txt',false,true)")
+    expect(fixture.locator(".pv-name")).to_have_text("proof.txt")
+    expect(fixture.locator(".file-preview-kind")).to_contain_text("1.0 KiB")
+    fixture.locator(".pv-name").focus()
+    page.keyboard.press("Tab")
+    expect(fixture.locator(".pv-act")).to_be_focused()
+    assert fixture.locator(".pv-act").evaluate("node => !node.closest('a a')")
+    page.set_viewport_size({"width": 390, "height": 900})
+    fixture.evaluate("node => node.style.width=''")
+    expect(fixture.locator(".file-preview-clip")).to_be_visible()
+    screenshot("preview-attachment-phone.png")
+    page.evaluate("window.__preview('proof.png')")
+    expect(fixture.locator("img")).to_be_visible()
+    expect(fixture.get_by_role("link", name="Download", exact=True)).to_be_visible()
+    assert fixture.locator("img").evaluate("node => node.getBoundingClientRect().height") <= 160
+    page.evaluate("window.__preview('missing.md')")
+    expect(fixture.locator(".quiet-line")).to_contain_text("missing.md — file fetch failed: 404")
+    expect(fixture.get_by_role("link", name="Download", exact=True)).to_be_visible()
+    page.evaluate("window.__preview('proof.mp4')")
+    expect(fixture.locator("[data-media-play]")).to_be_visible()
+    screenshot("preview-video-phone.png")
+    page.set_viewport_size({"width": 1100, "height": 900})
+    screenshot("preview-video-desktop.png")
+    page.set_viewport_size({"width": 390, "height": 900})
+    assert fixture.locator("video").count() == 0
+    # The native media stack receives keyboard activation and focus after replacement.
+    fixture.locator("[data-media-play]").focus()
+    page.keyboard.press("Enter")
+    expect(fixture.locator("video")).to_be_focused()
+    page.evaluate("window.__preview('proof.mp4',true)")
+    expect(fixture.locator("video[controls]")).to_be_visible()
+    assert fixture.locator("[data-media-play]").count() == 0
+    page.evaluate("window.__preview('proof.wav')")
+    expect(fixture.locator("[data-media-play]")).to_be_visible()
+    assert fixture.locator("audio").count() == 0 and audio_requests == []
+    slider = fixture.locator("[data-audio-seek]")
+    expect(slider).to_have_attribute("aria-disabled", "true")
+    # Keep the original native promise: immediate pause must cancel a real start.
+    page.evaluate("""() => {
+      const nativePlay = HTMLMediaElement.prototype.play;
+      window.__audioCancellation = {nativePlay};
+      HTMLMediaElement.prototype.play = function(...args) {
+        const proof = window.__audioCancellation;
+        proof.player = this;
+        proof.slider = document.querySelector('[data-card-fixture] [data-audio-seek]');
+        const pending = nativePlay.apply(this, args);
+        this.pause();
+        pending.catch(error => {
+          proof.rejection = {isDOMException: error instanceof DOMException, name: error.name};
+        });
+        return pending;
+      };
+    }""")
+    try:
+        fixture.locator("[data-media-play]").click()
+        page.wait_for_function("window.__audioCancellation.rejection")
+        assert page.evaluate("window.__audioCancellation.rejection") == {
+            "isDOMException": True,
+            "name": "AbortError",
+        }
+        assert page.evaluate("""() => {
+          const proof = window.__audioCancellation;
+          return proof.player === document.querySelector('[data-card-fixture] audio')
+            && proof.slider === document.querySelector('[data-card-fixture] [data-audio-seek]');
+        }""")
+        expect(slider).to_have_attribute("role", "slider")
+        expect(fixture.locator("[data-visible-content-failed]")).to_have_count(0)
+        expect(fixture.locator(".quiet-line")).to_have_count(0)
+        screenshot("audio-after-cancellation.png")
+    finally:
+        page.evaluate("""() => {
+          HTMLMediaElement.prototype.play = window.__audioCancellation.nativePlay;
+        }""")
+    fixture.get_by_role("button", name="Play proof.wav", exact=True).click()
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio')?.currentTime > .1")
+    assert page.evaluate(
+        "window.__audioCancellation.player === document.querySelector('[data-card-fixture] audio')"
+    )
+    page.evaluate("delete window.__audioCancellation")
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio')?.duration >= 8")
+    expect(slider).to_have_attribute("aria-disabled", "false")
+    screenshot("preview-audio-phone.png")
+    fixture.get_by_role("button", name="Pause proof.wav").click()
+    slider.focus()
+    slider.press("Home")
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio').currentTime < .1")
+    slider.press("ArrowRight")
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio').currentTime >= 4.9")
+    expect(slider).to_have_attribute("aria-valuenow", "5")
+    assert "0:05" in slider.get_attribute("aria-valuetext")
+    slider.press("End")
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio').currentTime >= 7.9")
+    box = slider.bounding_box()
+    slider.click(position={"x": box["width"] / 2, "y": box["height"] / 2})
+    page.wait_for_function(
+        "Math.abs(document.querySelector('[data-card-fixture] audio').currentTime - 4) < .3"
+    )
+    assert audio_requests
+    page.set_viewport_size({"width": 1100, "height": 900})
+    screenshot("preview-audio-desktop.png")
+    page.evaluate("window.__preview('replacement.wav')")
+    expect(fixture.locator("audio")).to_have_count(0)
+    expect(fixture.locator("[data-audio-seek]")).to_have_attribute("aria-disabled", "true")
+    expect(fixture.locator("[data-audio-seek]")).to_have_attribute("aria-valuenow", "0")
+    # Policy rejection must still reach FilePreview's failure state.
+    page.evaluate("""() => {
+      window.__audioNativePlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function() {
+        return Promise.reject(new DOMException('Playback denied', 'NotAllowedError'));
+      };
+    }""")
+    try:
+        page.evaluate("window.__preview('proof.wav')")
+        fixture.get_by_role("button", name="Play proof.wav", exact=True).click()
+        expect(fixture.locator("[data-visible-content-failed]")).to_have_count(1)
+        expect(fixture.locator(".quiet-line")).to_contain_text("proof.wav — file fetch failed")
+        expect(fixture.locator("[data-audio-seek]")).to_have_count(0)
+        screenshot("preview-audio-policy-failure.png")
+    finally:
+        page.evaluate("""() => {
+          HTMLMediaElement.prototype.play = window.__audioNativePlay;
+          delete window.__audioNativePlay;
+        }""")
+    # An invalid resource must emit a native media error and retain the failure UI.
+    page.evaluate("""() => {
+      window.__audioResourceError = null;
+      window.__observeAudioError = event => {
+        if (event.target instanceof HTMLAudioElement) {
+          window.__audioResourceError = {trusted: event.isTrusted, code: event.target.error?.code};
+        }
+      };
+      document.addEventListener('error', window.__observeAudioError, true);
+      window.__preview('invalid.wav');
+    }""")
+    try:
+        fixture.get_by_role("button", name="Play invalid.wav", exact=True).click()
+        page.wait_for_function("window.__audioResourceError")
+        assert page.evaluate("window.__audioResourceError") == {"trusted": True, "code": 4}
+        expect(fixture.locator("[data-visible-content-failed]")).to_have_count(1)
+        expect(fixture.locator(".quiet-line")).to_contain_text("invalid.wav — file fetch failed")
+        expect(fixture.locator("[data-audio-seek]")).to_have_count(0)
+        screenshot("preview-audio-resource-failure.png")
+    finally:
+        page.evaluate("""() => {
+          document.removeEventListener('error', window.__observeAudioError, true);
+          delete window.__observeAudioError;
+          delete window.__audioResourceError;
+        }""")
+    page.evaluate("window.__preview('')")

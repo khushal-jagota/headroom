@@ -45,6 +45,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
             "value": {
                 "latest_sequence": 20,
                 "owner_read_through_sequence": 0,
+                "first_unread_owner_message_at": 1 if bits["message_for_owner"] else None,
                 "latest_agent_activity_sequence": 20,
                 "latest_agent_activity_at": None,
                 "error_acknowledged_through_sequence": 0,
@@ -144,6 +145,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                     "recap_preview": row.get("recap_preview", ""),
                     "recap": row.get("recap", row.get("recap_preview", "")),
                     "created_at": row["created_at"],
+                    "updated_at": row.get("updated_at", row.get("activity_at", row["created_at"])),
                     "project_id": project_id,
                     "settled": row.get("settled", False),
                     "conversation_id": conv,

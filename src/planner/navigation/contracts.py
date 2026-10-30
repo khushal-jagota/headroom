@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Literal, TypedDict
 
 PREPARED_SCHEMA_VERSION = 7
-SCHEMA_VERSION = 8
-SUPPORTED_SEMANTICS = "attention-knowledge-v8-manager"
+SCHEMA_VERSION = 9
+SUPPORTED_SEMANTICS = "attention-knowledge-v9-review-messages"
 RecordKind = Literal[
     "ticket", "manager", "chief", "conversation", "address", "totals", "project"
 ]
@@ -51,6 +51,7 @@ class TicketValue(TypedDict):
 
 
 class ManagerValue(TypedDict):
+    updated_at: int
     title: str
     recap: str
     recap_preview: str
@@ -123,6 +124,7 @@ type AttentionKnowledge = CurrentAttentionKnowledge | DurableAttentionKnowledge
 
 
 class ConversationValue(TypedDict):
+    first_unread_owner_message_at: int | None
     latest_sequence: int
     owner_read_through_sequence: int
     latest_agent_activity_sequence: int
@@ -206,7 +208,7 @@ type NavigationRecord = (
 class Continuity(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v8-manager"]
+    semantics: Literal["attention-knowledge-v9-review-messages"]
     epoch: str
     revision: str
 
@@ -218,7 +220,7 @@ class Snapshot(Continuity):
 class RevisionBatch(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v8-manager"]
+    semantics: Literal["attention-knowledge-v9-review-messages"]
     epoch: str
     base_revision: str
     revision: str

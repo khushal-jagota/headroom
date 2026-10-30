@@ -1,16 +1,11 @@
 <script lang="ts">
+  import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import ConversationHistoryPicker from "./ConversationHistoryPicker.svelte";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
-  /** The pane: who this is, its controls, and the one box you speak into.
-   *
-   * A page that wants the conversation as a layer says how far open it is, and this is one
-   * conversation at three heights rather than three of anything: at rest the head and the
-   * thread give up their height and the rest bar says what happened last, and peeking and
-   * opening give it back. The same viewport, composer, and draft survive every move.
-   */
+  /** One composer and viewport survive movement between the reserved dock and full conversation. */
   import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
   import {progressFor,restFor} from '../../lib/conversation/view/presentation';
-  import type { Snippet } from "svelte";
+  import { tick, type Snippet } from "svelte";
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import TaskProgress from "./TaskProgress.svelte";
@@ -23,6 +18,7 @@
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
+  import { dockPreviewText, latestUnreadReply } from "../../lib/conversation/dockPresentation";
   import { restLineFrom } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
@@ -41,12 +37,14 @@
 
   let {
     conversationId,
+    roleLabel = "Worker",
     backendKey = null,
     conversationExists = false,
     workspaceFolder = null,
     rows = [],
     visibleRows = null,
     outgoingMessages = [],
+    withdrawnDisplayIds = new Set<string>(),
     running = false,
     ask = null,
     userInput = null,
@@ -78,9 +76,12 @@
     conversationState = $bindable(null),
     emptyState,
     reader = null,
+    acknowledgedMessageIds = new Set<string>(),
     viewAnchor = $bindable(null),
     transcriptVisible = true,
     draftKey,
+    uploadDestination = null,
+    reconcileLocalSend,
     transcriptLoading = false,
     onSend,
     onStop,
@@ -96,11 +97,15 @@
     /** Which conversation is on the screen. A message's files are fetched under it, so a
      *  piece can only ever reach a file kept for the conversation it belongs to. */
     reader?: ConversationViewReader | null;
+    acknowledgedMessageIds?: ReadonlySet<string>;
     viewAnchor?: ViewReaderAnchor | null;
     transcriptVisible?: boolean;
     draftKey: string;
+    uploadDestination?: UploadDestination | null;
+    reconcileLocalSend?: (messageId: string) => Promise<boolean>;
     transcriptLoading?: boolean;
     conversationId: string;
+    roleLabel?: "Worker" | "Manager" | "Chief";
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
      *  is not one existing, so only whoever has read the record can say. */
@@ -111,6 +116,7 @@
     visibleRows?: readonly TranscriptRow[] | null;
     /** Messages this browser has sent that the record does not have yet, oldest first. */
     outgoingMessages?: readonly OutgoingMessage[];
+    withdrawnDisplayIds?: ReadonlySet<string>;
     running?: boolean;
     ask?: {
       askId: string;
@@ -169,7 +175,8 @@
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
-      picked: RunValues
+      picked: RunValues,
+      context?: ComposerSendContext
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
@@ -186,6 +193,8 @@
     onNewConversation?: () => void;
   } = $props();
 
+  let placementReady = $state(false);
+  let entryPresentationPending = $state(true);
   let paneElement = $state<HTMLDivElement | null>(null);
   let menuOpen = $state(false);
   let confirmArmed = $state(false);
@@ -199,7 +208,7 @@
     return null;
   });
 
-  // Only at rest is there a bar to put it in. Peeked and opened have the turn head.
+  // The dock has an activity header. Full conversation has the turn head.
   let rowsForLens = $derived(visibleRows ?? rows);
   let planEntries = $state<import('../../lib/conversation/wire').PlanEntry[]>([]);
   let planController:AbortController|null=null;
@@ -232,13 +241,24 @@
    * Drawn, not typed. A character is sized by the font's own idea of how much of its em to
    * fill, which left a 32px control carrying about twelve pixels of ink — the "absolutely
    * tiny" the owner reported. A stroked path fills the box it is given. */
-  let stateControl = $derived(
-    conversationState === "peeked"
-      ? { opensIt: true, label: "Open the conversation full height" }
-      : conversationState === "opened"
-        ? { opensIt: false, label: "Put the conversation back to a card" }
-        : null
-  );
+  let stateControl = $derived(conversationState === null ? null : {
+    opensIt: conversationState === "rest",
+    label: conversationState === "rest" ? "Open the conversation full height" : "Return to the conversation dock"
+  });
+  let unreadPreview = $derived(dockPreviewText(reader?.status
+    ? reader.status.rest.latest_owner_message_sequence > ownerReadThroughSequence
+      ? reader.status.rest.latest_owner_message_preview : null
+    : latestUnreadReply(rows, ownerReadThroughSequence)));
+  let dockFeedback = $derived.by(() => {
+    if (userInput) return "Waiting for you";
+    if (restLine?.waiting || restLine?.marks.failed) return restLine.text;
+    const latest = reader?.status?.rest.latest_happened ?? rows.at(-1);
+    if (latest?.kind === "turn_ended" && latest.ending === "completed") return null;
+    const kind = latest?.kind;
+    return kind && ["prompt_refused", "prompt_uncertain", "prompt_discarded", "explicit_reply_missing", "turn_stopped", "turn_ended"].includes(kind)
+      ? restLine?.text ?? null : null;
+  });
+  let activityKnown = $derived(reader ? typeof reader.status?.turn_running === "boolean" : true);
 
   function closeMenu(): void {
     menuOpen = false;
@@ -247,23 +267,7 @@
 
   function onWindowPointerDown(event: PointerEvent): void {
     if (menuOpen && menuElement && !menuElement.contains(event.target as Node)) closeMenu();
-    theComposersInputWasPressed(event);
-  }
 
-  /** Pressing this pane's input or rest line opens a resting conversation a little. */
-  function theComposersInputWasPressed(event: PointerEvent): void {
-    if (conversationState !== "rest") return;
-    const pressed = event.target;
-    if (!(pressed instanceof Element) || paneElement === null) return;
-    if (!paneElement.contains(pressed)) return;
-    if (pressed.closest("[data-conversation-task-control], [data-conversation-task-list]")) return;
-    if (
-      pressed.closest("[data-conversation-input]") === null
-      && pressed.closest("[data-conversation-rest-bar]") === null
-    ) {
-      return;
-    }
-    conversationState = "peeked";
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
@@ -283,18 +287,18 @@
       menuButton?.focus();
       return;
     }
-    // One press, one state back. A non-layer conversation has nowhere to move.
-    if (conversationState === "opened") conversationState = "peeked";
-    else if (conversationState === "peeked") conversationState = "rest";
+    // Escape returns full conversation to the dock. A full-container pane stays open.
+    if (conversationState === "opened") { event.preventDefault(); conversationState = "rest"; }
   }
 
-  /** The control was pressed: the card's height, and nothing else.
-   *
-   * It is one control with two meanings, and both are about how tall the conversation
-   * is. Putting it away entirely is what Escape and a press on the page behind it do. */
+  /** Preview and Return share one action and restore focus to the corresponding control. */
   function moveThroughTheStates(): void {
-    if (conversationState === "peeked") conversationState = "opened";
-    else if (conversationState === "opened") conversationState = "peeked";
+    const restoreControlFocus = document.activeElement instanceof HTMLElement
+      && paneElement?.contains(document.activeElement)
+      && document.activeElement.hasAttribute("data-conversation-state-control");
+    if (conversationState === "rest") conversationState = "opened";
+    else if (conversationState === "opened") conversationState = "rest";
+    if (restoreControlFocus) void tick().then(() => paneElement?.querySelector<HTMLButtonElement>("[data-conversation-state-control]")?.focus({ preventScroll: true }));
   }
 
   function confirmNewConversation(): void {
@@ -369,11 +373,12 @@
       >Full</button>
     </div>
     <div class="chat-head-right">
-      <!-- One state control survives as its meaning changes, preserving keyboard focus. -->
-      {#if stateControl !== null}
+      <!-- The corresponding state control receives focus after preview activation. -->
+      {#if stateControl !== null && conversationState !== "rest"}
         <button
           type="button"
           class="chat-overflow-btn"
+          data-conversation-state-control
           data-conversation-expand={stateControl.opensIt ? true : undefined}
           data-conversation-collapse={stateControl.opensIt ? undefined : true}
           aria-label={stateControl.label}
@@ -382,9 +387,9 @@
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             {#if stateControl.opensIt}
-              <path d="M9 4H4v5M15 20h5v-5" />
+              <path d="m6 14 6-6 6 6" />
             {:else}
-              <path d="M4 9h5V4M20 15h-5v5" />
+              <path d="m6 10 6 6 6-6" />
             {/if}
           </svg>
         </button>
@@ -463,19 +468,33 @@
     </div>
   </div>
 
-  {#if conversationState !== "rest" && transcriptVisible}
+  <div class="conversation-reader" hidden={conversationState === "rest" || !transcriptVisible}>
   <!-- The conversation is never taken off the screen to say that it is loading. A
        region that removes its children while it waits removes the transcript the
        reader is in, and with it everything the viewport knows about where they were. -->
-  <div class="conversation-transcript-region" aria-busy={transcriptLoading}>
+  {#if reader?.entryPhase === 'error'}
+    <div class="chat-receipt" role="status" data-conversation-entry-status="error">The conversation did not load.
+      <button type="button" class="chat-qrow-act" onclick={() => { void reader?.connect().catch(() => undefined); }}>Retry conversation</button>
+    </div>
+  {/if}
+  <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
+    style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
+    aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   <ConversationViewport
+    bind:placementReady
+    bind:entryPresentationPending
+    {ownerReadThroughSequence}
     bind:viewAnchor
     {reader}
+    {acknowledgedMessageIds}
+    onStopDrawingMessage={onStopDrawingHeldPrompt}
+    onSendAgain={onSendHeldPromptAgain}
     {conversationId}
     {rows}
     visibleRows={rowsForLens}
     {lens}
     {outgoingMessages}
+    {withdrawnDisplayIds}
     {models}
     {ownSenderLabel}
     {livenessPulse}
@@ -484,9 +503,9 @@
   />
   </div>
 
-  {/if}
+  </div>
 
-  {#if conversationState === "peeked" || conversationState === "opened"}
+  {#if conversationState === "opened"}
     <TaskProgress
       progress={taskProgress}
       variant="strip"
@@ -496,9 +515,10 @@
     />
   {/if}
 
-  <!-- At rest this one line is the whole conversation visible above the composer. -->
+  <!-- Activity and the latest unread preview belong to the dock surface above the input. -->
   {#if conversationState === "rest"}
-    <ConversationRestBar line={restLine} />
+    <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
+      {connectionTrouble} {running} feedback={dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
   {#if readOnly}
@@ -508,6 +528,8 @@
   {:else}
     <ConversationComposer
       {draftKey}
+      {uploadDestination}
+      {reconcileLocalSend}
       conversationId={conversationExists ? conversationId : null}
       {backendKey}
       {conversationExists}
@@ -543,6 +565,8 @@
 </div>
 
 <style>
+  .conversation-reader { display:flex; flex-direction:column; flex:1; min-height:0; }
+  .conversation-reader[hidden] { display:none; }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
   /* The component measures itself, not the window. The same pane is narrow in a side
      panel on a wide screen, and a host that names no container of its own — the Chief
@@ -559,7 +583,7 @@
   @container conversation-pane (max-width: 480px) {
     :global([data-conversation-pane] .chat-u) { max-width: 86%; }
   }
-  /* Inside the conversation card the well and rest line are two halves of one card. */
+  /* The activity preview owns its gap above the separate rounded input. */
   :global(.conversation-layer [data-conversation-pane]) { gap: 0; }
   /* Rest keeps the same child viewport mounted, but gives its head and thread no display. */
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-head),

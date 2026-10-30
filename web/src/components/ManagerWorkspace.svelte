@@ -29,12 +29,6 @@
   import ManagerHeader from "./ManagerHeader.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import ArtifactsBand from "./ArtifactsBand.svelte";
-  import ArtifactPreview from "./ArtifactPreview.svelte";
-  import {
-    managedFileTargetFromLinkHref
-  } from "../lib/artifactStrip";
-  import { isPlainLinkClick } from "../lib/linkClick";
-  import type { ManagedFileTarget } from "../lib/filePreview";
   import type { ManagerWorkspaceContent } from "../lib/types";
 
   export type ManagerWorkspaceResource = {
@@ -46,13 +40,13 @@
   let {
     itemId,
     workspaceName,
+    requestedConversationId = null,
     backHref = "#/workspace/chief-of-staff",
-    workspaceResource = null,
-    navigationErrorHandledByParent = false
+    workspaceResource = null
     // A host that is already a way back can pass null so the line is not drawn.
   }: {
     itemId: string;
-    navigationErrorHandledByParent?: boolean;
+    requestedConversationId?: string | null;
     workspaceName: string;
     backHref?: string | null;
     workspaceResource?: ManagerWorkspaceResource | null;
@@ -79,7 +73,7 @@
   let publicItem=$derived(rawPublicItem?.recap_reference && fullRecap.body===undefined?undefined:rawPublicItem?{...rawPublicItem,recap:fullRecap.body ?? rawPublicItem.recap}:undefined);
   let content=$derived(workspaceResource ?? ownWorkspace);
   let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
-    error:fullRecap.error ?? content.error ?? (navigationErrorHandledByParent ? null : navigation.state.error),isLoading:content.isLoading || !publicItem});
+    error:fullRecap.error ?? content.error,isLoading:content.isLoading || !publicItem});
   const manifests=createQuery(()=>queries.workerTypeManifests());
   let headerElement=$state<HTMLElement | null>(null);
   let hoverElement=$state<HTMLDivElement | null>(null);
@@ -91,6 +85,13 @@
   $effect(()=>navigation.owner.setDemand('manager',{selected:{kind:'manager',id:itemId},selected_conversation_id:selectedPastConversationId,windows:[]}));
   onDestroy(()=>navigation.owner.setDemand('manager',undefined));
   let conversationState = $state<ConversationState>("rest");
+  let requestedConversationApplied: string | null | undefined;
+  $effect(() => {
+    if (!publicItem || requestedConversationApplied === requestedConversationId) return;
+    requestedConversationApplied = requestedConversationId;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== publicItem.conversation_id ? requestedConversationId : null;
+    if (requestedConversationId) conversationState = "opened";
+  });
   let backends = $state<readonly BackendSnapshot[]>([]);
 
   let hoverTarget = $state<HTMLElement | null>(null);
@@ -168,45 +169,6 @@
     conversationId = null;
   }
 
-  let shownFile = $state<ManagedFileTarget | null>(null);
-  let artifactReloadSignal = $state(0);
-  let artifactElement = $state<HTMLElement | null>(null);
-  let whatHadFocus: HTMLElement | null = null;
-
-  function showFile(file: ManagedFileTarget | null): void {
-    if (file && !shownFile) {
-      whatHadFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    }
-    shownFile = file;
-    if (file && conversationState === "opened") conversationState = "peeked";
-    if (!file) {
-      const restoreFocus = whatHadFocus;
-      whatHadFocus = null;
-      queueMicrotask(() => restoreFocus?.focus());
-    }
-  }
-
-  $effect(() => {
-    if (shownFile && artifactElement) artifactElement.focus();
-  });
-
-  function openManagedFileInPlace(event: MouseEvent): void {
-    if (event.defaultPrevented) return;
-    const anchor = (event.target as Element | null)?.closest?.("a[href]");
-    if (!anchor) return;
-    const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
-    if (!isPlainLinkClick(link, event)) return;
-    const file = managedFileTargetFromLinkHref(link.href);
-    if (!file) return;
-    event.preventDefault();
-    showFile(file);
-  }
-
-  function closeFileOnEscape(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.defaultPrevented || !shownFile) return;
-    event.preventDefault();
-    showFile(null);
-  }
   $effect(()=>{
     const view=navigation.selectors.effective;
     const generation=navigation.state.generation;
@@ -249,14 +211,11 @@
 
 </script>
 
-<svelte:window onkeydown={closeFileOnEscape} />
-
 <ManagerFrame
   class="manager-resource-workspace"
   bind:conversationState
   data-manager-workspace={itemId}
   data-manager-view={itemId}
-  onDocumentClick={openManagedFileInPlace}
 >
     <ResourceState shape="document" layout="fill"
       error={workspace.error}
@@ -268,7 +227,6 @@
         {@const item = workspace.data}
           <div bind:this={headerElement}>
           <ManagerHeader signal={item.conversation_signal} conversationId={item.conversation_id}
-            goal={item.goal} onSaveGoal={saveGoal}
             recap={item.recap} onSaveRecap={(value) => saveItem("recap", value)}
             recapTarget={{ kind: "manager", id: item.id }}>
             {#snippet eyebrow()}
@@ -292,31 +250,38 @@
           </div>
 
           <section class="manager-workers" aria-label="Workers">
-            <ManagerChildren navigationErrorHandledByParent principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication} tickets={shared?.ticketsByParent.get(`manager:${itemId}`) ?? []}
+            <ManagerChildren principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication} tickets={shared?.ticketsByParent.get(`manager:${itemId}`) ?? []}
               onHover={(element, id, immediate) => {
                 const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
                 if (ticket) hoverRow(element, ticket, immediate);
               }} onLeave={() => hover.leave()} />
           </section>
-          <div class="manager-artifacts"><ArtifactsBand owner={{kind:"manager",id:itemId}} /></div>
+          <div class="manager-bands disclosure-bands">
+            <details class="disclosure-band goal-band" data-goal-band>
+              <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
+              <div class="disclosure-band-body">
+                <div class="manager-goal">
+                  <InlineEdit
+                    value={item.goal}
+                    markdown
+                    multiline
+                    ariaLabel="Manager goal"
+                    placeholder="Write what this manager is for…"
+                    onSave={saveGoal}
+                  />
+                </div>
+              </div>
+            </details>
+            <ArtifactsBand owner={{kind:"manager",id:itemId}} />
+          </div>
       {/if}
     </ResourceState>
-  {#snippet readingAside()}
-  {#if shownFile}
-    <ArtifactPreview
-      target={shownFile}
-      reloadSignal={artifactReloadSignal}
-      bind:element={artifactElement}
-      onRefresh={() => artifactReloadSignal += 1}
-      onClose={() => showFile(null)}
-    />
-  {/if}
-  {/snippet}
   {#snippet conversation()}
       <LiveConversation historyOwner={{kind:"manager",id:itemId}}
         bind:conversationState
         conversationId={selectedConversationId}
         persistenceKey={`owner:sprint-item:${itemId}`}
+        uploadOwner={{kind:"manager",id:itemId}}
         readOnly={selectedPastConversationId !== null}
         bind:selectedPastConversationId
         label="Manager"
@@ -341,6 +306,10 @@
   :global(.manager-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
   .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .manager-workers { margin-top:var(--space-5); }
-  .manager-artifacts { margin-top:var(--space-5); }
+  .manager-bands { margin-top:var(--space-5); }
+  .manager-goal { font-size:var(--type-md); line-height:1.6; color:var(--text-faint); max-width:66ch; }
+  .goal-chevron { font-size:var(--type-md); line-height:1; }
+  .goal-chevron::before { content:"\203A"; }
+  .goal-band[open] > summary .goal-chevron::before { content:"\2304"; }
   a:focus-visible, button:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
 </style>

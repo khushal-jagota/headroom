@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  let { itemKey, marker = false, assistantContinuation = false, tool = false, toolContinuation = false, children }: {
+  let { displayKey = null, registerDisplayNode, itemKey, marker = false, assistantContinuation = false, tool = false, toolContinuation = false, children }: {
+      displayKey?: string | null;
+      registerDisplayNode?: (key:string,node:HTMLElement)=>(()=>void);
       itemKey: string;
       marker?: boolean;
       assistantContinuation?: boolean;
@@ -8,11 +10,15 @@
       toolContinuation?: boolean;
       children: Snippet;
   } = $props();
+  function register(node: HTMLElement, key: string | null) {
+    let cleanup = key ? registerDisplayNode?.(key,node) : undefined;
+    return { update(next: string | null) { cleanup?.(); cleanup = next ? registerDisplayNode?.(next,node) : undefined; }, destroy() { cleanup?.(); } };
+  }
 </script>
 <!-- A row is as tall as what it contains. It carries no provisional height, because a
      height that is only right once the row has been looked at makes the thread's own
      size a function of where the reader has already been. -->
-<div data-conversation-view-key={itemKey} class:marker class:assistant-continuation={assistantContinuation} class:tool class:tool-continuation={toolContinuation}>
+<div use:register={displayKey} data-conversation-view-key={itemKey} data-conversation-display-key={displayKey ?? undefined} class:marker class:assistant-continuation={assistantContinuation} class:tool class:tool-continuation={toolContinuation}>
   {@render children()}
 </div>
 

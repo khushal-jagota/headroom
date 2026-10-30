@@ -43,6 +43,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -326,6 +327,7 @@ async def _send_with_addressed_receipt(
     mode: PromptDeliveryMode,
     model_change: str | None = None,
     reasoning_effort_change: str | None = None,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
@@ -335,7 +337,6 @@ async def _send_with_addressed_receipt(
 ) -> AddressedPromptDeliveryReceipt:
     """Keep recipient attribution and freshness for caller-authored and system sends."""
     if recipient is not None:
-        refusal_options = {"record_refusal": True} if record_refusal else {}
         return await system.send_with_receipt(
             conversation_id,
             content,
@@ -343,12 +344,13 @@ async def _send_with_addressed_receipt(
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
-            **refusal_options,
+            record_refusal=record_refusal,
         )
     fate = await system.send(
         conversation_id,
@@ -357,12 +359,13 @@ async def _send_with_addressed_receipt(
         mode=mode,
         model_change=model_change,
         reasoning_effort_change=reasoning_effort_change,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
     )
     return AddressedPromptDeliveryReceipt(
         fate=fate,
-        newly_accepted=not isinstance(fate, PromptDeliveryRefused),
+        newly_accepted=not isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)),
     )
 
 
@@ -377,6 +380,7 @@ async def send_to_ticket_conversation(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
     mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
@@ -449,6 +453,7 @@ async def send_to_ticket_conversation(
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
@@ -476,6 +481,7 @@ async def send_to_ticket_conversation(
         runs_under=runs_under,
         sender_label=sender_label,
         mode=mode,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
@@ -495,6 +501,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
     runs_under: ConversationStartOverrides,
     sender_label: str,
     mode: PromptDeliveryMode,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
@@ -525,6 +532,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
@@ -565,6 +573,7 @@ async def _make_a_conversation_and_send_into_it(
     runs_under: ConversationStartOverrides,
     sender_label: str,
     mode: PromptDeliveryMode,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
@@ -613,6 +622,7 @@ async def _make_a_conversation_and_send_into_it(
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
@@ -629,6 +639,7 @@ async def _make_a_conversation_and_send_into_it(
             await _message_content_for(content, making),
             sender_label=sender_label,
             mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
@@ -821,6 +832,7 @@ async def send_to_agent_conversation(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
     mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
@@ -868,6 +880,7 @@ async def send_to_agent_conversation(
                     await _message_content_for(content, making),
                     sender_label=sender_label,
                     mode=mode,
+                    owner_read_through_sequence=owner_read_through_sequence,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
@@ -913,6 +926,7 @@ async def send_to_agent_conversation(
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,

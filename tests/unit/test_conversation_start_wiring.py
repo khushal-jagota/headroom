@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
+from typing import Literal
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
@@ -23,6 +24,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationTurnReference,
+    DeploymentRecoveryReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -36,6 +38,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal
 from planner.core.errors import PlannerError
 from planner.projects.data import create_project, update_project
@@ -104,6 +107,18 @@ class _LinkWatchingConversationSystem:
         self.start_requests: list[ConversationStartRequest] = []
         self.link_when_the_conversation_existed: str | None = "not observed"
 
+    @property
+    def workspace_admission(self) -> WorkspaceAdmission:
+        return self._system.workspace_admission
+
+    def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
+        return self._system.workspace_activity()
+
+    async def run_with_workspace_admission(
+        self, operation: Callable[[], None], *, require_idle: bool,
+    ) -> bool:
+        return await self._system.run_with_workspace_admission(operation, require_idle=require_idle)
+
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         return await self._system.run_if_idle(conversation_id, operation)
 
@@ -123,11 +138,13 @@ class _LinkWatchingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -136,11 +153,13 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
         )
 
     async def send_with_receipt(
@@ -152,11 +171,13 @@ class _LinkWatchingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         return await self._system.send_with_receipt(
@@ -166,11 +187,13 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
             record_refusal=record_refusal,
         )
 

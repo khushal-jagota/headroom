@@ -20,8 +20,9 @@
   import { holderLabelFor } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
+  import { conversationDock } from "../lib/conversation/layout/dock";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
-  import { isPrimaryPressOutsideConversation } from "../lib/conversation/dismissal";
+  import { createConversationDismissal } from "../lib/conversation/dismissal";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
@@ -45,25 +46,20 @@
   import ArtifactsBand from "../components/ArtifactsBand.svelte";
   import WorkerProposalCard from "../components/WorkerProposalCard.svelte";
   import { workerPageHistory } from "../lib/workerPageHistory";
-  import { managedFileTargetFromLinkHref } from "../lib/artifactStrip";
-  import { isPlainLinkClick } from "../lib/linkClick";
-  import {
-    resolvePreview,
-    targetFromPreviewHref,
-    type ManagedFileTarget
-  } from "../lib/filePreview";
+  import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
+  import { type ManagedFileTarget } from "../lib/filePreview";
 
   let {
     id,
     // The artifact this screen is showing, when the host keeps that in its address, and
     // the way to write it there. The Workspace supplies both; without them, the screen
     // holds the value itself.
+    requestedConversationId = null,
     openFile = null,
-    onOpenFile = null,
-    navigationErrorHandledByParent = false
+    onOpenFile = null
   }: {
     id: string;
-    navigationErrorHandledByParent?: boolean;
+    requestedConversationId?: string | null;
     openFile?: ManagedFileTarget | null;
     onOpenFile?: ((file: ManagedFileTarget | null) => void) | null;
   } = $props();
@@ -142,9 +138,11 @@
     }
   }
   let conversationId=$state<string | null>(null);
+  let selectedPastConversationId=$state<string | null>(null);
+  let shownConversationId=$derived(selectedPastConversationId ?? conversationId);
   $effect(() => navigation.owner.setDemand("ticket", {
     selected: { kind: "ticket", id: stableId },
-    selected_conversation_id: null, windows: []
+    selected_conversation_id: selectedPastConversationId, windows: []
   }));
   onDestroy(() => navigation.owner.setDemand("ticket", undefined));
   let observedPointer:string | undefined;
@@ -154,6 +152,13 @@
     if(key===observedPointer) return;
     observedPointer=key;
     conversationId=canonicalTicket.value.conversation_id;
+  });
+  let requestedConversationApplied: string | null | undefined;
+  $effect(() => {
+    if (!canonicalTicket || requestedConversationApplied === requestedConversationId) return;
+    requestedConversationApplied = requestedConversationId;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== canonicalTicket.value.conversation_id ? requestedConversationId : null;
+    if (requestedConversationId) conversationState = "opened";
   });
   // The one Manager this Ticket's ceiling can be handed to, named as Khushal names
   // it. Absent when the Ticket sits outside an Item, and then only me and the Chief show.
@@ -193,18 +198,21 @@
     const ownership = canonicalTicket?.value.stage_ownership;
     if (ownership === undefined || seededConversationStateFromStatus) return;
     seededConversationStateFromStatus = true;
-    conversationState = initialTicketConversationState(ownership);
+    conversationState = requestedConversationId ? "opened" : initialTicketConversationState(ownership);
   });
 
-  /** A primary press outside the card dismisses it without interrupting selection. */
-  function dismissConversationOnPointerDown(event: PointerEvent): void {
-    if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
-  }
+  const dismissal = createConversationDismissal(() => { conversationState = "rest"; });
+  const dismissOutsideConversation = dismissal.surface;
 
-  /** The artifact this screen is showing, when the host does not keep it in an address. */
+  /** The artifact this screen is showing, kept in the address when the host keeps one. */
   let heldFile = $state<ManagedFileTarget | null>(null);
-  let shownFile = $derived(onOpenFile ? openFile : heldFile);
-  let artifactReloadSignal = $state(0);
+  const artifact = createArtifactOnThePage({
+    shown: () => (onOpenFile ? openFile : heldFile),
+    keep: (file) => { if (onOpenFile) onOpenFile(file); else heldFile = file; },
+    conversationState: () => conversationState,
+    dismissConversation: () => { conversationState = "rest"; },
+    root: () => screenElement
+  });
   // Which stages the reader has opened or closed with their own hands, by field name. A
   // stage that settles moves into the fold above and is rebuilt there, so the answer
   // cannot live in the stage. It lives here, where it outlives the move.
@@ -218,71 +226,6 @@
       draft = created; fieldDrafts.set(name, draft);
     }
     return draft;
-  }
-
-  /** Show a file on this screen, or close the one it is showing.
-   *
-   * The Ticket stays where it is underneath, so the person who came to read an artifact
-   * has not left the work it belongs to. An opened conversation is the whole page, and
-   * an artifact opened behind it would be an artifact nobody can see, so the
-   * conversation steps back one to let it through.
-   */
-  function showFile(file: ManagedFileTarget | null): void {
-    if (file && !shownFile) {
-      whatHadFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    }
-    if (onOpenFile) onOpenFile(file);
-    else heldFile = file;
-    if (file && conversationState === "opened") conversationState = "peeked";
-    if (!file) {
-      const restoreFocus = whatHadFocus;
-      whatHadFocus = null;
-      queueMicrotask(() => restoreFocus?.focus());
-    }
-  }
-
-  /** The artifact takes focus when it opens, and gives it back when it closes.
-   *
-   * The reader is now reading the artifact, so that is where the keyboard should be. It
-   * is also what makes Escape reach this screen: a Ticket field is an editable surface
-   * and Escape belongs to the editor while the caret is in one, so an artifact opened
-   * from a link inside a field must move the focus out of it.
-   */
-  let artifactElement = $state<HTMLElement | null>(null);
-  let whatHadFocus: HTMLElement | null = null;
-  $effect(() => {
-    if (shownFile && artifactElement) artifactElement.focus();
-  });
-
-  /** A click on a link to a managed file opens the file here.
-   *
-   * Explicit preview addresses always open here. Raw managed links use the same viewer
-   * when their format supports a preview. Downloads and requests for another tab stay
-   * with the browser.
-   */
-  function openManagedFileInPlace(event: MouseEvent): void {
-    if (event.defaultPrevented) return;
-    const anchor = (event.target as Element | null)?.closest?.("a[href]");
-    if (!anchor || anchor.hasAttribute("download")) return;
-    const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
-    if (!isPlainLinkClick(link, event)) return;
-    const explicitPreview = targetFromPreviewHref(link.href);
-    const file = explicitPreview ?? managedFileTargetFromLinkHref(link.href);
-    if (!file || (!explicitPreview && resolvePreview(file).kind === "download")) return;
-    event.preventDefault();
-    showFile(file);
-  }
-
-  /** Escape closes the artifact, and belongs to it before anything else on the page.
-   *
-   * The conversation steps back a state on Escape too, so the press is claimed here to
-   * keep one press to one thing.
-   */
-  function closeFileOnEscape(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.defaultPrevented) return;
-    if (!shownFile) return;
-    event.preventDefault();
-    showFile(null);
   }
 
   onMount(() => {
@@ -431,15 +374,15 @@
     const root = screenElement;
     const detail = ticket.data;
     const shown = section;
-    const pointer = conversationId;
+    const pointer = shownConversationId;
     const generation = navigation.state.generation;
     if (!view?.runtimeCurrent || !source || !root || !detail || !shown
-      || pointer !== source.value.conversation_id) return;
+      || (selectedPastConversationId === null && pointer !== source.value.conversation_id)) return;
     const token = conversationObserver.observeSelectors(view.publication, generation);
     let obsolete = false;
     void tick().then(() => {
       if (obsolete || !root.isConnected || navigation.selectors.effective !== view
-        || navigation.state.generation !== generation || conversationId !== pointer) return;
+        || navigation.state.generation !== generation || shownConversationId !== pointer) return;
       const pane = root.querySelector('[data-conversation-pane]');
       if (pane?.getAttribute('data-conversation-id') === (pointer ?? '')) {
         conversationObserver.acknowledgeRender(view.publication, token);
@@ -480,7 +423,7 @@
 
 </script>
 
-<svelte:window onkeydown={closeFileOnEscape} />
+<svelte:window onkeydown={artifact.closeOnEscape} />
 
 <!-- The catcher for links to managed files sits on the whole screen, so a file opens in
      place wherever it was written: a Ticket field, the recap, or the conversation. -->
@@ -494,9 +437,9 @@
   data-screen="ticket"
   data-ticket-id={stableId}
   data-stage={section?.record.value.stage}
-  onclick={openManagedFileInPlace}
+  onclick={artifact.claimPress}
 >
-  <ResourceState shape="document" layout="fill" error={ticket.error ?? (navigationErrorHandledByParent ? null : navigation.state.error)} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(ticket.data && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
+  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(ticket.data && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
     {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
@@ -505,9 +448,9 @@
       </div>
     {:else if ticket.data && masthead}
       {@const detail = ticket.data}
-      <div class="ticket-page">
+      <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
-      <main class="ticket-doc" onpointerdowncapture={dismissConversationOnPointerDown}>
+      <main class="ticket-doc">
         <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id}>
           <div class="worker-eyebrow" data-ticket-identity>
             <span data-project-fact>{masthead.project || "No project"}</span>
@@ -640,26 +583,29 @@
         </div>
         {/if}
       </main>
-      {#if shownFile}
+      {#if artifact.shown}
         <ArtifactPreview
-          target={shownFile}
-          reloadSignal={artifactReloadSignal}
-          bind:element={artifactElement}
-          onRefresh={() => artifactReloadSignal += 1}
-          onClose={() => showFile(null)}
+          registerArtifactFrame={dismissal.registerArtifactFrame}
+          target={artifact.shown}
+          reloadSignal={artifact.reloadSignal}
+          bind:element={artifact.element}
+          onRefresh={artifact.refresh}
+          onClose={artifact.close}
         />
       {/if}
       </div>
       <div
         class="conversation-layer"
         data-conversation-layer-host
-        onpointerdowncapture={dismissConversationOnPointerDown}
       >
         <div class="conversation-column">
           <LiveConversation
             bind:conversationState
-            {conversationId}
+            conversationId={shownConversationId}
+            bind:selectedPastConversationId
+            readOnly={selectedPastConversationId !== null}
             persistenceKey={`owner:ticket:${detail.id}`}
+            uploadOwner={{kind:"ticket",id:detail.id}}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             bind:backends={conversationBackends}
@@ -676,7 +622,6 @@
 </section>
 
 <style>
-  .ticket-head, .ticket-col { width:min(720px, calc(100% - 48px)); padding-inline:0; }
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; }
   .ticket-head { padding-top:48px; }

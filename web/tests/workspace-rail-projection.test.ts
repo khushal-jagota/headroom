@@ -1,9 +1,11 @@
+import { managerPageGroups } from "../src/lib/managerPage";
 import { workItemTicketGroupKey } from "../src/lib/workItemPresentation";
 import { describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 import type { BoardCard, BoardManager, ManagerWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
-import { buildWorkspaceRail, refreshWorkspaceRailSignals, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
+import { buildWorkspaceRail, railTicketEligible, refreshWorkspaceRailSignals, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
+import { railDomMatches } from "../src/lib/workspaceRailDom";
 import { createRailMotionController, type WorkspaceRailPresentation } from "../src/lib/workspaceRailMotion";
 
 const quiet = {
@@ -16,7 +18,7 @@ const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & ManagerW
   ...quiet, ...values
 } as BoardCard & ManagerWorkspaceTicket);
 const item = (id: string, values: Partial<BoardManager> = {}): BoardManager => ({
-  id, title: id, recap: "",recap_preview: "", created_at: 1, tickets: [], conversation_id: null,
+  id, title: id, recap: "",recap_preview: "", created_at: 1, updated_at:1, tickets: [], conversation_id: null,
   ticket_rollup: quiet, ...quiet, ...values
 });
 
@@ -71,15 +73,32 @@ describe("manager rail projection", () => {
       card("closeout", { ticket_status:"empty", waiting_to_closeout:true }),
       card("agent-review", { ticket_status:"empty", awaiting_agent_approval:true }),
       card("idle", { ticket_status:"empty" }),
+      card("blocked-status", {ticket_status:"blocked", agent_state:"working", awaiting_approval:true}),
       ...["done", "backlog", "blocked"].map((id) => card(id, {
         awaiting_approval:true, stage:id === "done" ? "done" : "needs_plan",
         is_backlogged:id === "backlog", blocked:id === "blocked", ticket_status:"agent"
       }))];
-    const rail = buildWorkspaceRail(rows);
-    expect(rail.chiefGroups.map((group) => [group.label, group.cards.map((row) => row.id)]))
-      .toEqual([["Agent", ["working"]], ["Waiting on Consequences", ["closeout"]],
-        ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["idle"]]]);
+    const dependencies = [card("dependent-idle", {blocked:true, agent_state:"idle"}),
+      card("dependent-working", {blocked:true, agent_state:"working", awaiting_reply:true}),
+      card("dependent-failed", {blocked:true, agent_state:"errored"})];
+    rows.push(...dependencies);
+    const managers = (tickets: typeof rows) => [item("active", {tickets}), item("settled", {tickets, settled:true})];
+    const rail = buildWorkspaceRail(rows, managers(rows));
+    for (const groups of [rail.chiefGroups, rail.items[0].groups, rail.settledItems[0].groups]) {
+      expect(groups.map((group) => [group.label, group.cards.map((row) => row.id)]))
+        .toEqual([["Agent", ["working"]], ["Waiting on Consequences", ["closeout"]],
+          ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["idle"]]]);
+    }
     expect(rail.groups.find((group) => group.key === "empty")?.label).toBe("Empty");
+    const released = rows.map((row) => dependencies.includes(row) ? {...row, blocked:false, activity_at:100} : row);
+    const resumed = stabilizeWorkspaceRail(buildWorkspaceRail(released, managers(released)), rail);
+    for (const groups of [resumed.chiefGroups, resumed.items[0].groups, resumed.settledItems[0].groups]) {
+      expect(groups.find((group) => group.key === "agent")?.cards.map((row) => row.id))
+        .toEqual(["working", "dependent-idle", "dependent-working"]);
+      expect(groups.find((group) => group.key === "errored")?.cards.map((row) => row.id)).toEqual(["dependent-failed"]);
+      expect(groups.find((group) => group.key === "agent")?.cards[2]).toBe(released.find((row) => row.id === "dependent-working"));
+      expect(groups.find((group) => group.key === "agent")?.cards[2].awaiting_reply).toBe(true);
+    }
   });
 
   it("keeps unread independent of rail categories while preserving global classification and original records", () => {
@@ -89,14 +108,26 @@ describe("manager rail projection", () => {
       card("approval", { awaiting_reply:true, awaiting_approval:true }),
       card("answer", { awaiting_reply:true, awaiting_answer:true }),
       card("assigned", { awaiting_reply:true, assigned:true }),
-      card("error", { awaiting_reply:true, agent_state:"errored" })
+      card("error", { awaiting_reply:true, agent_state:"errored" }),
+      card("recent", {activity_at:20}),
+      card("tie-b", {title:"Same", activity_at:10}),
+      card("tie-a", {title:"Same", activity_at:10})
     ];
     const originals = structuredClone(rows);
     const before = buildWorkspaceRail(rows);
     expect(before.chiefGroups.map((group) => [group.key, group.cards.map((row) => row.id)]))
       .toEqual([["awaiting_approval", ["approval"]], ["awaiting_answer", ["answer"]],
-        ["assigned", ["assigned"]], ["errored", ["error"]], ["agent", ["working"]], ["empty", ["quiet"]]]);
-    for (const row of rows) expect(before.chiefGroups.flatMap((group) => group.cards).find((entry) => entry.id === row.id)).toBe(row);
+        ["assigned", ["assigned"]], ["errored", ["error"]], ["agent", ["recent", "tie-a", "tie-b", "working"]], ["empty", ["quiet"]]]);
+    const page = managerPageGroups(rows.filter(railTicketEligible));
+    const presentation = page.map((group) => ({key:group.key,
+      label:group.key === "empty" ? "Other" : group.label,
+      defaultCollapsed:group.quiet, cards:group.tickets}));
+    const withManagers = buildWorkspaceRail(rows, [item("active", {tickets:rows}),
+      item("settled", {tickets:rows, settled:true})]);
+    for (const groups of [before.chiefGroups, withManagers.items[0].groups, withManagers.settledItems[0].groups]) {
+      expect(groups).toEqual(presentation);
+      for (const row of rows) expect(groups.flatMap((group) => group.cards).find((entry) => entry.id === row.id)).toBe(row);
+    }
     expect(rows).toEqual(originals);
     expect(workItemTicketGroupKey(rows[0])).toBe("awaiting_reply");
     expect(before.groups.find((group) => group.key === "awaiting_reply")?.cards.map((row) => row.id))
@@ -107,7 +138,7 @@ describe("manager rail projection", () => {
     const categories = (rail: typeof before) => rail.chiefGroups.map((group) => [group.key, group.cards.map((row) => row.id)]);
     expect(categories(after)).toEqual(categories(before));
     expect(after.chiefGroups.flatMap((group) => group.cards).every((row) => !row.awaiting_reply && !row.conversation_signal?.message_for_owner)).toBe(true);
-    expect(after.chiefGroups.find((group) => group.key === "agent")?.cards[0].conversation_signal?.working).toBe(true);
+    expect(after.chiefGroups.find((group) => group.key === "agent")?.cards.find((row) => row.id === "working")?.conversation_signal?.working).toBe(true);
   });
 
   it("passes the authoritative recap through and returns nothing when it is absent", () => {
@@ -141,7 +172,7 @@ describe("manager rail projection", () => {
     expect(frozen.chiefGroups[0].cards[2]).toEqual({...reentered.chiefGroups[0].cards[2],
       conversation_id:"rebound", conversation_signal:{working:true,message_for_owner:false}});
     // A pointer can arrive after drain captures the answer but before exits settle.
-    let presented: WorkspaceRailPresentation = {rail:reentered, settledOpen:false, settledMessages:{}};
+    let presented: WorkspaceRailPresentation = {rail:reentered, settledOpen:false};
     const motion = createRailMotionController(() => null, () => presented, (next) => presented = next);
     motion.update({...presented, rail:updated});
     motion.freeze(true);
@@ -151,43 +182,26 @@ describe("manager rail projection", () => {
     await tick();
     expect(presented.rail).toEqual(stabilizeWorkspaceRail(updated, frozen));
     motion.dispose();
-    // A frozen message can disappear from discovery after it is read or its
-    // parent reopens. Membership waits, but facts come from the complete rail.
-    const child = card("child", {conversation_id:"old-conversation",
-      conversation_signal:{working:true, message_for_owner:true}});
-    presented = {rail:buildWorkspaceRail([], [item("settled", {settled:true, tickets:[child]})]),
-      settledOpen:true, settledMessages:{settled:[{kind:"ticket", id:"child", title:"Original title",
-        parentId:"settled", parentTitle:"Original parent", settled:true,
-        conversationId:"old-conversation", conversationSignal:child.conversation_signal}]}};
-    const childMotion = createRailMotionController(() => null, () => presented, (next) => presented = next);
-    childMotion.freeze(true);
-    childMotion.update({rail:buildWorkspaceRail([], [item("reopened", {tickets:[{...child,
-      title:"Changed title", conversation_id:"new-conversation",
-      conversation_signal:{working:false, message_for_owner:false}}]})]), settledOpen:true, settledMessages:{}});
-    expect(presented.settledMessages.settled).toEqual([{kind:"ticket", id:"child", title:"Original title",
-      parentId:"settled", parentTitle:"Original parent", settled:true, conversationId:"new-conversation",
-      conversationSignal:{working:false, message_for_owner:false}}]);
-    childMotion.freeze(false);
-    await tick();
-    expect(presented.settledMessages).toEqual({});
-    childMotion.dispose();
+
   });
 
   it("acknowledges manual folds during a frozen rail exit and admits late pages without another entrance", async () => {
-    let presented: WorkspaceRailPresentation = {rail:buildWorkspaceRail([card("departing")]), settledOpen:false, settledMessages:{}};
-    const plays: {node:string; duration:number; delay:number; canceled:boolean; finish:()=>void}[] = [];
+    let presented: WorkspaceRailPresentation = {rail:buildWorkspaceRail([card("departing")]), settledOpen:false};
+    const plays: {node:string; frames:Keyframe[]; duration:number; delay:number; canceled:boolean; finish:()=>void}[] = [];
     const attributes = new Set<string>();
     let focused: unknown = null;
+    let bodyHeight = 80;
     let prefersReduced = false;
     class Surface {
+      activeHeight: {effect:{target:Surface}|null; frames:Keyframe[]} | null = null;
       dataset: Record<string,string> = {};
       parentElement = null;
-      style = {overflow:"", setProperty() {}, removeProperty() { this.overflow = ""; }};
+      style = {overflow:"", height:"", setProperty() {}, removeProperty(key:string) { if (key === "overflow" || key === "height") this[key] = ""; }};
       classList = {add() {}, remove() {}, contains:()=>false};
       constructor(readonly name:string) { this.dataset.railMotion = name; }
       getBoundingClientRect() {
         const bodyOpen = presented.settledBodyOpen ?? presented.settledOpen;
-        return {height:this.name === "settled-section" ? 20 + (bodyOpen && presented.rail.settledItems.length ? 80 : 0) : 20, top:0,left:0};
+        return {height:this.name === "settled-section" && this.activeHeight?.effect ? parseFloat(String(this.activeHeight.frames[0].height)) : this.name === "settled-section" && this.style.height ? parseFloat(this.style.height) : this.name === "settled-section" ? 20 + (bodyOpen && presented.rail.settledItems.length ? bodyHeight : 0) : 20, top:0,left:0};
       }
       closest() { return null; }
       contains(value:unknown) { return this === body && value === focused; }
@@ -199,12 +213,17 @@ describe("manager rail projection", () => {
         if (selector === "[data-settled-scroll]") return (presented.settledBodyOpen ?? presented.settledOpen) ? body : null;
         return null;
       }
-      animate(_frames:Keyframe[], options:KeyframeAnimationOptions) {
+      animate(frames:Keyframe[], options:KeyframeAnimationOptions) {
         let finish!:()=>void;
         const finished = new Promise<void>(resolve => finish = resolve);
-        const play = {node:this.name,duration:Number(options.duration),delay:options.delay ?? 0,canceled:false,finish};
+        const play = {node:this.name,frames,duration:Number(options.duration),delay:options.delay ?? 0,canceled:false,finish};
         plays.push(play);
-        return {finished,effect:{target:this},cancel:()=>{play.canceled=true;finish();}};
+        const animation = {finished,frames,effect:{target:this} as {target:Surface}|null,cancel:()=>{play.canceled=true;if(this.activeHeight===animation)this.activeHeight=null;finish();}};
+        if (frames[0].height !== undefined) {
+          this.activeHeight = animation;
+          void finished.then(()=>{if(this.activeHeight===animation)this.activeHeight=null;});
+        }
+        return animation;
       }
     }
     const section = new Surface("settled-section"), header = new Surface("header"), chevron = new Surface("chevron"), body = new Surface("body");
@@ -223,7 +242,7 @@ describe("manager rail projection", () => {
     const flush = async () => { for (let i=0;i<12;i++) await tick(); };
     const motion = createRailMotionController(()=>railRoot, ()=>presented, next=>presented=next);
     try {
-      motion.update({rail:buildWorkspaceRail([]), settledOpen:false, settledMessages:{}});
+      motion.update({rail:buildWorkspaceRail([]), settledOpen:false});
       const unrelated = plays.find(play=>play.node === "row:departing")!;
       expect(unrelated.duration).toBe(160);
       motion.freeze(true);
@@ -237,43 +256,59 @@ describe("manager rail projection", () => {
       // A coherent first page arrives after the fold beat. The Worker exit
       // remains unresolved and hovered, but it cannot hold this page back.
       const child = card("child", {conversation_id:"child-conversation",conversation_signal:{working:false,message_for_owner:true}});
-      const page:WorkspaceRailPresentation = {rail:buildWorkspaceRail([], [item("late", {settled:true,tickets:[child]})]), settledOpen:false,
-        settledMessages:{late:[{kind:"ticket",id:"child",title:"Original message",parentId:"late",parentTitle:"late",settled:true,
-          conversationId:"child-conversation",conversationSignal:child.conversation_signal}]}};
+      const page:WorkspaceRailPresentation = {rail:buildWorkspaceRail([], [item("late", {settled:true,tickets:[child]})]), settledOpen:false};
       motion.update(page);
       expect(presented.rail.settledItems.map(item=>item.id)).toEqual(["late"]);
       expect(presented.settledOpen).toBe(true);
-      expect(plays).toHaveLength(3);
+      await flush();
+      const lateResize = plays[3];
+      expect(lateResize.node).toBe("settled-section");
+      expect(lateResize.frames).toEqual([{height:"20px"}, {height:"100px"}]);
+      expect(lateResize.duration).toBe(340);
+      // A signal-only refresh retains its beat; new natural geometry retargets
+      // only height, and an obsolete completion cannot release the new owner.
+      motion.update(page);
+      await flush();
+      expect(plays).toHaveLength(4);
+      expect(lateResize.canceled).toBe(false);
+      bodyHeight = 120;
+      motion.update(page);
+      await flush();
+      const retarget = plays[4];
+      expect(lateResize.canceled).toBe(true);
+      expect(retarget.node).toBe("settled-section");
+      expect(retarget.frames[1]).toEqual({height:"140px"});
+      lateResize.finish();
+      await flush();
+      expect(section.style.overflow).toBe("hidden");
+      retarget.finish();
+      await flush();
+      expect(section.style.height).toBe("");
+      expect(section.style.overflow).toBe("");
       focused = {};
       motion.setSettledOpen(false);
       expect(presented.settledOpen).toBe(false);
       expect(presented.settledBodyOpen).toBe(true);
       expect(focused).toBe(header);
       await flush();
-      const closing = plays.slice(3);
+      const closing = plays.slice(5);
       expect(closing.map(play=>[play.duration,play.delay])).toEqual([[340,0],[340,0],[340,0]]);
-      // Board clears message demand immediately, then navigation withdraws
-      // the settled scope. Neither update can empty a body mid-fade.
+      // Navigation withdraws the Settled scope. The manager body stays during its fade.
       const readChild = {...child,conversation_signal:{working:false,message_for_owner:false}};
-      motion.update({...page,rail:buildWorkspaceRail([], [item("late", {settled:true,tickets:[readChild]})]),settledMessages:{}});
-      expect(presented.settledMessages.late).toMatchObject([{title:"Original message",conversationSignal:{message_for_owner:false}}]);
-      const closed:WorkspaceRailPresentation = {rail:buildWorkspaceRail([]),settledOpen:false,settledMessages:{}};
+      motion.update({...page,rail:buildWorkspaceRail([], [item("late", {settled:true,tickets:[readChild]})])});
+      const closed:WorkspaceRailPresentation = {rail:buildWorkspaceRail([]),settledOpen:false};
       motion.update(closed);
       await flush();
       expect(presented.settledBodyOpen).toBe(true);
       expect(presented.rail.settledItems.map(item=>item.id)).toEqual(["late"]);
-      expect(presented.settledMessages.late).toHaveLength(1);
       motion.setSettledOpen(true);
       expect(closing.every(play=>play.canceled)).toBe(true);
       expect(unrelated.canceled).toBe(false);
-      expect(presented.settledMessages.late).toHaveLength(1);
-      const reopened = {...page,rail:buildWorkspaceRail([], [item("late", {settled:true,title:"Fresh page",tickets:[readChild]})]),
-        settledMessages:{late:page.settledMessages.late.map(message=>({...message,title:"Fresh message",conversationSignal:readChild.conversation_signal}))}};
+      const reopened = {...page,rail:buildWorkspaceRail([], [item("late", {settled:true,title:"Fresh page",tickets:[readChild]})])};
       motion.update(reopened);
       expect(presented.rail.settledItems[0].title).toBe("Fresh page");
-      expect(presented.settledMessages.late[0].title).toBe("Fresh message");
       await flush();
-      for (const play of plays.slice(6)) play.finish();
+      for (const play of plays.slice(8)) play.finish();
       await flush();
       expect(presented.settledOpen).toBe(true);
       expect(presented.settledBodyOpen).toBe(true);
@@ -293,7 +328,6 @@ describe("manager rail projection", () => {
       motion.update(closed);
       await flush();
       expect(presented.rail.settledItems[0].title).toBe("Fresh page");
-      expect(presented.settledMessages.late[0].title).toBe("Fresh message");
       expect(presented.settledBodyOpen).toBe(true);
       for (const play of plays.slice(beforeClose)) play.finish();
       await flush();
@@ -311,14 +345,41 @@ describe("manager rail projection", () => {
     } finally { motion.dispose(); vi.unstubAllGlobals(); }
   });
 
-  it("preserves creation and ID order and exact direct-conversation message marks", () => {
+  it("preserves active creation order, sorts Settled by update time, and keeps exact direct signals", () => {
     const rail = buildWorkspaceRail([], [
-      item("newer", { created_at: 20 }), item("older", { created_at: 10 }),
+      item("newer", { created_at: 20,updated_at:100 }), item("older", { created_at: 10 }),
       item("urgent", { created_at: 0, awaiting_reply: true, conversation_signal: {working:true,message_for_owner:true} }),
+      item("settled-old", {settled:true,created_at:100,updated_at:1}),
+      item("settled-new", {settled:true,created_at:1,updated_at:30}),
+      item("settled-tie", {settled:true,created_at:0,updated_at:30}),
       item("children-message", { ticket_rollup: { ...quiet, awaiting_reply: true } })
     ]);
     expect(rail.items.map((row) => row.id)).toEqual(["urgent", "children-message", "older", "newer"]);
+    expect(rail.settledItems.map(row=>[row.id,row.updatedAt])).toEqual([["settled-new",30],["settled-tie",30],["settled-old",1]]);
     expect(rail.items.map((row) => row.conversationSignal)).toEqual([{working:true,message_for_owner:true}, undefined, undefined, undefined]);
+  });
+
+  it("credits only manager order, matching controls, and no Settled message rows", () => {
+    // A selector host tests acknowledgment refusal without another browser host.
+    const rail=buildWorkspaceRail([], [item("older",{settled:true,updated_at:1}),item("newer",{settled:true,updated_at:2})]);
+    const title=(text:string,label:string)=>({textContent:text,getAttribute:()=>label,querySelector:()=>null});
+    let reopenLabel="Reopen newer",openLabel="Open newer",message=false;
+    const rows=rail.settledItems.map(row=>({dataset:{settledItem:row.id},querySelector:(selector:string)=>
+      selector==='.settled-title > span' ? title(row.title,'') : selector==='.settled-title'
+        ? title(row.title,row.id==='newer'?openLabel:`Open ${row.title}`)
+        : selector==='.reopen' ? title('Reopen',row.id==='newer'?reopenLabel:`Reopen ${row.title}`) : null}));
+    const chief={querySelectorAll:()=>[],querySelector:(selector:string)=>selector==='.item-head .item-title'?title('Chief of Staff',''):{querySelector:()=>null}};
+    let visible=rows;
+    const root={querySelectorAll:(selector:string)=>selector==='.active-work-scroll > .manager-card-slot > .manager-card'?[chief]:visible,
+      querySelector:(selector:string)=>selector==='[data-settled-count]'?title('(2)',''):message?{}:null} as unknown as HTMLElement;
+    const matches=(open=true)=>railDomMatches(root,rail,null,open);
+    expect(matches()).toBe(true);
+    visible=[...rows].reverse();expect(matches()).toBe(false);visible=rows;
+    reopenLabel='Reopen older';expect(matches()).toBe(false);reopenLabel='Reopen newer';
+    openLabel='Open older';expect(matches()).toBe(false);openLabel='Open newer';
+    message=true;expect(matches()).toBe(false);
+    visible=[];expect(matches(false)).toBe(false);
+    message=false;expect(matches(false)).toBe(true);
   });
 
   it("states only manifest stages and facts that prove work", () => {
@@ -343,7 +404,7 @@ describe("manager rail projection", () => {
 // Shared-publication adoption: these are browser adapters, not a new Signal policy.
 import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
-import { navigationWorkspacePresentation, navigationTicketMasthead, navigationReviewPresentation, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
+import { navigationWorkspacePresentation, navigationTicketMasthead, navigationReviewPresentation, navigationWorkingAgentCount, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
 import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
@@ -354,7 +415,7 @@ const sourceTicket:TicketRecord={kind:'ticket',id:'source-ticket',value:{
   ceiling_holder:{kind:'owner',id:'owner'},gating_field:'implementation',proposal_field:null,proposal_revision:0,
   proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'en'}};
 const sourceRecords:NavigationRecord[]=[sourceTicket,conversation('conversation'),
-  {kind:'manager',id:'item',value:{title:'Parent',recap:'Full parent recap.\n'+'Body continues. '.repeat(20),recap_preview:'Parent recap',created_at:1,project_id:'project',settled:false,conversation_id:null}},
+  {kind:'manager',id:'item',value:{title:'Parent',recap:'Full parent recap.\n'+'Body continues. '.repeat(20),recap_preview:'Parent recap',created_at:1,updated_at:11,project_id:'project',settled:false,conversation_id:null}},
   {kind:'project',id:'project',value:{name:'Project'}},
   {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:null}},
   {kind:'address',id:'address',value:{owner_kind:'ticket',owner_id:'source-ticket',conversation_id:'conversation',current:true,parent_kind:'manager',parent_id:'item'}}];
@@ -388,6 +449,7 @@ describe('canonical navigation workspace presentation',()=>{
       expect(first.tickets[0].recap).toBe(sourceTicket.value.recap);
       const parent=sourceRecords.find(record=>record.kind==='manager')!;
       expect(first.managers[0].recap).toBe(parent.value.recap);
+      expect(first.managers[0].updated_at).toBe(11);
       expect(first.tickets[0]).toMatchObject({blocked:true,assigned:true,awaiting_approval:true,awaiting_agent_approval:false,
         agent_state:'working',awaiting_reply:true,conversation_signal:{working:true,message_for_owner:true}});
       expect(buildWorkspaceRail(first.tickets,first.managers).items[0].groups).toEqual([]);
@@ -462,9 +524,9 @@ describe('shared Review and runtime counts',()=>{
     const ask=(id:string,stamp:number,changes:Partial<TicketRecord['value']>={}):TicketRecord=>({kind:'ticket',id,value:{...sourceTicket.value,
       ticket_status:'awaiting_approval',proposal_field:'plan',gating_field:'implementation',proposal_created_at:stamp,proposal_revision:1,...changes}});
     const records:NavigationRecord[]=[ask('b',2,{is_backlogged:true,blocked:true,terminal:true,worker_step_claim_out:true}),
-      ask('a',2),ask('earliest',1),ask('manager',0,{ceiling_holder:{kind:'chief',id:'chief'}}),
+      ask('c',2),ask('a',2),ask('earliest',1),ask('manager',0,{ceiling_holder:{kind:'chief',id:'chief'}}),
       ask('claim-only',0,{ticket_status:'empty',worker_step_claim_out:true,conversation_id:null}),
-      ...sourceRecords.slice(1).filter(record=>record.kind!=='chief').map(record=>record.kind==='manager' ? {...record,value:{...record.value,conversation_id:'manager-current'}} : record),conversation('historical'),conversation('manager-current'),
+      ...sourceRecords.slice(1).filter(record=>record.kind!=='chief').map(record=>record.kind==='manager' ? {...record,value:{...record.value,conversation_id:'manager-current'}} : record),conversation('historical'),conversation('unlinked'),conversation('manager-current'),
       {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:'conversation'}},
       {kind:'address',id:'history',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'historical',current:false,parent_kind:'chief',parent_id:'chief'}}];
     try {
@@ -474,22 +536,36 @@ describe('shared Review and runtime counts',()=>{
       if (manager?.kind==='conversation') manager.value.attention.current!.signal.working=false;
       adapter.publishSnapshot(currentSnapshot({...continuity,records}),'counts');
       let view=knowledge.accept(adapter.getPublication()!);
+      expect(navigationWorkingAgentCount(view)).toBe(0);
       expect(navigationReviewPresentation(view)).toMatchObject({runningConversationCount:0,exactOutClaimCount:2,
-        items:[{ticket_id:'earliest',field:'implementation',proposal_field:'plan'},{ticket_id:'a'},{ticket_id:'b'}]});
-      const active=conversation('conversation');active.value.attention.current!.signal.working=true;
+        items:[{review_item_type:'ticket',ticket_id:'a',messages:[{conversation_id:'historical'}]},{ticket_id:'earliest',proposal:{field:'implementation',proposal_field:'plan'}},{ticket_id:'c'}]});
+      const active=conversation('conversation',0,false);active.value.attention.current!.signal.working=true;
       const historical=conversation('historical');historical.value.attention.current!.signal.working=true;
       adapter.publishBatch(envelope({...continuity,base_revision:'0',revision:'1',upserts:[active,historical,conversation('manager-current')],deletes:[]}),encodeCursor({...continuity,revision:'1'}),'counts-batch');
       view=knowledge.accept(adapter.getPublication()!);
+      expect(navigationWorkingAgentCount(view)).toBe(2);
       expect(navigationReviewPresentation(view).runningConversationCount).toBe(2);
+      expect(navigationReviewPresentation(view).currentConversationIds).toEqual(new Set(['conversation','manager-current']));
       const lost=knowledge.loseRuntime()!;
+      expect(navigationWorkingAgentCount(lost)).toBeNull();
       expect(navigationReviewPresentation(lost)).toMatchObject({runningConversationCount:null,exactOutClaimCount:2});
-      expect(navigationReviewPresentation(lost).items.map(item=>item.ticket_id)).toEqual(['earliest','a','b']);
+      // Backlogged b stays outside Review but still contributes its outclaim.
+      expect(navigationReviewPresentation(lost).items.map(item=>item.review_item_type==='ticket' ? item.ticket_id : item.conversation_id)).toEqual(['a','earliest','c']);
       const missing={...view,conversations:new Map([...view.conversations].filter(([id])=>id!=='conversation'))};
+      expect(navigationWorkingAgentCount(missing)).toBeNull();
       expect(navigationReviewPresentation(missing).runningConversationCount).toBeNull();
+      const staleConversations=new Map(view.conversations);
+      const current=staleConversations.get('conversation')!;
+      if(current.working.state!=='fresh')throw new Error('Expected current working fact');
+      staleConversations.set('conversation',{...current,working:{...current.working,state:'retained'}});
+      expect(navigationWorkingAgentCount({...view,conversations:staleConversations})).toBeNull();
+      staleConversations.set('conversation',{...current,working:{state:'unknown'}});
+      expect(navigationWorkingAgentCount({...view,conversations:staleConversations})).toBeNull();
       const empty={...view,publication:{...view.publication,records:[]}};
+      expect(navigationWorkingAgentCount(empty)).toBe(0);
       expect(navigationReviewPresentation(empty).runningConversationCount).toBe(0);
       // Identity is stricter than same-field membership; a newer body cannot wear an older stamp.
-      const item=navigationReviewPresentation(view).items[0];
+      const item=navigationReviewPresentation(view).items.find(item=>item.review_item_type==='ticket')!.proposal!;
       const detail={id:item.ticket_id,pending_proposal:{field:'plan',created_at:1,revision:2,body:'replacement',proposed_by:'agent'}};
       expect(reviewProposalDetailMatches(item,detail)).toBe(false);
     } finally {adapter.destroy();}

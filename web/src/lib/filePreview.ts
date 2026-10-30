@@ -1,3 +1,5 @@
+import { managedHtmlBridge } from "./managedHtmlNavigation";
+import { MANAGED_ARTIFACT_PRIMARY_PRESS } from "./managedArtifactPress";
 import {
   conversationFileMediaType,
   isSafeConversationFileName
@@ -159,12 +161,22 @@ export function conversationFileTarget(
   return { kind: "conversation-file", href, fileName };
 }
 
-export function prepareManagedHtmlPreviewDocument(html: string, managedHtmlHref: string): string {
+export function prepareManagedHtmlPreviewDocument(html: string, managedHtmlHref: string, announceArtifactPress = false, generation?: string): string {
   const baseHref = absoluteHrefForManagedHtml(managedHtmlHref);
   const document = parseManagedHtmlDocument(html);
   const baseElement = document.createElement("base");
   baseElement.setAttribute("href", baseHref);
   document.head.insertBefore(baseElement, document.head.firstChild);
+  if (announceArtifactPress) {
+    const bridge = document.createElement("script");
+    bridge.textContent = `window.addEventListener("pointerdown", event => { if (event.isPrimary && event.button === 0) parent.postMessage(${JSON.stringify(MANAGED_ARTIFACT_PRIMARY_PRESS)}, "*"); }, true);`;
+    document.head.insertBefore(bridge, baseElement.nextSibling);
+  }
+  if (generation) {
+    const bridge = document.createElement("script");
+    bridge.textContent = managedHtmlBridge(generation);
+    document.head.insertBefore(bridge, document.head.firstChild);
+  }
   return serializeManagedHtmlDocument(document);
 }
 

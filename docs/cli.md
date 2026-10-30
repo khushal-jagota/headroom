@@ -292,6 +292,23 @@ On the production host, `~/.local/bin/panels` follows the current deployed appli
 The launcher preserves the runtime identity and uses the interpreter from that exact
 deployment.
 
+The server resolves its application root from the imported package. A source import
+under `src/planner` uses that checkout, even with an inherited `PLAN_APP_ROOT`.
+An installed package requires an absolute `PLAN_APP_ROOT` that owns the package
+under its own `.venv`. An application-root symlink is valid. A virtualenv or package
+symlink that escapes that ownership is not valid. The current directory does not
+select the application root. The supervisor adds no `PYTHONPATH` value and preserves
+any caller value, including an empty value.
+
+Invalid identity stops startup before configuration, state creation, or child launch.
+An invalid restart request fails locally and leaves the existing server alone.
+Check the reported module path and application identity. Use that application's
+`bin/panels-launcher serve` with the existing service configuration. For restart,
+use that application's `bin/panels restart`. These entrypoints stamp their own identity.
+Do not set an arbitrary root to bypass ownership checks. If the matching launcher
+still fails, restore the last known-good application through the
+[release procedure](deployment.md).
+
 Ticket creation accepts `locale` in its JSON object or `--locale vps|macos` beside
 `--input-json`. Use one input source for the locale. An idle Ticket moves with
 `panels ticket move <ticket> --locale vps|macos`.
@@ -300,3 +317,23 @@ Projects accept `--requires-macos` at creation and
 `panels project set <project> requires-macos --value true|false` for later edits.
 These requirements affect future locale resolution. See
 [Ticket locale rules](tickets-and-gates.md#execution-locale).
+
+
+## Application previews
+
+These commands use the caller's own Worker Ticket identity:
+
+```sh
+panels preview prepare --json
+panels preview register --port 5173 --json
+panels preview show --json
+panels preview stop
+```
+
+Prepare first, then start a prefix-aware application from the returned reserved
+Git worktree and register its loopback port. Share the returned `url` only after
+registration succeeds. Stop revokes the link; stop the application process too.
+Never serve untrusted or third-party content, downloaded samples, vendor demos,
+or pages embedding third-party scripts: preview code shares Panels' browser
+authority. Read [application-previews.md](application-previews.md) for startup,
+limits, the tailnet gate, and automatic expiry.

@@ -62,11 +62,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - For a new worktree, run:
 
   ```sh
-  python3 -m venv .venv
-  .venv/bin/python -m pip install -r requirements.txt
-  .venv/bin/python -m pip install --editable .
-  npm ci --prefix web
-  npm ci --prefix agent_backends
+  scripts/dev setup
   ```
 
   Create `.venv` in the worktree with those commands. Never copy, move, or symlink
@@ -74,8 +70,28 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   built in, so a copy points `pytest` at that tree's source and checks this source
   against that tree's pinned dependency versions. `git worktree move` breaks a
   virtualenv the same way. After a move, delete `.venv` and build it again.
+- Use guarded commands for dependency setup, npm, pytest, and mypy:
+
+  ```sh
+  scripts/dev npm --prefix web ci
+  scripts/dev npm --prefix agent_backends ci
+  scripts/dev npm --prefix web run check
+  scripts/dev pytest tests/unit/test_instrument.py
+  scripts/dev mypy scripts/tree_environment.py
+  scripts/dev python -m pytest tests/unit/test_instrument.py
+  scripts/dev .venv/bin/mypy scripts/tree_environment.py
+  ```
+
+  These launchers check deployment sharing before the requested tool starts.
+  Setup requires absent `.venv` and Node dependency directories and never deletes them.
+  Every web script also checks before its dependency executable starts.
+  No flag or environment variable bypasses the guard. If dependencies share deployed
+  storage, create a fresh worktree with independent dependencies. Do not delete through
+  an unresolved link or mount. If valid independent dependencies receive a false refusal,
+  fix the detector and add a regression check. If evidence is unavailable, restore the
+  evidence or fix its acquisition before retry. See `docs/deployment.md` for diagnostics.
 - `mypy` with this tree's config and any `pytest` that collects under `tests/` check
-  environment identity first, then installed distributions against applicable exact
+  deployment safety, then environment identity, then installed distributions against applicable exact
   pins in `requirements.txt`. The dependency check runs before `planner` imports.
   Extra installed distributions and this tree's editable install are valid.
   A dependency refusal names the required and installed versions, active interpreter,
@@ -86,10 +102,19 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   Restore the pinned dependency versions to pass it.
   These hooks cannot cover failures before pytest or mypy loads them. They do not
   cover `ruff`, pytest outside `tests/`, or arbitrary `.venv/bin` commands.
+  Direct invocations outside guarded entry points can still write into the deployment.
+  General prevention and race-free filesystem containment remain uncommissioned.
+  Development and verification run in independent worktrees, never the installed tree.
+  Startup checks do not contain running processes or prevent writes after the check.
+  The artifact digest detects damage after a write. Do not add cache exclusions.
+  If a write reaches the installed tree, report it and leave it in place. Do not clean it.
+  Repository review or merge does not install enforcement into the deployed release.
 - Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`
   and confirm any printed path resolves to the worktree before using its runtime.
 - Node dependency trees under `web/` and `agent_backends/` may be reused when their
-  manifests and locks match. Detach them before installing or changing dependencies.
+  manifests and locks match and their storage is independent of the deployment.
+  Matching lockfiles never permit deployed storage. Detach safe development-owned
+  trees before installing or changing dependencies.
   This never covers `.venv`.
 - When testing, browsing, computer use, exploration, or other active work needs
   running services, survey current port use, select available ports, start the
@@ -98,12 +123,14 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - The worktree's database and other local state may remain for later use until
   Consequences.
 - At Consequences, push the Ticket branch and open an ordinary pull request into
-  `staging`. Write an ordinary note about the change. Enable auto-merge and verify
-  that the pull request merged. Then remove the Ticket's services, local runtime
+  `staging`. Write an ordinary note about the change. Wait for `mypy (merged tree)`
+  to pass, merge the pull request explicitly, and verify that it merged.
+  Then remove the Ticket's services, local runtime
   state, worktree, and branch. If an old direct push to `origin/staging` is rejected,
   use this pull request route. If GitHub refuses the merge because of conflicts,
   bring current `staging` into the Ticket branch. Resolve the conflicts, verify the
-  resulting revision, push the branch, and enable auto-merge again.
+  resulting revision, and push the branch. Wait for a fresh `mypy (merged tree)`
+  pass, merge the pull request explicitly, and verify that it merged.
 - Open a `staging` → `main` pull request only when the user explicitly requests a
   release. Deployment from `main` remains a later user action.
 

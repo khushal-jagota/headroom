@@ -2,8 +2,6 @@ import type { TicketValue, TicketRecord, ManagerRecord, ProjectRecord, AddressRe
 import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
 import type { AgentState } from '../types';
 import type { WorkspaceTicket, WorkspaceManager, WorkspaceSettledManager, WorkspaceChief } from '../workspaceRail';
-import { workspaceMessageIndex } from '../workspaceMessageDiscovery';
-import { workspaceRailChildMessageConversations } from '../workspaceRail';
 import type { ConversationSignal } from '../conversationSignal';
 import type { WorkspaceMessageConversation } from '../types';
 
@@ -40,6 +38,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const rawProjectsById=new Map<string,ProjectRecord>();
   const addressesByConversation=new Map<string,AddressRecord[]>();
   const reviewItems: import('../types').NavigationReviewItem[]=[];
+  const reviewTickets=new Map<string,import('../types').NavigationReviewTicketItem>();
   const currentConversationIds=new Set<string>();
   let exactOutClaimCount=0;
   let chiefRecord:Extract<(typeof records)[number],{kind:'chief'}> | undefined;
@@ -50,10 +49,11 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(record.kind==='ticket') {
       const row=record.value;
       if(row.worker_step_claim_out) exactOutClaimCount+=1;
-      if(row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
+      if(!row.is_backlogged && row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
         && row.gating_field!==null && row.proposal_field!==null && row.proposal_created_at!==null) {
-        reviewItems.push({review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
-          title:row.title,waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision});
+        const proposal:import('../types').NavigationReviewProposalItem={review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
+          title:row.title,waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision};
+        reviewTickets.set(record.id,{review_item_type:'ticket',ticket_id:record.id,title:row.title,waiting_since:proposal.waiting_since,proposal,messages:[]});
       }
     }
     if(record.kind==='ticket') rawTicketsById.set(record.id,record);
@@ -104,7 +104,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const managers: WorkspaceManager[]=managerRecords.map(record=>{
     const row=record.value;
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
-    return {id:record.id,title:row.title,created_at:row.created_at,
+    return {id:record.id,title:row.title,created_at:row.created_at,updated_at:row.updated_at,
       settled:row.settled,project_id:row.project_id,project:projects.get(row.project_id)?.name,
       recap:row.recap,recap_reference:'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null,recap_preview:row.recap_preview,conversation_id:row.conversation_id,
       conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`manager:${record.id}`) ?? [],
@@ -127,7 +127,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const messages: WorkspaceMessageConversation[]=[];
   const seen=new Set<string>();
   // Preserve exact address membership before deduplication. Current addresses win within an owner.
-  const addresses=[...addressesByConversation.values()].flat().sort((a,b)=>Number(b.value.current)-Number(a.value.current) || a.id.localeCompare(b.id));
+  const addresses=[...addressesByConversation.values()].flat().sort((a,b)=>Number(b.value.current)-Number(a.value.current) || compareIdentity(a.id,b.id));
   for(const record of addresses) {
     const address=record.value;
     const knowledge=view.conversations.get(address.conversation_id);
@@ -145,20 +145,41 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       parentId,parentTitle:parentId==='chief' ? chief?.label ?? null : parent?.title ?? null,
       settled:address.owner_kind==='manager' ? item?.settled === true : parent?.settled === true});
   }
-  const messagesByParent=new Map<string,WorkspaceMessageConversation[]>();
-  for(const message of messages) {
-    if(message.parentId===null || message.parentId===undefined) continue;
-    const siblings=messagesByParent.get(message.parentId) ?? [];
-    siblings.push(message);messagesByParent.set(message.parentId,siblings);
+  const conversationsById=new Map(records.flatMap(record=>record.kind==='conversation' ? [[record.id,record.value] as const] : []));
+  const reviewConversations=new Set<string>();
+  for(const record of addresses) {
+    const address=record.value;
+    if(reviewConversations.has(address.conversation_id))continue;
+    if(value(view.conversations.get(address.conversation_id)?.message_for_owner)!==true)continue;
+    const conversation=conversationsById.get(address.conversation_id);
+    if(conversation?.first_unread_owner_message_at == null)continue;
+    // Select the canonical address before the owner-state filter. Never fall back
+    // to a former owner when the canonical owner is excluded.
+    reviewConversations.add(address.conversation_id);
+    const owner=address.owner_kind==='ticket' ? rawTicketsById.get(address.owner_id)?.value
+      : address.owner_kind==='manager' ? managersById.get(address.owner_id) : chiefRecord?.value;
+    if(!owner)continue;
+    if(address.owner_kind==='ticket' && ('stage' in owner && owner.stage==='done' || 'is_backlogged' in owner && owner.is_backlogged))continue;
+    if(address.owner_kind==='manager' && 'settled' in owner && owner.settled)continue;
+    const message:import('../types').ReviewMessageItem={review_item_type:'message',conversation_id:address.conversation_id,address_id:record.id,
+      owner_kind:address.owner_kind,owner_id:address.owner_id,title:'title' in owner ? owner.title : owner.label,
+      waiting_since:conversation.first_unread_owner_message_at,recap:'recap' in owner ? owner.recap : '',
+      recap_reference:'recap_reference' in owner ? owner.recap_reference as ViewContentReference|null : null};
+    if(address.owner_kind==='ticket') {
+      let card=reviewTickets.get(address.owner_id);
+      if(!card) {
+        card={review_item_type:'ticket',ticket_id:address.owner_id,title:message.title,waiting_since:message.waiting_since,proposal:null,messages:[]};
+        reviewTickets.set(address.owner_id,card);
+      }
+      card.messages.push(message);
+      // A card represents the oldest thing waiting on the owner. Proposal identity
+      // retains its own timestamp even when an older message sets queue position.
+      card.waiting_since=Math.min(card.waiting_since,message.waiting_since);
+    } else reviewItems.push(message);
   }
-  const messageIndex=workspaceMessageIndex(messages,tickets,byTicket);
-  const railMessagesByParent=new Map<string,readonly WorkspaceMessageConversation[]>();
-  for(const parent of [...managers,...settledManagers]) {
-    railMessagesByParent.set(parent.id,workspaceRailChildMessageConversations(messages,parent,tickets,messageIndex));
-  }
+  reviewItems.push(...reviewTickets.values());
   const addressesById=new Map([...addressesByConversation.values()].flat().map(record=>[record.id,record]));
   const unreadConversationIdsByWindow=new Map<string,ReadonlySet<string>>();
-  const scopedRailMessagesByParent=new Map<string,readonly WorkspaceMessageConversation[]>();
   for(const window of view.publication.view?.windows ?? []) {
     if(window.request.section!=='unread')continue;
     const ids=new Set<string>();
@@ -167,18 +188,16 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       if(address)ids.add(address.value.conversation_id);
     }
     unreadConversationIdsByWindow.set(window.window_id,ids);
-    if(window.request.owner?.kind==='manager') {
-      const parentId=window.request.owner.id;
-      scopedRailMessagesByParent.set(parentId,(railMessagesByParent.get(parentId) ?? []).filter(row=>ids.has(row.conversationId)));
-    }
   }
   return {tickets,managers,settledManagers,chief,messages,conversationSignals,rawTicketsById,rawManagersById,rawProjectsById,
     ticketsById:byTicket,managersById:new Map(managers.map(item=>[item.id,item])),
-    ticketsByParent,messagesByParent,ticketMastheadsById,addressesByConversation,
-    railMessagesByParent,scopedRailMessagesByParent,unreadConversationIdsByWindow,
+    ticketsByParent,ticketMastheadsById,addressesByConversation,
+    unreadConversationIdsByWindow,
     review:finishReviewPresentation(view,reviewItems,currentConversationIds,exactOutClaimCount),
     viewWindows:view.publication.view?.windows ?? [],globalCounts:view.publication.view?.counts ?? null};
 }
+
+function compareIdentity(a:string,b:string):number { return a<b ? -1 : a>b ? 1 : 0; }
 
 /** Review follows the canonical complete queue, independently of sidebar filters. */
 export function navigationReviewPresentation(view: EffectiveNavigationView): NavigationReviewPresentation {
@@ -191,24 +210,41 @@ type NavigationReviewPresentation = {
   currentConversationIds:ReadonlySet<string>;
 };
 function finishReviewPresentation(view:EffectiveNavigationView,items:import('../types').NavigationReviewItem[],pointers:Set<string>,exactOutClaimCount:number):NavigationReviewPresentation {
-  items.sort((a,b) => a.waiting_since-b.waiting_since || (a.ticket_id < b.ticket_id ? -1 : a.ticket_id > b.ticket_id ? 1 : 0));
-  let runningConversationCount: number | null = view.runtimeCurrent ? 0 : null;
-  for (const id of pointers) {
-    const fact = view.conversations.get(id)?.working;
-    if (!fact || fact.state !== 'fresh') { runningConversationCount = null; break; }
-    if (runningConversationCount !== null && fact.value) runningConversationCount += 1;
-  }
+  items.sort((a,b) => a.waiting_since-b.waiting_since
+    || compareIdentity(a.review_item_type,b.review_item_type)
+    || compareIdentity(a.review_item_type==='message' ? a.conversation_id : a.ticket_id,
+      b.review_item_type==='message' ? b.conversation_id : b.ticket_id));
   const counts=view.publication.view?.counts;
-  if(counts){runningConversationCount=view.runtimeCurrent?counts.running_conversations:null;exactOutClaimCount=counts.out_claims;}
-  return {items,runningConversationCount,exactOutClaimCount,currentConversationIds:pointers};
+  if(counts)exactOutClaimCount=counts.out_claims;
+  return {items,runningConversationCount:navigationWorkingAgentCount(view),exactOutClaimCount,currentConversationIds:pointers};
 }
 
-export function reviewProposalIdentity(item: import('../types').NavigationReviewItem): string {
+/** Workspace-wide count. A scoped view supplies its exact total without a resident-row scan. */
+export function navigationWorkingAgentCount(view:EffectiveNavigationView | null | undefined):number | null {
+  if(!view?.runtimeCurrent)return null;
+  const counts=view.publication.view?.counts;
+  if(counts)return counts.running_conversations;
+  const pointers=new Set<string>();
+  for(const record of view.publication.records) {
+    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') && record.value.conversation_id!==null) {
+      pointers.add(record.value.conversation_id);
+    }
+  }
+  let count=0;
+  for(const id of pointers) {
+    const fact=view.conversations.get(id)?.working;
+    if(!fact || fact.state!=='fresh')return null;
+    if(fact.value)count+=1;
+  }
+  return count;
+}
+
+export function reviewProposalIdentity(item: import('../types').NavigationReviewProposalItem): string {
   return JSON.stringify([item.ticket_id,item.field,item.proposal_field,item.waiting_since,item.proposal_revision]);
 }
 
 /** Summary identity admits the body; detail and manifest cannot rewrite the queue. */
-export function reviewProposalDetailMatches(item: import('../types').NavigationReviewItem, detail: Pick<import('../types').TicketDetail,'id' | 'pending_proposal'>): boolean {
+export function reviewProposalDetailMatches(item: import('../types').NavigationReviewProposalItem, detail: Pick<import('../types').TicketDetail,'id' | 'pending_proposal'>): boolean {
   const proposal = detail.pending_proposal;
   return detail.id === item.ticket_id && proposal !== null && proposal.field === item.proposal_field
     && proposal.created_at === item.waiting_since && proposal.revision === item.proposal_revision;
@@ -233,8 +269,6 @@ export function navigationTicketMasthead(view:EffectiveNavigationView,id:string)
 }
 
 export type NavigationPresentationIndexes = {
-  readonly railMessagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
-  readonly scopedRailMessagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
   readonly unreadConversationIdsByWindow:ReadonlyMap<string,ReadonlySet<string>>;
   readonly addressesByConversation:ReadonlyMap<string,readonly AddressRecord[]>;
   readonly rawTicketsById:ReadonlyMap<string,TicketRecord>;
@@ -243,7 +277,6 @@ export type NavigationPresentationIndexes = {
   readonly ticketsById:ReadonlyMap<string,NavigationTicket>;
   readonly managersById:ReadonlyMap<string,WorkspaceManager>;
   readonly ticketsByParent:ReadonlyMap<string,readonly NavigationTicket[]>;
-  readonly messagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
   readonly ticketMastheadsById:ReadonlyMap<string,NavigationTicketMasthead>;
 };
 export type NavigationPresentation = NavigationWorkspacePresentation & NavigationPresentationIndexes & {

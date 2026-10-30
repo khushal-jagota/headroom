@@ -26,8 +26,8 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from planner.conversation.backend_state import (
     BackendStateStore,
@@ -51,11 +51,13 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ConversationStartRequest,
     HeldPromptPromotionMode,
+    PromptDeliveryFate,
     PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
     backend_supports_steer,
 )
@@ -64,6 +66,9 @@ from planner.conversation.events import (
     HeldPromptsChangedFrame,
     ModelThinkingFrame,
     PermissionAskedEventPayload,
+    PromptDeliveryUncertainEventPayload,
+    PromptDiscardedEventPayload,
+    PromptEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
     UserInputAnswer,
@@ -109,19 +114,29 @@ from planner.conversation.snapshot import (
 )
 from planner.conversation.storage import (
     ConversationRecord,
+    ConversationStore,
     StoredConversationEvent,
 )
 from planner.conversation.tool_detail import readable_tool_call_detail as _readable_tool_call_detail
+from planner.conversation.video_uploads.contracts import (
+    CheckedVideoUpload,
+    UploadDestination,
+    VideoUploadError,
+    VideoUploadServiceContract,
+)
 from planner.conversation.voice_transcription import (
     VoiceTranscriptionFailed,
     VoiceTranscriptionUnconfigured,
     transcribe_conversation_audio,
 )
 from planner.core.authctx import RequestContext, request_context, require_owner
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.response_compression import answers_with_an_event_stream
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
+from planner.message_delivery.contracts import MessageDeliveryResult
+from planner.runtime import conversation_start
 
 Ctx = Annotated[RequestContext, Depends(request_context)]
 
@@ -230,12 +245,12 @@ class SentTextPiece(BaseModel):
 
 
 class SentImagePiece(BaseModel):
-    """A picture, with its bytes. This is the only door bytes come in through.
+    """A picture, with its bytes. Images arrive with their message.
 
     They ride with the message they belong to rather than going through an upload of
     their own, so there is no half-sent message: either the picture and the words arrive
     together or nothing does. The server keeps the bytes and the record names what it
-    kept, so ``data`` appears here and nowhere else.
+    kept, so ``data`` stops at intake. Video uses a separate bounded upload and a reference.
     """
 
     piece: Literal["image"]
@@ -253,7 +268,15 @@ class SentFilePiece(BaseModel):
     file_name: str
 
 
-type SentPiece = SentTextPiece | SentImagePiece | SentFilePiece
+class SentVideoUploadPiece(BaseModel):
+    """A server-owned ready video reference, never inline bytes."""
+
+    model_config = ConfigDict(extra="forbid")
+    piece: Literal["video_upload"]
+    upload_id: str
+
+
+type SentPiece = SentTextPiece | SentImagePiece | SentFilePiece | SentVideoUploadPiece
 
 
 class SendBody(BaseModel):
@@ -297,6 +320,7 @@ class OwnerSendBody(BaseModel):
     """
 
     conversation_id: str | None = None
+    owner_read_through_sequence: int | None = Field(default=None, ge=0)
     backend_key: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
@@ -555,7 +579,7 @@ async def tail_conversation(
 
 @router.post("/conversations/{conversation_id}/send")
 async def send_into_conversation(
-    conversation_id: str, body: SendBody, runtime: Runtime
+    conversation_id: str, body: SendBody, runtime: Runtime, request: Request, ctx: Ctx
 ) -> dict[str, Any]:
     """Send a message in, and report the fate the system gave it.
 
@@ -567,26 +591,55 @@ async def send_into_conversation(
     then refused leaves those files behind unnamed, which costs a few bytes on disk and
     loses nothing.
     """
-    _require_mutable_conversation(runtime, conversation_id)
-    _require_unassociated_send_conversation(runtime, conversation_id)
-    try:
-        content = await _kept_message_content(runtime, conversation_id, body.content)
-        fate = await runtime.system.send(
-            conversation_id,
-            content,
-            sender_label=body.sender_label,
-            mode=body.mode,
-            model_change=body.model_change,
-            reasoning_effort_change=body.reasoning_effort_change,
-            sender_message_id=body.sender_message_id,
-            sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
-        )
-    except ValueError as invalid:
-        raise HTTPException(status_code=422, detail=str(invalid)) from invalid
+    admission = video_send_admission(
+        request,
+        runtime.message_files,
+        body.content,
+        body.sender_message_id,
+        UploadDestination(
+            kind="conversation", id=conversation_id, expected_conversation_id=conversation_id
+        ),
+        None,
+        ctx.principal,
+    )
+    async with conversation_start.conversation_link_lock(f"conversation:{conversation_id}"):
+        _require_mutable_conversation(runtime, conversation_id)
+        _require_unassociated_send_conversation(runtime, conversation_id)
+        try:
+            if admission is not None:
+                await admission.preflight(conversation_id)
+                content = await admission(conversation_id)
+            else:
+                content = await conversation_message_content(
+                    runtime.message_files,
+                    conversation_id,
+                    body.content,
+                    sender_message_id=body.sender_message_id,
+                )
+            fate = await runtime.system.send(
+                conversation_id,
+                content,
+                sender_label=body.sender_label,
+                mode=body.mode,
+                model_change=body.model_change,
+                reasoning_effort_change=body.reasoning_effort_change,
+                sender_message_id=body.sender_message_id,
+                sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+            )
+            if admission is not None:
+                admission.finish(fate)
+        except BaseException as error:
+            if admission is not None:
+                admission.abort_before_dispatch()
+            if isinstance(error, ValueError):
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            raise
     return delivery_fate_json(fate)
 
 
-@router.get("/conversations/{conversation_id}/files/{stored_file_id}")
+@router.api_route(
+    "/conversations/{conversation_id}/files/{stored_file_id}", methods=["GET", "HEAD"]
+)
 async def read_conversation_message_file(
     conversation_id: str, stored_file_id: str, runtime: Runtime
 ) -> Response:
@@ -598,12 +651,12 @@ async def read_conversation_message_file(
     """
     await _require_conversation(runtime, conversation_id)
     try:
-        contents = await runtime.message_files.read(conversation_id, stored_file_id)
+        path = runtime.message_files.path_of(conversation_id, stored_file_id)
     except (MessageFileMissing, OSError) as gone:
         raise HTTPException(status_code=404, detail="no such file") from gone
     media_type = await runtime.message_files.media_type_of(conversation_id, stored_file_id)
-    return Response(
-        content=contents,
+    return FileResponse(
+        path=path,
         media_type=media_type or "application/octet-stream",
         headers={
             "Cache-Control": "private, max-age=31536000, immutable",
@@ -1030,6 +1083,142 @@ async def _pending_user_input(
     return None
 
 
+class VideoSendAdmission:
+    """Bind one upload before conversation creation and adopt it before dispatch."""
+
+    def __init__(
+        self,
+        service: VideoUploadServiceContract,
+        message_files: ConversationMessageFiles,
+        store: ConversationStore,
+        destination: UploadDestination,
+        sent: list[SentPiece],
+        sender_message_id: str,
+        recipient: Principal | None,
+    ) -> None:
+        self.service = service
+        self.message_files = message_files
+        self.store = store
+        self.destination = destination
+        self.sent = sent
+        self.sender_message_id = sender_message_id
+        self.recipient = recipient
+        self.checked: CheckedVideoUpload | None = None
+        self.content_prepared = False
+
+    async def preflight(self, current_conversation_id: str | None) -> MessageDeliveryResult | None:
+        upload = next(piece for piece in self.sent if isinstance(piece, SentVideoUploadPiece))
+        try:
+            self.checked = self.service.preflight(
+                upload.upload_id,
+                self.destination.model_copy(
+                    update={"expected_conversation_id": current_conversation_id}
+                ),
+                self.sender_message_id,
+            )
+        except VideoUploadError as error:
+            raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+        prior = self.checked.conversation_id
+        if prior is None or prior == current_conversation_id:
+            return None
+        # A reset never admits a fresh message into a past conversation. Only a durable
+        # receipt can acknowledge the original send; an unknown outcome keeps its pin.
+        outcome = await self.store.sender_message_outcome(prior, self.sender_message_id)
+        fate: PromptDeliveryFate = PromptDeliveryUncertain()
+        if outcome is not None:
+            payload = outcome.payload
+            content = await self(prior)
+            if getattr(payload, "content", None) != content:
+                raise HTTPException(
+                    status_code=422, detail="sender_message_id already names a different message"
+                )
+            if isinstance(payload, PromptEventPayload):
+                fate = (
+                    PromptDeliveryInjected()
+                    if payload.mode is PromptDeliveryMode.steer
+                    else PromptDeliveryStarted()
+                )
+            elif isinstance(payload, PromptDeliveryUncertainEventPayload):
+                fate = PromptDeliveryUncertain()
+            elif isinstance(payload, PromptDiscardedEventPayload) and payload.suppression_reason:
+                fate = PromptDeliverySuppressed(payload.suppression_reason)
+            elif hasattr(payload, "refusal_reason"):
+                fate = PromptDeliveryRefused(payload.refusal_reason)
+        self.finish(fate)
+        assert self.recipient is not None
+        return MessageDeliveryResult(self.recipient, prior, fate)
+
+    async def __call__(self, conversation_id: str) -> MessageContent:
+        content = await conversation_message_content(
+            self.message_files,
+            conversation_id,
+            self.sent,
+            sender_message_id=self.sender_message_id,
+            video_admission=self,
+        )
+        self.content_prepared = True
+        return content
+
+    def abort_before_dispatch(self) -> None:
+        if (
+            self.checked is not None
+            and not self.content_prepared
+            and self.checked.conversation_id is None
+        ):
+            self.service.finish(self.checked, "refused")
+
+    def adopt(self, conversation_id: str) -> MessageFile:
+        if self.checked is None:
+            raise HTTPException(status_code=409, detail="video upload admission was not checked")
+        try:
+            kept = self.service.adopt(self.checked, conversation_id)
+            status = self.service.status(self.checked.upload_id)
+        except VideoUploadError as error:
+            raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+        return MessageFile(
+            stored_file_id=kept.stored_file_id,
+            media_type=kept.media_type,
+            file_name=status.filename,
+            byte_count=kept.byte_count,
+        )
+
+    def finish(self, fate: PromptDeliveryFate) -> None:
+        assert self.checked is not None
+        outcome: Literal["accepted", "refused", "uncertain"] = "accepted"
+        if isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)):
+            outcome = "refused"
+        elif isinstance(fate, PromptDeliveryUncertain):
+            outcome = "uncertain"
+        self.service.finish(self.checked, outcome)
+
+
+def video_send_admission(
+    request: Request,
+    message_files: ConversationMessageFiles,
+    sent: list[SentPiece],
+    sender_message_id: str | None,
+    destination: UploadDestination,
+    recipient: Principal | None,
+    principal: Principal,
+) -> VideoSendAdmission | None:
+    videos = [piece for piece in sent if isinstance(piece, SentVideoUploadPiece)]
+    if not videos:
+        return None
+    if principal.kind is not PrincipalKind.owner:
+        raise HTTPException(status_code=403, detail="only the owner can attach video")
+    if len(videos) > 1:
+        raise HTTPException(status_code=422, detail="a message permits only one video")
+    if not sender_message_id:
+        raise HTTPException(status_code=422, detail="video requires sender_message_id")
+    service = getattr(request.app.state, "video_uploads", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="video uploads are unavailable")
+    runtime = _runtime(request)
+    return VideoSendAdmission(
+        service, message_files, runtime.store, destination, sent, sender_message_id, recipient
+    )
+
+
 async def _kept_message_content(
     runtime: ConversationRuntime, conversation_id: str, sent: list[SentPiece]
 ) -> MessageContent:
@@ -1037,7 +1226,12 @@ async def _kept_message_content(
 
 
 async def conversation_message_content(
-    message_files: ConversationMessageFiles, conversation_id: str, sent: list[SentPiece]
+    message_files: ConversationMessageFiles,
+    conversation_id: str,
+    sent: list[SentPiece],
+    *,
+    sender_message_id: str | None = None,
+    video_admission: VideoSendAdmission | None = None,
 ) -> MessageContent:
     """The message as the record will hold it, with the bytes already kept.
 
@@ -1051,6 +1245,11 @@ async def conversation_message_content(
     """
     # Prove every attachment before keeping any. A malformed later piece must reject
     # the whole request without leaving an earlier piece behind as an unnamed managed file.
+    video_count = sum(isinstance(piece, SentVideoUploadPiece) for piece in sent)
+    if video_count > 1:
+        raise HTTPException(status_code=422, detail="a message permits only one video")
+    if video_count and video_admission is None:
+        raise HTTPException(status_code=422, detail="video upload requires send admission")
     validated_images: list[tuple[bytes, str]] = []
     validated_files: list[tuple[bytes, str]] = []
     total_image_bytes = 0
@@ -1086,14 +1285,20 @@ async def conversation_message_content(
     pieces: list[MessagePiece] = []
     image_index = 0
     file_index = 0
-    for piece in sent:
+    for piece_index, piece in enumerate(sent):
         match piece:
             case SentTextPiece():
                 pieces.append(MessageText(text=piece.text))
             case SentImagePiece():
                 contents, media_type = validated_images[image_index]
                 image_index += 1
-                kept = await message_files.keep(conversation_id, contents, media_type=media_type)
+                kept = await message_files.keep(
+                    conversation_id,
+                    contents,
+                    media_type=media_type,
+                    sender_message_id=sender_message_id,
+                    piece_index=piece_index,
+                )
                 pieces.append(
                     MessageImage(
                         stored_file_id=kept.stored_file_id,
@@ -1101,10 +1306,19 @@ async def conversation_message_content(
                         file_name=piece.file_name,
                     )
                 )
+            case SentVideoUploadPiece():
+                assert video_admission is not None
+                pieces.append(video_admission.adopt(conversation_id))
             case SentFilePiece():
                 contents, media_type = validated_files[file_index]
                 file_index += 1
-                kept = await message_files.keep(conversation_id, contents, media_type=media_type)
+                kept = await message_files.keep(
+                    conversation_id,
+                    contents,
+                    media_type=media_type,
+                    sender_message_id=sender_message_id,
+                    piece_index=piece_index,
+                )
                 pieces.append(
                     MessageFile(
                         stored_file_id=kept.stored_file_id,
@@ -1193,6 +1407,8 @@ def delivery_fate_json(fate: object) -> dict[str, Any]:
             return {"fate": "injected"}
         case PromptDeliveryRefused(refusal_reason=reason):
             return {"fate": "refused", "refusal_reason": str(reason)}
+        case PromptDeliverySuppressed(reason=reason):
+            return {"fate": "suppressed", "reason": reason}
         case PromptDeliveryUncertain():
             return {"fate": "uncertain"}
         case _:  # pragma: no cover - the fate type is closed
