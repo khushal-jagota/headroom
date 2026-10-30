@@ -32,6 +32,7 @@ class GoalFixture:
         self.hold_cumulative_read = False
         self.held_reads = []
         self.observations = {}
+        self.coverage = {}
         self.manual_revisions = {}
         self.goals = {}
         self.reading_overrides = {}
@@ -135,7 +136,7 @@ class GoalFixture:
             "query_start_at": None,
             "query_end_at": None,
             "limitation": None,
-            "coverage_status": "not_applicable",
+            "coverage_status": self.coverage.get((measure, date), "not_applicable"),
             "coverage_reasons": [],
         }
 
@@ -783,6 +784,135 @@ def agent_unit_spacing(browser, url):
     print(f"goal chart unit spacing desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
 
 
+def manual_unit_spacing(browser, url):
+    # Shared formatting tests own the suffix matrix. This boundary proves that
+    # manual controls, comparisons, and split flex counters use that contract.
+    started = time.monotonic()
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root) / "manual-unit-spacing" if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    receipts = []
+    for phone in (False, True):
+        mode = "phone" if phone else "desktop"
+        context = browser.new_context(
+            viewport={"width": 390 if phone else 1280, "height": 844 if phone else 900},
+            has_touch=phone, is_mobile=phone, reduced_motion="reduce",
+        )
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        errors = []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        fixture = GoalFixture()
+        for model in ("daily_quota", "cumulative_target", "individual_readings"):
+            fixture.goals[model]["primary_chart"].update(
+                unit="minutes", format={"decimals": 2 if model == "individual_readings" else 0}
+            )
+            fixture.observations[model] = {TODAY: 12 if model == "daily_quota" else 12.25,
+                                           YESTERDAY: 22.5}
+        fixture.coverage[("daily_quota", TODAY)] = "unknown"
+        fixture.coverage[("cumulative_target", TODAY)] = "partial"
+        primary = fixture.goals["individual_readings"]["primary_chart"]
+        fixture.goals["individual_readings"]["page"]["blocks"] = [
+            {**primary, "id": "supporting-minutes", "placement": "supporting",
+             "title": "Supporting minutes"},
+            # Two probes protect precedence at the manual caller, without
+            # repeating the shared symbol/currency/whitespace matrix.
+            *[{**primary, "id": identity, "placement": "supporting", "title": identity,
+               "format": {"decimals": 2, "suffix": suffix}}
+              for identity, suffix in (("literal-suffix", "h"), ("empty-suffix", ""))],
+        ]
+        page.route("**/api/**", fixture.respond)
+        renders = {}
+        try:
+            for model, expected in (
+                ("daily_quota", "Coverage unavailable · "
+                 "Difference (coverage unavailable): -8 minutes"),
+                ("cumulative_target", "Partial reading · Partial difference: -7.75 minutes"),
+                ("individual_readings", "7.75 minutes to a 20 minutes reading"),
+            ):
+                page.goto(url + f"#/workspace/goal/{model}", wait_until="domcontentloaded")
+                chart = page.locator(f'[data-chart-id="{model}"]')
+                comparison = chart.locator(
+                    ".completion" if model == "cumulative_target" else ".comparison"
+                )
+                expect(comparison).to_have_text(expected)
+                assert expected in chart.aria_snapshot()
+                renders[model] = {"text": chart.inner_text(), "aria": chart.aria_snapshot()}
+                if output:
+                    chart.screenshot(path=str(output / f"{mode}-{model}.png"))
+
+            suffix = chart.locator(".number-row > .unit")
+            expect(suffix).to_have_text(" minutes", use_inner_text=False)
+            renders["inline_separator"] = rendered_separator(suffix)
+            expect(chart.locator(".number-row")).to_have_css("gap", "0px")
+            supporting = page.locator('[data-chart-id="supporting-minutes"]')
+            if phone:
+                summary = supporting.get_by_role("button", name=re.compile("Supporting minutes"))
+                expect(summary).to_have_attribute("aria-expanded", "false")
+                counter = supporting.locator(".support-reading > span")
+                expect(counter.locator(":scope > span").first).to_have_text("12.25 minutes")
+                assert "12.25 minutes" in summary.aria_snapshot()
+                visual_suffix = counter.locator(':scope > [aria-hidden="true"] > span').last
+                expect(visual_suffix).to_have_text(" minutes", use_inner_text=False)
+                renders["summary_separator"] = rendered_separator(visual_suffix)
+                renders["collapsed_summary"] = summary.aria_snapshot()
+                if output:
+                    supporting.screenshot(path=str(output / "phone-collapsed-summary.png"))
+            else:
+                for identity, expected in (("literal-suffix", "7.75h to a 20h reading"),
+                                           ("empty-suffix", "7.75 to a 20 reading")):
+                    probe = page.locator(f'[data-chart-id="{identity}"]')
+                    expect(probe.locator(".comparison")).to_have_text(expected)
+                    expect(probe.locator(".number-row > .unit")).to_have_count(
+                        1 if identity == "literal-suffix" else 0
+                    )
+                    if identity == "literal-suffix":
+                        expect(probe.locator(".unit")).to_have_text("h", use_inner_text=False)
+                    renders[identity] = probe.aria_snapshot()
+
+            plot = chart.get_by_role("slider")
+            session = context.new_cdp_session(page) if phone else None
+            if phone:
+                plot.scroll_into_view_if_needed()
+                box = plot.bounding_box()
+                assert box
+                session.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [
+                    {"x": box["x"] + box["width"] * 5 / 6, "y": box["y"] + box["height"] / 2}
+                ]})
+            else:
+                plot.focus()
+                plot.press("End")
+                plot.press("ArrowLeft")
+            expect(plot).to_have_attribute(
+                "aria-valuetext", "29 Oct: Reading 22.50 minutes, 20 minutes target 20.00 minutes"
+            )
+            expect(chart.locator('[data-tooltip-series="actual"] > span').last).to_have_text(
+                "22.50 minutes"
+            )
+            renders["inspection"] = {"text": chart.inner_text(), "aria": chart.aria_snapshot()}
+            if output:
+                chart.screenshot(path=str(output / f"{mode}-line-inspection.png"))
+            if phone:
+                # Touch inspection ends without an explicit reading selection.
+                session.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+            else:
+                plot.press("Enter")
+                expect(chart.get_by_role("textbox")).to_have_attribute("data-reading", "22.5")
+                expect(chart.locator(".comparison")).to_have_text("20 minutes target reached")
+            assert fixture.writes == [], fixture.writes
+            assert errors == [], errors
+            receipts.append({"mode": mode, "renders": renders, "errors": errors})
+        finally:
+            context.close()
+    elapsed = time.monotonic() - started
+    if output:
+        (output / "receipt.json").write_text(
+            json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
+        )
+    print(f"manual unit spacing desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
+
+
 def run(browser, urls):
     started = time.monotonic()
     fixture = GoalFixture()
@@ -810,3 +940,4 @@ def run(browser, urls):
         flush=True,
     )
     agent_unit_spacing(browser, urls[0])
+    manual_unit_spacing(browser, urls[0])
