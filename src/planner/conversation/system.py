@@ -50,7 +50,11 @@ if TYPE_CHECKING:
     from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
 
 
-from planner.conversation.backend_event_contracts import TurnEndingContext
+from planner.conversation.backend_event_contracts import (
+    RetainedDeliveryChild,
+    TurnEndingContext,
+    child_stops_outside_lock,
+)
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
     AgentMessageCompletedArguments,
@@ -76,6 +80,7 @@ from planner.conversation.backends.contracts import (
     PromptWriteFailed,
     PromptWriteRefused,
     ProviderSelectionReportedArguments,
+    RetainedBackendChildFactory,
     SessionLoadFailed,
     TokenUsageReportedArguments,
     ToolCallFinishedArguments,
@@ -1112,19 +1117,10 @@ class SqliteProcessConversationSystem:
 
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
         """Require an actual cleanup receipt or proof that no source ever started."""
-        from planner.core.db import connect
-
-        conn = connect(self._store._db_path)
-        try:
-            retained = conn.execute(
-                "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
-                (conversation_id,),
-            ).fetchone()
-            remote_receipt = (
-                retained is not None and json.loads(retained[0]).get("source_retired") is True
-            )
-        finally:
-            conn.close()
+        retained = await self._store.read_executor_turn(conversation_id)
+        remote_receipt = (
+            retained is not None and json.loads(retained[2]).get("source_retired") is True
+        )
         state = await self._conversation_state(conversation_id)
         if state is None:
             return remote_receipt
@@ -1183,25 +1179,14 @@ class SqliteProcessConversationSystem:
                 cancel_fact = None
                 child = state.child
                 if child is None and state.executor_child_reference is not None:
-                    from planner.executor.routing import LocaleBackendChildFactory
-                    from planner.executor.store import ExecutorStore
-                    from planner.executor.vps_remote_child import MacRemoteChildFactory
-                    from planner.executor.vps_runs import MacRuns
-
-                    reference = state.executor_child_reference
                     factory = self._backend_child_factories[state.record.backend_key]
-                    if ExecutorStore(self._store._db_path).child_assignment(reference) is not None:
-                        if isinstance(factory, LocaleBackendChildFactory):
-                            child = factory.recover_remote_child(reference)
-                        elif isinstance(factory, (MacRuns, MacRemoteChildFactory)):
-                            child = factory.recover(reference)
+                    if isinstance(factory, RetainedBackendChildFactory):
+                        child = factory.recover(state.executor_child_reference)
                         if child is not None:
                             state.child = child
                 if child is not None:
-                    from planner.executor.vps_remote_child import MacRemoteChild
-
                     if running is not None:
-                        if isinstance(child, MacRemoteChild):
+                        if child_stops_outside_lock(child):
                             reference = child.reference
                             reservation = state.reserved_turn
                             self._set_phase(state, _ConversationPhase.ending)
@@ -1234,7 +1219,7 @@ class SqliteProcessConversationSystem:
                             )
                             if (
                                 not owns_ending
-                                or not isinstance(current_child, MacRemoteChild)
+                                or not child_stops_outside_lock(current_child)
                                 or current_child.reference != reference
                                 or state.executor_child_reference != reference
                             ):
@@ -1267,11 +1252,6 @@ class SqliteProcessConversationSystem:
 
     async def _kill_initial_delivery(self, state: _ConversationState) -> bool:
         """Own local disposition without waiting for an unacknowledged native operation."""
-        from planner.executor.routing import LocaleBackendChildFactory
-        from planner.executor.store import ExecutorStore
-        from planner.executor.vps_remote_child import MacRemoteChild, MacRemoteChildFactory
-        from planner.executor.vps_runs import MacRuns
-
         async with state.lock:
             reservation = state.reserved_turn
             if reservation is None and state.running_turn is not None:
@@ -1283,45 +1263,36 @@ class SqliteProcessConversationSystem:
                 child = state.child
                 if child is None:
                     factory = self._backend_child_factories[state.record.backend_key]
-                    if isinstance(factory, LocaleBackendChildFactory):
-                        child = factory.recover_remote_child(reference)
-                    elif isinstance(factory, (MacRuns, MacRemoteChildFactory)):
+                    if isinstance(factory, RetainedBackendChildFactory):
                         child = factory.recover(reference)
                     state.child = child
                 await self._discard_held_prompts(state)
-                if isinstance(child, MacRemoteChild):
+                if child_stops_outside_lock(child):
                     self._schedule_remote_retirement(state, child)
                 return True
             if reservation.shutdown_owned and reservation.shutdown_fate is not None:
                 await self._discard_held_prompts(state)
                 return True
             child = state.child
-            if not isinstance(child, MacRemoteChild):
+            if not child_stops_outside_lock(child):
                 factory = self._backend_child_factories[state.record.backend_key]
-                if not isinstance(
-                    factory, (MacRuns, MacRemoteChildFactory, LocaleBackendChildFactory)
-                ):
+                if not isinstance(factory, RetainedBackendChildFactory):
                     return False
                 if state.executor_child_reference is not None:
-                    reference = state.executor_child_reference
-                    if ExecutorStore(self._store._db_path).child_assignment(reference) is None:
+                    child = factory.recover(state.executor_child_reference)
+                    if child is None:
                         return True
-                    child = (
-                        factory.recover_remote_child(reference)
-                        if isinstance(factory, LocaleBackendChildFactory)
-                        else factory.recover(reference)
-                    )
                     state.child = child
             # Prompt acceptance can finish through the ordinary factual delivery path.
             if (
                 not reservation.shutdown_owned
-                and isinstance(child, MacRemoteChild)
+                and child_stops_outside_lock(child)
                 and child.prompt_accepted
             ):
                 return False
             reservation.shutdown_owned = True
             suppressed = (
-                await child.cancel_initial_delivery() if isinstance(child, MacRemoteChild) else True
+                await child.withdraw_delivery() if child is not None else True
             )
             old_facts = await self._store.lifecycle_facts(state.record.conversation_id)
             previous_prompt = next(
@@ -1404,7 +1375,7 @@ class SqliteProcessConversationSystem:
             state.reserved_turn = None
             self._set_phase(state, _ConversationPhase.idle)
             reservation.resolved.set()
-            if child is not None:
+            if child_stops_outside_lock(child):
                 self._configure_initial_command_recording(state, child, reservation)
                 self._schedule_remote_retirement(state, child, reservation=reservation)
             return True
@@ -1426,7 +1397,7 @@ class SqliteProcessConversationSystem:
         return metadata[0], metadata[1], json.dumps(runtime)
 
     def _configure_initial_command_recording(
-        self, state: _ConversationState, child: Any, reservation: _ReservedTurn
+        self, state: _ConversationState, child: RetainedDeliveryChild, reservation: _ReservedTurn
     ) -> None:
 
         async def record(command: ChildCommand) -> None:
@@ -1484,7 +1455,7 @@ class SqliteProcessConversationSystem:
     def _schedule_remote_retirement(
         self,
         state: _ConversationState,
-        child: Any,
+        child: RetainedDeliveryChild,
         *,
         reservation: _ReservedTurn | None = None,
         nonadmitted_turn: TurnToken | None = None,
@@ -1599,11 +1570,11 @@ class SqliteProcessConversationSystem:
     async def _stop_initial_child(
         self,
         state: _ConversationState,
-        child: Any,
+        child: RetainedDeliveryChild,
         dependency: _ReservedTurn | None,
         metadata: tuple[str, str, str] | None,
     ) -> bool:
-        from planner.executor.store import ExecutorStore
+        from pydantic import TypeAdapter
 
         reference = child.reference
         if dependency is not None:
@@ -1616,8 +1587,12 @@ class SqliteProcessConversationSystem:
             LOGGER.exception("Remote child termination remains unconfirmed")
             return False
         async with state.lock:
-            if metadata is None or ExecutorStore(self._store._db_path).cleanup_evidence_uncertain(
-                reference
+            latest = await self._store.read_executor_turn(reference.conversation_id)
+            if (
+                metadata is None
+                or latest is None
+                or TypeAdapter(ChildReference).validate_json(latest[0]) != reference
+                or json.loads(latest[2]).get("cleanup_evidence_uncertain")
             ):
                 return False
             runtime = json.loads(metadata[2])
@@ -1638,7 +1613,7 @@ class SqliteProcessConversationSystem:
             )
             if retired is False:
                 return False
-            child.retire_local_reference()
+            await child.detach()
             if state.child is child:
                 state.child = None
             if state.executor_child_reference == reference:
@@ -1962,7 +1937,7 @@ class SqliteProcessConversationSystem:
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
-                self._with_native_worker_context(state, steer_child, held.content),
+                held.content,
                 (
                     (held.sender,)
                     if held.reply_requested
@@ -2406,13 +2381,18 @@ class SqliteProcessConversationSystem:
             for state in states:
                 child = state.child
                 state.child = None
-                from planner.executor.vps_remote_child import MacRemoteChild
-
-                if child is not None and not isinstance(child, MacRemoteChild):
+                if child is not None:
                     try:
-                        if not await self._stop_child(state, child):
-                            state.child = child
-                            state.child_is_quarantined = True
+                        await child.detach()
+                        if not child.stop_outside_lock:
+                            state.local_child_retirement_proven = True
+                    except Exception:
+                        state.child = child
+                        state.child_is_quarantined = True
+                        LOGGER.exception(
+                            "conversation %s could not detach its backend child cleanly",
+                            state.record.conversation_id,
+                        )
                     except asyncio.CancelledError:
                         state.child = child
                         state.child_is_quarantined = True
@@ -3035,7 +3015,7 @@ class SqliteProcessConversationSystem:
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
-                self._with_native_worker_context(state, child, content),
+                content,
                 (
                     (sender,)
                     if reply_requested and sender is not None and recipient is not None
@@ -3162,9 +3142,7 @@ class SqliteProcessConversationSystem:
             async with state.lock:
                 child = state.child
                 if child is not None:
-                    from planner.executor.vps_remote_child import MacRemoteChild
-
-                    if isinstance(child, MacRemoteChild):
+                    if child_stops_outside_lock(child):
                         self._schedule_remote_retirement(state, child)
                         termination_confirmed = False
                     else:
@@ -4276,9 +4254,7 @@ class SqliteProcessConversationSystem:
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
-        from planner.executor.vps_remote_child import MacRemoteChild
-
-        if isinstance(child, MacRemoteChild) and state.reserved_turn is not None:
+        if child_stops_outside_lock(child) and state.reserved_turn is not None:
             self._configure_initial_command_recording(state, child, state.reserved_turn)
         automatic_notice = False
         if messages:
@@ -4304,7 +4280,7 @@ class SqliteProcessConversationSystem:
                 composed_content, interruption_notice, "\n\n"
             )
         composed = with_authenticated_reply_directive(
-            self._with_native_worker_context(state, child, composed_content), reply_senders
+            composed_content, reply_senders
         )
         if (
             state.last_ended_turn_token is not None
@@ -4409,8 +4385,6 @@ class SqliteProcessConversationSystem:
         saying two different things about what it is running on. Dropping it costs one
         lazy respawn and keeps the record the only answer.
         """
-        from planner.executor.vps_remote_child import MacRemoteChild
-
         def check_delivery_owner() -> None:
             if (
                 self._shutting_down
@@ -4431,7 +4405,7 @@ class SqliteProcessConversationSystem:
             check_delivery_owner()
             if state.child is not old_child:
                 raise DeliveryCancelled()
-            if isinstance(old_child, MacRemoteChild):
+            if child_stops_outside_lock(old_child):
                 if state.executor_child_reference != old_child.reference:
                     raise DeliveryCancelled()
                 cleanup = self._schedule_remote_retirement(
@@ -4472,7 +4446,7 @@ class SqliteProcessConversationSystem:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
         async with state.lock:
             check_delivery_owner()
-            if isinstance(child, MacRemoteChild) and reservation is not None:
+            if child_stops_outside_lock(child) and reservation is not None:
                 self._configure_initial_command_recording(state, child, reservation)
         automatic_notice = False
         if messages:
@@ -4496,7 +4470,7 @@ class SqliteProcessConversationSystem:
                     composed_content, interruption_notice, "\n\n"
                 )
             content = with_authenticated_reply_directive(
-                self._with_native_worker_context(state, child, composed_content),
+                composed_content,
                 self._reply_senders(messages),
             )
         async with state.lock:
@@ -5247,9 +5221,7 @@ class SqliteProcessConversationSystem:
         # exists for: a turn that has started and has nothing to show yet.
         state.model_thinking_shown_at_monotonic = 0.0
         state.reserved_turn = reservation
-        from planner.executor.vps_remote_child import MacRemoteChild
-
-        if isinstance(state.child, MacRemoteChild):
+        if child_stops_outside_lock(state.child):
             state.child.initial_commands = []
             state.child.prompt_accepted = False
         self._set_phase(state, _ConversationPhase.starting)
@@ -5454,9 +5426,7 @@ class SqliteProcessConversationSystem:
             raise BackendSpawnFailed(state.record.conversation_id)
         child = state.child
         if child is not None:
-            from planner.executor.vps_remote_child import MacRemoteChild
-
-            if isinstance(child, MacRemoteChild) and state.reserved_turn is not None:
+            if child_stops_outside_lock(child) and state.reserved_turn is not None:
                 child.initial_commands = []
                 child.prompt_accepted = False
                 self._configure_initial_command_recording(state, child, state.reserved_turn)
@@ -5509,9 +5479,7 @@ class SqliteProcessConversationSystem:
             event_sink=sink,
             message_files=self._message_files,
         )
-        from planner.executor.vps_remote_child import MacRemoteChild
-
-        if isinstance(child, MacRemoteChild):
+        if child_stops_outside_lock(child):
             state.executor_child_reference = child.reference
             state.executor_initial_commands = ()
             state.executor_delivery_uncertain = False
@@ -5538,7 +5506,7 @@ class SqliteProcessConversationSystem:
         )
         state.child_launch_context = None if expectation is None else expectation.context
         if (
-            isinstance(child, MacRemoteChild)
+            child_stops_outside_lock(child)
             and (
                 self._shutting_down
                 or (
@@ -5560,9 +5528,7 @@ class SqliteProcessConversationSystem:
         The new one resumes from the stored session cursor on the values the record
         holds, which is how a conversation gets back to one answer about itself.
         """
-        from planner.executor.vps_remote_child import MacRemoteChild
-
-        if isinstance(child, MacRemoteChild):
+        if child_stops_outside_lock(child):
             self._schedule_remote_retirement(state, child)
             return
         if state.child is child:
@@ -5618,23 +5584,6 @@ class SqliteProcessConversationSystem:
             )
         await self._discard_child(state, child)
         return None if attempt is None else replace(attempt, status=LifecycleStatus.unknown)
-
-    @staticmethod
-    def _with_native_worker_context(
-        state: _ConversationState, child: BackendChild, content: MessageContent
-    ) -> MessageContent:
-        """Tell native Workers where their localized skills and Ticket files live."""
-        from planner.executor.configuration import NATIVE_WORKER_CONTEXT
-        from planner.executor.vps_remote_child import MacRemoteChild
-
-        identity = dict(state.record.identity_environment_variables)
-        if (
-            isinstance(child, MacRemoteChild)
-            and identity.get("PLAN_ACTOR") == "worker"
-            and identity.get("PLAN_TICKET_ID")
-        ):
-            return prefix_message_content_text(content, NATIVE_WORKER_CONTEXT, "\n\n")
-        return content
 
     async def _compose_prompt_content(
         self, state: _ConversationState, content: MessageContent
@@ -6103,8 +6052,6 @@ class SqliteProcessConversationSystem:
         async with self._conversations_lock:
             states = list(self._conversations.values())
         recovered_quarantines: list[_ConversationState] = []
-        from planner.executor.vps_remote_child import MacRemoteChild
-
         for state in states:
             if state.child is None or state.lock.locked():
                 continue
@@ -6114,7 +6061,7 @@ class SqliteProcessConversationSystem:
                 if child is None or state.phase is not _ConversationPhase.idle:
                     continue
                 was_quarantined = state.child_is_quarantined
-                if isinstance(child, MacRemoteChild):
+                if child_stops_outside_lock(child):
                     # Only an explicit operation retries failed remote cleanup.
                     if was_quarantined and (
                         state.initial_shutdown_task is not None
@@ -6153,11 +6100,9 @@ class SqliteProcessConversationSystem:
         state: _ConversationState, running: _RunningTurn
     ) -> tuple[str, str, str] | None:
         from planner.executor.protocol import encode_value
-        from planner.executor.vps_remote_child import MacRemoteChild
-
         child = state.child
         reference = (
-            child.reference if isinstance(child, MacRemoteChild) else state.executor_child_reference
+            child.reference if child_stops_outside_lock(child) else state.executor_child_reference
         )
         if reference is None:
             return None
@@ -6241,8 +6186,6 @@ class SqliteProcessConversationSystem:
     ) -> None:
         from pydantic import TypeAdapter
 
-        from planner.executor.vps_remote_child import MacRemoteChild
-
         # Pending command futures have already become uncertain. Let their normal
         # delivery writers finish; replacing the process cannot prove non-delivery.
         await self._acquire_settled(state)
@@ -6273,8 +6216,8 @@ class SqliteProcessConversationSystem:
             )
             if not retired:
                 raise ValueError("Replaced executor child retirement was not committed")
-            if isinstance(state.child, MacRemoteChild):
-                state.child.retire_local_reference()
+            if child_stops_outside_lock(state.child):
+                await state.child.detach()
             state.child = None
             state.executor_child_reference = None
             state.child_is_quarantined = False
@@ -6305,6 +6248,8 @@ class SqliteProcessConversationSystem:
                 if getattr(state.initial_shutdown_child, "reference", None) != reference:
                     raise ValueError("Pending retirement belongs to another child")
                 return
+            if not child_stops_outside_lock(child):
+                raise ValueError("Retained child must allow callbacks during stop")
             state.child = child
             self._schedule_remote_retirement(state, child)
 
@@ -6314,6 +6259,7 @@ class SqliteProcessConversationSystem:
         envelope: QueuedEnvelope,
         acceptor: ExecutorEffectAcceptor,
         record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
+        public_request_id: str | None,
     ) -> AcceptanceReceipt:
         """Commit native application, lifecycle, answer row, and receipt together."""
 
@@ -6323,7 +6269,7 @@ class SqliteProcessConversationSystem:
         return await self._own_settlement(
             state,
             self._receive_remote_answer_application_owned(
-                state, application, envelope, acceptor, record_application
+                state, application, envelope, acceptor, record_application, public_request_id
             ),
         )
 
@@ -6334,6 +6280,7 @@ class SqliteProcessConversationSystem:
         envelope: QueuedEnvelope,
         acceptor: ExecutorEffectAcceptor,
         record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
+        public_request_id: str | None,
     ) -> AcceptanceReceipt:
         from pydantic import TypeAdapter
 
@@ -6348,7 +6295,7 @@ class SqliteProcessConversationSystem:
             operation = (
                 LifecycleOperation.user_input if user_input else LifecycleOperation.permission
             )
-            public_id = self._store.executor_public_request_id(ask)
+            public_id = public_request_id
             if public_id is None:
                 raise ValueError("answer application lacks an original public request identity")
             running = state.running_turn
@@ -6455,13 +6402,11 @@ class SqliteProcessConversationSystem:
 
     async def receive_remote_live_backend_event(self, event: BackendEvent) -> None:
         from planner.executor.protocol import decode_event_arguments
-        from planner.executor.vps_remote_child import MacRemoteChild
-
         state = await self._conversation_state(event.child.conversation_id)
         if state is None or event.turn is None:
             return
         child = state.child
-        if not isinstance(child, MacRemoteChild) or child.reference != event.child:
+        if not child_stops_outside_lock(child) or child.reference != event.child:
             return
         sink = state.child_event_sink
         if not isinstance(sink, _CoreBackendEventSink):

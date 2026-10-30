@@ -919,6 +919,13 @@ class ConversationSystem(Protocol):
         """Discard one held message, or return false if it is no longer held."""
         ...
 
+    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
+        """Whether this conversation's exact child is proven stopped or never started.
+
+        A disconnect, a queued stop, or an interrupted transcript is not proof.
+        """
+        ...
+
     async def kill(self, conversation_id: str) -> None:
         """Kill this conversation's activity outright: stop the running turn AND discard
         every held message. Nothing runs afterwards until someone sends again.

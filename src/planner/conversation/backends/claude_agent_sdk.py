@@ -1341,6 +1341,16 @@ class ClaudeAgentSdkBackendChild:
         except Exception as never_given:
             raise UserInputAnswerWriteFailed(request_id) from never_given
 
+    @property
+    def stop_outside_lock(self) -> bool:
+        return False
+
+    async def withdraw_delivery(self) -> bool:
+        return True
+
+    async def detach(self) -> None:
+        await self.stop()
+
     async def stop(self) -> None:
         """Close the exact child, retaining cleanup handles until each step succeeds."""
         self._wire_broken = True

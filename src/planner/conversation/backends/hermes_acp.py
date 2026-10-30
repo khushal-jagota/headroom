@@ -693,6 +693,16 @@ class HermesAcpBackendChild:
         except PromptWriteFailed as gone:
             raise PermissionAnswerWriteFailed(ask_id) from gone
 
+    @property
+    def stop_outside_lock(self) -> bool:
+        return False
+
+    async def withdraw_delivery(self) -> bool:
+        return True
+
+    async def detach(self) -> None:
+        await self.stop()
+
     async def stop(self) -> None:
         """Shut the child down: stop reading, close the wire, end the process."""
         turn = self._turn

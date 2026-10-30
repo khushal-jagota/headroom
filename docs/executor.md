@@ -72,6 +72,19 @@ relays and generation-scoped file slots. `app_transport.py` exposes the app rout
 do not own sockets. These VPS modules import no Mac implementation modules.
 Conversation event and answer callbacks remain until the conversation refactor.
 
+The conversation talks to children through the backend contract. Withdrawing a
+delivery reports whether the provider can be proved never to have received it.
+Detaching releases the VPS handle when its process ends and leaves the Mac agent
+running. Stopping still means terminating the exact agent, with the final ordered
+stop receipt as proof. Local children stop when detached. A child declares whether
+its stop must wait outside the conversation lock so final output can be recorded.
+
+The turn-table split remains separate work: conversation still records retained
+child identities, command preparation, uncertainty, and retirement with its turn
+facts. The answer refactor still owns saved-answer state and the executor-backed
+question views. These retained rows and callbacks are not yet the final module
+boundary.
+
 ## Native skills and artifact paths
 
 Each new Mac Worker start receives the current canonical skills from the VPS database.
@@ -91,6 +104,8 @@ A short link outage keeps the existing child and does not repeat bootstrap.
 A VPS restart closes the old run and requires an exact-child stop before a fresh start.
 Later starts can update the account's shared skill paths.
 
+The Mac runner adds the host instructions immediately before handing a prompt or
+steer to the provider adapter. They are not VPS conversation context or sender text.
 Each composed native Worker delivery directs the Worker to read `panels/SKILL.md` from
 `PLAN_NATIVE_SKILLS_DIR` and resolve subsequent skill layers at that root.
 This variable names the immutable skill generation for its start, even if later

@@ -450,7 +450,13 @@ def test_native_context_scope_and_rebind_do_not_duplicate_composed_content(
                 )
                 text = message_content_text(decoded_content)
                 assert text.startswith("[Authenticated Panels reply requirement]\n")
-                assert text.count(NATIVE_WORKER_CONTEXT) == int(expected_context)
+                assert NATIVE_WORKER_CONTEXT not in text
+                native_content = MacRunner._with_native_worker_context(
+                    system._conversations["c"].record.resolved_start(), decoded_content
+                )
+                assert message_content_text(native_content).count(NATIVE_WORKER_CONTEXT) == int(
+                    expected_context
+                )
             assert len({command.child.child_id for command in written}) == 2
         finally:
             await system.shutdown()

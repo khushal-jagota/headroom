@@ -124,11 +124,15 @@ class MacRemoteChild:
         self.initial_delivery_cancelled = False
         self.prompt_accepted = False
 
-    def retire_local_reference(self) -> None:
+    @property
+    def stop_outside_lock(self) -> bool:
+        return True
+
+    async def detach(self) -> None:
         if self._retire_reference is not None:
             self._retire_reference(self.reference)
 
-    async def cancel_initial_delivery(self) -> bool:
+    async def withdraw_delivery(self) -> bool:
         """Fence initial work; true proves the prompt never called the provider.
 
         A successful child start does not prove prompt acceptance. Restored children
