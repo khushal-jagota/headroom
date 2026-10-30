@@ -411,7 +411,12 @@ def test_goal_writes_require_its_current_saved_manual_binding(tmp_db: Connection
     goals.update_goal(
         tmp_db,
         goal.id,
-        {"expected_revision": 1, "primary_chart": None},
+        {
+            "expected_revision": 1,
+            "kind": "binary",
+            "primary_checklist_block_id": None,
+            "primary_chart": None,
+        },
         principal=OWNER_PRINCIPAL,
         now=NOW,
     )

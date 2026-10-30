@@ -325,7 +325,8 @@ def test_html_navigation_rejects_untrusted_root_descriptors(tmp_path: Path) -> N
 
 def _create_goal(client: TestClient) -> str:
     result = client.post(
-        "/api/goals", json={"title": "Files", "project_id": "project_other"}
+        "/api/goals", json={"title": "Files", "project_id": "project_other", "kind": "binary",
+               "primary_checklist_block_id": None}
     )
     assert result.status_code == 200, result.text
     return str(result.json()["id"])

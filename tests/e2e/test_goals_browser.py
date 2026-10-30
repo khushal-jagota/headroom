@@ -336,6 +336,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             "project_id": project["id"],
             "title": "Publish a field guide",
             "kind": "binary",
+            "primary_checklist_block_id": None,
             "page": {
                 "kind": "headroom.page",
                 "version": 1,
@@ -715,6 +716,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             "project_id": project["id"],
             "title": "Another active goal",
             "kind": "binary",
+            "primary_checklist_block_id": None,
         },
     )
     # One preview scenario proves the real native controls, backend acceptance,
@@ -937,7 +939,8 @@ def test_goal_files_open_from_authored_page_and_historical_conversation(
     goal = api.direct_post(
         server,
         "/api/goals",
-        {"project_id": project["id"], "title": "Keep the field guide", "kind": "binary"},
+        {"project_id": project["id"], "title": "Keep the field guide", "kind": "binary",
+         "primary_checklist_block_id": None},
     )
     goal_path = f"/api/goals/{goal['id']}"
     file_path = f"/files/goals/{goal['id']}/artifacts/field%20guide.md"

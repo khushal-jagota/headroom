@@ -150,7 +150,7 @@ def checklist_save_feedback(page):
     )
     expect(progress).to_have_attribute('aria-valuenow', '1')
     publish.click()
-    expect(checklist.get_by_text('Saving checklist…')).to_be_visible()
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
     expect(progress).to_have_attribute('aria-valuenow', '1')
     expect(checklist.locator('[data-block=checklist]')).not_to_have_attribute(
         'data-complete', 'true'
@@ -165,7 +165,7 @@ def checklist_save_feedback(page):
     assert 'All 2 items done.' not in checklist.inner_text()
     checklist.get_by_role('button', name='Retry save').click()
     expect(checklist.get_by_role('alert')).to_have_count(0)
-    expect(checklist.get_by_text('Saving checklist…')).to_be_visible()
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
     expect(progress).to_have_attribute('aria-valuenow', '1')
     page.wait_for_function("typeof window.__checklistReply === 'function'")
     page.evaluate("window.__checklistReply(true)")

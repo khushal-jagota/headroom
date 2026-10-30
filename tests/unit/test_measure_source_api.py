@@ -3,19 +3,24 @@
 import json
 from collections.abc import Iterator
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from sqlite3 import Connection
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import pytest
 from click.testing import CliRunner
+from fastapi import APIRouter, Body, FastAPI
+from fastapi.params import Body as BodyParameter
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 from tests.support.measure_sources import configured_source
 from tests.unit.test_scheduled_ticket_authority import _app
 
 from planner.cli.main import main
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL
+from planner.core.request_guidance import preserve_authored_request_examples
 from planner.measure_sources import actions
 from planner.measure_sources.contracts import SourceScriptBody
 
@@ -66,8 +71,10 @@ def _schema_shape(
 
 
 def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Connection) -> None:
-    with TestClient(_app(tmp_db)) as client:
+    app = _app(tmp_db)
+    with TestClient(app) as client:
         document = client.get("/openapi.json").json()
+        assert app.openapi() == document
     for node in _schema_nodes(document):
         if "$ref" in node:
             _reference(document, node["$ref"])
@@ -108,11 +115,23 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
 
     create_schema = shape("goal", "schema", "create", method="post")
     edit_schema = shape("goal", "schema", "edit", method="patch")
-    assert set(create_schema["required"]) == {"title", "project_id"}
-    assert "expected_revision" in create_schema["properties"]
+    branches = {
+        branch["properties"]["kind"]["const"]: branch for branch in create_schema["anyOf"]
+    }
+    assert set(branches) == {"binary", "quantitative"}
+    assert set(branches["binary"]["required"]) == {
+        "title", "project_id", "kind", "primary_checklist_block_id"
+    }
+    assert set(branches["quantitative"]["required"]) == {
+        "title", "project_id", "kind", "primary_chart"
+    }
+    for branch in branches.values():
+        assert "expected_revision" in branch["properties"]
+        assert "default" not in branch["properties"]["kind"]
     assert edit_schema["required"] == ["expected_revision"]
     for field in ("deadline", "primary_chart", "primary_checklist_block_id"):
-        assert {"type": "null"} in create_schema["properties"][field]["anyOf"]
+        assert {"type": "null"} in branches["binary"]["properties"][field]["anyOf"]
+    assert "anyOf" not in branches["quantitative"]["properties"]["primary_chart"]
     measure_schema = shape("measure", "schema", method="post")
     assert set(measure_schema["required"]) == {
         "project_id",
@@ -151,11 +170,73 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
     for node in _schema_nodes(chart):
         if "$ref" in node:
             _reference(chart, node["$ref"])
-    assert _schema_shape(chart, chart) == next(
-        item
-        for item in create_schema["properties"]["primary_chart"]["anyOf"]
-        if item.get("type") == "object"
-    )
+    assert _schema_shape(chart, chart) == branches["quantitative"]["properties"]["primary_chart"]
+
+
+def test_authored_request_examples_preserve_only_request_values_across_cached_reads() -> None:
+    """The null repair must not change schemas, responses, or route-owned metadata."""
+    # The shared production app proves installed discovery parity above. This local
+    # schema-only case covers custom media and response examples that its routes lack.
+    class RequestBody(BaseModel):
+        choice: str | None = None
+        count: int = 4
+
+    router = APIRouter()
+    examples = {"explicit": {"value": {
+        "choice": None, "values": [None, 4], "day": date(2026, 10, 30)
+    }}}
+    encoded_examples = {"explicit": {"value": {
+        "choice": None, "values": [None, 4], "day": "2026-10-30"
+    }}}
+
+    responses: dict[int | str, dict[str, Any]] = {200: {"content": {"application/json": {
+        "examples": {"response": {"value": {"choice": None}}}
+    }}}}
+
+    @router.post("/authored", responses=responses, operation_id="authored_post")
+    @router.put("/authored", responses=responses, operation_id="authored_put")
+    def authored(
+        body: Annotated[RequestBody, Body(
+            openapi_examples=examples, media_type="application/vnd.panels.example+json"
+        )],
+    ) -> RequestBody:
+        return body
+
+    @router.post("/ordinary")
+    def ordinary(body: RequestBody) -> RequestBody:
+        return body
+
+    app = FastAPI()
+    app.include_router(router)
+    baseline = deepcopy(app.openapi())
+    route = next(route for route in router.routes if isinstance(route, APIRoute)
+                 and route.path == "/authored")
+    assert route.body_field is not None
+    metadata = cast(BodyParameter, route.body_field.field_info)
+    original_examples = deepcopy(metadata.openapi_examples)
+    preserve_authored_request_examples(app)
+
+    for _ in range(2):
+        document = app.openapi()
+        assert document["components"] == baseline["components"]
+        assert document["paths"]["/ordinary"] == baseline["paths"]["/ordinary"]
+        for method in ("post", "put"):
+            operation = document["paths"]["/authored"][method]
+            before = baseline["paths"]["/authored"][method]
+            assert operation["responses"] == before["responses"]
+            content = operation["requestBody"]["content"]
+            media = content["application/vnd.panels.example+json"]
+            assert media["schema"] == before["requestBody"]["content"][
+                "application/vnd.panels.example+json"
+            ]["schema"]
+            assert media["examples"] == encoded_examples
+            media["examples"]["explicit"]["value"]["choice"] = "mutated cached document"
+            media["examples"]["explicit"]["value"]["day"] = "mutated date"
+        assert metadata.openapi_examples == original_examples
+        assert metadata.openapi_examples is not None
+        retained_value = metadata.openapi_examples["explicit"]["value"]
+        assert isinstance(retained_value, dict)
+        assert retained_value["day"] == date(2026, 10, 30)
 
 
 def test_published_examples_complete_writes_and_diagnose_recorded_failures(
@@ -164,7 +245,8 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
     """The reference must be usable at the canonical writer, with safe repair guidance."""
     from tests.unit.test_goal_pages import create
 
-    goal_body = _guidance("goal", "schema", "create")["examples"]["chief_goal"]
+    goal_examples = _guidance("goal", "schema", "create")["examples"]
+    goal_body = goal_examples["chief_goal"]
     source_body = _guidance("measure-source", "schema")["examples"]["goal_source"]
     measure_body = _guidance("measure", "schema")["examples"]["taken_daily_count"]
     chart_body = _guidance("goal", "schema", "edit")["examples"]["primary_line_chart"]
@@ -181,6 +263,33 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
         assert sentinel not in response.text
 
     with TestClient(_app(tmp_db)) as client:
+        initial_count = tmp_db.execute("SELECT count(*) FROM goals").fetchone()[0]
+        for extra, missing in (
+            ({}, "kind"),
+            ({"kind": "binary"}, "primary_checklist_block_id"),
+            ({"kind": "quantitative"}, "primary_chart"),
+            ({"kind": "quantitative", "primary_chart": None}, "primary_chart"),
+        ):
+            invalid(
+                client.post(
+                    "/api/goals",
+                    json={"project_id": "project_vylo", "title": sentinel, **extra},
+                    headers={"X-Plan-Actor": "chief"},
+                ),
+                missing,
+                "panels goal schema create",
+            )
+        assert tmp_db.execute("SELECT count(*) FROM goals").fetchone()[0] == initial_count
+        for name in ("binary_goal", "checklist_goal"):
+            body = deepcopy(goal_examples[name])
+            body["project_id"] = "project_vylo"
+            response = client.post("/api/goals", json=body, headers={"X-Plan-Actor": "chief"})
+            assert response.status_code == 200, response.text
+            assert response.json()["kind"] == "binary"
+            assert (
+                response.json()["primary_checklist_block_id"]
+                == body["primary_checklist_block_id"]
+            )
         goal_body["project_id"] = "project_vylo"
         created = client.post("/api/goals", json=goal_body, headers={"X-Plan-Actor": "chief"})
         assert created.status_code == 200, created.text
@@ -383,7 +492,8 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
         minimal = client.post(
             "/api/goals",
             headers={"X-Plan-Actor": "chief"},
-            json={"title": "Defaults", "project_id": "project_vylo", "expected_revision": 99},
+            json={"title": "Defaults", "project_id": "project_vylo", "expected_revision": 99,
+                  "kind": "binary", "primary_checklist_block_id": None},
         )
         assert minimal.status_code == 200, minimal.text
         assert minimal.json()["primary_chart"] is None

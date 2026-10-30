@@ -204,7 +204,8 @@ def test_goal_catalog_discovers_direct_files_without_a_goal_link_index(
     tmp_db: sqlite3.Connection,
 ) -> None:
     goal = create_goal(
-        tmp_db, {"title": "Context", "project_id": "project_vylo"},
+        tmp_db, {"title": "Context", "project_id": "project_vylo", "kind": "binary",
+                 "primary_checklist_block_id": None},
         principal=OWNER_PRINCIPAL, now=1,
     )
     req = _request(tmp_db)
@@ -230,7 +231,8 @@ def test_goal_catalog_accepts_configured_ancestor_links_but_rejects_managed_root
     tmp_db: sqlite3.Connection,
 ) -> None:
     goal = create_goal(
-        tmp_db, {"title": "Deployment files", "project_id": "project_vylo"},
+        tmp_db, {"title": "Deployment files", "project_id": "project_vylo", "kind": "binary",
+                 "primary_checklist_block_id": None},
         principal=OWNER_PRINCIPAL, now=1,
     )
     req = _request(tmp_db)

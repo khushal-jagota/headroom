@@ -117,7 +117,8 @@ def test_canonical_actions_require_schedule_authority(
     own, _unrelated, worker = chain
     goal = create_goal(
         tmp_db,
-        {"project_id": "project_vylo", "title": "Goal caller"},
+        {"project_id": "project_vylo", "title": "Goal caller", "kind": "binary",
+         "primary_checklist_block_id": None},
         principal=OWNER_PRINCIPAL,
         now=1,
     )
