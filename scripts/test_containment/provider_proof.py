@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from test_containment.admission import enclosing_mount, parse_mountinfo  # noqa: E402
 from test_containment.provider import build_provider_configuration  # noqa: E402
 from test_containment.runner import ROOT, strict_prefix  # noqa: E402
 
@@ -110,16 +111,19 @@ def _require_disposable_home(home: Path) -> None:
     )
     if statuses.get("NSpid", "").split() != [str(os.getpid())]:
         raise RuntimeError("unexpected PID namespace state")
-    # This exact file exists only in the disposable account fixture.
+    mounts = parse_mountinfo(Path("/proc/self/mountinfo").read_text())
+    home_mount = enclosing_mount(home, mounts)
+    if (
+        home_mount.point != Path("/")
+        or home_mount.filesystem != "tmpfs"
+        or home_mount.root != Path("/")
+        or home_mount.source != "tmpfs"
+    ):
+        raise RuntimeError("account home is not inside the disposable outer root")
+    # Check the fixture marker only after the actual anonymous-root check.
     sentinel = home / ".codex/skills/sentinel.txt"
     if sentinel.read_text() != "protected disposable sentinel\n":
         raise RuntimeError("provider proof requires the disposable outer account fixture")
-    # A home bind must differ from the root filesystem's backing path.
-    escaped = str(home).replace(" ", "\\040")
-    if not any(
-        line.split()[4] == escaped for line in Path("/proc/self/mountinfo").read_text().splitlines()
-    ):
-        raise RuntimeError("account home has no exact disposable fixture mount")
 
 
 def main() -> int:
