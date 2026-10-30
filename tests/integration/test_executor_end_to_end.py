@@ -1834,11 +1834,11 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
                     await release_final_event.wait()
                 return await accept_envelope(envelope, identity)
 
-            def observe_stop_hint(outcome: Any) -> None:
+            async def observe_stop_hint(outcome: Any) -> None:
                 pending = harness.endpoint.pending_commands.get(outcome.command_id)
                 if pending is not None and pending[0].operation is ChildOperation.stop:
                     stop_hint_seen.set()
-                resolve_command(outcome)
+                await resolve_command(outcome)
 
             monkeypatch.setattr(harness.native, "stop", stop_with_final_event)
             monkeypatch.setattr(harness.endpoint, "accept_envelope", withhold_final_event)
@@ -3133,11 +3133,11 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                     accepted.append(envelope)
                 return receipt
 
-            def observed_hint(outcome: CommandOutcome) -> None:
+            async def observed_hint(outcome: CommandOutcome) -> None:
                 pending = harness.endpoint.pending_commands.get(outcome.command_id)
                 if pending is not None and pending[0].operation is ChildOperation.stop:
                     stop_hint.set()
-                resolve(outcome)
+                await resolve(outcome)
 
             async def cancel_native() -> None:
                 pass

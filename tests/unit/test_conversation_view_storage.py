@@ -756,7 +756,7 @@ def test_refusal_view_projects_canonical_validation_and_rebuilds_only_cache() ->
         rebuild_projection(conn)
         assert (
             conn.execute("SELECT projection_version FROM conversation_view_state").fetchone()[0]
-            == 3
+            == VIEW_PROJECTION_VERSION
         )
         assert json.loads(encode_wire(read_row(conn, "fixture", 1)[0])) == first
         assert list(conn.execute("SELECT * FROM conversation_events ORDER BY sequence")) == original

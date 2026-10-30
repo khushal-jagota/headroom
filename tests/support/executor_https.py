@@ -10,6 +10,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -19,6 +20,13 @@ import aiohttp
 import uvicorn
 from aiohttp import web
 from fastapi import FastAPI
+
+
+@contextlib.contextmanager
+def short_transport_root() -> Iterator[Path]:
+    """Keep Unix sockets below macOS's path limit, regardless of test name."""
+    with tempfile.TemporaryDirectory(prefix="ex-", dir=Path("/tmp").resolve()) as root:
+        yield Path(root)
 
 
 @dataclass(frozen=True)

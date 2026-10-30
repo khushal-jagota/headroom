@@ -11,6 +11,7 @@ property. ``tests/unit/test_instrument.py`` reaches ``scripts`` the same way.
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from collections.abc import Iterator
@@ -27,11 +28,19 @@ import tree_environment  # noqa: E402  # reached via sys.path.insert above
 @pytest.fixture
 def executor_transport_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Retained fixture for synthetic executor test storage."""
-    with tempfile.TemporaryDirectory(prefix="executor-test-", dir="/tmp") as temporary:
-        yield Path(temporary)
+    from tests.support.executor_https import short_transport_root
+
+    from planner.executor.configuration import ExecutorPaths
+
+    with short_transport_root() as root:
+        monkeypatch.setattr(ExecutorPaths, "ipc_socket", property(lambda self: root / "ipc.sock"))
+        yield root
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    # File transport rejects symlink ancestors, including macOS's /var and /tmp.
+    os.environ["TMPDIR"] = str(Path("/tmp").resolve())
+    tempfile.tempdir = None
     diagnosis = tree_environment.preflight(TREE, ask_planner=True)
     if diagnosis:
         raise pytest.UsageError(diagnosis)

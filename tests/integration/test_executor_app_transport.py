@@ -19,6 +19,8 @@ from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.contracts import FileManifest, FileScope, FileSnapshot
 from planner.executor.wire import encode_message
 
+pytestmark = pytest.mark.usefixtures("executor_transport_home")
+
 
 def test_native_admission_and_generation_file_slots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -295,7 +297,7 @@ def test_duplicate_hello_preserves_active_file_reservations(
     asyncio.run(run())
 
 
-def test_native_provider_report_reaches_core_once_and_blocks_mismatched_steer(
+def test_native_provider_report_reaches_core_once_without_blocking_steer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -307,8 +309,7 @@ def test_native_provider_report_reaches_core_once_and_blocks_mismatched_steer(
     from planner.conversation.contracts import (
         ConversationBackendKey,
         PromptDeliveryMode,
-        PromptDeliveryQueued,
-        PromptDeliveryRefused,
+        PromptDeliveryUncertain,
     )
     from planner.conversation.message_content import text_message_content
     from planner.core.db import connect
@@ -344,7 +345,7 @@ def test_native_provider_report_reaches_core_once_and_blocks_mismatched_steer(
                 assert payload["child_lifetime"] == "captured-native-lifetime"
                 assert payload["model"] == "a-different-concrete-model"
                 assert payload["submitted_token"] == "scripted"
-                assert payload["blocks_submission"] is True
+                assert payload["blocks_submission"] is False
             finally:
                 connection.close()
             row = harness.mac.spool._db.execute(
@@ -360,11 +361,12 @@ def test_native_provider_report_reaches_core_once_and_blocks_mismatched_steer(
             before = harness.native.prompt_count
             result = await harness.system.send(
                 "c_scripted",
-                text_message_content("Do not emit under a proved mismatch"),
+                text_message_content("Continue after an observational model report"),
                 sender_label="Owner",
                 mode=PromptDeliveryMode.steer,
             )
-            assert isinstance(result, (PromptDeliveryRefused, PromptDeliveryQueued))
+            # This child has no steer method, so dispatch remains uncertain.
+            assert isinstance(result, PromptDeliveryUncertain)
             assert harness.native.prompt_count == before
         finally:
             await harness.close()
