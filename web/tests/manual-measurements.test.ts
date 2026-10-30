@@ -104,6 +104,13 @@ it('compares manual daily records in both target directions while preserving unk
  expect(render()).not.toContain('class="comparison"');
  expect(render()).not.toContain('selected-date');
  expect(render()).toContain('aria-label="Messages sent for 28 Oct"');
+ const supporting = renderToStaticMarkup(createElement(ManualMeasurement, {
+  block: { ...daily, placement: 'supporting' }, values: examples.values,
+  adapter: examples.adapters.get(daily.measure_id!), preferenceKey: 'manual-supporting', narrow: true,
+ }));
+ expect(supporting).toContain('class="support-reading">—</span>');
+ expect(supporting).toContain('class="support-status"></span>');
+ expect(supporting).not.toContain('No reading');
  const adapter = examples.adapters.get(daily.measure_id!)!;
  const next = await adapter.write({ request_id: 'manual-coverage', date: '2026-10-28', expected_definition_revision: 1, expected_write_revision: 0, basis: 'date', operation: 'replace', value: 30 });
  expect(next.state.observation).toMatchObject({ value: 30, query_start_at: null, query_end_at: null, limitation: null, coverage_status: 'unknown' });
