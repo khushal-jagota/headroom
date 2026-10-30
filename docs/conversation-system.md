@@ -1347,16 +1347,16 @@ T3 names. The browser copies the compatible TypeScript merge, format and chart-d
 files. Other modules adapt the language and framework without a different scan design.
 T3's test cases accompany the copy. Its MIT notice and pinned revision are retained.
 
-The Usage page's Limits tab reads selected allowance fields from local history.
-Codex observations supply the main account windows and actual observation times.
-A separate companion cache preserves those observations on warm scans and restarts.
-Model-specific observations do not replace the main account windows. If Claude's
-local history lacks an allowance observation, the page reports it as unavailable.
-No provider request or credential read fills that gap.
+The Usage page's Limits tab reads persisted provider observations. The passive read
+uses `BackendStateStore.read_usage()` without a transcript scan, catalogue probe,
+price read, or provider request. Observation timestamps remain visible, including
+old observations. A missing observation does not receive a fabricated timestamp.
 
-Subscription reset credits and a provider credit balance are different values.
-The local adapter does not map a balance into T3's reset-credit field or label it as
-currency. It leaves values unfilled when the target contract has no matching field.
+Limits Refresh uses the existing explicit provider refresh. Failed, unauthenticated,
+and unavailable outcomes stay distinct. A failed refresh retains the previous
+successful observation. Tokens and Cost do not refresh provider allowances or keep
+a local allowance companion. Their Refresh updates prices and local transcript totals.
+Subscription reset credits remain absent when the provider observation has no such field.
 
 T3's exact rolling bounds define the 24-hour view. Its merge logic supplies totals,
 source ownership and distinct session counts. Its chart data fills absent periods
@@ -1371,9 +1371,9 @@ A missing rate leaves the record unpriced. A failed price fetch can use the stor
 
 _Code paths:_ `src/planner/conversation/usage/` contains `UsageService`,
 `usageTranscriptReader`, `usageTranscripts`, `usageScanCache`, `usageAggregation`,
-`usagePricing`, `UsageLimitSources`, and `cliproxyApi`. The approved local extension is
-`localUsageLimits`. `GET /api/conversation/usage/summary` accepts T3's explicit window
-and returns its bucket contract. `GET /api/conversation/usage/limits` returns local
+`usagePricing`, `UsageLimitSources`, and `cliproxyApi`. `providerLimits` projects saved
+provider observations into the existing card contract. `GET /api/conversation/usage/summary` accepts T3's explicit window
+and returns its bucket contract. `GET /api/conversation/usage/limits` returns persisted provider
 allowance windows. `POST /api/conversation/usage/rates/refresh` refreshes prices only.
 The old `POST /api/conversation/usage/refresh` import route is removed.
 

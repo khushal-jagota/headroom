@@ -8,6 +8,8 @@ import UsageHeader from "../src/components/usage/UsageHeader.svelte";
 import { prefixHref } from "../src/lib/utilityAddress";
 import * as wire from "../src/lib/conversation/recordedUsageWire";
 import { refreshUsage } from "../src/lib/usage/usage";
+import { backendUsageOutcomeLabel, refreshBackendSnapshots } from "../src/lib/conversation/backendRefresh";
+import type { BackendUsageRefreshOutcome } from "../src/lib/conversation/wire";
 import { readUsageSummary, readUsageLimits } from "../src/lib/conversation/recordedUsageWire";
 
 const input: UsageSummaryInput = {
@@ -54,10 +56,12 @@ describe("T3 Svelte presentation", () => {
     } } }).body;
     expect(body).toContain("0%");
     expect(body).toContain("Weekly");
-    expect(body).toContain("2026-10-29T11:59:00Z");
+    expect(body).toContain('datetime="2026-10-29T11:59:00Z"');
+    expect(body).toContain("Oct 29, 2026, 11:59 AM UTC");
     expect(body).toContain("2026-11-04T06:35:00Z");
     expect(body).toContain("No valid local allowance observation.");
     expect(body).not.toContain("reset credits banked");
+    expect(body.indexOf('datetime="2026-10-29T11:59:00Z"')).toBeLessThan(body.indexOf('data-allowance-window='));
   });
   it("keeps the ordinary Config address and disables the period only on Limits", () => {
     const body = render(UsageHeader, { props: { tab: "limits", href: prefixHref("#/backends"), days: 1,
@@ -90,4 +94,27 @@ describe("local usage HTTP boundary", () => {
     expect(calls).toEqual(["rates", "summary"]);
   });
 
+});
+
+describe("explicit provider refresh", () => {
+  it("retains every provider outcome with null detail and keeps saved allowance cards", async () => {
+    const outcomes: BackendUsageRefreshOutcome[] = [
+      { backend_key: "codex", outcome: "failed", detail: null },
+      { backend_key: "claude", outcome: "unauthenticated", detail: null },
+      { backend_key: "hermes", outcome: "unavailable", detail: null },
+    ];
+    const result = await refreshBackendSnapshots(async () => ({ backends: [], usage_outcomes: outcomes }));
+    expect(result.outcomes).toEqual(outcomes);
+    expect(result.error).toBeNull();
+    const body = render(UsageLimits, { props: { providers: ["codex"], now: Date.parse("2026-10-30T12:00:00Z"), outcomes: result.outcomes, limits: {
+      codex: { checkedAt: "2026-10-27T11:59:00Z", windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 35, windowDurationMins: 300 }] },
+    } } }).body;
+    for (const label of ["Codex: Failed", "Claude: Unauthenticated", "hermes: Unavailable", "65%", "Oct 27, 2026, 11:59 AM UTC"])
+      expect(body).toContain(label);
+    expect(backendUsageOutcomeLabel("succeeded")).toBeNull();
+  });
+  it("keeps transport errors separate from provider outcomes", async () => {
+    const result = await refreshBackendSnapshots(async () => { throw new Error("Transport failed"); });
+    expect(result).toEqual({ snapshots: null, outcomes: [], error: "Transport failed" });
+  });
 });

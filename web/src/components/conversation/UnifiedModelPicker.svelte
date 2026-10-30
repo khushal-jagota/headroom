@@ -9,6 +9,7 @@
   import { effortOptionsFor } from "../../lib/conversation/composer";
   import {
     backendRefreshControl,
+    backendUsageOutcomeLabel,
     refreshBackendSnapshots
   } from "../../lib/conversation/backendRefresh";
   import type { BackendModel, BackendSnapshot, ConversationBackendKey } from "../../lib/conversation/wire";
@@ -168,7 +169,10 @@
     feedback = null;
     const result = await refreshBackendSnapshots();
     if (result.snapshots !== null) snapshots = result.snapshots;
-    feedback = result.error;
+    feedback = result.error ?? (result.outcomes
+      .filter(outcome => outcome.outcome !== "succeeded")
+      .map(outcome => `${outcome.backend_key}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
+      .join(" · ") || null);
     refreshing = false;
     await tick();
     picker.focusList();
