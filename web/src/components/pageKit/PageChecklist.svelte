@@ -14,7 +14,6 @@
   const localRequests = new Map<string, number>();
   let disposed = false;
   let saveError = $derived(Object.values(failed)[0]?.error);
-  let saving = $derived(Object.keys(pending).length > 0);
   async function persist(id: string, state: "done" | "open") {
     const request = ++requestSequence;
     const blockId = block.id;
@@ -256,7 +255,6 @@
     </ChecklistSummary>
     <button bind:this={headerToggle} type="button" class="header-toggle" data-checklist-toggle aria-label={bodyOpen ? "Hide checklist" : "Show checklist"} aria-expanded={bodyOpen} aria-controls="{uid}-body" onclick={toggleChecklist}></button>
   </div>
-  {#if saving}<p class="save-feedback" role="status">Saving checklist…</p>{/if}
   {#if Object.keys(failed).length}<p class="save-feedback" role="alert">Checklist change was not saved. {String(saveError)} <button type="button" onclick={() => { for (const [id, { state }] of Object.entries(failed)) void persist(id, state); }}>Retry save</button></p>{/if}
   <div id="{uid}-body" data-checklist-body bind:this={body} inert={!bodyOpen} aria-hidden={!bodyOpen}>
   {#if bodyOpen}

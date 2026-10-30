@@ -428,7 +428,8 @@ def late_failure_sessions(page, fixture):
         fixture.hold = True
         with page.expect_request("**/api/goals/checklist"):
             panel.get_by_role("checkbox", name="Publish guide", exact=True).click()
-            expect(panel.get_by_text("Saving checklist…")).to_be_visible()
+            # A held write must not show pending-save text.
+            expect(panel.get_by_text("Saving checklist…")).to_have_count(0)
             if replacement:
                 open_preview(page, "binary")
             else:
@@ -591,8 +592,13 @@ def touch_overlap(browser, url):
     session.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     long_panel.evaluate("node => node.scrollTop = node.scrollHeight")
     last = long_panel.get_by_role("checkbox", name="Long item 29", exact=True)
+    # A normal tap must stay quiet: no pending-save text, no panel height change.
+    before = long_panel.bounding_box()
     last.tap()
     expect(last).to_have_attribute("aria-checked", "true")
+    expect(long_panel.get_by_text("Saving checklist…")).to_have_count(0)
+    after = long_panel.bounding_box()
+    assert before and after and before["height"] == after["height"]
     box = long_panel.bounding_box()
     footer = page.locator(".workspace-mobile-nav").bounding_box()
     assert box and footer and box["y"] + box["height"] <= footer["y"] - 12
@@ -1395,7 +1401,8 @@ def overview_checklist_remount(page, fixture, phone, output, mode):
     count = len(fixture.writes)
     with page.expect_request(f'**/api/goals/{identity}'):
         (control.tap if phone else control.click)()
-    expect(checklist.get_by_text('Saving checklist…')).to_be_visible()
+    # Held writes must not show pending-save text.
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
     assert len(fixture.held) == 1
 
     def active(value):
@@ -1410,7 +1417,8 @@ def overview_checklist_remount(page, fixture, phone, output, mode):
 
     active(False)
     active(True)
-    expect(checklist.get_by_text('Saving checklist…')).to_be_visible()
+    # The pending write survives the remount without showing pending-save text.
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
     expect(control).to_have_attribute('aria-checked', 'true')
     expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '1')
     fixture.reject_held()
