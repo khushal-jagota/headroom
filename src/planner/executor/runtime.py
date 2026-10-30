@@ -888,7 +888,7 @@ class NativeChildRegistry:
             ask = cast(BackendPermissionAsk, arguments["ask"])
             if turn is None:
                 raise ValueError("permission ask lacks turn")
-            child.asks[ask.ask_id] = AskReference(reference, turn, ask.ask_id)
+            child.asks[ask.ask_id] = AskReference(reference, turn, ask.ask_id, AskKind.permission)
         elif method == BackendEventMethod.user_input_requested:
             request = cast(BackendUserInputRequest, arguments["request"])
             if turn is None:

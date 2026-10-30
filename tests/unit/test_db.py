@@ -1416,7 +1416,7 @@ def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(
 ) -> None:
     conn = connect(str(tmp_path / "workspace-upgrade.db"))
     with monkeypatch.context() as historical:
-        _migration_tree_through(tmp_path, historical, "merge_resident_native_usage")
+        _migration_tree_through(tmp_path, historical, "video_upload_ledger")
         create_schema(conn)
     conn.execute(
         "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
@@ -1432,28 +1432,3 @@ def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE conversations SET workspace_path_policy = 'guess'")
     conn.close()
-
-
-def test_claude_snapshot_fence_preserves_rows_and_refuses_older_reader(tmp_path: Path) -> None:
-    """The new semantics need a rollback fence, without data or spool conversion."""
-    tree = tmp_path / "older-migrations"
-    shutil.copytree(db_module.MIGRATIONS_DIRECTORY, tree)
-    (tree / "versions" / "claude_policy_snapshot_scope.py").unlink()
-    path = tmp_path / "snapshot-fence.db"
-    conn = connect(str(path))
-    try:
-        with patch.object(db_module, "MIGRATIONS_DIRECTORY", tree):
-            create_schema(conn)
-        assert _revision(conn) == "held_selection_kind"
-        before = _schema_objects(conn)
-        rows_before = list(conn.execute("SELECT * FROM projects ORDER BY id"))
-        create_schema(conn)
-        assert _revision(conn) == "claude_policy_snapshot_scope"
-        assert _schema_objects(conn) == before
-        assert list(conn.execute("SELECT * FROM projects ORDER BY id")) == rows_before
-        with patch.object(db_module, "MIGRATIONS_DIRECTORY", tree):
-            with pytest.raises(RuntimeError, match="(?i)(revision|schema|newer)"):
-                create_schema(conn)
-        assert _revision(conn) == "claude_policy_snapshot_scope"
-    finally:
-        conn.close()

@@ -1557,6 +1557,7 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
 
     from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
     from planner.executor.contracts import (
+        AskKind,
         AskReachability,
         AskReference,
         ChildInventory,
@@ -1570,7 +1571,9 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
     executor_store.begin_connection(identity, 100)
     asks = tuple(
-        AskReference(ChildReference("inc", name, name), TurnToken(name, 1), "ask")
+        AskReference(
+            ChildReference("inc", name, name), TurnToken(name, 1), "ask", AskKind.permission
+        )
         for name in ("child-gone", "callback-gone", "live")
     )
     for ask in asks:

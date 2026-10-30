@@ -6169,14 +6169,8 @@ class SqliteProcessConversationSystem:
             automatic_notice=runtime.get("automatic_notice", False),
             callbacks_revoked=runtime.get("callbacks_revoked", False),
             pending_permission_ask_ids=set(runtime["pending_permission_ask_ids"]),
-            permission_provider_ids=runtime.get(
-                "permission_provider_ids",
-                {identity: identity for identity in runtime["pending_permission_ask_ids"]},
-            ),
-            user_input_provider_ids=runtime.get(
-                "user_input_provider_ids",
-                {identity: identity for identity in runtime["pending_user_input_questions"]},
-            ),
+            permission_provider_ids=runtime["permission_provider_ids"],
+            user_input_provider_ids=runtime["user_input_provider_ids"],
             pending_user_input_questions=TypeAdapter(
                 dict[str, tuple[UserInputQuestion, ...]]
             ).validate_python(runtime["pending_user_input_questions"]),
@@ -6248,15 +6242,7 @@ class SqliteProcessConversationSystem:
                     if ask.kind is AskKind.permission:
                         public = self._store.executor_public_request_id(ask)
                         if public is None:
-                            providers = predicted.permission_provider_ids.items()
-                            public = next(
-                                (
-                                    identity
-                                    for identity, provider in providers
-                                    if provider == ask.ask_id
-                                ),
-                                f"{token.turn_number}:permission:{ask.ask_id}",
-                            )
+                            continue
                         permission_ids[public] = ask.ask_id
                 predicted.pending_permission_ask_ids = set(permission_ids)
                 predicted.permission_provider_ids = permission_ids
@@ -6267,14 +6253,7 @@ class SqliteProcessConversationSystem:
                     ask = AskReference(inventory.child, token, provider, AskKind.user_input)
                     public = self._store.executor_public_request_id(ask)
                     if public is None:
-                        public = next(
-                            (
-                                identity
-                                for identity, native in predicted.user_input_provider_ids.items()
-                                if native == provider
-                            ),
-                            f"{token.turn_number}:user_input:{provider}",
-                        )
+                        continue
                     input_ids[public] = provider
                 predicted.user_input_provider_ids = input_ids
                 predicted.pending_user_input_questions = {
@@ -6343,7 +6322,6 @@ class SqliteProcessConversationSystem:
             operation = (
                 LifecycleOperation.user_input if user_input else LifecycleOperation.permission
             )
-            lifecycle_id = f"{ask.turn.turn_number}:{operation.value}:{ask.ask_id}"
             public_id = self._store.executor_public_request_id(ask)
             if public_id is None:
                 raise ValueError("answer application lacks an original public request identity")
@@ -6407,7 +6385,7 @@ class SqliteProcessConversationSystem:
                             for fact in self._store.lifecycle_facts_in_transaction(
                                 connection, conversation_id
                             )
-                            if fact.kind is LifecycleKind.request and fact.identity == lifecycle_id
+                            if fact.kind is LifecycleKind.request and fact.identity == public_id
                         ),
                         None,
                     )
@@ -6417,7 +6395,7 @@ class SqliteProcessConversationSystem:
                         else (
                             LifecycleFact(
                                 LifecycleKind.request,
-                                lifecycle_id,
+                                public_id,
                                 ask.turn.turn_number,
                                 operation,
                                 LifecycleStatus.answered,

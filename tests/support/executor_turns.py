@@ -19,6 +19,12 @@ def persist_pending_turn(
     store.register_child(first.child, "ticket", "test-ticket", 1000)
     runtime: dict[str, JsonValue] = {
         "ended": False,
+        "permission_provider_ids": {
+            ask.ask_id: ask.ask_id for ask in asks if ask.kind == AskKind.permission
+        },
+        "user_input_provider_ids": {
+            ask.ask_id: ask.ask_id for ask in asks if ask.kind == AskKind.user_input
+        },
         "pending_permission_ask_ids": [
             ask.ask_id for ask in asks if ask.kind == AskKind.permission
         ],

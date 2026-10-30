@@ -22,10 +22,11 @@ from tests.unit.test_executor_native_runtime import native_registry as native_re
 from planner.conversation.backends.contracts import TurnToken
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
-from planner.core.migrations.versions.executor_authoritative_acceptance import STATEMENTS
+from planner.core.migrations.versions.mac_vps_execution import STATEMENTS
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AnswerApplication,
+    AskKind,
     AskReachability,
     AskReference,
     ChildCommand,
@@ -51,7 +52,7 @@ from planner.executor.store import ExecutorStore
 
 IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
 CHILD = ChildReference("incarnation", "child", "conversation")
-ASK = AskReference(CHILD, TurnToken("conversation", 1), "ask")
+ASK = AskReference(CHILD, TurnToken("conversation", 1), "ask", AskKind.permission)
 
 
 @pytest.fixture
