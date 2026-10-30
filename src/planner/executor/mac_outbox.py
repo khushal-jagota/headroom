@@ -1,18 +1,16 @@
-"""Keep agent output until the VPS confirms it, in conversation order.
-
-File manifests and capture still use the existing publication protocol. Its only
-transport dependency is OutboxLink.publish_file; the next file-sync change can
-replace that adapter without changing producers or confirmation waiters.
-"""
+"""Keep agent output and immutable changed files until the VPS confirms them."""
 
 from __future__ import annotations
 
 import asyncio
 import fcntl
+import hashlib
 import json
 import os
 import sqlite3
+import stat
 import threading
+import time
 from collections import defaultdict
 from dataclasses import replace
 from pathlib import Path
@@ -23,6 +21,8 @@ from pydantic import TypeAdapter
 
 from planner.executor.codec import encode_value, envelope_payload_digest
 from planner.executor.configuration import (
+    FILE_CHUNK_BYTES,
+    FILE_MODIFIED_WINDOW_NS,
     MAX_TRANSFERS,
     OUTBOX_BUSY_TIMEOUT_MS,
     OUTBOX_RETRY_SECONDS,
@@ -32,16 +32,27 @@ from planner.executor.configuration import (
 from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,
+    FileManifest,
+    FileScope,
     FileSnapshot,
     JsonObject,
     OutboxEntry,
     OutboxLink,
     OutboxRecord,
     QueuedEnvelope,
+    ReceiptDisposition,
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.files import copy_verified, fsync_directory, safe_component, snapshot_ticket
+from planner.executor.files import (
+    contained_path,
+    copy_verified,
+    directory_descriptor,
+    fsync_directory,
+    fsync_file,
+    regular_descriptor,
+    safe_component,
+)
 from planner.executor.wire import encode_message
 
 DATABASE_NAME = "outbox.sqlite3"
@@ -57,6 +68,17 @@ CREATE TABLE items (
     receipt_json BLOB
 );
 CREATE INDEX waiting ON items(conversation_id,sequence) WHERE receipt_json IS NULL;
+CREATE TABLE item_files (
+    sequence INTEGER NOT NULL REFERENCES items(sequence) ON DELETE CASCADE,
+    relative_path TEXT NOT NULL, sha256 TEXT NOT NULL, byte_count INTEGER NOT NULL,
+    PRIMARY KEY(sequence,relative_path)
+) WITHOUT ROWID;
+CREATE INDEX item_files_blob ON item_files(sha256);
+CREATE TABLE ticket_files (
+    ticket_id TEXT NOT NULL, relative_path TEXT NOT NULL, byte_count INTEGER NOT NULL,
+    modified_ns INTEGER NOT NULL, sha256 TEXT NOT NULL,
+    PRIMARY KEY(ticket_id,relative_path)
+) WITHOUT ROWID;
 """
 
 
@@ -70,6 +92,7 @@ class MacOutbox:
         self._sending = asyncio.Lock()
         self._waiters: dict[str, set[asyncio.Future[AcceptanceReceipt]]] = {}
         self._closed = False
+        self._capturing = 0
         self._database: sqlite3.Connection | None = None
         path = root / DATABASE_NAME
         # An old draft format is refused before creating even a lock file.
@@ -99,6 +122,7 @@ class MacOutbox:
             db.execute("PRAGMA synchronous=FULL")
             db.execute("PRAGMA fullfsync=ON")
             db.execute("PRAGMA trusted_schema=OFF")
+            db.execute("PRAGMA foreign_keys=ON")
             if not existed:
                 db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA)
                 db.execute("INSERT INTO sender VALUES(1,?)", (uuid4().hex,))
@@ -129,19 +153,120 @@ class MacOutbox:
             self._loop.call_soon_threadsafe(self._wake.set)
 
     def add(self, entry: OutboxEntry, *, ticket_id: str | None = None) -> QueuedEnvelope:
-        if ticket_id is not None:
-            with self._lock:
-                capture_lock = self._capture_locks[ticket_id]
-                previous = self.lookup(entry.submission_id) if entry.submission_id else None
-            if previous is not None:
+        if ticket_id is None:
+            return self._add(entry)
+        with self._lock:
+            capture_lock = self._capture_locks[ticket_id]
+        with capture_lock:
+            if entry.submission_id and self.lookup(entry.submission_id) is not None:
                 return self._add(entry)
-            # Serialize a Ticket's captures without holding the SQLite lock during I/O.
-            with capture_lock:
-                snapshots = snapshot_ticket(ExecutorPaths(self.root.parent), ticket_id)
-                return self._add(replace(entry, snapshots=snapshots))
-        return self._add(entry)
+            with self._lock:
+                self._capturing += 1
+            try:
+                snapshots, updates = self._capture(ticket_id)
+                return self._add(replace(entry, snapshots=snapshots), updates=updates)
+            finally:
+                with self._lock:
+                    self._capturing -= 1
 
-    def _add(self, entry: OutboxEntry) -> QueuedEnvelope:
+    def _capture(self, ticket_id: str) -> tuple[tuple[FileSnapshot, ...], list[tuple[object, ...]]]:
+        root = ExecutorPaths(self.root.parent).artifacts / safe_component(ticket_id)
+        snapshots: list[FileSnapshot] = []
+        updates: list[tuple[object, ...]] = []
+        checked_ns = time.time_ns()
+
+        def walk(folder: Path) -> None:
+            with directory_descriptor(folder):
+                pass
+            with os.scandir(folder) as entries:
+                for entry in sorted(entries, key=lambda item: item.name):
+                    if entry.is_dir(follow_symlinks=False):
+                        walk(Path(entry.path))
+                        continue
+                    relative = Path(entry.path).relative_to(root).as_posix()
+                    source = contained_path(root, relative)
+                    info = entry.stat(follow_symlinks=False)
+                    if not stat.S_ISREG(info.st_mode):
+                        raise ValueError("artifact is not regular file")
+                    with self._lock:
+                        previous = self._db.execute(
+                            "SELECT byte_count,modified_ns,sha256 FROM ticket_files "
+                            "WHERE ticket_id=? AND relative_path=?",
+                            (ticket_id, relative),
+                        ).fetchone()
+                    if previous is not None and previous[:2] == (info.st_size, info.st_mtime_ns):
+                        # Until confirmed, later references must retain the same bytes
+                        # even if an earlier item is permanently refused.
+                        with self._lock:
+                            waiting = self._db.execute(
+                                "SELECT 1 FROM item_files JOIN items USING(sequence) "
+                                "WHERE sha256=? AND receipt_json IS NULL LIMIT 1",
+                                (previous[2],),
+                            ).fetchone()
+                        if waiting:
+                            manifest = FileManifest(
+                                FileScope.ticket, ticket_id, relative, previous[2], info.st_size
+                            )
+                            snapshots.append(FileSnapshot(manifest, self._blobs / previous[2]))
+                        continue
+                    temporary = self._blobs / (".tmp-" + uuid4().hex)
+                    digest = hashlib.sha256()
+                    count = 0
+                    try:
+                        with (
+                            regular_descriptor(source) as incoming,
+                            os.fdopen(
+                                os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
+                                "wb",
+                            ) as outgoing,
+                        ):
+                            before = os.fstat(incoming)
+                            while block := os.read(incoming, FILE_CHUNK_BYTES):
+                                outgoing.write(block)
+                                digest.update(block)
+                                count += len(block)
+                            after = os.fstat(incoming)
+                            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                                after.st_size,
+                                after.st_mtime_ns,
+                                after.st_ctime_ns,
+                            ) or count != after.st_size:
+                                raise ValueError("artifact changed during capture")
+                            outgoing.flush()
+                            fsync_file(outgoing.fileno())
+                        sha256 = digest.hexdigest()
+                        target = self._blobs / sha256
+                        if not target.exists():
+                            os.replace(temporary, target)
+                        fsync_directory(self._blobs)
+                        manifest = FileManifest(
+                            FileScope.ticket, ticket_id, relative, sha256, count
+                        )
+                        # A recent timestamp is deliberately not reusable on the next check.
+                        modified_ns = (
+                            -1
+                            if checked_ns - after.st_mtime_ns <= FILE_MODIFIED_WINDOW_NS
+                            else after.st_mtime_ns
+                        )
+                        updates.append((ticket_id, relative, count, modified_ns, sha256))
+                        with self._lock:
+                            waiting = self._db.execute(
+                                "SELECT 1 FROM item_files JOIN items USING(sequence) "
+                                "WHERE sha256=? AND receipt_json IS NULL LIMIT 1",
+                                (sha256,),
+                            ).fetchone()
+                        if previous is None or previous[2] != sha256 or waiting:
+                            snapshots.append(FileSnapshot(manifest, target))
+                    finally:
+                        temporary.unlink(missing_ok=True)
+
+        if root.exists():
+            walk(root)
+        return tuple(snapshots), updates
+
+    def _add(
+        self, entry: OutboxEntry, *, updates: list[tuple[object, ...]] | tuple[()] = ()
+    ) -> QueuedEnvelope:
         with self._lock:
             safe_component(entry.conversation_id)
             submission = safe_component(entry.submission_id or uuid4().hex)
@@ -186,6 +311,26 @@ class MacOutbox:
                         "VALUES(?,?,?,?,?)",
                         (submission, entry.conversation_id, child_id, entry.kind.value, encoded),
                     )
+                    assert cursor.lastrowid is not None
+                    self._db.executemany(
+                        "INSERT INTO item_files VALUES(?,?,?,?)",
+                        [
+                            (
+                                cursor.lastrowid,
+                                m.manifest.relative_path,
+                                m.manifest.sha256,
+                                m.manifest.byte_count,
+                            )
+                            for m in snapshots
+                        ],
+                    )
+                    self._db.executemany(
+                        "INSERT INTO ticket_files VALUES(?,?,?,?,?) "
+                        "ON CONFLICT(ticket_id,relative_path) DO UPDATE SET "
+                        "byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,"
+                        "sha256=excluded.sha256",
+                        updates,
+                    )
                     if entry.kind is EnvelopeKind.child_stopped:
                         self._db.execute(
                             "DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL",
@@ -219,9 +364,6 @@ class MacOutbox:
         return TypeAdapter(JsonObject).validate_python(encode_value(value))
 
     def _envelope(self, row: tuple[object, ...]) -> QueuedEnvelope:
-        # Existing file manifests/digests are a wire adapter, not a second ledger.
-        from planner.executor.contracts import FileManifest
-
         sequence, submission, conversation, _, kind, encoded, _ = row
         assert (
             isinstance(sequence, int)
@@ -333,6 +475,13 @@ class MacOutbox:
             ):
                 raise ValueError("receipt identity mismatch")
             with self._db:
+                if receipt.disposition is not ReceiptDisposition.accepted:
+                    for manifest in envelope.file_dependencies:
+                        self._db.execute(
+                            "DELETE FROM ticket_files WHERE ticket_id=? AND relative_path=? "
+                            "AND sha256=?",
+                            (manifest.owner_id, manifest.relative_path, manifest.sha256),
+                        )
                 if envelope.kind is EnvelopeKind.cli_write:
                     self._db.execute(
                         "UPDATE items SET receipt_json=? WHERE submission_id=?",
@@ -359,9 +508,15 @@ class MacOutbox:
                 waiter.set_result(receipt)
 
     def _sweep_blobs(self) -> None:
-        if not any(self._blobs.iterdir()):
+        if self._capturing or not any(self._blobs.iterdir()):
             return
-        referenced = {m.sha256 for envelope in self.pending() for m in envelope.file_dependencies}
+        referenced = {
+            row[0]
+            for row in self._db.execute(
+                "SELECT DISTINCT sha256 FROM item_files JOIN items USING(sequence) "
+                "WHERE receipt_json IS NULL"
+            )
+        }
         for path in self._blobs.iterdir():
             if path.name not in referenced:
                 path.unlink()
@@ -384,7 +539,7 @@ class MacOutbox:
                     for manifest in missing:
                         if manifest not in snapshots:
                             raise ValueError("VPS requested a file outside this item")
-                        await link.publish_file(envelope, snapshots[manifest])
+                        await link.put_file(envelope, snapshots[manifest])
                     continue
                 if response.kind is not WireMessageKind.receipt:
                     raise ValueError("expected outbox receipt")

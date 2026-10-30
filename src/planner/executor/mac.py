@@ -12,7 +12,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Literal, cast
 from uuid import uuid4
 
 import aiohttp
@@ -27,6 +27,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
     WorkspacePathPolicy,
 )
+from planner.conversation.message_content import MessageFile
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
     CatalogRequest,
@@ -71,13 +72,10 @@ from planner.executor.contracts import (
     EnvelopeKind,
     ExecutorHealth,
     ExecutorIdentity,
+    FileDownloadRequest,
+    FileScope,
     FileSnapshot,
     FileTransfer,
-    InputTransferCancel,
-    InputTransferCancelled,
-    InputTransferFailed,
-    InputTransferProgress,
-    InputTransferRequest,
     IpcOperation,
     IpcRequest,
     IpcResponse,
@@ -94,13 +92,21 @@ from planner.executor.contracts import (
     ReceiptDisposition,
     ReconnectAsk,
     ReconnectResult,
+    Steer,
     UnconfirmedCliResult,
     WireMessage,
     WireMessageKind,
+    WithdrawCommands,
+    WithdrawResult,
+    WritePrompt,
 )
 from planner.executor.diagnostics import connection_diagnostics
-from planner.executor.files import IncomingFiles, safe_component
-from planner.executor.input_transfers import InputTransferDeadline
+from planner.executor.files import (
+    contained_path,
+    copy_verified,
+    directory_descriptor,
+    safe_component,
+)
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry, now_ms
 from planner.executor.transfers import settled_io, wait_for_settlement
@@ -164,12 +170,7 @@ class MacExecutor:
         self._stop = asyncio.Event()
         self.exit_committed = False
         self._ipc_stopping = False
-        self.inputs = IncomingFiles(
-            paths.root / "artifacts" / "files", paths.run / "input-quarantine"
-        )
         self._command_tasks: set[asyncio.Task[None]] = set()
-        self._input_transfers: dict[str, InputTransferDeadline] = {}
-        self._input_workers: dict[str, asyncio.Task[None]] = {}
         self._transfer_tasks: set[asyncio.Task[None]] = set()
         self._quiesce_lock = asyncio.Lock()
         self._catalog_observer = catalog_observer
@@ -183,6 +184,8 @@ class MacExecutor:
             factory=self._factory(panels_server_url),
             message_files=ConversationMessageFiles(paths.root / "artifacts" / "unused-db-path"),
         )
+
+        self.registry.prepare_inputs = self._prepare_inputs
 
     def _factory(
         self, server_url: str
@@ -291,62 +294,6 @@ class MacExecutor:
             if message.kind in (WireMessageKind.catalog_request, WireMessageKind.catalog_cancel):
                 self._catalog_frame(message)
                 continue
-            if message.kind is WireMessageKind.input_cancel:
-                cancellation = TypeAdapter(InputTransferCancel).validate_python(message.payload)
-                state = self._input_transfers.get(message.request_id)
-                if state is not None:
-                    if (
-                        state.request.command_id != cancellation.command_id
-                        or state.request.slot.transfer_id != cancellation.transfer_id
-                    ):
-                        raise ProtocolRefused("input cancellation identity mismatch")
-                    state.revoked = True
-                    worker = self._input_workers.get(message.request_id)
-                    if worker is not None:
-                        worker.cancel()
-                # Admission is revoked before ACK; physical cleanup remains owned.
-                await self._send(
-                    WireMessage(
-                        WireMessageKind.input_cancelled,
-                        message.request_id,
-                        as_object(
-                            InputTransferCancelled(
-                                cancellation.command_id, cancellation.transfer_id
-                            )
-                        ),
-                    )
-                )
-                continue
-            if (
-                message.kind == WireMessageKind.file_slot
-                and message.request_id not in self._pending
-            ):
-                request = TypeAdapter(InputTransferRequest).validate_python(message.payload)
-                if not self._handshake_accepted or self._transport_admission_stopped:
-                    raise ProtocolRefused("input before validated handshake")
-                if message.request_id in self._input_transfers:
-                    raise ProtocolRefused("duplicate input exchange")
-                if len(self._input_transfers) >= MAX_TRANSFERS:
-                    await self._send(
-                        WireMessage(
-                            WireMessageKind.input_failed,
-                            message.request_id,
-                            as_object(
-                                InputTransferFailed(
-                                    request.command_id,
-                                    request.slot.transfer_id,
-                                    "input transfer capacity exceeded",
-                                )
-                            ),
-                        )
-                    )
-                    continue
-                state = InputTransferDeadline(request)
-                self._input_transfers[message.request_id] = state
-                task = asyncio.create_task(self._input(message, state))
-                self._transfer_tasks.add(task)
-                task.add_done_callback(self._transfer_tasks.discard)
-                continue
             if not self._handshake_accepted and message.kind in (
                 WireMessageKind.command,
                 WireMessageKind.reconnect_ask,
@@ -364,6 +311,16 @@ class MacExecutor:
                             "mac_received_at_ms": received,
                             "mac_sent_at_ms": now_ms(),
                         },
+                    )
+                )
+            elif message.kind is WireMessageKind.withdraw:
+                request = TypeAdapter(WithdrawCommands).validate_python(message.payload)
+                withdrawn = self.registry.withdraw_commands(request)
+                await self._send(
+                    WireMessage(
+                        WireMessageKind.withdraw_result,
+                        message.request_id,
+                        as_object(WithdrawResult(withdrawn)),
                     )
                 )
             elif message.kind == WireMessageKind.command:
@@ -558,141 +515,98 @@ class MacExecutor:
                 WireMessage(WireMessageKind.command_outcome, message.request_id, as_object(outcome))
             )
 
-    async def _input(
-        self, message: WireMessage, state: InputTransferDeadline | None = None
-    ) -> None:
-        # State is installed by the reader before scheduling, so an immediate
-        # cancellation cannot miss an input whose worker has not started.
-        if state is None:
-            state = InputTransferDeadline(
-                TypeAdapter(InputTransferRequest).validate_python(message.payload)
-            )
-            self._input_transfers[message.request_id] = state
-        client, writer, identity = self._app_client, self._writer, self.identity
-        request, slot = state.request, state.request.slot
-        temporary = self.paths.run / ("input-" + uuid4().hex)
+    async def _prepare_inputs(self, command: ChildCommand) -> None:
+        args = command.arguments
+        if not isinstance(args, (WritePrompt, Steer)):
+            return
+        seen: set[str] = set()
+        for content in (args.content, args.sender_content or ()):
+            for piece in content:
+                if isinstance(piece, MessageFile) and piece.stored_file_id not in seen:
+                    seen.add(piece.stored_file_id)
+                    await self.get_file(command, piece.stored_file_id)
+
+    async def get_file(self, command: ChildCommand, stored_file_id: str) -> None:
+        identity, client = self.identity, self._app_client
         self._transfers += 1
-
-        async def send(kind: WireMessageKind, payload: JsonObject) -> None:
-            async with self._write_lock:
-                if writer is None or self._writer is not writer or self.identity != identity:
-                    raise ConnectionError("input generation changed")
-                if kind is WireMessageKind.file_accepted and not state.active():
-                    return
-                try:
-                    await writer.send(WireMessage(kind, message.request_id, payload))
-                except OSError as error:
-                    writer.close()
-                    raise ConnectionError("input control connection failed") from error
-
-        async def progress(phase: str, count: int) -> None:
-            if not state.active():
-                raise asyncio.CancelledError()
-            update = InputTransferProgress(
-                request.command_id, slot.transfer_id, cast(Any, phase), count
-            )
-            state.advance(update)
-            await send(WireMessageKind.input_progress, as_object(update))
-
-        async def receive() -> None:
-            if not state.active():
-                return
-            if client is None or not self._handshake_accepted or slot.direction != "download":
-                raise ValueError("input generation or slot unavailable")
-            self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
-            # Capacity covers download, verification, installation and deferred I/O.
-            async with self._transfer_capacity:
-                await client.download(slot, temporary, progress)
-                if not state.active() or identity != self.identity or not self._handshake_accepted:
-                    return
-                await settled_io(self.inputs.receive_path, slot.manifest, temporary)
-                if not state.active() or identity != self.identity or not self._handshake_accepted:
-                    return
-                await send(WireMessageKind.file_accepted, as_object(slot.manifest))
-
-        worker = asyncio.create_task(receive())
-        self._input_workers[message.request_id] = worker
-        timer = asyncio.create_task(state.expired())
+        temporary = self.paths.run / (".input-" + uuid4().hex)
         try:
-            done, _ = await asyncio.wait((worker, timer), return_when=asyncio.FIRST_COMPLETED)
-            if worker not in done:
-                state.revoked = True
-                worker.cancel()
-                await send(
-                    WireMessageKind.input_failed,
-                    as_object(
-                        InputTransferFailed(
-                            request.command_id, slot.transfer_id, "input transfer deadline expired"
-                        )
-                    ),
+            async with self._transfer_capacity:
+                response = await self._request(
+                    WireMessageKind.get_file,
+                    as_object(FileDownloadRequest(command.command_id, stored_file_id)),
                 )
-            else:
-                await worker
-        except (OSError, ValueError, ConnectionError, aiohttp.ClientError) as error:
-            state.revoked = True
-            with contextlib.suppress(ConnectionError, OSError):
-                await send(
-                    WireMessageKind.input_failed,
-                    as_object(
-                        InputTransferFailed(request.command_id, slot.transfer_id, str(error))
-                    ),
+                slot = TypeAdapter(FileTransfer).validate_python(response.payload)
+                manifest = slot.manifest
+                if (
+                    response.kind is not WireMessageKind.file_transfer
+                    or slot.direction != "download"
+                    or client is None
+                    or manifest.scope is not FileScope.conversation
+                    or manifest.owner_id != command.child.conversation_id
+                    or Path(manifest.relative_path).name != stored_file_id
+                ):
+                    raise ValueError("invalid input transfer")
+                root = self.paths.root / "artifacts" / "files" / "conversations"
+                target = contained_path(
+                    root, f"{safe_component(manifest.owner_id)}/{manifest.relative_path}"
                 )
+                self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
+                await client.download(slot, temporary)
+                if identity != self.identity or not self._handshake_accepted:
+                    raise ConnectionError("input generation changed")
+
+                def install() -> None:
+                    with directory_descriptor(target.parent, create=True) as parent:
+                        staged = target.parent / (".tmp-" + uuid4().hex)
+                        try:
+                            copy_verified(temporary, staged, manifest)
+                            os.replace(
+                                staged.name, target.name, src_dir_fd=parent, dst_dir_fd=parent
+                            )
+                            os.fsync(parent)
+                        finally:
+                            staged.unlink(missing_ok=True)
+
+                await settled_io(install)
         finally:
-            state.revoked = True
-            timer.cancel()
-            worker.cancel()
-            # Never abandon an admitted thread or release its capacity/source early.
-            await wait_for_settlement(worker)
-            await wait_for_settlement(timer)
             temporary.unlink(missing_ok=True)
-            self._input_workers.pop(message.request_id, None)
-            self._input_transfers.pop(message.request_id, None)
             self._transfers -= 1
 
     async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
         return await self._request(kind, payload)
 
-    async def publish_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
-        """Temporary adapter to the retained file publication protocol."""
-        identity = self.identity
-        payload = envelope.payload
-        child = payload.get("child")
+    async def put_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
+        identity, client = self.identity, self._app_client
+        child = envelope.payload.get("child")
         if child is None:
-            ask = cast(JsonObject, payload.get("ask", {}))
+            ask = cast(JsonObject, envelope.payload.get("ask", {}))
             child = ask.get("child")
         if child is None:
-            raise ValueError("file publication lacks assigned child")
-        publication: JsonObject = {"manifest": as_object(snapshot.manifest), "child": child}
-        response = await self._request(WireMessageKind.file_manifest, publication)
-        if identity != self.identity or not self._handshake_accepted:
-            raise ConnectionError("publication generation changed")
-        if response.kind != WireMessageKind.file_accepted:
-            slot = TypeAdapter(FileTransfer).validate_python(response.payload)
-            if (
-                response.kind is not WireMessageKind.file_slot
-                or slot.direction != "upload"
-                or slot.manifest != snapshot.manifest
-                or self._app_client is None
-            ):
-                raise ValueError("invalid publication slot")
-            client = self._app_client
-            self._transfers += 1
-            try:
-                async with self._transfer_capacity:
-                    assert client is not None
-                    await client.upload(slot, snapshot.local_path)
-                if identity != self.identity or not self._handshake_accepted:
-                    raise ConnectionError("publication generation changed")
-                completion = await self._request(WireMessageKind.file_complete, publication)
+            raise ValueError("file upload lacks assigned child")
+        self._transfers += 1
+        try:
+            async with self._transfer_capacity:
+                response = await self._request(
+                    WireMessageKind.put_file,
+                    {
+                        "manifest": as_object(snapshot.manifest),
+                        "child": child,
+                    },
+                )
+                slot = TypeAdapter(FileTransfer).validate_python(response.payload)
                 if (
-                    completion.kind is not WireMessageKind.file_accepted
-                    or completion.payload != as_object(snapshot.manifest)
+                    response.kind is not WireMessageKind.file_transfer
+                    or slot.direction != "upload"
+                    or slot.manifest != snapshot.manifest
+                    or client is None
                 ):
-                    raise ValueError("publication did not confirm complete bytes")
-            finally:
-                self._transfers -= 1
-        elif response.payload != as_object(snapshot.manifest):
-            raise ValueError("publication receipt manifest changed")
+                    raise ValueError("invalid upload transfer")
+                await client.upload(slot, snapshot.local_path)
+                if identity != self.identity or not self._handshake_accepted:
+                    raise ConnectionError("file generation changed")
+        finally:
+            self._transfers -= 1
 
     async def _connected(self) -> None:
         phase = ConnectionPhase.app_connect

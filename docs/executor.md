@@ -180,19 +180,30 @@ still use the durable outbox and replay after reconnect.
 
 ## Files precede their references
 
-Workers use ordinary file tools in a resolved Ticket directory. Publication
-captures immutable bytes. Transport consumes a `FileSnapshot` containing its
-manifest and local path. Snapshot bytes remain immutable until an authoritative
-receipt. Equal retained bytes share a content-addressed blob. Capture still runs
-at completed tool, reply, turn, and CLI boundaries through the existing snapshot
-helper. The outbox uploads only manifests the VPS reports missing, using the
-existing publication exchange. A lost receipt retries the original item, so already
-accepted file publications do not need another upload. Confirmation releases blobs
-that no waiting item references. Temporary and unreferenced blobs are swept on open.
+Workers use ordinary file tools in their Ticket directory. Capture runs after
+agent steps and before each agent Panels write. It walks the directory with
+`os.scandir` and compares size and modified time with the last captured index.
+Matching files are never opened. Files modified within two seconds of a check
+are hashed again at the next check, catching same-size changes within one clock
+tick. Changed files are read once, hashed while copied, and flushed into immutable
+content-addressed blobs. Captures of one Ticket take turns. The queued item, its
+file references and the updated index commit together after the bytes are durable.
+Deleted files are not sent.
 
-The next file-sync change will replace the snapshot helper and publication exchange
-with the size-and-time index and direct file reception. This change retains the
-existing hash checks and capture-before-reference ordering.
+The sender asks the VPS to accept the original item. The VPS replies with any
+missing files; the Mac uploads those blobs with `put_file` and sends the same
+item again. The VPS verifies ownership, path, length and hash, and keeps uploads
+in a private staging directory. Acceptance renames files into their Ticket folder
+before applying the effect. After a crash between rename and database commit,
+matching target bytes allow the same item to finish without another upload.
+Sequence and receipt checks prevent an older retry from replacing newer bytes.
+A file linked by an accepted agent write is therefore durable on the VPS first,
+without separate link parsing. Pending items retain their exact original bytes.
+
+Confirmation releases blobs no waiting item references. Temporary and unreferenced
+blobs are swept when the outbox opens. The size-and-time index does not retain
+file bytes after confirmation. Earlier draft outbox formats require an explicit
+operator rebuild; they are never converted silently.
 
 Generation loss closes admission before cleanup waits. Filesystem work can outlive logical failure or cancellation.
 The transfer retains its files, descriptors, and capacity until that work settles. Cleanup never deletes a resource that admitted work still uses.
@@ -205,14 +216,17 @@ The outbox holds no transaction across network I/O.
 
 Files and database rows have different commit boundaries. Complete orphan bytes
 after a crash can finish their original publication. Partial bytes stay outside
-served paths. Input attachments travel in the opposite direction before the
-backend operation that needs them.
+served paths. For inputs the Mac runner pulls with `get_file` during its
+`preparing` phase. Only files named in that exact pending command can be fetched.
+The provider is called after verification and installation. Withdrawing a preparing
+command proves it cannot call the provider; stop waits for its physical cleanup.
+There are no input progress, completion or cancellation frames.
 
 The Mac resolves a checkout below the VPS account home relative to its own account
 home. The directory must exist. Workers receive local artifact paths and executor
 capabilities after host-specific role values are replaced.
 
-Code paths: `src/planner/executor/files.py`, `publication.py`, `vps.py`.
+Code paths: `src/planner/executor/mac_outbox.py`, `files.py`, `store.py`, `vps.py`.
 
 ## A lost connection supplies no answer
 
@@ -396,7 +410,7 @@ No automatic two-host update or general migration mechanism exists.
 
 ## Fresh installation and retained journals
 
-The installation path uses outbox format 4. There is no reader or converter for
+The installation path uses outbox format 5. There is no reader or converter for
 earlier draft formats. Preserve incompatible state for diagnosis; do not convert it
 as part of installation.
 

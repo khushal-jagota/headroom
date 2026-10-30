@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
@@ -38,10 +41,18 @@ from planner.executor.contracts import (
     ExecutorIdentity,
     ExecutorTurnContext,
     FileManifest,
+    FileScope,
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
     TransactionalWriter,
+)
+from planner.executor.files import (
+    contained_path,
+    copy_verified,
+    directory_descriptor,
+    file_digest,
+    safe_component,
 )
 from planner.executor.logic.reconciliation import (
     answer_target_is_open,
@@ -71,7 +82,7 @@ def _invalid(message: str) -> PlannerError:
 
 
 class MissingFiles(Exception):
-    """The item may be retried after the existing file adapter uploads its bytes."""
+    """The sender must upload these immutable bytes, then retry the same item."""
 
     def __init__(self, manifests: tuple[FileManifest, ...]) -> None:
         self.manifests = manifests
@@ -150,6 +161,8 @@ class ExecutorStore:
             connection.execute("SAVEPOINT domain_write")
             try:
                 self._validate_envelope(connection, envelope, check_files=check_files)
+                if check_files:
+                    self.install_files(envelope.file_dependencies)
                 result = writer(connection, envelope)
                 if not connection.in_transaction:
                     raise RuntimeError("Executor domain writer committed its transaction")
@@ -817,92 +830,53 @@ class ExecutorStore:
         finally:
             connection.close()
 
+    def file_target(self, manifest: FileManifest) -> Path:
+        safe_component(manifest.owner_id)
+        if manifest.byte_count < 0 or not re.fullmatch(r"[0-9a-f]{64}", manifest.sha256):
+            raise ValueError("invalid file length or digest")
+        if manifest.scope is not FileScope.ticket:
+            raise ValueError("Mac uploads must belong to a Ticket")
+        root = Path(self.db_path).resolve().parent / "files" / "tickets"
+        return contained_path(root, f"{manifest.owner_id}/{manifest.relative_path}")
+
+    def _staged_file(self, manifest: FileManifest) -> Path:
+        self.file_target(manifest)
+        key = hashlib.sha256(_record(manifest).encode()).hexdigest()
+        return Path(self.db_path).resolve().parent / "executor-uploads" / key
+
     @staticmethod
-    def _publication_matches(connection: sqlite3.Connection, manifest: FileManifest) -> bool:
-        row = connection.execute(
-            "SELECT manifest_json,state FROM executor_publications WHERE publication_id=?",
-            (manifest.publication_id,),
-        ).fetchone()
-        return row is not None and row[0] == _record(manifest) and row[1] == "accepted"
-
-    def publication_accepted(self, manifest: FileManifest) -> bool:
-        connection = connect(self.db_path)
+    def _matches(path: Path, manifest: FileManifest) -> bool:
         try:
-            return self._publication_matches(connection, manifest)
-        finally:
-            connection.close()
+            return file_digest(path) == (manifest.sha256, manifest.byte_count)
+        except FileNotFoundError:
+            return False
 
-    def begin_publication(self, manifest: FileManifest, *, identity: ExecutorIdentity) -> None:
-        """Persist path reservation before rename; a crash cannot reorder versions."""
-        with self._transaction() as connection:
-            self._connected(connection, identity)
-            previous = connection.execute(
-                "SELECT manifest_json FROM executor_publications WHERE publication_id=?",
-                (manifest.publication_id,),
-            ).fetchone()
-            if previous is not None:
-                if previous[0] != _record(manifest):
-                    raise _invalid("Publication identity conflicts with original manifest")
-                return
-            pending = connection.execute(
-                "SELECT publications.state FROM executor_publication_paths paths "
-                "JOIN executor_publications publications USING(publication_id) "
-                "WHERE paths.scope=? AND paths.owner_id=? AND paths.relative_path=?",
-                (manifest.scope.value, manifest.owner_id, manifest.relative_path),
-            ).fetchone()
-            if pending is not None and pending[0] != "accepted":
-                raise _invalid("Earlier path publication requires recovery")
-            connection.execute(
-                "INSERT INTO executor_publications VALUES (?,?,?,?,NULL)",
-                (manifest.publication_id, _record(manifest), manifest.sha256, "staged"),
-            )
-            connection.execute(
-                "INSERT INTO executor_publication_paths VALUES (?,?,?,?) "
-                "ON CONFLICT(scope,owner_id,relative_path) DO UPDATE SET "
-                "publication_id=excluded.publication_id",
-                (
-                    manifest.scope.value,
-                    manifest.owner_id,
-                    manifest.relative_path,
-                    manifest.publication_id,
-                ),
-            )
+    def store_upload(self, manifest: FileManifest, source: Path) -> None:
+        """Verify and flush into private staging, never into the served file tree."""
+        target = self._staged_file(manifest)
+        with directory_descriptor(target.parent, create=True) as parent:
+            temporary = target.parent / (".tmp-" + uuid4().hex)
+            try:
+                copy_verified(source, temporary, manifest)
+                os.replace(temporary.name, target.name, src_dir_fd=parent, dst_dir_fd=parent)
+                os.fsync(parent)
+            finally:
+                temporary.unlink(missing_ok=True)
 
-    def publication_manifest(self, publication_id: str) -> FileManifest | None:
-        connection = connect(self.db_path)
-        try:
-            row = connection.execute(
-                "SELECT manifest_json FROM executor_publications WHERE publication_id=?",
-                (publication_id,),
-            ).fetchone()
-            return _parse(FileManifest, row[0]) if row else None
-        finally:
-            connection.close()
-
-    def accept_publication(
-        self,
-        manifest: FileManifest,
-        publish: Callable[[], None],
-        now_ms: int,
-        *,
-        identity: ExecutorIdentity,
-    ) -> None:
-        """Reserve durably, then serialize rename and acceptance against newer paths."""
-        self.begin_publication(manifest, identity=identity)
-        with self._transaction() as connection:
-            self._connected(connection, identity)
-            row = connection.execute(
-                "SELECT state FROM executor_publications WHERE publication_id=?",
-                (manifest.publication_id,),
-            ).fetchone()
-            if row is not None and row[0] == "accepted":
-                return
-            publish()
-            connection.execute(
-                "UPDATE executor_publications SET state='accepted',accepted_at_vps_ms=? "
-                "WHERE publication_id=?",
-                (now_ms, manifest.publication_id),
-            )
+    def install_files(self, manifests: tuple[FileManifest, ...]) -> None:
+        """Called under the receipt transaction, before any referenced effect."""
+        for manifest in manifests:
+            target = self.file_target(manifest)
+            if self._matches(target, manifest):
+                continue  # Rename survived a crash before the receipt committed.
+            source = self._staged_file(manifest)
+            if not self._matches(source, manifest):
+                raise MissingFiles((manifest,))
+            with directory_descriptor(target.parent, create=True) as parent:
+                with directory_descriptor(source.parent) as staging:
+                    os.replace(source.name, target.name, src_dir_fd=staging, dst_dir_fd=parent)
+                    os.fsync(staging)
+                os.fsync(parent)
 
     def evidence_for_conversation(self, conversation_id: str) -> tuple[AskEvidence, ...]:
         connection = connect(self.db_path)
@@ -1076,11 +1050,31 @@ class ExecutorStore:
             kind=envelope.kind,
         ):
             raise _invalid("Envelope digest does not match content")
-        if check_files:
+        if check_files and envelope.file_dependencies:
+            child = envelope.payload.get("child")
+            if not isinstance(child, dict):
+                ask = envelope.payload.get("ask")
+                child = ask.get("child") if isinstance(ask, dict) else None
+            reference = TypeAdapter(ChildReference).validate_python(child)
+            assignment = connection.execute(
+                "SELECT principal_kind,principal_id FROM executor_child_assignments "
+                "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
+                "AND closed_at_ms IS NULL",
+                (reference.executor_incarnation, reference.child_id, reference.conversation_id),
+            ).fetchone()
+            for manifest in envelope.file_dependencies:
+                self.file_target(manifest)
+                if (
+                    reference.conversation_id != envelope.conversation_id
+                    or assignment is None
+                    or tuple(assignment) != ("ticket", manifest.owner_id)
+                ):
+                    raise _invalid("artifact belongs to another Ticket")
             missing = tuple(
                 m
                 for m in envelope.file_dependencies
-                if not self._publication_matches(connection, m)
+                if not self._matches(self.file_target(m), m)
+                and not self._matches(self._staged_file(m), m)
             )
             if missing:
                 raise MissingFiles(missing)

@@ -362,6 +362,7 @@ def build_executor_router() -> APIRouter:
             raise HTTPException(409, "file generation unavailable or encoded body")
         try:
             await service.upload(transfer_id, request.stream())
+            await endpoint.store_upload(identity, transfer_id)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
         return Response(status_code=204)

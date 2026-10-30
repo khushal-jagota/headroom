@@ -23,7 +23,6 @@ from click.testing import CliRunner
 from planner.cli.main import main
 from planner.conversation.backends.contracts import BackendChild
 from planner.executor import ipc_client
-from planner.executor import mac_outbox as journal_module
 from planner.executor.cli import executor_group
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
@@ -40,8 +39,8 @@ from planner.executor.contracts import (
     ReceiptDisposition,
     StopRun,
 )
-from planner.executor.files import snapshot_ticket
 from planner.executor.mac import MacExecutor
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import _Child
 from planner.executor.wire import encode_frame, read_typed_frame
 
@@ -143,10 +142,12 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
 ) -> None:
     async def run() -> None:
         entered, release = threading.Event(), threading.Event()
-        original = snapshot_ticket
+        original = MacOutbox._capture
         captures = 0
 
-        def held_snapshot(*args: object, **kwargs: object) -> tuple[FileSnapshot, ...]:
+        def held_snapshot(
+            *args: object, **kwargs: object
+        ) -> tuple[tuple[FileSnapshot, ...], list[tuple[object, ...]]]:
             nonlocal captures
             captures += 1
             snapshots = original(*args, **kwargs)  # type: ignore[arg-type]
@@ -154,7 +155,7 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
             assert release.wait(5)
             return snapshots
 
-        monkeypatch.setattr(journal_module, "snapshot_ticket", held_snapshot)
+        monkeypatch.setattr(MacOutbox, "_capture", held_snapshot)
         short_client_socket(monkeypatch)
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
             try:
@@ -437,13 +438,17 @@ def test_production_six_second_preparation_consumes_shared_thirty_second_budget(
     async def run() -> None:
         captures = 0
 
-        def slow_snapshot(*args: object, **kwargs: object) -> tuple[FileSnapshot, ...]:
+        original = MacOutbox._capture
+
+        def slow_snapshot(
+            *args: object, **kwargs: object
+        ) -> tuple[tuple[FileSnapshot, ...], list[tuple[object, ...]]]:
             nonlocal captures
             captures += 1
             time.sleep(6)
-            return snapshot_ticket(*args, **kwargs)  # type: ignore[arg-type]
+            return original(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(journal_module, "snapshot_ticket", slow_snapshot)
+        monkeypatch.setattr(MacOutbox, "_capture", slow_snapshot)
         async with ipc_service(tmp_path, monkeypatch) as (executor, _):
             started = time.monotonic()
             response = await asyncio.to_thread(

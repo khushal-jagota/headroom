@@ -144,25 +144,6 @@ def test_strict_identity_refuses_coercion_unknown_fields_and_short_sha() -> None
             parse_identity(malformed)
 
 
-def test_input_path_not_visible_before_verified_complete(tmp_path: Path) -> None:
-    from planner.executor.files import IncomingFiles
-
-    receiver = IncomingFiles(tmp_path / "managed", tmp_path / "quarantine")
-    original = tmp_path / "source"
-    original.mkdir()
-    (original / "image").write_bytes(b"\x00binary")
-    snapshot = snapshot_file(
-        root=original, relative_path="image", scope=FileScope.conversation, owner_id="c_one"
-    )
-    receiver.begin(snapshot.manifest)
-    target = tmp_path / "managed" / "conversations" / "c_one" / "image"
-    assert not target.exists()
-    with pytest.raises(ValueError, match="incomplete"):
-        receiver.complete(snapshot.manifest)
-    receiver.receive_path(snapshot.manifest, snapshot.local_path)
-    assert target.read_bytes() == b"\x00binary"
-
-
 def test_disk_failure_never_grants_queue_receipt_or_consumes_sequence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -213,24 +194,3 @@ def test_oversized_envelope_never_becomes_a_queued_poison_entry(tmp_path: Path) 
     first = spool.add(OutboxEntry(conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={}))
     assert first.sequence == 1
     spool.close()
-
-
-def test_input_full_retry_discards_partial_quarantine_without_publishing_it(tmp_path: Path) -> None:
-    from planner.executor.files import IncomingFiles
-
-    source = tmp_path / "source"
-    source.mkdir()
-    contents = b"binary\x00\xff" * 60_000
-    (source / "file").write_bytes(contents)
-    snapshot = snapshot_file(
-        root=source, relative_path="file", scope=FileScope.conversation, owner_id="c_one"
-    )
-    receiver = IncomingFiles(tmp_path / "managed", tmp_path / "quarantine")
-    incomplete = tmp_path / "incomplete"
-    incomplete.write_bytes(contents[:100])
-    with pytest.raises(ValueError, match="incomplete"):
-        receiver.receive_path(snapshot.manifest, incomplete)
-    assert not (tmp_path / "managed" / "conversations" / "c_one" / "file").exists()
-    # The link drops. The same publication restarts at offset zero on reconnect.
-    target = receiver.receive_path(snapshot.manifest, snapshot.local_path)
-    assert target.read_bytes() == contents

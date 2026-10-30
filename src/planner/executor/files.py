@@ -8,12 +8,12 @@ import os
 import re
 import stat
 import sys
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from planner.executor.configuration import FILE_CHUNK_BYTES, ExecutorPaths
+from planner.executor.configuration import FILE_CHUNK_BYTES
 from planner.executor.contracts import FileManifest, FileScope, FileSnapshot
 
 
@@ -163,7 +163,7 @@ def snapshot_file(
         finally:
             os.close(outgoing)
     return FileSnapshot(
-        FileManifest(uuid4().hex, scope, owner_id, relative_path, digest.hexdigest(), count),
+        FileManifest(scope, owner_id, relative_path, digest.hexdigest(), count),
         temporary_path,
     )
 
@@ -177,102 +177,3 @@ def file_digest(path: Path) -> tuple[str, int]:
             count += len(block)
     return digest.hexdigest(), count
 
-
-def snapshot_ticket(
-    paths: ExecutorPaths,
-    ticket_id: str,
-    *,
-    previous: Mapping[str, FileManifest] | None = None,
-    reuse: Callable[[FileManifest], FileSnapshot | None] | None = None,
-) -> tuple[FileSnapshot, ...]:
-    root = paths.artifacts / safe_component(ticket_id)
-    if not root.exists():
-        return ()
-    snapshots: list[FileSnapshot] = []
-    try:
-        for path in sorted(root.rglob("*")):
-            if not (path.is_file() or path.is_symlink()):
-                continue
-            relative = path.relative_to(root).as_posix()
-            digest = file_digest(path)
-            manifest = previous.get(relative) if previous is not None else None
-            if manifest is not None and (manifest.sha256, manifest.byte_count) == digest:
-                assert reuse is not None
-                retained = reuse(manifest)
-                if retained is not None:
-                    snapshots.append(retained)
-                continue
-            snapshot = snapshot_file(
-                root=root, relative_path=relative, scope=FileScope.ticket, owner_id=ticket_id
-            )
-            snapshots.append(snapshot)
-            if (snapshot.manifest.sha256, snapshot.manifest.byte_count) != digest:
-                raise ValueError("artifact changed during snapshot capture")
-        return tuple(snapshots)
-    except BaseException:
-        for snapshot in snapshots:
-            if snapshot.local_path.parent.name == ".executor-snapshots":
-                snapshot.local_path.unlink(missing_ok=True)
-        raise
-
-
-class IncomingFiles:
-    """Quarantined VPS inputs become native-readable only after full-byte verification."""
-
-    def __init__(self, root: Path, quarantine: Path) -> None:
-        self.root = root
-        self.quarantine = quarantine
-        self._manifests: dict[str, FileManifest] = {}
-
-    def begin(self, manifest: FileManifest) -> None:
-        safe_component(manifest.publication_id)
-        safe_component(manifest.owner_id)
-        contained_path(self.root, manifest.relative_path)
-        previous = self._manifests.get(manifest.publication_id)
-        if previous is not None and previous != manifest:
-            raise ValueError("conflicting input manifest")
-        self.quarantine.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target = self.quarantine / manifest.publication_id
-        # A repeated manifest begins a full retry from offset zero. The sender
-        # serializes transfers; partial bytes from an earlier link are not resumable.
-        target.write_bytes(b"")
-        self._manifests[manifest.publication_id] = manifest
-
-    def receive_path(self, manifest: FileManifest, path: Path) -> Path:
-        safe_component(manifest.publication_id)
-        safe_component(manifest.owner_id)
-        contained_path(self.root, manifest.relative_path)
-        with directory_descriptor(self.quarantine, create=True) as parent:
-            temporary = self.quarantine / uuid4().hex
-            copy_verified(path, temporary, manifest)
-            os.replace(
-                temporary.name, manifest.publication_id, src_dir_fd=parent, dst_dir_fd=parent
-            )
-            os.fsync(parent)
-        self._manifests[manifest.publication_id] = manifest
-        return self.complete(manifest)
-
-    def complete(self, manifest: FileManifest) -> Path:
-        if self._manifests.get(manifest.publication_id) != manifest:
-            raise ValueError("unknown input publication")
-        temporary = self.quarantine / manifest.publication_id
-        with regular_descriptor(temporary) as descriptor:
-            digest = hashlib.sha256()
-            count = 0
-            while block := os.read(descriptor, FILE_CHUNK_BYTES):
-                count += len(block)
-                digest.update(block)
-            if count != manifest.byte_count or digest.hexdigest() != manifest.sha256:
-                raise ValueError("incomplete or corrupt input")
-        family = "conversations" if manifest.scope == FileScope.conversation else "tickets"
-        target = contained_path(
-            self.root, f"{family}/{safe_component(manifest.owner_id)}/{manifest.relative_path}"
-        )
-        with directory_descriptor(target.parent, create=True) as parent:
-            with regular_descriptor(temporary) as descriptor:
-                fsync_file(descriptor)
-            with directory_descriptor(self.quarantine) as quarantine:
-                os.replace(temporary.name, target.name, src_dir_fd=quarantine, dst_dir_fd=parent)
-            os.fsync(parent)
-        self._manifests.pop(manifest.publication_id)
-        return target

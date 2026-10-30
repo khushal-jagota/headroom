@@ -219,7 +219,7 @@ def test_wal_full_and_one_process_owner(tmp_path: Path) -> None:
         MacOutbox(tmp_path / "outbox")
     assert {
         row[0] for row in outbox._db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    } == {"sender", "items", "sqlite_sequence"}
+    } == {"sender", "items", "item_files", "ticket_files", "sqlite_sequence"}
     outbox.close()
 
 
@@ -254,7 +254,7 @@ def test_send_wakes_after_commit_four_conversations_and_one_each(tmp_path: Path)
                     json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
                 )
 
-            async def publish_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
+            async def put_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
                 raise AssertionError("no files")
 
         sender = asyncio.create_task(outbox.send_pending(Link()))
@@ -342,7 +342,7 @@ def test_missing_files_upload_then_lost_receipt_replays_original_item(tmp_path: 
                     json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
                 )
 
-            async def publish_file(self, row: QueuedEnvelope, file: FileSnapshot) -> None:
+            async def put_file(self, row: QueuedEnvelope, file: FileSnapshot) -> None:
                 nonlocal uploaded
                 assert not uploaded and file.local_path.read_bytes() == b"original bytes"
                 uploaded = True
@@ -394,7 +394,7 @@ def test_busy_confirmation_retries_same_sequence(
                     json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
                 )
 
-            async def publish_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
+            async def put_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
                 raise AssertionError("no files")
 
         sender = asyncio.create_task(outbox.send_pending(Link()))
@@ -411,3 +411,75 @@ def test_busy_confirmation_retries_same_sequence(
             outbox.close()
 
     asyncio.run(run())
+
+
+def test_ticket_index_skips_unchanged_sources_and_rechecks_racy_same_size_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gap: hashing every source or trusting a recent same-size stat loses the design."""
+    import os
+    import time
+    from contextlib import contextmanager
+
+    from planner.executor import mac_outbox as module
+
+    root = tmp_path / "artifacts/tickets/t_one"
+    root.mkdir(parents=True)
+    old_ns = time.time_ns() - 10_000_000_000
+    for index in range(200):
+        path = root / str(index)
+        path.write_bytes(b"old")
+        os.utime(path, ns=(old_ns, old_ns))
+    outbox = MacOutbox(tmp_path / "spool")
+    first = outbox.add(entry("first"), ticket_id="t_one")
+    assert len(first.file_dependencies) == 200
+    outbox.acknowledge(receipt(first))
+    opened: list[Path] = []
+    original = module.regular_descriptor
+
+    @contextmanager
+    def observe(path: Path):  # type: ignore[no-untyped-def]
+        if path.is_relative_to(root):
+            opened.append(path)
+        with original(path) as descriptor:
+            yield descriptor
+
+    monkeypatch.setattr(module, "regular_descriptor", observe)
+    assert outbox.add(entry("unchanged"), ticket_id="t_one").file_dependencies == ()
+    assert opened == []
+    # Same-size change with exactly the prior timestamp, inside one clock tick.
+    source = root / "0"
+    recent = time.time_ns()
+    source.write_bytes(b"one")
+    os.utime(source, ns=(recent, recent))
+    second = outbox.add(entry("second"), ticket_id="t_one")
+    source.write_bytes(b"two")
+    os.utime(source, ns=(recent, recent))
+    third = outbox.add(entry("third"), ticket_id="t_one")
+    assert len(opened) == 2 and set(opened) == {source}
+    assert outbox.snapshots(second.submission_id)[0].local_path.read_bytes() == b"one"
+    assert outbox.snapshots(third.submission_id)[0].local_path.read_bytes() == b"two"
+    outbox.close()
+    reopened = MacOutbox(tmp_path / "spool")
+    assert reopened.snapshots(second.submission_id)[0].local_path.read_bytes() == b"one"
+    assert reopened.snapshots(third.submission_id)[0].local_path.read_bytes() == b"two"
+    reopened.close()
+
+
+def test_capture_index_rolls_back_with_item_and_file_rows(tmp_path: Path) -> None:
+    root = tmp_path / "artifacts/tickets/t_one"
+    root.mkdir(parents=True)
+    (root / "file").write_bytes(b"bytes")
+    box = MacOutbox(tmp_path / "spool")
+    box._db.execute(
+        "CREATE TRIGGER fail_add BEFORE INSERT ON item_files "
+        "BEGIN SELECT RAISE(ABORT,'disk full'); END"
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="disk full"):
+        box.add(entry(), ticket_id="t_one")
+    assert box.pending_count() == 0
+    assert box._db.execute("SELECT COUNT(*) FROM ticket_files").fetchone() == (0,)
+    box.close()
+    reopened = MacOutbox(tmp_path / "spool")
+    assert list((reopened.root / "blobs").iterdir()) == []
+    reopened.close()

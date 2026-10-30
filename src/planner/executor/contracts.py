@@ -92,39 +92,6 @@ class FileTransfer:
 
 
 @dataclass(frozen=True, slots=True)
-class InputTransferRequest:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-    command_id: str
-    slot: FileTransfer
-
-
-@dataclass(frozen=True, slots=True)
-class InputTransferProgress:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-    command_id: str
-    transfer_id: str
-    phase: Literal["download", "finalization"]
-    byte_count: Annotated[int, Field(strict=True)]
-
-
-@dataclass(frozen=True, slots=True)
-class InputTransferCancel:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-    command_id: str
-    transfer_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class InputTransferCancelled(InputTransferCancel):
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class InputTransferFailed(InputTransferCancel):
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
 class ClockSample:
     """NTP-style exchange; Unix milliseconds on each host, no zero uncertainty."""
 
@@ -232,7 +199,6 @@ class FileScope(StrEnum):
 class FileManifest:
     """Path is POSIX relative to its scope root, never an absolute host path."""
 
-    publication_id: str
     scope: FileScope
     owner_id: str
     relative_path: str
@@ -242,11 +208,28 @@ class FileManifest:
 
 
 @dataclass(frozen=True, slots=True)
-class FilePublicationRequest:
-    """The child assignment authorizes bytes before publication, not just the row."""
+class FileUploadRequest:
+    """The child assignment authorizes staging and installation of these bytes."""
 
     manifest: FileManifest
     child: ChildReference
+
+
+@dataclass(frozen=True, slots=True)
+class WithdrawCommands:
+    child: ChildReference
+    command_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class WithdrawResult:
+    withdrawn: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FileDownloadRequest:
+    command_id: str
+    stored_file_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -636,11 +619,6 @@ class WireMessageKind(StrEnum):
     hello_accepted = "hello_accepted"
     transport_open = "transport_open"
     transport_opened = "transport_opened"
-    file_slot = "file_slot"
-    input_progress = "input_progress"
-    input_cancel = "input_cancel"
-    input_cancelled = "input_cancelled"
-    input_failed = "input_failed"
     protocol_refused = "protocol_refused"
     reconnect_ask = "reconnect_ask"
     reconnect_result = "reconnect_result"
@@ -649,9 +627,11 @@ class WireMessageKind(StrEnum):
     envelope = "envelope"
     receipt = "receipt"
     missing_files = "missing_files"
-    file_manifest = "file_manifest"
-    file_complete = "file_complete"
-    file_accepted = "file_accepted"
+    put_file = "put_file"
+    withdraw = "withdraw"
+    withdraw_result = "withdraw_result"
+    get_file = "get_file"
+    file_transfer = "file_transfer"
     command = "command"
     command_outcome = "command_outcome"
     read_request = "read_request"
@@ -804,6 +784,6 @@ class RemoteInputTransferFailed(RuntimeError):
 class OutboxLink(Protocol):
     async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage: ...
 
-    async def publish_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
-        """Temporary adapter to the existing file publication exchange."""
+    async def put_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
+        """Store this immutable file in the VPS private staging folder."""
         ...

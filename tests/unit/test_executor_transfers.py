@@ -24,7 +24,6 @@ from planner.executor.transfers import GenerationTransfers
 
 def _manifest(data: bytes) -> FileManifest:
     return FileManifest(
-        "publication",
         FileScope.ticket,
         "ticket",
         "file.txt",

@@ -42,7 +42,7 @@ from planner.executor.remote import RemoteBackendChildFactory
 from planner.executor.vps import ExecutorEndpoint
 
 
-@pytest.mark.parametrize("boundary", ["start_inputs", "prompt_inputs", "prompt_frame"])
+@pytest.mark.parametrize("boundary", ["prompt_frame"])
 def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
     tmp_db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
 ) -> None:
@@ -76,14 +76,6 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
         )
         emitted: list[ChildCommand] = []
 
-        async def transfer(command: ChildCommand) -> None:
-            target = (
-                ChildOperation.start if boundary == "start_inputs" else ChildOperation.write_prompt
-            )
-            if boundary.endswith("inputs") and command.operation is target:
-                entered.set()
-                await release.wait()
-
         async def frame(message: WireMessage) -> None:
             command = TypeAdapter(ChildCommand).validate_python(message.payload)
             emitted.append(command)
@@ -102,7 +94,6 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                     )
                 )
 
-        monkeypatch.setattr(endpoint, "_transfer_command_inputs_locked", transfer)
         monkeypatch.setattr(endpoint.writer, "send", frame)
         factory = RemoteBackendChildFactory(
             lambda start, sink: reference,

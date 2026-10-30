@@ -45,9 +45,15 @@ def test_native_admission_and_generation_file_slots(
             finally:
                 await production_client.close()
             service = harness.endpoint._transports[identity]
+
+            # This case isolates HTTP body validation; connected item acceptance
+            # exercises the real store_upload path in the file-producing event case.
+            async def keep_transfer(identity: object, transfer_id: str) -> None:
+                pass
+
+            monkeypatch.setattr(harness.endpoint, "store_upload", keep_transfer)
             data = bytes(range(256)) * 1000
             manifest = FileManifest(
-                "publication",
                 FileScope.ticket,
                 "ticket",
                 "binary.dat",
@@ -149,7 +155,6 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
             service = harness.endpoint._transports[identity]
             data = b"x" * 1000000
             manifest = FileManifest(
-                "publication",
                 FileScope.ticket,
                 "ticket",
                 "binary.dat",
@@ -252,7 +257,6 @@ def test_duplicate_hello_preserves_active_file_reservations(
             writer = harness.endpoint.writer
             service = harness.endpoint._transports[identity]
             manifest = FileManifest(
-                "publication",
                 FileScope.ticket,
                 "ticket",
                 "empty",

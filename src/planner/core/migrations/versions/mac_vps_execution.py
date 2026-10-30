@@ -57,14 +57,7 @@ STATEMENTS = (
         executor_incarnation TEXT NOT NULL, command_id TEXT NOT NULL,
         outcome_json TEXT NOT NULL, output_confirmed INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(executor_incarnation,command_id))""",
-    """CREATE TABLE executor_publications (
-        publication_id TEXT PRIMARY KEY, manifest_json TEXT NOT NULL, sha256 TEXT NOT NULL,
-        state TEXT NOT NULL CHECK(state IN ('staged','accepted')),
-        accepted_at_vps_ms INTEGER)""",
-    """CREATE TABLE executor_publication_paths (
-        scope TEXT NOT NULL, owner_id TEXT NOT NULL, relative_path TEXT NOT NULL,
-        publication_id TEXT NOT NULL REFERENCES executor_publications(publication_id),
-        PRIMARY KEY(scope,owner_id,relative_path))""",
+
 )
 
 
