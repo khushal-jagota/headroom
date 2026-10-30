@@ -140,3 +140,59 @@ def test_native_inventory_distinguishes_build_objects_libraries_and_static_pie()
         )
         == "development tool"
     )
+
+
+def test_tk_omission_removes_stale_payload_and_retains_required_extensions(tmp_path: Path) -> None:
+    from planner.environments.runtime_packaging import _exclude_tkinter, _stdlib_ignore
+
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    excluded = (
+        "tkinter/__init__.py",
+        "tkinter/ttk.py",
+        "lib-dynload/_tkinter.cpython-312-x86_64-linux-gnu.so",
+    )
+    retained = (
+        "lib-dynload/_ssl.cpython-312-x86_64-linux-gnu.so",
+        "lib-dynload/_tkinter_extra.cpython-312-x86_64-linux-gnu.so",
+        "turtle.py",
+        "idlelib/__init__.py",
+        "os.py",
+    )
+    # A prior package attempt leaves these files in the destination. Copy-ignore
+    # alone does not remove them, which would leave Tk in the sealed inventory.
+    for relative in (*excluded, *retained):
+        for root in (source, destination):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(relative)
+    removed = _exclude_tkinter(source, destination)
+    shutil.copytree(source, destination, dirs_exist_ok=True, ignore=_stdlib_ignore(source))
+    assert set(removed) == set(excluded)
+    assert all(not (destination / relative).exists() for relative in excluded)
+    assert all((destination / relative).is_file() for relative in retained)
+    assert all((source / relative).is_file() for relative in (*excluded, *retained))
+
+
+def test_physical_tk_library_refuses_even_without_any_dependency_edge(tmp_path: Path) -> None:
+    from planner.environments.runtime_packaging import _assert_no_tkinter_payload
+
+    library = tmp_path / "runtime/unused/libtcl8.6.so.0"
+    library.parent.mkdir(parents=True)
+    library.write_bytes(b"stale unreferenced library")
+    with pytest.raises(RuntimeContractError, match="excluded Tcl/Tk native file"):
+        _assert_no_tkinter_payload(tmp_path)
+
+
+def test_development_tool_role_does_not_hide_executable_loader_context() -> None:
+    from planner.environments.runtime_packaging import _elf_executable
+
+    header = "Type: DYN (Position-Independent Executable file)"
+    relative = ".venv/lib/python3.12/site-packages/ruff/ruff"
+    assert _native_role(relative, header, inactive=False) == "development tool"
+    # An executable remains a separate loader root even under the stdlib prefix.
+    # The packager uses this predicate, not the inventory's descriptive role.
+    assert _elf_executable(header, "/lib64/ld-linux-x86-64.so.2")
+    assert _elf_executable(header, None)
+    assert _elf_executable("Type: EXEC (Executable file)", None)
+    assert not _elf_executable("Type: DYN (Shared object file)", None)
