@@ -1258,6 +1258,7 @@ def _run(browser, urls):
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'"
     )
     model_picker.get_by_role("listbox").press("Enter")
+    model_picker.get_by_role("option", name="Provider default", exact=True).click()
     page.wait_for_function(
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')"
     )
@@ -1303,6 +1304,7 @@ def _run(browser, urls):
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'"
     )
     model_picker.get_by_role("listbox").press("Enter")
+    model_picker.get_by_role("option", name="Provider default", exact=True).click()
     page.wait_for_function(
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')"
     )
@@ -2888,9 +2890,17 @@ def _overlay_menu_bounds(browser, url):
                             hit(effort)
                             effort.click()
                         else:
-                            picker.get_by_role('listbox').press('Home')
+                            picker.get_by_role('listbox').press('h')
                             picker.get_by_role('listbox').press('Enter')
                         proof['actions'].append([mode,'effort',method,'high'])
+                    else:
+                        default = picker.get_by_role('option', name='Provider default', exact=True)
+                        if method == 'pointer':
+                            hit(default)
+                            default.click()
+                        else:
+                            picker.get_by_role('listbox').press('Home')
+                            picker.get_by_role('listbox').press('Enter')
                     expect(trigger).to_have_attribute('aria-label', re.compile(model,re.I))
                     proof['actions'].append([mode,'model',method,model])
             for method in ('pointer','keyboard'):
@@ -2914,7 +2924,7 @@ def _overlay_menu_bounds(browser, url):
                         expect(picker.locator('[data-conversation-picker-choice="high"]')).to_be_visible()
                     elif control=='models':
                         expect(picker.locator('[data-conversation-picker-choice="opus"]')).to_be_visible()
-                    else:
+                    elif control=='refresh':
                         expect(picker.locator('.model-picker-summary')).to_have_text('Fixture refresh boundary')
                         feedback = picker.locator('[data-conversation-picker-feedback]')
                         expect(feedback.get_by_role('button', name='Why', exact=True)).to_have_count(0)

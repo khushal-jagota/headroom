@@ -418,14 +418,14 @@ def run(browser, urls):
         # Exact owner transition: a new Sonnet choice remains visible while metadata is
         # empty, then through a stale Opus response; no observation confirms a UI choice.
         page.evaluate("window.__pickerPending()")
-        expect(trigger).to_have_text("Sonnet")
+        expect(trigger).to_have_text("sonnet")
         trigger.click()
         assert "unobserved" not in picker.inner_text().lower()
         assert "unresolved" not in picker.inner_text().lower()
         if output:
             page.screenshot(path=str(Path(output) / f"selection-pending-{width}.png"))
         page.evaluate("window.__pickerStale()")
-        expect(trigger).to_have_text("Sonnet")
+        expect(trigger).to_have_text("sonnet")
         assert "catalog unavailable" not in picker.inner_text().lower()
         assert "catalog unknown" not in picker.inner_text().lower()
         if output:
@@ -439,7 +439,7 @@ def run(browser, urls):
         # An explicit installation failure remains actionable without losing selection.
         page.evaluate("window.__pickerAvailability()")
         expect(picker.locator(".model-picker-summary")).to_have_text("Claude is not installed on Mac.")
-        expect(trigger).to_have_text("Sonnet")
+        expect(trigger).to_have_text("sonnet")
     # Missing/conflicting current-selection markers do not erase caller-owned intent.
     for selection in ["unobserved", "conflict"]:
         page.goto(urls[0] + "?picker&selection=" + selection, wait_until="domcontentloaded")
