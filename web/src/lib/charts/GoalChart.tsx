@@ -9,7 +9,7 @@ import { Gauge } from './components/gauge';
 import { ProgressCard, TimeBudgetCard, AllocationCard, seriesColor } from './components/goal-indicators';
 import { Bars } from './components/bar-chart';
 import { motionTokens } from './lib/motion-tokens';
-import { chartData, chartHeadline, chartTone, comparisonText, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, observationDetails, coverageLabel, seriesKey, allocationData } from './presentation';
+import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, observationDetails, coverageLabel, seriesKey, allocationData } from './presentation';
 import './theme.css';
 
 const colors = { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--text-muted)' };
@@ -90,13 +90,13 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
     ]),
     ...(data.some(d => d.values.target !== undefined) ? [{ key: 'target', label: block.expectation ? 'Expected' : block.binding || block.reference?.length || block.aggregate === 'sum' ? 'Target' : `${formatTrimmedReading(block, displayBlock.target!)} ${block.target_label ?? (block.direction === 'atmost' ? 'limit' : 'target')}`, color: C.reference, dashed: true, area: false, curve: block.expectation ? 'linear' as const : undefined }] : []),
   ];
-  const counter = (number: number | undefined) => number === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={number} prefix={block.format?.prefix} suffix={block.format?.suffix ?? block.unit} decimals={block.format?.decimals ?? 0} />;
+  const counter = (number: number | undefined) => number === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={number} prefix={block.format?.prefix} suffix={readingSuffix(block)} decimals={block.format?.decimals ?? 0} />;
   const range = <Range value={selectedRange?.id ?? preferences.range} onChange={range => preference({ range })} id={preferenceKey} block={block} projection={projection} />;
   let chart: React.ReactNode;
   if (block.kind === 'allocation') chart = <AllocationCard block={block} data={data} series={authoredSeries} range={block.binding ? selectedRange : undefined} activeKey={activeKey} />;
   else if (block.kind === 'time-budget') chart = <TimeBudgetCard block={displayBlock} value={value} summary={headline.categorySummary} coverage_status={headline.coverage_status} />;
   else if (block.kind === 'progress') chart = <ProgressCard block={displayBlock} value={value} summary={headline.categorySummary} coverage_status={headline.coverage_status} />;
-  else if (block.kind === 'gauge') chart = value === undefined ? <p className="chart-empty-value">{missingReadingText(data, headline.label)}</p> : <Gauge value={value} tone={coverageLabel(headline.coverage_status) ? 'neutral' : undefined} min={displayBlock.domain?.[0]} max={displayBlock.domain?.[1]} formatValue={v => formatTrimmedReading(block, v)} unit={block.format?.suffix ?? block.unit ?? ''} label={title}
+  else if (block.kind === 'gauge') chart = value === undefined ? <p className="chart-empty-value">{missingReadingText(data, headline.label)}</p> : <Gauge value={value} tone={coverageLabel(headline.coverage_status) ? 'neutral' : undefined} min={displayBlock.domain?.[0]} max={displayBlock.domain?.[1]} formatValue={v => formatTrimmedReading(block, v)} unit={readingSuffix(block)} label={title}
     target={displayBlock.target === undefined ? undefined : { value: displayBlock.target, label: `${formatTrimmedReading(block, displayBlock.target)} ${block.target_label ?? 'target'}` }}
     thresholds={!!coverageLabel(headline.coverage_status) || displayBlock.target === undefined || block.binding && headline.categorySummary?.meets_expectation == null ? undefined : [
       { from: Math.min(0, value), tone: block.direction === 'atmost' ? 'success' : 'danger', label: block.direction === 'atmost' ? 'Within limit' : 'Below target' },

@@ -7,7 +7,7 @@ import type { ChartBlock, ChartSeries, CategoryChartRange, CategoryChartSummary,
 import type { LineChartDatum } from './line-chart-integrated';
 import { AnimatedCounter } from './animated-counter';
 import { motionTokens } from '../lib/motion-tokens';
-import { formatReading, allocationData, seriesKey, coverageLabel, categoryCoverage } from '../presentation';
+import { readingSuffix, formatReading, allocationData, seriesKey, coverageLabel, categoryCoverage } from '../presentation';
 
 export const seriesColor = (series: ChartSeries, index: number, palette = 'allocation', active = false) =>
   `var(--chart-${palette}-${series.color ?? (index === 0 ? 'blue' : index === 1 ? 'blue-muted' : 'blue-dark')}${active ? '-active' : ''})`;
@@ -59,7 +59,7 @@ export function TimeBudgetCard({ block, value, summary, coverage_status }: { blo
           </g>;
         })}
       </svg>
-      <div className="ring-center">{display === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={display} prefix={block.format?.prefix} suffix={block.format?.suffix ?? block.unit} decimals={block.format?.decimals ?? 0} />}<span>{active === 1 ? names[1] : 'Spent'}</span></div>
+      <div className="ring-center">{display === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={display} prefix={block.format?.prefix} suffix={readingSuffix(block)} decimals={block.format?.decimals ?? 0} />}<span>{active === 1 ? names[1] : 'Spent'}</span></div>
     </div>
     <div className="allocation-legend" data-active={active ?? undefined}>{names.map((name, i) => {
       const amount = i === 0 ? value : remaining === undefined ? undefined : Math.abs(remaining);
@@ -101,7 +101,7 @@ export function AllocationCard({ block, data, series, range, activeKey = null }:
             strokeDasharray={`${fraction * circumference} ${circumference}`} strokeDashoffset={-start * circumference} style={{ pointerEvents: 'stroke' }} onPointerEnter={() => setActive(key)} onClick={() => setActive(key)} />}
         </g>;
       })}</svg>
-      <div className="ring-center">{activeValue === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={activeValue} prefix={percentage ? undefined : block.format?.prefix} suffix={percentage ? '%' : block.format?.suffix ?? block.unit} decimals={percentage ? (activeEntry ? 1 : 0) : block.format?.decimals ?? 0} />}<span>{activeEntry?.item.name ?? (percentage ? 'Total' : block.total_label ?? 'Total')}</span></div>
+      <div className="ring-center">{activeValue === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={activeValue} prefix={percentage ? undefined : block.format?.prefix} suffix={percentage ? '%' : readingSuffix(block)} decimals={percentage ? (activeEntry ? 1 : 0) : block.format?.decimals ?? 0} />}<span>{activeEntry?.item.name ?? (percentage ? 'Total' : block.total_label ?? 'Total')}</span></div>
     </div>
     <div className="allocation-legend" data-active={active ?? undefined}>{entries.map(({ item, key, color }) => <motion.button key={key} type="button" data-selected={active === key}
       onFocus={() => setActive(key)} onBlur={() => setActive(null)} onMouseEnter={() => setActive(key)} onMouseLeave={() => setActive(null)} onClick={() => setActive(current => current === key ? null : key)}
