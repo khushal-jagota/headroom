@@ -10,6 +10,18 @@ export async function prepare({ scratchRoot }) {
   // reload. Network sources use the case fixture through the real navigation transport.
   await writeFile(join(scratchRoot, host), `<script lang="ts">
 import AppWithQueryClient from '../src/AppWithQueryClient.svelte';
+import {Chart} from 'chart.js';
+// Canvas tooltips have no DOM node. Observe the production instance in this host.
+(globalThis as any).__goalCanvasInspection = (canvas: HTMLCanvasElement) => {
+  const chart = Chart.getChart(canvas);
+  return chart ? {opacity: chart.tooltip?.opacity ?? 0,
+    active: chart.getActiveElements().map(({index, datasetIndex}) => ({index, datasetIndex})),
+    events: [...(chart.options.events ?? [])], stacked: !!chart.options.scales?.x?.stacked,
+    point: chart.getDatasetMeta(0).data[0] ? {
+      x: chart.getDatasetMeta(0).data[0].x,
+      y: (chart.chartArea.top + chart.chartArea.bottom) / 2,
+    } : null} : null;
+};
 import { railDomMatches } from '../src/lib/workspaceRailDom';
 import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 (globalThis as any).__railDomMatches = (cards, managers, chief) => railDomMatches(

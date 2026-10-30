@@ -15,6 +15,9 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
 }) {
   const ref = useRef<HTMLCanvasElement>(null), chart = useRef<Chart<'bar' | 'line'> | null>(null);
   const callback = useRef(onActive); callback.current = onActive;
+  // Touch can synthesize mouse events without a mouse pointer transition.
+  const pointerOrigin = useRef<string | null>(null);
+  const inspectionSource = useRef<'mouse' | 'keyboard' | 'touch' | null>(null);
   const found = data.findIndex(datum => datum.key === activeKey);
   const index = found < 0 ? null : found;
   const reduce = useReducedMotion();
@@ -54,6 +57,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
       type: 'bar', data: { labels: data.map(d => d.axisLabel), datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
+        events: ['mousemove', 'mouseout', 'touchstart', 'touchmove'],
         animation: reduce ? false : { duration: motionTokens.duration.bar * 1000, easing: 'easeInOutCubic' },
         interaction: { mode: 'index', intersect: false },
         plugins: {
@@ -65,7 +69,11 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
           x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxRotation: 0, maxTicksLimit: 4 } },
           y: { stacked: block.stacked, position: 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxTicksLimit: 5, precision: hasCountAxis(block, projection, range) ? 0 : undefined, callback: v => formatAxisTick(block, Number(v)) } },
         },
-        onHover: (_, elements) => { const i = elements[0]?.index ?? null; callback.current(i === null ? null : data[i]); },
+        onHover: (event, elements) => {
+          const i = elements[0]?.index ?? null;
+          inspectionSource.current = i === null ? null : event.native?.type.startsWith('touch') ? 'touch' : 'mouse';
+          callback.current(i === null ? null : data[i]);
+        },
       },
     } satisfies import('chart.js').ChartConfiguration<'bar' | 'line'>;
     if (chart.current) {
@@ -77,7 +85,8 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
 
   useEffect(() => () => { chart.current?.destroy(); chart.current = null; }, []);
 
-  function inspect(i: number | null) {
+  function inspect(i: number | null, source: 'keyboard' | null = null) {
+    inspectionSource.current = i === null ? null : source;
     callback.current(i === null ? null : data[i]);
     const c = chart.current;
     if (!c) return;
@@ -96,10 +105,17 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
       <canvas ref={ref} role="slider" tabIndex={data.length ? 0 : -1} aria-label={`${block.title ?? 'Chart'}, explore observations`}
         aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={Math.max(1, (index ?? data.length - 1) + 1)}
         aria-valuetext={`${readingLabel}: ${reading === undefined ? 'No reading' : formatReading(block, reading)}`}
-        onMouseLeave={() => inspect(null)} onBlur={() => inspect(null)} onKeyDown={event => {
+        onPointerEnter={event => { pointerOrigin.current = event.pointerType; }}
+        onPointerMove={event => { pointerOrigin.current = event.pointerType; }}
+        onPointerDown={event => { pointerOrigin.current = event.pointerType; }}
+        onMouseMoveCapture={event => { if (pointerOrigin.current !== null && pointerOrigin.current !== 'mouse') event.stopPropagation(); }}
+        onMouseOutCapture={event => { if (pointerOrigin.current !== null && pointerOrigin.current !== 'mouse') event.stopPropagation(); }}
+        onPointerLeave={event => { if (event.pointerType === 'mouse' && inspectionSource.current === 'mouse') inspect(null); }}
+        onBlur={() => { if (inspectionSource.current !== 'mouse') inspect(null); }} onKeyDown={event => {
           if (!data.length || !['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Escape'].includes(event.key)) return;
           event.preventDefault();
-          inspect(event.key === 'Escape' ? null : event.key === 'Home' ? 0 : event.key === 'End' ? data.length - 1 : Math.max(0, Math.min(data.length - 1, (index ?? data.length - 1) + (event.key === 'ArrowLeft' ? -1 : 1))));
+          const next = event.key === 'Escape' ? null : event.key === 'Home' ? 0 : event.key === 'End' ? data.length - 1 : Math.max(0, Math.min(data.length - 1, (index ?? data.length - 1) + (event.key === 'ArrowLeft' ? -1 : 1)));
+          inspect(next, 'keyboard');
         }} />
     </div>
   </>;

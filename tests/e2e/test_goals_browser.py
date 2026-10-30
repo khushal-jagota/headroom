@@ -435,16 +435,18 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert any(
         row["id"] == goal["id"] for row in api.get(server, "/api/goals?active=true")["goals"]
     )
-    # Promotion crosses the same revision-checked writer as ordinary checklist edits.
+    # Agent configuration crosses the API and change stream into the mounted page.
     before_selection = current["page"]
-    with page.expect_response(
-        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
-        timeout=WAIT_MS,
-    ) as selected:
-        page.get_by_label("Completion display", exact=True).select_option(
-            label="Approach checklist"
-        )
-    assert selected.value.ok
+    selected = httpx.patch(
+        server.base + path,
+        headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
+        json={
+            "expected_revision": current["revision"],
+            "primary_checklist_block_id": "approach",
+        },
+        timeout=10,
+    )
+    assert selected.is_success, selected.text
     current = api.get(server, path)
     assert current["primary_checklist_block_id"] == "approach"
     assert current["page"] == before_selection and current["completed"] is False
