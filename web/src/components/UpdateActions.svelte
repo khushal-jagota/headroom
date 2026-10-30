@@ -53,10 +53,10 @@
 <div class="update-actions" data-update-activity={status.activity}>
   {#if !active && request?.state === "failed"}<span role="alert">Update failed</span>{/if}
   {#if active && request}
-    <span>{request.state === "applying" ? "Update in progress" : request.mode === "idle" && request.state === "pending" ? "Update waits for idle" : "Update queued"}</span>
+    <span>{request.state === "applying" ? "Update in progress" : request.mode === "idle" && request.state === "pending" ? "Update waits for idle" : "Update requested"}</span>
     {#if canCancelUpdate(request)}<button type="button" class="ghost" disabled={submitting} onclick={cancel}>Cancel update</button>{/if}
   {:else if confirming}
-    <span>{status.activity === "busy" ? "Work is active. Update now can interrupt it." : "Activity is unknown. Update now can interrupt work."}</span>
+    <span>{status.activity === "busy" ? "Work is active. The update can interrupt it." : "Activity is unknown. The update can interrupt work."}</span>
     {#if usableUpdate(confirming, now)}
       <button type="button" class="ghost" disabled={submitting} onclick={() => submit(confirming!, "now", true)}>Proceed with update</button>
     {:else}<span>This update expired. Refresh its availability.</span>{/if}
@@ -67,7 +67,7 @@
          refetch restores both actions while the release remains usable. If the
          release expired or disappeared, the failure has no retry actions. -->
     <button type="button" class="primary" disabled={submitting} onclick={() => submit(status.available!, "idle")}>Update when idle</button>
-    <button type="button" class="ghost" disabled={submitting} onclick={() => submit(status.available!, "now")}>Update now</button>
+    <button type="button" class="ghost" disabled={submitting} onclick={() => submit(status.available!, "now")}>Start update</button>
   {/if}
   {#if error}<span role="alert">{error}</span>{/if}
 </div>
