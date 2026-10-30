@@ -44,6 +44,7 @@ from planner.conversation.events import (
     ConversationTurnEnding,
     PermissionAskOption,
     ToolCallStatus,
+    TurnEndedEventPayload,
     UserInputAnswer,
     UserInputOption,
     UserInputQuestion,
@@ -1476,6 +1477,109 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
             assert isinstance(delivery, PromptDeliveryStarted)
             assert harness.native.start_count == harness.native.prompt_count == 2
         finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.support.executor_catalog import ScriptedCatalogObserver
+
+    from planner.conversation.contracts import PromptDeliveryMode, PromptDeliveryUncertain
+    from planner.executor.contracts import ChildCommand, ChildOperation, CommandOutcome
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        release = asyncio.Event()
+        late_delivery: asyncio.Task[PromptDeliveryFate] | None = None
+        try:
+            await harness.native.raise_ask()
+            await harness.wait_ask_reachable()
+            ask = harness.ask
+            old_turn = harness.native.turn
+            old_mac = harness.mac
+            reached = asyncio.Event()
+            send_command = harness.endpoint.send_command
+
+            async def hold_command(command: ChildCommand) -> CommandOutcome:
+                if command.operation is ChildOperation.steer:
+                    reached.set()
+                    await release.wait()
+                return await send_command(command)
+
+            monkeypatch.setattr(harness.endpoint, "send_command", hold_command)
+            late_delivery = asyncio.create_task(
+                harness.system.send(
+                    "c_scripted", text_message_content("Unknown"), sender_label="Test",
+                    mode=PromptDeliveryMode.steer,
+                )
+            )
+            await asyncio.wait_for(reached.wait(), 3)
+            old_mac._stop.set()
+            assert harness.endpoint.writer is not None
+            harness.endpoint.writer.close()
+            await asyncio.wait_for(harness.task, 3)
+
+            # Model service death with a fresh registry and incarnation. This
+            # does not prove launchd terminates real provider process groups.
+            replacement = MacExecutor(
+                paths=old_mac.paths,
+                revision=old_mac.identity.application_revision,
+                executor_id=old_mac.executor_id,
+                panels_server_url=harness.proxy.origin,
+                session_factory=harness.proxy.session_factory,
+            )
+            replacement._catalog_observer = ScriptedCatalogObserver(lambda: replacement.identity)
+            replacement.registry = NativeChildRegistry(
+                paths=replacement.paths,
+                incarnation=replacement.identity.executor_incarnation,
+                spool=replacement.spool,
+                factory=old_mac.registry.factory,
+                message_files=old_mac.registry.message_files,
+            )
+            harness.mac = replacement
+            harness.task = asyncio.create_task(replacement.run())
+            await eventually(
+                lambda: harness.endpoint.identity == replacement.identity,
+                "Replacement hello did not reach the VPS",
+            )
+            release.set()
+            assert isinstance(await asyncio.wait_for(late_delivery, 3), PromptDeliveryUncertain)
+            await eventually(
+                lambda: harness.endpoint.ready and replacement.state is ConnectionState.ready,
+                "Replacement Mac did not reconcile",
+            )
+            assert not await harness.system.is_running("c_scripted")
+            assert harness.events("turn_ended") == 1
+            endings = [
+                event.payload
+                for event in await harness.system._store.read_events_after("c_scripted", 0)
+                if isinstance(event.payload, TurnEndedEventPayload)
+            ]
+            assert len(endings) == 1
+            assert endings[0].ending is ConversationTurnEnding.interrupted
+            assert harness.endpoint.store.has_closed_child_assignment(ask.child)
+            evidence = harness.endpoint.store.ask_evidence(ask)
+            assert evidence is not None and evidence.reachability is AskReachability.child_gone
+            state = harness.system._conversations["c_scripted"]
+            assert not state.child_is_quarantined
+            assert state.executor_child_reference is None
+            assert harness.native.start_count == harness.native.prompt_count == 1
+            delivery = await harness.system.send(
+                "c_scripted", text_message_content("Fresh"), sender_label="Test"
+            )
+            assert isinstance(delivery, PromptDeliveryStarted)
+            assert harness.native.start_count == harness.native.prompt_count == 2
+            assert harness.native.turn != old_turn
+            fresh_child = next(iter(replacement.registry.children.values())).reference
+            assert fresh_child.executor_incarnation != ask.child.executor_incarnation
+            assert harness.events("prompt_delivery_uncertain") == 1
+        finally:
+            release.set()
+            if late_delivery is not None:
+                await asyncio.gather(late_delivery, return_exceptions=True)
             await harness.close()
 
     asyncio.run(run())

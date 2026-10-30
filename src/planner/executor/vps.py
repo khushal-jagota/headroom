@@ -1106,6 +1106,18 @@ class ExecutorEndpoint:
             if existing[0] != command:
                 raise ValueError("command identity reused with different content")
             return await asyncio.shield(existing[1])
+        if (
+            self.identity is not None
+            and command.child.executor_incarnation != self.identity.executor_incarnation
+        ):
+            # A delivery writer can register after _session settled old futures.
+            # It must finish as unknown, never wait for or send to the new process.
+            return CommandOutcome(
+                command.command_id,
+                command.child,
+                CommandDisposition.uncertain,
+                {"reason": "executor_process_replaced"},
+            )
         future: asyncio.Future[CommandOutcome] = asyncio.get_running_loop().create_future()
         self.pending_commands[command.command_id] = (command, future)
         try:
@@ -1682,6 +1694,10 @@ class ExecutorEndpoint:
                                 {"reason": "executor_process_replaced"},
                             )
                         )
+            if self.runtime is not None:
+                await self.runtime.system.interrupt_replaced_executor_runs(
+                    identity.executor_incarnation
+                )
             async with self._send_lock:
                 if self.writer is not writer or self.identity != identity:
                     return

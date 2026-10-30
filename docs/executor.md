@@ -237,6 +237,13 @@ Until termination is proved, that conversation remains fenced against fresh work
 The next send then starts a fresh run. Unresolved delivery stays unknown and is
 never resent. An absent child in inventory alone does not prove termination.
 
+A new Mac service process interrupts the old incarnation's turns, closes their
+assignments and callbacks, and clears their fences before the new connection is
+accepted. The next send starts a fresh run. Unknown delivery stays unknown and is
+never resent. This relies on launchd's default cleanup of a job's process group
+when the job exits; the first real Mac/VPS run must verify that provider processes
+actually die on service restart or reboot. The scripted tests do not prove that.
+
 Each replay pass drains only the pending sequence prefix captured at its start,
 with one in-flight submission per conversation. New events stay durable for a
 later pass. Both passes before readiness use their own prefix, so new child
