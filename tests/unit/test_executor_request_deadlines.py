@@ -7,12 +7,17 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from tests.support.executor_control import MessageReader
 
 from planner.executor import mac
 from planner.executor.configuration import PROTOCOL_VERSION
 from planner.executor.contracts import ExecutorIdentity, WireMessage, WireMessageKind
 from planner.executor.mac import MacExecutor
 from planner.executor.vps import ExecutorEndpoint
+
+
+async def stalled_send(*_: object) -> None:
+    await asyncio.Event().wait()
 
 
 def requester(writer: Any) -> MacExecutor:
@@ -26,7 +31,7 @@ def requester(writer: Any) -> MacExecutor:
 
 def peer() -> Any:
     writer = Mock()
-    writer.drain = AsyncMock()
+    writer.send = AsyncMock()
     return writer
 
 
@@ -39,14 +44,14 @@ def test_absolute_request_deadline_covers_send_and_response(
         writer = peer()
         executor = requester(writer)
         if blocked == "drain":
-            writer.drain.side_effect = asyncio.Event().wait
+            writer.send.side_effect = stalled_send
         if blocked == "lock":
             await executor._write_lock.acquire()
         with pytest.raises(TimeoutError):
             await executor._request(WireMessageKind.envelope, {})
         assert not executor._pending
         writer.close.assert_called_once_with()
-        assert writer.write.call_count == (0 if blocked == "lock" else 1)
+        assert writer.send.call_count == (0 if blocked == "lock" else 1)
         if blocked == "lock":
             executor._write_lock.release()
 
@@ -59,14 +64,14 @@ def test_timeout_does_not_close_replacement_generation(monkeypatch: pytest.Monke
         original, replacement = peer(), peer()
         executor = requester(original)
         task = asyncio.create_task(executor._request(WireMessageKind.envelope, {}))
-        while not original.write.called:
+        while not original.send.called:
             await asyncio.sleep(0)
         executor._writer = replacement
         with pytest.raises(TimeoutError):
             await task
         original.close.assert_called_once_with()
         replacement.close.assert_not_called()
-        replacement.write.assert_not_called()
+        replacement.send.assert_not_called()
         assert not executor._pending
 
     asyncio.run(run())
@@ -84,8 +89,8 @@ def test_generation_change_while_waiting_for_send_never_writes_replacement() -> 
         executor._write_lock.release()
         with pytest.raises(ConnectionError):
             await task
-        original.write.assert_not_called()
-        replacement.write.assert_not_called()
+        original.send.assert_not_called()
+        replacement.send.assert_not_called()
         replacement.close.assert_not_called()
         assert not executor._pending
 
@@ -97,7 +102,7 @@ def test_external_cancellation_preserves_writer_and_cleans_pending() -> None:
         writer = peer()
         executor = requester(writer)
         task = asyncio.create_task(executor._request(WireMessageKind.envelope, {}))
-        while not writer.write.called:
+        while not writer.send.called:
             await asyncio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -181,7 +186,7 @@ def test_request_task_cancellation_propagates() -> None:
 
 
 def test_late_response_after_timeout_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    from planner.executor.wire import encode_frame
+    from planner.executor.wire import encode_message
 
     async def run() -> None:
         monkeypatch.setattr(mac, "REQUEST_TIMEOUT_SECONDS", 0.02)
@@ -193,10 +198,10 @@ def test_late_response_after_timeout_is_ignored(monkeypatch: pytest.MonkeyPatch)
         request_id = next(iter(executor._pending))
         with pytest.raises(TimeoutError):
             await task
-        reader = asyncio.StreamReader()
-        reader.feed_data(encode_frame(WireMessage(WireMessageKind.receipt, request_id, {})))
+        reader = MessageReader()
+        reader.feed_data(encode_message(WireMessage(WireMessageKind.receipt, request_id, {})))
         reader.feed_eof()
-        with pytest.raises(asyncio.IncompleteReadError):
+        with pytest.raises(ConnectionError):
             await executor._read_loop(reader)
         assert not executor._pending
 
@@ -258,7 +263,7 @@ def test_catalog_absolute_deadline_never_closes_shared_writer(
         endpoint = catalog_endpoint(writer)
         assert endpoint.identity is not None
         if blocked == "drain":
-            writer.drain.side_effect = asyncio.Event().wait
+            writer.send.side_effect = stalled_send
         if blocked == "lock":
             await endpoint._send_lock.acquire()
         result = await endpoint.observe_catalog(catalog_request(endpoint.identity), attempt_id="a")
@@ -312,7 +317,7 @@ def test_catalog_revocation_cannot_write_replacement_or_accept_late_reply(
             endpoint.writer,
         )
         assert not endpoint._catalog_responses
-        replacement.write.assert_not_called()
+        replacement.send.assert_not_called()
         original.close.assert_not_called()
         replacement.close.assert_not_called()
 
@@ -352,7 +357,7 @@ def test_catalog_reply_binds_context_schema_and_attempt_without_refreshing_time(
         observer = ScriptedCatalogObserver(lambda: identity)
         endpoint.clock_sample = ClockSample(1000, 1002, 1003, 1005)
         task = asyncio.create_task(endpoint.observe_catalog(request, attempt_id="caller"))
-        while not writer.write.called:
+        while not writer.send.called:
             await asyncio.sleep(0)
         request_id = next(iter(endpoint._catalog_responses))
         result = await observer.observe(
@@ -458,7 +463,7 @@ def test_native_catalog_admission_rejects_unready_or_unscoped_authority(invalid:
         await asyncio.sleep(0)
         assert observer.calls == 0
         assert not executor._catalog_tasks
-        writer.write.assert_not_called()
+        writer.send.assert_not_called()
         writer.close.assert_not_called()
 
     asyncio.run(run())
@@ -541,7 +546,7 @@ def test_native_catalog_capacity_survives_cancellation_until_physical_cleanup(
 
         await wait_for_settlement(task)
         await asyncio.sleep(0)
-        assert writer.write.call_count == (1 if cause == "deadline" else 0)
+        assert writer.send.call_count == (1 if cause == "deadline" else 0)
         assert not executor._catalog_tasks
         executor._catalog_frame(WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload))
         writer.close.assert_not_called()

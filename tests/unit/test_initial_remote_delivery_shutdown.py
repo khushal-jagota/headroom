@@ -34,7 +34,7 @@ from planner.executor.contracts import (
     ChildReference,
     CommandDisposition,
     CommandOutcome,
-    FrameWriter,
+    ControlMessageWriter,
     WireMessage,
 )
 from planner.executor.remote import RemoteBackendChildFactory
@@ -51,7 +51,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
     async def run() -> None:
         endpoint = ExecutorEndpoint(db_path, RealClock())
         endpoint.ready = True
-        endpoint.writer = cast(FrameWriter, SimpleNamespace(close=lambda: None))
+        endpoint.writer = cast(ControlMessageWriter, SimpleNamespace(close=lambda: None, send=None))
         from planner.executor.codec import encode_value
         from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
         from planner.executor.contracts import (
@@ -84,8 +84,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                 entered.set()
                 await release.wait()
 
-        async def frame(writer: FrameWriter, message: WireMessage) -> None:
-            del writer
+        async def frame(message: WireMessage) -> None:
             command = TypeAdapter(ChildCommand).validate_python(message.payload)
             emitted.append(command)
             if command.operation is ChildOperation.write_prompt and boundary == "prompt_frame":
@@ -104,7 +103,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                 )
 
         monkeypatch.setattr(endpoint, "_transfer_command_inputs_locked", transfer)
-        monkeypatch.setattr("planner.executor.vps.write_frame", frame)
+        monkeypatch.setattr(endpoint.writer, "send", frame)
         factory = RemoteBackendChildFactory(
             lambda start, sink: reference,
             endpoint.send_command,

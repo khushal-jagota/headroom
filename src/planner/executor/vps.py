@@ -65,6 +65,8 @@ from planner.executor.contracts import (
     ClockSample,
     CommandDisposition,
     CommandOutcome,
+    ControlMessageReader,
+    ControlMessageWriter,
     DurableAnswer,
     EnvelopeKind,
     ExecutorHealth,
@@ -72,8 +74,6 @@ from planner.executor.contracts import (
     ExecutorIdentity,
     FilePublicationRequest,
     FileScope,
-    FrameReader,
-    FrameWriter,
     InputTransferCancel,
     InputTransferCancelled,
     InputTransferFailed,
@@ -101,8 +101,6 @@ from planner.executor.store import ExecutorStore
 from planner.executor.transfers import GenerationTransfers, settled_io, wait_for_settlement
 from planner.executor.wire import (
     parse_identity,
-    read_frame,
-    write_frame,
 )
 from planner.tickets.contracts import TicketLocale
 
@@ -125,7 +123,7 @@ class ExecutorEndpoint:
         self.runtime: Any = None
         self.app: Any = None
         self.identity: ExecutorIdentity | None = None
-        self.writer: FrameWriter | None = None
+        self.writer: ControlMessageWriter | None = None
         self.ready = False
         self.children: dict[str, RemoteBackendChild] = {}
         self.sinks: dict[str, BackendEventSink] = {}
@@ -155,7 +153,7 @@ class ExecutorEndpoint:
         self._input_exchanges: dict[str, InputTransferExchange] = {}
         self._responses: dict[str, asyncio.Future[WireMessage]] = {}
         self._catalog_responses: dict[
-            str, tuple[CatalogRequest, FrameWriter, asyncio.Future[WireMessage]]
+            str, tuple[CatalogRequest, ControlMessageWriter, asyncio.Future[WireMessage]]
         ] = {}
         self.clock_sample: ClockSample | None = None
         self.process_id: int | None = None
@@ -310,10 +308,10 @@ class ExecutorEndpoint:
         async with self._send_lock:
             if writer is None or self.writer is not writer:
                 raise ConnectionError("executor link unavailable")
-            await write_frame(writer, message)
+            await writer.send(message)
 
     async def _reconciliation_current(
-        self, identity: ExecutorIdentity, writer: FrameWriter
+        self, identity: ExecutorIdentity, writer: ControlMessageWriter
     ) -> bool:
         if self.writer is not writer or self.identity != identity:
             return False
@@ -324,16 +322,16 @@ class ExecutorEndpoint:
         return self.writer is writer and self.identity == identity
 
     async def _send_reconciliation(
-        self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
+        self, message: WireMessage, identity: ExecutorIdentity, writer: ControlMessageWriter
     ) -> bool:
         # This handler owns a particular connection, including while waiting for
-        # another sender or draining an already written frame.
+        # another sender or completing an already started send.
         if not await self._reconciliation_current(identity, writer):
             return False
         async with self._send_lock:
             if self.writer is not writer or self.identity != identity:
                 return False
-            await write_frame(writer, message)
+            await writer.send(message)
         return await self._reconciliation_current(identity, writer)
 
     async def _request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
@@ -354,7 +352,7 @@ class ExecutorEndpoint:
         finally:
             self._responses.pop(request_id, None)
 
-    def _fail_catalogs(self, writer: FrameWriter | None = None) -> None:
+    def _fail_catalogs(self, writer: ControlMessageWriter | None = None) -> None:
         for _, captured_writer, future in self._catalog_responses.values():
             if (writer is None or writer is captured_writer) and not future.done():
                 future.set_exception(ConnectionError("executor catalog connection lost"))
@@ -390,8 +388,7 @@ class ExecutorEndpoint:
                 async with self._send_lock:
                     if self.writer is not writer or self.identity != identity or not self.ready:
                         raise ConnectionError("catalog generation changed")
-                    await write_frame(
-                        writer,
+                    await writer.send(
                         WireMessage(WireMessageKind.catalog_request, request_id, _object(request)),
                     )
                 response = await future
@@ -564,15 +561,14 @@ class ExecutorEndpoint:
         request_id: str,
         request: CatalogRequest,
         identity: ExecutorIdentity,
-        writer: FrameWriter,
+        writer: ControlMessageWriter,
     ) -> None:
         try:
             async with asyncio.timeout(CATALOG_CANCEL_TIMEOUT_SECONDS):
                 async with self._send_lock:
                     current = self.writer is writer and self.identity == identity and self.ready
                     if current:
-                        await write_frame(
-                            writer,
+                        await writer.send(
                             WireMessage(
                                 WireMessageKind.catalog_cancel, request_id, _object(request)
                             ),
@@ -663,7 +659,7 @@ class ExecutorEndpoint:
                 await asyncio.gather(timer, return_exceptions=True)
 
     def _receive_input_frame(
-        self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
+        self, message: WireMessage, identity: ExecutorIdentity, writer: ControlMessageWriter
     ) -> bool:
         state = self._input_exchanges.get(message.request_id)
         kinds = (
@@ -812,7 +808,7 @@ class ExecutorEndpoint:
         self,
         command: ChildCommand,
         identity: ExecutorIdentity | None = None,
-        writer: FrameWriter | None = None,
+        writer: ControlMessageWriter | None = None,
     ) -> bool:
         identity = self.identity if identity is None else identity
         writer = self.writer if writer is None else writer
@@ -834,7 +830,7 @@ class ExecutorEndpoint:
         self,
         command: ChildCommand,
         expected_identity: ExecutorIdentity | None = None,
-        expected_writer: FrameWriter | None = None,
+        expected_writer: ControlMessageWriter | None = None,
     ) -> bool:
         """The final guard is shared by immediate sends and reconnect replay."""
         if command.operation not in (
@@ -857,15 +853,14 @@ class ExecutorEndpoint:
                     return False
                 if expected_identity != self.identity or expected_writer is not self.writer:
                     raise ConnectionError("command input generation changed")
-                writer: FrameWriter | None = self.writer
+                writer: ControlMessageWriter | None = self.writer
                 if writer is None or not self.ready:
                     raise ConnectionError("executor link unavailable")
                 # From this point even a failed/partial write may have reached native.
                 self._possibly_emitted_commands.add(command.command_id)
                 if command.operation is ChildOperation.write_prompt:
                     self._prompt_command_ids.add(command.command_id)
-                await write_frame(
-                    writer,
+                await writer.send(
                     WireMessage(WireMessageKind.command, command.command_id, _object(command)),
                 )
                 return True
@@ -897,8 +892,7 @@ class ExecutorEndpoint:
                     or command.command_id != "apply_" + answer.answer_id
                 ):
                     return
-                await write_frame(
-                    writer,
+                await writer.send(
                     WireMessage(WireMessageKind.command, command.command_id, _object(command)),
                 )
                 emitted = True
@@ -1611,11 +1605,11 @@ class ExecutorEndpoint:
             await self._dispatch_answer(answer)
         return True
 
-    async def _session(self, reader: FrameReader, writer: FrameWriter) -> None:
+    async def _session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
         identity = None
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                hello = await read_frame(reader)
+                hello = await reader.receive()
             if hello.kind is not WireMessageKind.hello:
                 raise ValueError("executor handshake required")
             parsed_identity = parse_identity(hello.payload.get("identity"))
@@ -1664,8 +1658,7 @@ class ExecutorEndpoint:
             async with self._send_lock:
                 if self.writer is not writer or self.identity != identity:
                     return
-                await write_frame(
-                    writer,
+                await writer.send(
                     WireMessage(
                         WireMessageKind.hello_accepted, hello.request_id, _object(identity)
                     ),
@@ -1676,7 +1669,7 @@ class ExecutorEndpoint:
             self._tasks.add(probe)
             probe.add_done_callback(self._tasks.discard)
             while self.writer is writer and self.identity == identity:
-                message = await read_frame(reader)
+                message = await reader.receive()
                 # Decode and fence synchronously before domain work can yield.
                 # A valid frame proves receipt even when its operation is refused.
                 if self.writer is not writer or self.identity != identity:
@@ -1692,7 +1685,6 @@ class ExecutorEndpoint:
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
         except (
-            asyncio.IncompleteReadError,
             ConnectionError,
             OSError,
             ValueError,
@@ -1739,7 +1731,7 @@ class ExecutorEndpoint:
         self,
         message: WireMessage,
         identity: ExecutorIdentity,
-        writer: FrameWriter,
+        writer: ControlMessageWriter,
     ) -> None:
         try:
             await self._handle_message(
@@ -1756,7 +1748,7 @@ class ExecutorEndpoint:
         self,
         message: WireMessage,
         identity: ExecutorIdentity,
-        writer: FrameWriter,
+        writer: ControlMessageWriter,
     ) -> None:
         if self.writer is not writer or self.identity != identity:
             return
@@ -1925,8 +1917,7 @@ class ExecutorEndpoint:
                 async with self._send_lock:
                     if self.writer is not writer or self.identity != identity:
                         return
-                    await write_frame(
-                        writer,
+                    await writer.send(
                         WireMessage(
                             WireMessageKind.reconciliation_ready,
                             message.request_id,

@@ -11,8 +11,8 @@ from planner.executor.configuration import (
     INPUT_PROGRESS_TIMEOUT_SECONDS,
 )
 from planner.executor.contracts import (
+    ControlMessageWriter,
     ExecutorIdentity,
-    FrameWriter,
     InputTransferProgress,
     InputTransferRequest,
     WireMessage,
@@ -81,6 +81,6 @@ class InputTransferDeadline:
 class InputTransferExchange:
     deadline: InputTransferDeadline
     identity: ExecutorIdentity
-    writer: FrameWriter
+    writer: ControlMessageWriter
     response: asyncio.Future[WireMessage]
     cancelled: asyncio.Event = field(default_factory=asyncio.Event)

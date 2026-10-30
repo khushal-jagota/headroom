@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any, NoReturn
 
 import pytest
+from tests.support.executor_control import MessageReader
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.message_files import ConversationMessageFiles
@@ -32,7 +33,7 @@ from planner.executor.contracts import (
 from planner.executor.mac import MacExecutor
 from planner.executor.outbox_storage import DATABASE_NAME, connect_database, initialize_database
 from planner.executor.vps import ExecutorEndpoint
-from planner.executor.wire import read_frame
+from planner.executor.wire import encode_message
 
 
 def isolate_replay_paths(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -62,20 +63,18 @@ def isolate_replay_paths(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class PairedWriter:
-    """A FrameWriter feeding its peer's exact byte reader, without a listener."""
+    """A typed writer delivering one binary message at a time, without a listener."""
 
-    def __init__(self, reader: asyncio.StreamReader) -> None:
+    def __init__(self, reader: MessageReader) -> None:
         self.reader = reader
         self.closed = False
         self.frames: list[bytes] = []
 
-    def write(self, data: bytes) -> None:
+    async def send(self, message: WireMessage) -> None:
+        data = encode_message(message)
         assert not self.closed
         self.frames.append(data)
         self.reader.feed_data(data)
-
-    async def drain(self) -> None:
-        await asyncio.sleep(0)
 
     def close(self) -> None:
         if not self.closed:
@@ -193,14 +192,14 @@ async def _prove_historical_replay(
     assert not mac.registry.children
     assert all(state.child is None for state in system._conversations.values())
     mac._handshake_accepted = True
-    mac_reader, vps_reader = asyncio.StreamReader(), asyncio.StreamReader()
+    mac_reader, vps_reader = MessageReader(), MessageReader()
     vps_writer, mac_writer = PairedWriter(mac_reader), PairedWriter(vps_reader)
     endpoint.writer, mac._writer = vps_writer, mac_writer
     received: list[WireMessage] = []
 
     async def serve() -> None:
         while True:
-            message = await read_frame(vps_reader)
+            message = await vps_reader.receive()
             received.append(message)
             await endpoint._handle_message(message, identity, vps_writer)
 

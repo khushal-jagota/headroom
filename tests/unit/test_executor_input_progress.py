@@ -264,7 +264,7 @@ def test_failed_input_removes_only_commands_without_possible_native_admission(
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
         endpoint.identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "native", 1)
         writer = Mock()
-        writer.drain = AsyncMock()
+        writer.send = AsyncMock()
         endpoint.writer = writer
         endpoint.ready = not replay
         endpoint.pending_commands = {}
@@ -344,7 +344,7 @@ def test_canceled_input_command_preserves_only_possible_native_outcome(
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
         endpoint.identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "native", 1)
         writer = Mock()
-        writer.drain = AsyncMock()
+        writer.send = AsyncMock()
         endpoint.writer = writer
         endpoint.ready = True
         endpoint.pending_commands = {}

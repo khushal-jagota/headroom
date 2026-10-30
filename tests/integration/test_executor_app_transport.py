@@ -17,7 +17,7 @@ from planner.executor import app_transport
 from planner.executor.app_transport import ExecutorAppClient
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.contracts import FileManifest, FileScope, FileSnapshot
-from planner.executor.wire import encode_frame
+from planner.executor.wire import encode_message
 
 
 def test_native_admission_and_generation_file_slots(
@@ -36,7 +36,7 @@ def test_native_admission_and_generation_file_slots(
             try:
                 with pytest.raises(aiohttp.ClientConnectorCertificateError):
                     async with production_client.websocket(
-                        "/api/executor/connect", MAX_ENVELOPE_BYTES + 4
+                        "/api/executor/connect", MAX_ENVELOPE_BYTES
                     ):
                         pytest.fail("untrusted TLS certificate was accepted")
             finally:
@@ -221,11 +221,11 @@ def test_malformed_control_cannot_fence_current_peer(
                     if malformed == "text":
                         await socket.send_str("hello")
                     elif malformed == "trailing":
-                        await socket.send_bytes(encode_frame({"kind": "hello"}) + b"extra")
+                        await socket.send_bytes(b'{"kind":"hello"}extra')
                     elif malformed == "empty":
-                        await socket.send_bytes(b"\0\0\0\0")
+                        await socket.send_bytes(b"")
                     else:
-                        await socket.send_bytes(b"x" * (MAX_ENVELOPE_BYTES + 5))
+                        await socket.send_bytes(b"x" * (MAX_ENVELOPE_BYTES + 1))
                     reply = await asyncio.wait_for(socket.receive(), 2)
                     assert reply.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
             assert harness.endpoint.identity == identity and harness.endpoint.ready
@@ -265,7 +265,7 @@ def test_duplicate_hello_preserves_active_file_reservations(
                     headers={"X-Panels-Executor-ID": "test-executor"},
                 ) as socket:
                     await socket.send_bytes(
-                        encode_frame(
+                        encode_message(
                             WireMessage(
                                 WireMessageKind.hello,
                                 "duplicate",
