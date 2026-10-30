@@ -18,7 +18,6 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-import pytest
 import uvicorn
 from fastapi import FastAPI
 
@@ -188,13 +187,10 @@ def test_tcp_snapshot_live_stream_reconnect_disconnect_and_shutdown(tmp_path: Pa
                     # An idle real TCP response must terminate from publication shutdown itself.
                     assert feed.error is None
                     await asyncio.wait_for(runtime.close(), 1)
-                    # Configured send fencing also rejects the final HTTP terminator.
-                    # The resulting transport failure belongs only to this deliberate loss.
-                    with pytest.raises(
-                        httpx.RemoteProtocolError, match="incomplete chunked read"
-                    ) as closed:
-                        await asyncio.wait_for(task, 1)
-                    assert feed.error is closed.value
+                    # The old incomplete-chunked-read assertion encoded the defect.
+                    # Authority loss must still allow the empty HTTP terminator.
+                    await asyncio.wait_for(task, 1)
+                    assert feed.error is None
                     assert open_change_stream_count() == baseline
                 finally:
                     await cancel(task)
