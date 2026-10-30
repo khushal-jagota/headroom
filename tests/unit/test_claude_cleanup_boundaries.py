@@ -46,17 +46,17 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.execution_identity import ChildReference
-from planner.executor.codec import encode_value
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.contracts import (
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
     ReceiptDisposition,
     decode_command_arguments,
+    encode_value,
 )
-from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets

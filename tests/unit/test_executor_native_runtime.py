@@ -14,7 +14,6 @@ from uuid import uuid4
 
 import pytest
 from pydantic import TypeAdapter
-from tests.support.executor_control import MessageReader
 
 from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import (
@@ -49,9 +48,10 @@ from planner.conversation.model_resolution.contracts import (
 )
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
-from planner.executor.codec import encode_value
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.contracts import (
+from planner.executor.mac import MacExecutor, as_object
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import (
     AcceptanceReceipt,
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
@@ -75,9 +75,8 @@ from planner.executor.contracts import (
     WireMessageKind,
     WritePrompt,
     decode_command_arguments,
+    encode_value,
 )
-from planner.executor.mac import MacExecutor, as_object
-from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
 from planner.tickets.contracts import TicketLocale
 
@@ -1015,7 +1014,7 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
         assert native_stops == []
         released.set()
         await task
-        from planner.executor.contracts import AcceptanceReceipt, ReceiptDisposition
+        from planner.executor.protocol import AcceptanceReceipt, ReceiptDisposition
 
         pending_before_stop = spool.pending()
         assert pending_before_stop == ()
@@ -1177,7 +1176,7 @@ def test_replay_protocol_error_surfaces_and_preserves_pending_conversation(
             visited.append(row.conversation_id)
             raise ValueError("invalid protocol response")
 
-        monkeypatch.setattr(executor, "_request", transport)
+        monkeypatch.setattr(executor, "request", transport)
         pending = executor.spool.pending()
         with pytest.raises(ValueError, match="invalid protocol response"):
             await executor.spool.send_pending(executor)
@@ -1192,7 +1191,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
     tmp_path: Path,
 ) -> None:
     async def run() -> None:
-        from planner.executor.contracts import AcceptanceReceipt, ReceiptDisposition
+        from planner.executor.protocol import AcceptanceReceipt, ReceiptDisposition
 
         executor = MacExecutor(
             paths=ExecutorPaths(tmp_path),
@@ -1286,8 +1285,7 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
     import subprocess
     import sys
 
-    from planner.executor.contracts import IpcResponse
-    from planner.executor.wire import encode_frame
+    from planner.executor.protocol import IpcResponse, encode_frame
 
     root = tmp_path / "daemon"
     script = (
@@ -1577,7 +1575,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
     from planner.conversation.backends.contracts import BackendUserInputRequest
     from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
     from planner.execution_identity import AskKind, AskReference
-    from planner.executor.contracts import AnswerApplication
+    from planner.executor.protocol import AnswerApplication
 
     async def run() -> None:
         entered, release = asyncio.Event(), asyncio.Event()
@@ -1749,7 +1747,7 @@ def test_old_peer_is_refused_before_work_or_replay_and_preserves_spool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.execution_identity import ProtocolRefused
-    from planner.executor.contracts import WireMessage, WireMessageKind
+    from planner.executor.protocol import WireMessage, WireMessageKind
 
     async def run() -> None:
         executor = make_executor(tmp_path)
@@ -1765,7 +1763,7 @@ def test_old_peer_is_refused_before_work_or_replay_and_preserves_spool(
                 )
             return await original(kind, payload)
 
-        monkeypatch.setattr(executor, "_request", old_reply)
+        monkeypatch.setattr(peer, "reply", old_reply)
         row = executor.spool.add(
             OutboxEntry(
                 conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={"original": True}
@@ -1797,19 +1795,25 @@ class ControlPeer:
         self.reader = asyncio.StreamReader()
         self.closed = False
         self.failure: Exception | None = None
+        self.respond = True
 
     async def receive_bytes(self, max_bytes: int) -> bytes:
         return await self.reader.read(max_bytes)
 
     async def send_bytes(self, data: bytes) -> None:
-        pass
+        from planner.executor.protocol import decode_message, encode_message
+
+        if self.respond:
+            message = decode_message(data)
+            response = await self.reply(message.kind, message.payload)
+            self.reader.feed_data(encode_message(replace(response, request_id=message.request_id)))
 
     async def aclose(self) -> None:
         self.closed = True
         self.reader.feed_eof()
 
     async def reply(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-        from planner.executor.contracts import WireMessage, WireMessageKind
+        from planner.executor.protocol import WireMessage, WireMessageKind
 
         result: JsonObject
         if kind is WireMessageKind.hello:
@@ -1828,7 +1832,7 @@ class ControlPeer:
 def install_control_peer(executor: MacExecutor, monkeypatch: pytest.MonkeyPatch) -> ControlPeer:
     from contextlib import asynccontextmanager
 
-    from planner.executor import mac as module
+    from planner.executor import link as module
 
     peer = ControlPeer(executor)
 
@@ -1848,7 +1852,6 @@ def install_control_peer(executor: MacExecutor, monkeypatch: pytest.MonkeyPatch)
 
     client = SimpleNamespace(websocket=websocket, close=peer.aclose)
     monkeypatch.setattr(module, "ExecutorAppClient", Mock(return_value=client))
-    monkeypatch.setattr(executor, "_request", peer.reply)
     return peer
 
 
@@ -1862,7 +1865,7 @@ def test_websocket_failure_closes_client_and_records_loss(
         peer.failure = ConnectionError("WebSocket refused")
         with pytest.raises(ConnectionError, match="WebSocket refused"):
             await executor._connected()
-        assert executor._app_client is None and executor.lost_at_ms is not None
+        assert executor._link is None and executor.lost_at_ms is not None
         assert executor.state is ConnectionState.disconnected
         executor.spool.close()
 
@@ -1875,14 +1878,14 @@ def test_controlled_stop_wakes_pending_handshake_without_peer_response(
     async def run() -> None:
         executor = make_executor(tmp_path)
         peer = install_control_peer(executor, monkeypatch)
-        monkeypatch.setattr(executor, "_request", MacExecutor._request.__get__(executor))
+        peer.respond = False
         task = asyncio.create_task(executor._connected())
         try:
-            while executor._writer is None:
+            while executor._link is None:
                 await asyncio.sleep(0)
             executor._stop.set()
             await asyncio.wait_for(task, 1)
-            assert executor._writer is None and peer.closed
+            assert executor._link is None and peer.closed
             assert not executor.spool.pending()
         finally:
             task.cancel()
@@ -1892,60 +1895,40 @@ def test_controlled_stop_wakes_pending_handshake_without_peer_response(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("case", ["valid", "no_handshake", "bad_payload", "stale_request"])
-def test_ready_ack_clears_loss_before_fulfilling_current_request(tmp_path: Path, case: str) -> None:
-    from planner.execution_identity import ProtocolRefused
-    from planner.executor.contracts import ConnectionState, WireMessage, WireMessageKind
-    from planner.executor.wire import encode_message
-
+@pytest.mark.parametrize("valid", [True, False])
+def test_ready_ack_clears_loss_before_outbox_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    valid: bool,
+) -> None:
     async def run() -> None:
-        executor = MacExecutor(
-            paths=ExecutorPaths(tmp_path),
-            revision="a" * 40,
-            executor_id="owner-mac",
-            panels_server_url="https://unused",
-        )
-        executor.state = ConnectionState.reconciling
+        executor = make_executor(tmp_path)
+        peer = install_control_peer(executor, monkeypatch)
         executor.lost_at_ms = 123
-        executor._handshake_accepted = case != "no_handshake"
+        reply = peer.reply
         observed: list[tuple[ConnectionState, int | None]] = []
 
-        class ObservedFuture(asyncio.Future[WireMessage]):
-            def set_result(self, result: WireMessage) -> None:
-                # Observe synchronously before fulfillment can resume the session.
-                observed.append((executor.state, executor.lost_at_ms))
-                super().set_result(result)
+        async def respond(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+            response = await reply(kind, payload)
+            if kind is WireMessageKind.reconciliation_ready and not valid:
+                return replace(response, payload={"ready": False})
+            return response
 
-        pending = ObservedFuture()
-        executor._pending["current-request"] = pending
-        reader = MessageReader()
-        reader.feed_data(
-            encode_message(
-                WireMessage(
-                    WireMessageKind.reconciliation_ready,
-                    "old-request" if case == "stale_request" else "current-request",
-                    {"ready": False} if case == "bad_payload" else {"ready": True},
-                )
-            )
-        )
-        reader.feed_eof()
+        async def replay(link: object) -> None:
+            observed.append((executor.state, executor.lost_at_ms))
+            executor._stop.set()
+
+        monkeypatch.setattr(peer, "reply", respond)
+        monkeypatch.setattr(executor.spool, "send_pending", replay)
         try:
-            if case in ("no_handshake", "bad_payload"):
-                with pytest.raises(ProtocolRefused, match="invalid reconciliation"):
-                    await executor._read_loop(reader)
-            else:
-                with pytest.raises(ConnectionError):
-                    await executor._read_loop(reader)
-            if case == "valid":
+            if valid:
+                await executor._connected()
                 assert observed == [(ConnectionState.ready, None)]
-                assert pending.done()
             else:
-                assert observed == []
-                assert not pending.done()
-                assert executor.state == ConnectionState.reconciling
-                assert executor.lost_at_ms == 123
+                with pytest.raises(ValueError, match="invalid reconciliation"):
+                    await executor._connected()
+                assert not observed and executor.lost_at_ms == 123
         finally:
-            pending.cancel()
             executor.spool.close()
 
     asyncio.run(run())
@@ -2005,11 +1988,12 @@ def test_cleanup_failure_still_revokes_generation_drains_tasks_and_closes_client
         try:
             while executor.state is not ConnectionState.ready:
                 await asyncio.sleep(0)
-            client = executor._app_client
+            assert executor._link is not None
+            client = executor._link.file_client()
             assert client is not None
 
             async def broken_close() -> None:
-                assert executor._writer is None and not executor._handshake_accepted
+                assert executor._link is None and not executor._handshake_accepted
                 exited.set()
                 await peer.aclose()
                 raise TimeoutError("transport cleanup failed")
@@ -2019,9 +2003,9 @@ def test_cleanup_failure_still_revokes_generation_drains_tasks_and_closes_client
             with pytest.raises(TimeoutError, match="cleanup failed"):
                 await asyncio.wait_for(task, 2)
             assert peer.closed and exited.is_set()
-            assert executor._writer is None and executor._app_client is None
+            assert executor._link is None
             assert executor.health().connection_state is ConnectionState.disconnected
-            assert not executor._pending and not executor._transfers
+            assert not executor._transfers
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)

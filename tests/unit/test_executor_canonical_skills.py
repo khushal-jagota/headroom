@@ -11,7 +11,7 @@ import pytest
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.core.db import connect, create_schema
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.contracts import CanonicalSkillSnapshot, CanonicalSkillSource
+from planner.executor.protocol import CanonicalSkillSnapshot, CanonicalSkillSource
 from planner.executor.skills import (
     install_native_skill_snapshot,
     read_canonical_skill_snapshot,

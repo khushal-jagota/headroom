@@ -7,18 +7,18 @@ import hashlib
 import os
 import re
 import stat
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from planner.core.task_settlement import wait_for_settlement
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import FILE_CHUNK_BYTES, MAX_TRANSFERS, TRANSFER_CHUNK_BYTES
-from planner.executor.contracts import FileManifest, FileSnapshot, FileTransfer
 from planner.executor.files import copy_verified, directory_descriptor, regular_descriptor
+from planner.executor.protocol import FileManifest, FileSnapshot, FileTransfer
 
 
 async def settled_io[Result](function: Callable[..., Result], *args: Any) -> Result:
@@ -227,5 +227,89 @@ def _upload_descriptor(path: Path) -> Iterator[int]:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise ValueError("upload reservation is not regular")
         yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+if TYPE_CHECKING:
+    from planner.executor.link import Link
+
+
+async def put_file(link: Link, slot: FileTransfer, path: Path) -> None:
+    client = link.file_client()
+    if slot.direction != "upload" or not re.fullmatch(r"[a-f0-9]{32}", slot.transfer_id):
+        raise ValueError("invalid upload slot")
+
+    async def chunks() -> AsyncIterator[bytes]:
+        with regular_descriptor(path) as descriptor:
+            remaining = slot.manifest.byte_count
+            digest = hashlib.sha256()
+            while remaining:
+                content = await settled_io(
+                    os.read, descriptor, min(TRANSFER_CHUNK_BYTES, remaining)
+                )
+                if not content:
+                    raise ValueError("snapshot shorter than manifest")
+                remaining -= len(content)
+                digest.update(content)
+                yield content
+            if await settled_io(os.read, descriptor, 1):
+                raise ValueError("snapshot exceeds manifest")
+            if digest.hexdigest() != slot.manifest.sha256:
+                raise ValueError("snapshot digest differs from manifest")
+
+    headers = client.headers() | {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": str(slot.manifest.byte_count),
+    }
+    async with client.session.put(
+        client.server_url + "/api/executor/files/" + slot.transfer_id,
+        data=chunks(),
+        headers=headers,
+        allow_redirects=False,
+        compress=False,
+    ) as response:
+        link.file_client()
+        if response.status != 204:
+            if 400 <= response.status < 500:
+                raise ValueError("executor upload refused")
+            raise ConnectionError("executor upload refused")
+
+
+async def get_file(
+    link: Link,
+    slot: FileTransfer,
+    path: Path,
+    progress: Callable[[str, int], Awaitable[None]] | None = None,
+) -> None:
+    client = link.file_client()
+    if slot.direction != "download" or not re.fullmatch(r"[a-f0-9]{32}", slot.transfer_id):
+        raise ValueError("invalid download slot")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        async with client.session.get(
+            client.server_url + "/api/executor/files/" + slot.transfer_id,
+            headers=client.headers() | {"Accept-Encoding": "identity"},
+            allow_redirects=False,
+        ) as response:
+            if response.status != 200 or response.headers.get("Content-Encoding"):
+                raise ConnectionError("executor download refused")
+            count, digest = 0, hashlib.sha256()
+            async for chunk in response.content.iter_chunked(TRANSFER_CHUNK_BYTES):
+                count += len(chunk)
+                if count > slot.manifest.byte_count:
+                    raise ValueError("download exceeds manifest")
+                digest.update(chunk)
+                await settled_io(_write_all, descriptor, chunk)
+                if progress is not None and chunk:
+                    await progress("download", count)
+            if count != slot.manifest.byte_count:
+                raise ValueError("download shorter than manifest")
+            if digest.hexdigest() != slot.manifest.sha256:
+                raise ValueError("download digest differs from manifest")
+            link.file_client()
+            if progress is not None:
+                await progress("finalization", count)
+            await settled_io(os.fsync, descriptor)
     finally:
         os.close(descriptor)

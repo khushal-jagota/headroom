@@ -9,7 +9,7 @@ import aiohttp
 from pydantic import ValidationError
 
 from planner.execution_identity import ProtocolRefused
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     ConnectionFailureCategory,
     ConnectionFailureOrigin,
     ConnectionPhase,

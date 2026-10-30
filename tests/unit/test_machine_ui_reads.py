@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI, Request
-from tests.support.executor_control import MessageReader
+from tests.support.executor_control import MessageReader, message_link
 from tests.support.executor_turns import persist_pending_turn
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
@@ -23,9 +23,9 @@ from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
+from planner.executor import link as link_module
 from planner.executor import vps
-from planner.executor.codec import encode_value
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     AskEvidence,
     AskReachability,
     ConnectionState,
@@ -33,9 +33,10 @@ from planner.executor.contracts import (
     JsonObject,
     WireMessage,
     WireMessageKind,
+    encode_message,
+    encode_value,
 )
 from planner.executor.remote import RemoteBackendChild
-from planner.executor.wire import encode_message
 from planner.managers import data as managers
 from planner.projects import data as projects
 from planner.tickets import data, locale_configuration
@@ -53,6 +54,9 @@ class Writer:
     def __init__(self) -> None:
         self.closed = False
         self.writes: list[WireMessage] = []
+
+    def is_closing(self) -> bool:
+        return self.closed
 
     async def send(self, data: WireMessage) -> None:
         self.writes.append(data)
@@ -82,6 +86,7 @@ def test_contact_is_receipt_not_handshake_and_retains_history_after_loss(
     assert endpoint.health()["last_contact_source"] == "vps_received_valid_executor_frame"
     tick = [100]
     monkeypatch.setattr(vps, "now_ms", lambda tick=tick: tick[0])
+    monkeypatch.setattr(link_module, "now_ms", lambda: tick[0])
     handled = asyncio.Event()
 
     async def send(message: WireMessage) -> None:
@@ -95,7 +100,6 @@ def test_contact_is_receipt_not_handshake_and_retains_history_after_loss(
         await vps.ExecutorEndpoint._handle(endpoint, message, identity, cast(Any, writer))
         handled.set()
 
-    monkeypatch.setattr(endpoint, "_send", send)
     monkeypatch.setattr(endpoint, "_measure_clock", probe)
     monkeypatch.setattr(endpoint, "_handle", handle)
 
@@ -103,7 +107,7 @@ def test_contact_is_receipt_not_handshake_and_retains_history_after_loss(
         reader = MessageReader()
         reader.feed_data(encode_message(_hello()))
         task = asyncio.create_task(endpoint._session(reader, cast(Any, Writer())))
-        while endpoint.writer is None:
+        while endpoint.link is None:
             await asyncio.sleep(0)
         assert endpoint.observed_at_ms == endpoint.last_contact_at_ms == 100
         tick[0] = 200
@@ -134,19 +138,21 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
     async def run() -> None:
         for superseded in (False, True):
             endpoint = _endpoint(tmp_db, fake_clock)
-            monkeypatch.setattr(endpoint, "_send", send)
             monkeypatch.setattr(endpoint, "_measure_clock", probe)
             tick = [100]
             monkeypatch.setattr(vps, "now_ms", lambda tick=tick: tick[0])
+            monkeypatch.setattr(link_module, "now_ms", lambda tick=tick: tick[0])
             reader = MessageReader()
             reader.feed_data(encode_message(_hello()))
             writer = Writer()
             task = asyncio.create_task(endpoint._session(reader, cast(Any, writer)))
-            while endpoint.writer is None:
+            while endpoint.link is None:
                 await asyncio.sleep(0)
             tick[0] = 200
             if superseded:
-                endpoint.writer = cast(Any, Writer())
+                assert endpoint.link is not None
+                endpoint.link.close()
+                endpoint.link = message_link(Writer(), cast(ExecutorIdentity, endpoint.identity))
                 endpoint.identity = replace(
                     cast(ExecutorIdentity, endpoint.identity), connection_generation=2
                 )
@@ -327,6 +333,7 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
     endpoint = _endpoint(tmp_db, fake_clock)
     tick = [100]
     monkeypatch.setattr(vps, "now_ms", lambda: tick[0])
+    monkeypatch.setattr(link_module, "now_ms", lambda: tick[0])
     received = asyncio.Event()
     original_handle = endpoint._handle
 
@@ -347,7 +354,7 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
         reader = MessageReader()
         reader.feed_data(encode_message(_hello()))
         task = asyncio.create_task(endpoint._session(reader, cast(Any, Writer())))
-        while endpoint.writer is None:
+        while endpoint.link is None:
             await asyncio.sleep(0)
         identity = cast(ExecutorIdentity, endpoint.identity)
         child_reference = ChildReference(identity.executor_incarnation, "child", "conversation")
@@ -371,15 +378,17 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
         tick[0] = 200
         request_id = str(uuid4())
         response: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
-        endpoint._responses[request_id] = response
+        assert endpoint.link is not None
+        endpoint.link._pending[request_id] = response
         reader.feed_data(
             encode_message(WireMessage(WireMessageKind.transport_opened, request_id, {}))
         )
-        await asyncio.wait_for(received.wait(), 1)
+        await asyncio.wait_for(response, 1)
         assert response.done()
         assert response.result().kind is WireMessageKind.transport_opened
         assert endpoint.ask_status("conversation", "1:permission:ask")["answer_available"] is False
         assert endpoint.health()["last_contact_at_ms"] == 200
+        await endpoint.close()
         reader.feed_eof()
         await task
         assert endpoint.health()["last_contact_at_ms"] == 200

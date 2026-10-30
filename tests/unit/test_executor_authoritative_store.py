@@ -12,24 +12,25 @@ from typing import TYPE_CHECKING, Any
 
 from tests.support.executor_control import MessageReader
 
-from planner.executor.contracts import decode_command_arguments
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
+from planner.executor.protocol import decode_command_arguments
 
 if TYPE_CHECKING:
     pass
 
 import pytest
+from tests.support.executor_control import message_link
 from tests.support.executor_turns import persist_pending_turn
 from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
+from tests.unit.test_executor_request_deadlines import peer
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
 from planner.core.migrations.versions.mac_vps_execution import STATEMENTS
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
-from planner.executor.codec import envelope_payload_digest
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     AnswerApplication,
     AskReachability,
     ChildCommand,
@@ -46,6 +47,7 @@ from planner.executor.contracts import (
     ReceiptDisposition,
     WireMessage,
     WireMessageKind,
+    envelope_payload_digest,
 )
 from planner.executor.store import ExecutorStore
 
@@ -376,15 +378,15 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
     from uuid import uuid4
 
     from planner.core.clock import RealClock
-    from planner.executor.contracts import (
+    from planner.executor.link_files import GenerationTransfers
+    from planner.executor.mac import as_object
+    from planner.executor.protocol import (
         ConnectionState,
         ExecutorHealth,
         WireMessage,
+        encode_message,
     )
-    from planner.executor.mac import as_object
-    from planner.executor.transfers import GenerationTransfers
     from planner.executor.vps import ExecutorEndpoint
-    from planner.executor.wire import encode_message
 
     async def run() -> None:
         endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
@@ -418,7 +420,7 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
                 FileUploadRequest(manifest(b"bytes"), CHILD),
             )
 
-        writer = Mock()
+        writer = peer()
         writer.send = AsyncMock(side_effect=setup_generation)
         monkeypatch.setattr(endpoint, "_measure_clock", AsyncMock())
         try:
@@ -428,7 +430,7 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
             assert not root_path.exists()
             assert not endpoint._transports and not endpoint._transport_roots
             assert not endpoint._upload_transfers
-            assert endpoint.writer is None and not endpoint.ready
+            assert endpoint.link is None and not endpoint.ready
         finally:
             root.cleanup()
             for task in tuple(endpoint._tasks):
@@ -449,9 +451,9 @@ def test_cancelled_input_snapshot_is_removed_after_copy_settles(
     from planner.conversation.contracts import PromptDeliveryMode
     from planner.conversation.message_content import MessageFile
     from planner.core.clock import RealClock
-    from planner.executor.contracts import WritePrompt
     from planner.executor.files import snapshot_file
-    from planner.executor.transfers import GenerationTransfers
+    from planner.executor.link_files import GenerationTransfers
+    from planner.executor.protocol import WritePrompt
     from planner.executor.vps import ExecutorEndpoint
 
     async def run() -> None:
@@ -518,15 +520,11 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
 ) -> None:
     import asyncio
     import json
-    from unittest.mock import AsyncMock, Mock
+    from unittest.mock import AsyncMock
 
     from planner.core.clock import RealClock
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import (
-        ChildCommand,
-        WireMessage,
-    )
     from planner.executor.mac import as_object
+    from planner.executor.protocol import ChildCommand, WireMessage, encode_value
     from planner.executor.vps import ExecutorEndpoint
 
     async def run() -> None:
@@ -544,12 +542,12 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
         endpoint = ExecutorEndpoint(store.db_path, RealClock())
         endpoint.store = store
         endpoint.identity = IDENTITY
-        writer = Mock()
-        endpoint.writer = writer
+        writer = peer()
+        endpoint.link = message_link(writer, IDENTITY)
         future = asyncio.get_running_loop().create_future()
         endpoint.pending_commands[command.command_id] = command, future
         send = AsyncMock()
-        monkeypatch.setattr(endpoint, "_send", send)
+        monkeypatch.setattr(endpoint.link._writer, "send", send)
         monkeypatch.setattr(endpoint, "_send_reconciliation", send)
         connection = connect(store.db_path)
         try:
@@ -576,7 +574,7 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
         await endpoint._handle_message(
             WireMessage(WireMessageKind.command_outcome, command.command_id, as_object(outcome)),
             IDENTITY,
-            writer,
+            endpoint.link,
         )
         assert not future.done() and send.await_count == 0
         await endpoint._resolve_command(outcome)
@@ -639,11 +637,7 @@ def test_refused_native_evidence_marker_survives_domain_rollback_and_metadata_tu
     from typing import cast
 
     from planner.conversation.storage import ConversationStore
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import (
-        BackendEvent,
-        BackendEventMethod,
-    )
+    from planner.executor.protocol import BackendEvent, BackendEventMethod, encode_value
 
     value: object
     if kind is EnvelopeKind.backend_event:
@@ -702,7 +696,7 @@ def test_retirement_metadata_is_monotonic_and_stale_child_cannot_replace_fresh(
     import json
 
     from planner.conversation.storage import ConversationStore
-    from planner.executor.codec import encode_value
+    from planner.executor.protocol import encode_value
 
     connection = connect(store.db_path)
     try:
@@ -832,20 +826,19 @@ def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
     from tests.unit.test_executor_request_deadlines import peer
 
     from planner.core.clock import RealClock
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import AcceptanceReceipt, WireMessage
+    from planner.executor.protocol import AcceptanceReceipt, WireMessage, encode_value
     from planner.executor.vps import ExecutorEndpoint
 
     async def exercise() -> None:
         endpoint = ExecutorEndpoint(str(tmp_path / "unused.sqlite"), RealClock())
         writer = peer()
-        endpoint.identity, endpoint.writer = IDENTITY, writer
+        endpoint.identity, endpoint.link = IDENTITY, message_link(writer, IDENTITY)
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()
-        from planner.executor.contracts import ReconnectResult
         from planner.executor.mac import as_object
+        from planner.executor.protocol import ReconnectResult
 
-        endpoint._request = AsyncMock(  # type: ignore[method-assign]
+        endpoint.link.request = AsyncMock(  # type: ignore[method-assign]
             return_value=WireMessage(
                 WireMessageKind.reconnect_result,
                 "ask",
@@ -872,9 +865,9 @@ def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
             )
 
         endpoint.accept_envelope = accept  # type: ignore[method-assign]
-        task = asyncio.create_task(endpoint._handle_message(frame, IDENTITY, writer))
+        task = asyncio.create_task(endpoint._handle_message(frame, IDENTITY, endpoint.link))
         await entered.wait()
-        await endpoint._handle_message(control, IDENTITY, writer)
+        await endpoint._handle_message(control, IDENTITY, endpoint.link)
         assert not task.done()
         assert endpoint.ready
         release.set()
@@ -897,7 +890,7 @@ def test_superseded_ingress_cannot_reach_handler_or_close_replacement(
 
     from planner.core.clock import RealClock
     from planner.executor import vps
-    from planner.executor.contracts import WireMessage
+    from planner.executor.protocol import WireMessage
 
     async def exercise() -> None:
         endpoint = vps.ExecutorEndpoint(str(tmp_path / "unused.sqlite"), RealClock())
@@ -914,7 +907,9 @@ def test_superseded_ingress_cannot_reach_handler_or_close_replacement(
             calls += 1
             if calls == 1:
                 return _hello()
-            endpoint.writer = replacement
+            assert endpoint.link is not None
+            endpoint.link.close()
+            endpoint.link = message_link(replacement, IDENTITY)
             return frame
 
         original.receive = AsyncMock(side_effect=read)
@@ -933,16 +928,16 @@ def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
 ) -> None:
     """Gap: one snapshot replaces outcome ACK/chunk aggregation without granting stale authority."""
     import asyncio
-    from unittest.mock import AsyncMock, Mock
+    from unittest.mock import AsyncMock
 
     from planner.core.clock import RealClock
-    from planner.executor.contracts import CommandState, ReconnectResult
     from planner.executor.mac import as_object
+    from planner.executor.protocol import CommandState, ReconnectResult
     from planner.executor.vps import ExecutorEndpoint
 
     async def run() -> None:
         endpoint = ExecutorEndpoint(store.db_path, RealClock())
-        endpoint.identity, endpoint.writer = IDENTITY, Mock()
+        endpoint.identity, endpoint.link = IDENTITY, message_link(peer(), IDENTITY)
         commands = tuple(
             ChildCommand(
                 phase,
@@ -985,13 +980,13 @@ def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
         request = AsyncMock(
             return_value=WireMessage(WireMessageKind.reconnect_result, "ask", as_object(result))
         )
-        monkeypatch.setattr(endpoint, "_request", request)
+        monkeypatch.setattr(endpoint.link, "request", request)
         if invalid is not None:
             with pytest.raises(ValueError):
-                await endpoint._reconnect(IDENTITY, endpoint.writer)
+                await endpoint._reconnect(IDENTITY, endpoint.link)
             assert all(not f.done() for _, f in endpoint.pending_commands.values())
         else:
-            assert await endpoint._reconnect(IDENTITY, endpoint.writer) == {"unknown"}
+            assert await endpoint._reconnect(IDENTITY, endpoint.link) == {"unknown"}
             assert endpoint.pending_commands["finished"][1].result() == outcome
             assert all(
                 not endpoint.pending_commands[key][1].done()
@@ -1020,7 +1015,7 @@ def test_ready_ack_includes_stop_registered_after_reconnect_ask(
     async def run() -> None:
         endpoint = ExecutorEndpoint(store.db_path, RealClock())
         writer = peer()
-        endpoint.identity, endpoint.writer = IDENTITY, writer
+        endpoint.identity, endpoint.link = IDENTITY, message_link(writer, IDENTITY)
         endpoint.runtime = SimpleNamespace(system=SimpleNamespace())
         command = ChildCommand(
             "late-stop",
@@ -1051,9 +1046,11 @@ def test_ready_ack_includes_stop_registered_after_reconnect_ask(
         monkeypatch.setattr(endpoint, "_emit_command", emitted)
         try:
             await endpoint._handle_message(
-                WireMessage(WireMessageKind.reconciliation_ready, "ready", {}), IDENTITY, writer
+                WireMessage(WireMessageKind.reconciliation_ready, "ready", {}),
+                IDENTITY,
+                endpoint.link,
             )
-            emitted.assert_awaited_once_with(command, IDENTITY, writer)
+            emitted.assert_awaited_once_with(command, IDENTITY, endpoint.link)
             assert caller is not None and await asyncio.wait_for(caller, 1) == outcome
         finally:
             if caller is not None and not caller.done():
@@ -1064,7 +1061,7 @@ def test_ready_ack_includes_stop_registered_after_reconnect_ask(
 
 
 def file_envelope(sequence: int, file: FileManifest) -> QueuedEnvelope:
-    from planner.executor.codec import encode_value
+    from planner.executor.protocol import encode_value
 
     payload: JsonObject = {"child": encode_value(CHILD)}
     row = replace(
@@ -1167,8 +1164,8 @@ def test_upload_cancellation_keeps_transfer_until_private_copy_settles(
     from collections.abc import AsyncIterator
 
     from planner.core.clock import RealClock
-    from planner.executor.contracts import FileUploadRequest
-    from planner.executor.transfers import GenerationTransfers
+    from planner.executor.link_files import GenerationTransfers
+    from planner.executor.protocol import FileUploadRequest
     from planner.executor.vps import ExecutorEndpoint
 
     async def run() -> None:

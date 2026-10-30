@@ -57,9 +57,9 @@ from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, 
 from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
-from planner.executor.codec import encode_value
 from planner.executor.configuration import NATIVE_WORKER_CONTEXT, ExecutorPaths
-from planner.executor.contracts import (
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import (
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
     ChildCommand,
@@ -67,8 +67,8 @@ from planner.executor.contracts import (
     CommandOutcome,
     Steer,
     WritePrompt,
+    encode_value,
 )
-from planner.executor.mac_outbox import MacOutbox
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
@@ -351,7 +351,7 @@ def test_native_context_scope_and_rebind_do_not_duplicate_composed_content(
 ) -> None:
     from planner.conversation.backends.contracts import TurnToken
     from planner.conversation.contracts import ConversationStartRequest
-    from planner.executor.contracts import CommandDisposition
+    from planner.executor.protocol import CommandDisposition
 
     async def exercise() -> None:
         db_path = str(tmp_path / "panels.sqlite")
@@ -482,7 +482,7 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
         PromptDeliverySuppressed,
         PromptDeliveryUncertain,
     )
-    from planner.executor.contracts import CommandDisposition
+    from planner.executor.protocol import CommandDisposition
     from planner.executor.store import ExecutorStore
 
     async def exercise() -> None:

@@ -8,28 +8,26 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from tests.support.executor_control import message_link
 from tests.unit.test_executor_native_runtime import ScriptedChild
 from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
 
-from planner.conversation.model_resolution.contracts import (
-    SelectionKind,
-)
+from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.core.clock import Clock
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.contracts import (
+from planner.executor.mac import as_object
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
-    ControlMessageWriter,
     EnvelopeKind,
     OutboxEntry,
     ReceiptDisposition,
     decode_command_arguments,
 )
-from planner.executor.mac import as_object
-from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
 from planner.tickets import data
@@ -66,7 +64,7 @@ def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> Exec
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
     result = ExecutorEndpoint(path, cast(Clock, SimpleNamespace()))
     result.identity = identity
-    result.writer = cast(ControlMessageWriter, Writer())
+    result.link = message_link(Writer(), identity)
     result.ready = True
     result.store.begin_connection(identity, 1)
     result.store.mark_ready(identity, 2)
@@ -83,7 +81,7 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
         from dataclasses import replace
 
         from planner.conversation.backends.contracts import TurnToken
-        from planner.executor.contracts import (
+        from planner.executor.protocol import (
             BackendEvent,
             BackendEventMethod,
             CliWrite,

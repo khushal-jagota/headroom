@@ -63,13 +63,15 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
-from planner.executor.codec import encode_value
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.contracts import (
+from planner.executor.link import Link
+from planner.executor.mac import MacExecutor
+from planner.executor.protocol import (
     AcceptanceReceipt,
     AskReachability,
     CommandDisposition,
     ConnectionState,
+    ControlMessageReader,
     ControlMessageWriter,
     EnvelopeKind,
     IpcOperation,
@@ -85,8 +87,8 @@ from planner.executor.contracts import (
     WireMessageKind,
     WritePrompt,
     decode_command_arguments,
+    encode_value,
 )
-from planner.executor.mac import MacExecutor
 from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
 
@@ -216,33 +218,39 @@ class CutReceiptEndpoint(ExecutorEndpoint):
         return await super()._accept_envelope(envelope, identity)
 
     async def _send_reconciliation(
-        self, message: WireMessage, identity: ExecutorIdentity, writer: ControlMessageWriter
+        self, message: WireMessage, identity: ExecutorIdentity, writer: Link
     ) -> bool:
         sent = await super()._send_reconciliation(message, identity, writer)
         return sent
 
-    async def _send(self, message: WireMessage) -> None:
-        if (
-            message.kind is WireMessageKind.file_transfer
-            and message.payload.get("direction") == "download"
-            and self.cut_input
-        ):
-            self.cut_input = False
-            self.input_cut_count += 1
-            assert self.writer is not None
-            self.writer.close()
-            return
-        if (
-            message.kind == WireMessageKind.receipt
-            and self.cut_submission is not None
-            and message.payload.get("submission_id") == self.cut_submission
-        ):
-            self.cut_submission = None
-            self.cut_count += 1
-            assert self.writer is not None
-            self.writer.close()
-            return
-        await super()._send(message)
+    async def _session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
+        original = writer.send
+
+        async def send(message: WireMessage) -> None:
+            if (
+                message.kind is WireMessageKind.file_transfer
+                and message.payload.get("direction") == "download"
+                and self.cut_input
+            ):
+                self.cut_input = False
+                self.input_cut_count += 1
+                assert self.link is not None
+                self.link.close()
+                return
+            if (
+                message.kind == WireMessageKind.receipt
+                and self.cut_submission is not None
+                and message.payload.get("submission_id") == self.cut_submission
+            ):
+                self.cut_submission = None
+                self.cut_count += 1
+                assert self.link is not None
+                self.link.close()
+                return
+            await original(message)
+
+        writer.send = send  # type: ignore[method-assign]
+        await super()._session(reader, writer)
 
 
 def public_ask_id(ask: AskReference) -> str:
@@ -332,8 +340,8 @@ class ExecutorHarness:
 
     async def _close(self) -> None:
         self.mac._stop.set()
-        if self.endpoint.writer is not None:
-            self.endpoint.writer.close()
+        if self.endpoint.link is not None:
+            self.endpoint.link.close()
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self.task, 3)
         if not self.task.done():
@@ -618,7 +626,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
         ClaudeAgentSdkChildLaunch,
     )
     from planner.executor.configuration import NATIVE_WORKER_CONTEXT
-    from planner.executor.contracts import ChildOperation
+    from planner.executor.protocol import ChildOperation
     from planner.runtime.conversation_start import send_to_ticket_conversation
     from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
 
@@ -790,7 +798,7 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
 
     from planner.conversation.message_content import MessageText
     from planner.conversation.model_resolution.contracts import SelectionKind
-    from planner.executor.contracts import ChildOperation
+    from planner.executor.protocol import ChildOperation
     from planner.runtime.conversation_start import (
         conversation_link_lock,
         send_to_ticket_conversation,
@@ -816,6 +824,8 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
     async def run() -> None:
         started = time.monotonic()
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         conn = connect(harness.endpoint.db_path)
         try:
             first = next(iter(harness.mac.registry.children.values()))
@@ -1055,7 +1065,7 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                         == before
                     )
                     resume = await hold_reconnection(harness, monkeypatch)
-                    await eventually(lambda: harness.mac._writer is None, "Mac link stayed open")
+                    await eventually(lambda: harness.mac._link is None, "Mac link stayed open")
                     await sink.agent_message_delta(turn, "Lost text")
                     await sink.model_thinking_happened(turn)
                     await sink.tool_call_progress(turn, tool_call_id="tool", detail="Lost progress")
@@ -1091,6 +1101,8 @@ def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
@@ -1101,8 +1113,8 @@ def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
                 generation,
                 1000,
             )
-            assert harness.endpoint.writer is not None
-            harness.endpoint.writer.close()
+            assert harness.endpoint.link is not None
+            harness.endpoint.link.close()
             await eventually(
                 lambda: (
                     harness.mac.identity.connection_generation > generation
@@ -1136,10 +1148,12 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
     async def run() -> None:
         from dataclasses import replace
 
-        from planner.executor.contracts import CliWrite
         from planner.executor.mac import as_object
+        from planner.executor.protocol import CliWrite
 
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             child = next(iter(harness.mac.registry.children.values())).reference
             native_child = next(iter(harness.mac.registry.children.values()))
@@ -1229,9 +1243,11 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             if receipt_failure != "disconnect":
-                original_send = harness.endpoint._send
+                original_send = harness.endpoint.link._writer.send
 
                 async def fail_receipt(message: WireMessage) -> None:
                     if (
@@ -1245,17 +1261,17 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                         return
                     await original_send(message)
 
-                monkeypatch.setattr(harness.endpoint, "_send", fail_receipt)
+                monkeypatch.setattr(harness.endpoint.link._writer, "send", fail_receipt)
                 if receipt_failure == "silent":
-                    monkeypatch.setattr("planner.executor.mac.REQUEST_TIMEOUT_SECONDS", 0.2)
-                    writer = harness.mac._writer
+                    monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 0.2)
+                    writer = harness.mac._link
                     assert writer is not None
                     close = writer.close
 
                     def restore_budget_and_close() -> None:
                         # Accelerate only the missing receipt, not the fresh
                         # generation's real SSH and reconciliation setup.
-                        monkeypatch.setattr("planner.executor.mac.REQUEST_TIMEOUT_SECONDS", 30.0)
+                        monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 30.0)
                         close()
 
                     monkeypatch.setattr(writer, "close", restore_budget_and_close)
@@ -1310,6 +1326,8 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             await asyncio.wait_for(harness.endpoint.close(), 2)
             await harness.native.raise_ask()
@@ -1337,10 +1355,12 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
     from tests.support.executor_catalog import ScriptedCatalogObserver
 
     from planner.conversation.contracts import PromptDeliveryMode, PromptDeliveryUncertain
-    from planner.executor.contracts import ChildCommand, ChildOperation, CommandOutcome
+    from planner.executor.protocol import ChildCommand, ChildOperation, CommandOutcome
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         release = asyncio.Event()
         late_delivery: asyncio.Task[PromptDeliveryFate] | None = None
         try:
@@ -1369,8 +1389,8 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
             )
             await asyncio.wait_for(reached.wait(), 3)
             old_mac._stop.set()
-            assert harness.endpoint.writer is not None
-            harness.endpoint.writer.close()
+            assert harness.endpoint.link is not None
+            harness.endpoint.link.close()
             await asyncio.wait_for(harness.task, 3)
 
             # Model service death with a fresh registry and incarnation. This
@@ -1442,6 +1462,8 @@ def test_binary_artifact_is_complete_before_dependent_backend_row(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             ticket_id = next(iter(harness.mac.registry.children.values())).ticket_id
             assert ticket_id is not None
@@ -1478,6 +1500,8 @@ def test_remote_replayed_usage_compaction_and_ending_preserve_core_rules(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             sink = harness.native.sink
             turn = harness.native.turn
@@ -1520,12 +1544,13 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.message_content import MessageFile, MessageText
-    from planner.executor import vps
-    from planner.executor.contracts import ChildCommand
-    from planner.executor.transfers import GenerationTransfers
+    from planner.executor.link_files import GenerationTransfers
+    from planner.executor.protocol import ChildCommand
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             await harness.native.sink.turn_ended(
@@ -1536,7 +1561,7 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
             generation = harness.mac.identity.connection_generation
-            monkeypatch.setattr(vps, "REQUEST_TIMEOUT_SECONDS", 0.15)
+            monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 0.15)
             emitted: list[ChildCommand] = []
             emit = harness.endpoint._emit_command
 
@@ -1588,7 +1613,8 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
                 )
             )
             await asyncio.wait_for(first_chunk.wait(), 2)
-            control = await harness.endpoint._request(
+            assert harness.endpoint.link is not None
+            control = await harness.endpoint.link.request(
                 WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
             )
             assert control.kind is WireMessageKind.health
@@ -1610,6 +1636,8 @@ def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
@@ -1668,10 +1696,12 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
 
     from planner.conversation.admission.contracts import AdmissionExpectation
     from planner.conversation.message_content import MessageFile, MessageText
-    from planner.executor.contracts import ChildCommand, CommandOutcome
+    from planner.executor.protocol import ChildCommand, CommandOutcome
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             await harness.native.sink.turn_ended(
@@ -1752,10 +1782,12 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.message_content import MessageFile
-    from planner.executor.contracts import ChildCommand, ChildOperation
+    from planner.executor.protocol import ChildCommand, ChildOperation
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         entered, cleanup = asyncio.Event(), asyncio.Event()
         sending = None
         try:
@@ -1801,8 +1833,8 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
             assert harness.mac.registry.ask((command_id,))[0].phase == "preparing"
             # Reconnect observes the same preparation; it does not replay the provider.
             generation = harness.mac.identity.connection_generation
-            assert harness.endpoint.writer is not None
-            harness.endpoint.writer.close()
+            assert harness.endpoint.link is not None
+            harness.endpoint.link.close()
             await eventually(
                 lambda: (
                     harness.endpoint.ready
@@ -1836,7 +1868,7 @@ def test_concurrent_identical_inputs_keep_independent_downloads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.message_content import MessageFile
-    from planner.executor.contracts import (
+    from planner.executor.protocol import (
         ChildCommand,
         ChildOperation,
         CommandDisposition,
@@ -1845,6 +1877,8 @@ def test_concurrent_identical_inputs_keep_independent_downloads(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             contents = bytes(range(256)) * 3000
             commands, paths = [], []
@@ -1909,6 +1943,8 @@ def test_historical_permission_evidence_cannot_overflow_reconnect_frame(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             child = next(iter(harness.mac.registry.children.values())).reference
             for index in range(600):
@@ -1939,6 +1975,8 @@ def test_complete_user_input_map_is_durable_before_drop_and_normalized_once(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
@@ -1961,8 +1999,8 @@ def test_complete_user_input_map_is_durable_before_drop_and_normalized_once(
                 harness.input_ask, INPUT_ANSWERS, generation, 1000
             )
             assert answer.option_id is None and answer.user_input_answers == ORDERED_INPUT_ANSWERS
-            assert harness.endpoint.writer is not None
-            harness.endpoint.writer.close()
+            assert harness.endpoint.link is not None
+            harness.endpoint.link.close()
             await eventually(
                 lambda: (
                     harness.mac.identity.connection_generation > generation
@@ -1997,6 +2035,8 @@ def test_selected_user_input_map_survives_missing_callback_without_application(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
@@ -2010,8 +2050,8 @@ def test_selected_user_input_map_survives_missing_callback_without_application(
             else:
                 harness.mac.registry.children.clear()
             generation = harness.mac.identity.connection_generation
-            assert harness.endpoint.writer is not None
-            harness.endpoint.writer.close()
+            assert harness.endpoint.link is not None
+            harness.endpoint.link.close()
             await eventually(
                 lambda: (
                     harness.mac.identity.connection_generation > generation
@@ -2038,6 +2078,8 @@ def test_user_input_request_id_reuse_gets_separate_answer_history(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
@@ -2104,6 +2146,8 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
@@ -2165,12 +2209,13 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
     from uuid import uuid4
 
     from planner.execution_identity import ExecutorIdentity
-    from planner.executor.app_transport import ControlWebSocket, ExecutorAppClient
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import ExecutorHealth
+    from planner.executor.link import ControlWebSocket, ExecutorAppClient
+    from planner.executor.protocol import ExecutorHealth, encode_value
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             identity = harness.endpoint.identity
             assert identity is not None
@@ -2216,12 +2261,14 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             reject = True
             rejected = asyncio.Event()
             refusals: list[AcceptanceReceipt] = []
-            generation, writer = harness.mac.identity, harness.endpoint.writer
-            send = harness.endpoint._send
+            generation, writer = harness.mac.identity, harness.endpoint.link
+            send = harness.endpoint.link._writer.send
 
             async def corrupt_ack(message: WireMessage) -> None:
                 if reject and message.kind is WireMessageKind.file_transfer:
@@ -2247,7 +2294,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                     refusals.append(TypeAdapter(AcceptanceReceipt).validate_python(message.payload))
                     rejected.set()
 
-            monkeypatch.setattr(harness.endpoint, "_send", corrupt_ack)
+            monkeypatch.setattr(harness.endpoint.link._writer, "send", corrupt_ack)
             ticket_id = next(iter(harness.mac.registry.children.values())).ticket_id
             assert ticket_id is not None
             artifact = harness.mac.paths.artifacts / ticket_id / "typed-ack.bin"
@@ -2275,8 +2322,9 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             await eventually(lambda: not harness.mac.spool.pending(), "Refused item did not drain")
             assert not harness.endpoint._upload_transfers
             assert artifact.read_bytes() == contents
-            assert harness.mac.identity == generation and harness.endpoint.writer is writer
-            control = await harness.endpoint._request(
+            assert harness.mac.identity == generation and harness.endpoint.link is writer
+            assert harness.endpoint.link is not None
+            control = await harness.endpoint.link.request(
                 WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
             )
             assert control.kind is WireMessageKind.health
@@ -2306,10 +2354,12 @@ def test_input_descriptor_must_validate_before_provider_invocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
     from planner.conversation.message_content import MessageFile
-    from planner.executor.contracts import ChildCommand, CommandDisposition, CommandOutcome
+    from planner.executor.protocol import ChildCommand, CommandDisposition, CommandOutcome
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             await harness.native.sink.turn_ended(
@@ -2319,7 +2369,7 @@ def test_input_descriptor_must_validate_before_provider_invocation(
                 standard_error_tail=None,
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
-            send = harness.endpoint._send
+            send = harness.endpoint.link._writer.send
 
             async def corrupt(message: WireMessage) -> None:
                 if (
@@ -2336,7 +2386,7 @@ def test_input_descriptor_must_validate_before_provider_invocation(
                     )
                 await send(message)
 
-            monkeypatch.setattr(harness.endpoint, "_send", corrupt)
+            monkeypatch.setattr(harness.endpoint.link._writer, "send", corrupt)
             kept = await harness.endpoint.runtime.message_files.keep(
                 "c_scripted", b"input bytes", media_type="application/octet-stream"
             )
@@ -2371,7 +2421,8 @@ def test_input_descriptor_must_validate_before_provider_invocation(
                 / kept.stored_file_id
             )
             assert not target.exists()
-            control = await harness.endpoint._request(
+            assert harness.endpoint.link is not None
+            control = await harness.endpoint.link.request(
                 WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
             )
             assert control.kind is WireMessageKind.health
@@ -2392,8 +2443,8 @@ async def hold_reconnection(
         await connected()
 
     monkeypatch.setattr(harness.mac, "_connected", paused)
-    assert harness.endpoint.writer is not None
-    harness.endpoint.writer.close()
+    assert harness.endpoint.link is not None
+    harness.endpoint.link.close()
     await eventually(lambda: not harness.endpoint.ready, "link did not disconnect")
     return resume
 
@@ -2403,7 +2454,7 @@ async def post_owner_answer(harness: ExecutorHarness, ask: AskReference) -> dict
     from fastapi import FastAPI
 
     from planner.conversation.api import _runtime, router
-    from planner.executor.codec import encode_value
+    from planner.executor.protocol import encode_value
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -2439,6 +2490,8 @@ def test_saved_answer_after_vps_restart_remains_unapplied(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         resume = None
         try:
             if kind is AskKind.permission:
@@ -2499,17 +2552,17 @@ def test_ready_transition_sweeps_answer_saved_after_reconciliation(
                 await harness.wait_input_reachable()
                 ask = harness.input_ask
             resume = await hold_reconnection(harness, monkeypatch)
-            request = harness.mac._request
+            request = Link.request
 
             async def pause_ready(
-                message_kind: WireMessageKind, payload: JsonObject
+                self: Link, message_kind: WireMessageKind, payload: JsonObject, **kwargs: Any
             ) -> WireMessage:
                 if message_kind is WireMessageKind.reconciliation_ready:
                     reached.set()
                     await ready_release.wait()
-                return await request(message_kind, payload)
+                return await request(self, message_kind, payload, **kwargs)
 
-            monkeypatch.setattr(harness.mac, "_request", pause_ready)
+            monkeypatch.setattr(Link, "request", pause_ready)
             resume.set()
             await asyncio.wait_for(reached.wait(), 5)
             assert not harness.endpoint.ready
@@ -2535,6 +2588,8 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         resume = None
         native_cancel = asyncio.Event()
         cancel_entered = asyncio.Event()
@@ -2613,7 +2668,7 @@ def test_revocation_before_emission_blocks_immediate_send_and_pending_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def run() -> None:
-        from planner.executor.contracts import ChildCommand, ChildOperation
+        from planner.executor.protocol import ChildCommand, ChildOperation
 
         harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         prepared, emit, replay_prepared = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -2678,6 +2733,8 @@ def test_frame_before_revocation_preserves_native_application_after_assignment_c
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         applied, callback_entered = asyncio.Event(), asyncio.Event()
         cancel_entered, cancel_finish = asyncio.Event(), asyncio.Event()
         interrupt = None
@@ -2798,10 +2855,12 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
 def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from planner.executor.contracts import ChildOperation, CommandOutcome
+    from planner.executor.protocol import ChildOperation, CommandOutcome
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         release_application, release_event = asyncio.Event(), asyncio.Event()
         application_waiting, event_waiting, stop_hint = (
             asyncio.Event(),
@@ -2950,10 +3009,12 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
     async def run() -> None:
         started = time.monotonic()
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             assert harness.endpoint.identity is not None
             identity = harness.endpoint.identity
-            writer = harness.endpoint.writer
+            writer = harness.endpoint.link
             observer = ScriptedCatalogObserver(lambda: harness.mac.identity)
             harness.mac._catalog_observer = observer
             request = CatalogRequest(
@@ -3002,7 +3063,7 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             assert harness.native.prompt_count == prompts_before
             assert journal_additions == []
             assert harness.endpoint.identity == identity
-            assert harness.endpoint.writer is writer and harness.endpoint.ready
+            assert harness.endpoint.link is writer and harness.endpoint.ready
             assert harness.mac.identity == identity
             assert harness.native.stop_count == 0
 
@@ -3034,7 +3095,7 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
 ) -> None:
     """Real TLS reply loss and in-flight completion need both readers and native ownership."""
-    from planner.executor.contracts import ChildCommand, ChildOperation
+    from planner.executor.protocol import ChildCommand, ChildOperation
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
@@ -3053,9 +3114,10 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
                 None,
                 decode_command_arguments(ChildOperation.cancel_running_turn, {}),
             )
-            mac_send = harness.mac._send
+            assert harness.mac._link is not None
+            mac_send = harness.mac._link._writer.send
             # Commands use the shared send lock directly; observe at the writer boundary.
-            writer = harness.endpoint.writer
+            writer = harness.endpoint.link
             assert writer is not None
             original_command = harness.mac._command
             dropped = False
@@ -3067,7 +3129,7 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
                     observed.set()
                     await release.wait()
 
-            async def receive(message: WireMessage) -> None:
+            async def receive(message: WireMessage, command: ChildCommand, link: Link) -> None:
                 nonlocal dropped
                 if message.request_id == command.command_id:
                     sends.append(message.request_id)
@@ -3075,7 +3137,7 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
                         dropped = True
                         observed.set()
                         return
-                await original_command(message)
+                await original_command(message, command, link)
 
             async def lose_result(message: WireMessage) -> None:
                 if message.kind is WireMessageKind.command_outcome and (
@@ -3085,17 +3147,19 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
                     return
                 await mac_send(message)
 
-            request = harness.endpoint._request
+            request = Link.request
 
-            async def ask(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+            async def ask(
+                self: Link, kind: WireMessageKind, payload: JsonObject, **kwargs: Any
+            ) -> WireMessage:
                 if kind is WireMessageKind.reconnect_ask:
                     asks.append(payload)
-                return await request(kind, payload)
+                return await request(self, kind, payload, **kwargs)
 
             monkeypatch.setattr(harness.native, "cancel_running_turn", invoke, raising=False)
             monkeypatch.setattr(harness.mac, "_command", receive)
-            monkeypatch.setattr(harness.mac, "_send", lose_result)
-            monkeypatch.setattr(harness.endpoint, "_request", ask)
+            monkeypatch.setattr(harness.mac._link._writer, "send", lose_result)
+            monkeypatch.setattr(Link, "request", ask)
             if phase == "preparing":
                 locked = harness.mac.registry.children[reference.child_id].lock
                 await locked.acquire()
@@ -3159,8 +3223,8 @@ def test_reconnect_ready_precedes_retained_output_drain(
                 queued = harness.mac.spool.pending()
                 assert len(queued) == 1
                 generation = harness.mac.identity.connection_generation
-                assert harness.endpoint.writer is not None
-                harness.endpoint.writer.close()
+                assert harness.endpoint.link is not None
+                harness.endpoint.link.close()
                 await eventually(
                     lambda: (
                         harness.mac.identity.connection_generation > generation

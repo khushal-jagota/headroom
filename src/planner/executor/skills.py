@@ -15,7 +15,7 @@ from pathlib import Path
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.core.contracts import PlannerError
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.contracts import CanonicalSkillSnapshot, CanonicalSkillSource
+from planner.executor.protocol import CanonicalSkillSnapshot, CanonicalSkillSource
 from planner.managed_skills import read_all_skill_sources, skill_description
 from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES, provision_native_backend_skills
 from planner.worker_types.store import read_definitions

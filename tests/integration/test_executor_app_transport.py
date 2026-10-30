@@ -15,10 +15,10 @@ from tests.integration.test_executor_end_to_end import boot, eventually
 from tests.support.executor_control import paused_outbox
 
 from planner.executor import app_transport
-from planner.executor.app_transport import ExecutorAppClient
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
-from planner.executor.contracts import FileManifest, FileScope, FileSnapshot
-from planner.executor.wire import encode_message
+from planner.executor.link import ExecutorAppClient
+from planner.executor.link_files import get_file, put_file
+from planner.executor.protocol import FileManifest, FileScope, FileSnapshot, encode_message
 
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
@@ -28,6 +28,8 @@ def test_native_admission_and_generation_file_slots(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             identity = harness.endpoint.identity
             assert identity is not None
@@ -44,6 +46,7 @@ def test_native_admission_and_generation_file_slots(
                         pytest.fail("untrusted TLS certificate was accepted")
             finally:
                 await production_client.close()
+            assert harness.mac._link is not None
             service = harness.endpoint._transports[identity]
 
             # This case isolates HTTP body validation; connected item acceptance
@@ -105,7 +108,7 @@ def test_native_admission_and_generation_file_slots(
                 download = await service.create_download_async(FileSnapshot(manifest, source))
                 download_url = harness.proxy.origin + "/api/executor/files/" + download.transfer_id
                 destination = tmp_path / "download"
-                await client.download(download, destination)
+                await get_file(harness.mac._link, download, destination)
                 assert destination.read_bytes() == data
                 async with client.session.get(download_url, headers=client.headers()) as response:
                     assert response.status == 409
@@ -126,7 +129,7 @@ def test_native_admission_and_generation_file_slots(
                 with monkeypatch.context() as response_patch:
                     response_patch.setattr(app_transport, "StreamingResponse", encoded_response)
                     with pytest.raises(ConnectionError, match="executor download refused"):
-                        await client.download(encoded_download, encoded_destination)
+                        await get_file(harness.mac._link, encoded_download, encoded_destination)
                 assert encoded_destination.read_bytes() == b""
                 async with client.session.get(
                     harness.proxy.origin + "/api/executor/files/" + "f" * 32,
@@ -146,12 +149,15 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             identity = harness.endpoint.identity
             assert identity is not None
             client = ExecutorAppClient(
                 harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
             )
+            assert harness.mac._link is not None
             service = harness.endpoint._transports[identity]
             data = b"x" * 1000000
             manifest = FileManifest(
@@ -183,10 +189,10 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
                 await eventually(lambda: bool(service.active), "upload did not reach native app")
                 generation = harness.mac.identity.connection_generation
                 # Native health request traverses control while file body stalls.
-                from planner.executor.contracts import WireMessageKind
+                from planner.executor.protocol import WireMessageKind
 
                 response = await asyncio.wait_for(
-                    harness.endpoint._request(
+                    harness.endpoint.link.request(
                         WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1}}
                     ),
                     2,
@@ -217,6 +223,8 @@ def test_malformed_control_cannot_fence_current_peer(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             identity = harness.endpoint.identity
             assert identity is not None
@@ -248,21 +256,24 @@ def test_duplicate_hello_preserves_active_file_reservations(
 ) -> None:
     from pydantic import TypeAdapter
 
-    from planner.executor.codec import encode_value
-    from planner.executor.contracts import (
+    from planner.executor.mac import as_object
+    from planner.executor.protocol import (
         FileTransfer,
         FileUploadRequest,
         WireMessage,
         WireMessageKind,
+        encode_value,
     )
-    from planner.executor.mac import as_object
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             identity = harness.endpoint.identity
             assert identity is not None
-            writer = harness.endpoint.writer
+            writer = harness.endpoint.link
+            assert harness.mac._link is not None
             service = harness.endpoint._transports[identity]
             child = next(iter(harness.mac.registry.children.values()))
             assert child.ticket_id is not None
@@ -302,7 +313,7 @@ def test_duplicate_hello_preserves_active_file_reservations(
                     reply = await asyncio.wait_for(socket.receive(), 2)
                     assert reply.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
             assert harness.endpoint.ready and harness.endpoint.identity == identity
-            assert harness.endpoint.writer is writer
+            assert harness.endpoint.link is writer
             assert harness.endpoint._transports[identity] is service and service.valid()
             assert slot.transfer_id in service.transfers
             native_client = ExecutorAppClient(
@@ -311,7 +322,7 @@ def test_duplicate_hello_preserves_active_file_reservations(
             try:
                 source = tmp_path / "empty-source"
                 source.write_bytes(b"")
-                await native_client.upload(slot, source)
+                await put_file(harness.mac._link, slot, source)
                 assert slot.transfer_id not in service.transfers
                 assert not harness.endpoint.store.file_target(manifest).exists()
                 harness.endpoint.store.install_files((manifest,))
@@ -338,8 +349,8 @@ def test_native_provider_report_reaches_core_once_without_blocking_steer(
     )
     from planner.conversation.message_content import text_message_content
     from planner.core.db import connect
-    from planner.executor.contracts import WireMessageKind
     from planner.executor.mac import as_object
+    from planner.executor.protocol import WireMessageKind
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch, backend_key=ConversationBackendKey.claude)
@@ -375,7 +386,7 @@ def test_native_provider_report_reaches_core_once_without_blocking_steer(
                 assert payload["blocks_submission"] is False
             finally:
                 connection.close()
-            replay = await harness.mac._request(WireMessageKind.envelope, as_object(envelope))
+            replay = await harness.mac.request(WireMessageKind.envelope, as_object(envelope))
             assert replay.kind is WireMessageKind.receipt
             assert harness.events("provider_selection_reported") == 1
             before = harness.native.prompt_count
@@ -415,6 +426,8 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        assert harness.endpoint.link is not None
+        assert harness.mac._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             first_turn = harness.native.turn

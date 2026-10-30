@@ -464,6 +464,21 @@ and reconnects through one command-and-child ask, readiness, and outbox draining
 After a VPS restart, that ask causes each old child to be stopped before fresh work.
 There is no fallback transport. Lost replies leave native effects unconfirmed rather than repeating them.
 
+Both ends use the same Link in `src/planner/executor/link.py`. It matches replies,
+serializes sends, bounds messages, and fails waiting requests
+when that connection is lost. A request's deadline includes waiting to send. A durable
+request timeout closes only its own connection; a catalog read can time out without
+closing shared work. A closed Link cannot send or dispatch old frames through a
+replacement connection. Item validation returns a refusal while leaving other work
+connected. Unreadable messages and protocol mismatches close the connection.
+
+File bytes use `link_files.py`, with bounded HTTP streaming and length and hash
+checks. Reservations belong to one connection generation. The domain code still
+checks which child may send or receive each file, and installs files before accepting
+dependent work. `protocol.py` holds the shared message shapes and codecs; execution
+identity types remain in their separate leaf file. The Link does not own children,
+commands, the outbox, or database writes.
+
 Connection diagnostics omit credentials, addresses, paths, exception messages, and remote payloads.
 Active transfers prevent quiescence. The Manager coordinates compatible peers through the existing identity-bound application procedure.
 A coding candidate grants no permission for a live route or peer change.

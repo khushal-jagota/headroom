@@ -17,7 +17,8 @@ import pytest
 from planner.execution_identity import ChildReference
 from planner.executor import files
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.contracts import (
+from planner.executor.mac import MacExecutor, as_object
+from planner.executor.protocol import (
     AcceptanceReceipt,
     IpcOperation,
     IpcRequest,
@@ -27,7 +28,6 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.mac import MacExecutor, as_object
 
 
 def test_mac_full_flush_failure_propagates_after_regular_flush(
@@ -78,7 +78,7 @@ def ipc_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[MacExec
             ),
         )
 
-    monkeypatch.setattr(mac, "_request", accept)
+    monkeypatch.setattr(mac, "request", accept)
     return mac, IpcRequest(
         "original-submission",
         IpcOperation.write,

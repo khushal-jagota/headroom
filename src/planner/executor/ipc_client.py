@@ -18,7 +18,7 @@ from planner.executor.configuration import (
     MAX_ENVELOPE_BYTES,
     executor_paths,
 )
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     IpcOperation,
     IpcRequest,
     IpcResponse,
@@ -26,8 +26,8 @@ from planner.executor.contracts import (
     IpcWritePayload,
     JsonObject,
     UnconfirmedCliResult,
+    encode_frame,
 )
-from planner.executor.wire import encode_frame
 
 
 def request(operation: IpcOperation, payload: JsonObject) -> IpcResponse:

@@ -1,4 +1,4 @@
-"""Request failures disconnect their generation without claiming operation refusal."""
+"""Shared Link deadlines and the domain's separate catalog failure authority."""
 
 from __future__ import annotations
 
@@ -7,73 +7,79 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from tests.support.executor_control import MessageReader
+from tests.support.executor_control import MessageReader, deliver, message_link
 
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
 from planner.executor import mac
-from planner.executor.contracts import WireMessage, WireMessageKind
 from planner.executor.mac import MacExecutor
+from planner.executor.protocol import WireMessage, WireMessageKind
 from planner.executor.vps import ExecutorEndpoint
+
+IDENTITY = ExecutorIdentity(
+    PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "12345678-1234-5678-1234-567812345678", 1
+)
 
 
 async def stalled_send(*_: object) -> None:
     await asyncio.Event().wait()
 
 
-def requester(writer: Any) -> MacExecutor:
-    executor = MacExecutor.__new__(MacExecutor)
-    executor._writer = writer
-    executor._pending = {}
-    executor._handshake_accepted = False
-    executor._write_lock = asyncio.Lock()
-    return executor
-
-
 def peer() -> Any:
     writer = Mock()
     writer.send = AsyncMock()
+    writer.wait_closed = AsyncMock()
+    writer.is_closing.return_value = False
     return writer
 
 
+def requester(writer: Any) -> MacExecutor:
+    executor = MacExecutor.__new__(MacExecutor)
+    executor.identity = IDENTITY
+    executor._link = message_link(writer, IDENTITY)
+    executor._handshake_accepted = False
+    return executor
+
+
 @pytest.mark.parametrize("blocked", ["response", "drain", "lock"])
-def test_absolute_request_deadline_covers_send_and_response(
-    monkeypatch: pytest.MonkeyPatch, blocked: str
-) -> None:
+def test_absolute_request_deadline_covers_send_and_response(blocked: str) -> None:
     async def run() -> None:
-        monkeypatch.setattr(mac, "REQUEST_TIMEOUT_SECONDS", 0.02)
         writer = peer()
-        executor = requester(writer)
+        link = message_link(writer, IDENTITY)
         if blocked == "drain":
             writer.send.side_effect = stalled_send
         if blocked == "lock":
-            await executor._write_lock.acquire()
-        with pytest.raises(TimeoutError):
-            await executor._request(WireMessageKind.envelope, {})
-        assert not executor._pending
-        writer.close.assert_called_once_with()
-        assert writer.send.call_count == (0 if blocked == "lock" else 1)
-        if blocked == "lock":
-            executor._write_lock.release()
+            await link._lock.acquire()
+        try:
+            with pytest.raises(TimeoutError):
+                await link.request(WireMessageKind.envelope, {}, timeout=0.02)
+            assert not link._pending
+            writer.close.assert_called_once_with()
+            assert writer.send.call_count == (0 if blocked == "lock" else 1)
+        finally:
+            if blocked == "lock":
+                link._lock.release()
+            cast_reader = link._reader
+            assert isinstance(cast_reader, MessageReader)
+            cast_reader.feed_eof()
+            await link.wait_closed()
 
     asyncio.run(run())
 
 
-def test_timeout_does_not_close_replacement_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_timeout_does_not_close_replacement_generation() -> None:
     async def run() -> None:
-        monkeypatch.setattr(mac, "REQUEST_TIMEOUT_SECONDS", 0.02)
         original, replacement = peer(), peer()
-        executor = requester(original)
-        task = asyncio.create_task(executor._request(WireMessageKind.envelope, {}))
+        first, second = message_link(original, IDENTITY), message_link(replacement, IDENTITY)
+        task = asyncio.create_task(first.request(WireMessageKind.envelope, {}, timeout=0.02))
         while not original.send.called:
             await asyncio.sleep(0)
-        executor._writer = replacement
         with pytest.raises(TimeoutError):
             await task
         original.close.assert_called_once_with()
         replacement.close.assert_not_called()
         replacement.send.assert_not_called()
-        assert not executor._pending
+        assert not first._pending and not second._pending
 
     asyncio.run(run())
 
@@ -81,19 +87,19 @@ def test_timeout_does_not_close_replacement_generation(monkeypatch: pytest.Monke
 def test_generation_change_while_waiting_for_send_never_writes_replacement() -> None:
     async def run() -> None:
         original, replacement = peer(), peer()
-        executor = requester(original)
-        await executor._write_lock.acquire()
-        task = asyncio.create_task(executor._request(WireMessageKind.envelope, {}))
-        while not executor._pending:
+        link = message_link(original, IDENTITY)
+        await link._lock.acquire()
+        task = asyncio.create_task(link.request(WireMessageKind.envelope, {}))
+        while not link._pending:
             await asyncio.sleep(0)
-        executor._writer = replacement
-        executor._write_lock.release()
+        link.close()
+        link._lock.release()
         with pytest.raises(ConnectionError):
             await task
         original.send.assert_not_called()
         replacement.send.assert_not_called()
         replacement.close.assert_not_called()
-        assert not executor._pending
+        assert not link._pending
 
     asyncio.run(run())
 
@@ -101,14 +107,14 @@ def test_generation_change_while_waiting_for_send_never_writes_replacement() -> 
 def test_external_cancellation_preserves_writer_and_cleans_pending() -> None:
     async def run() -> None:
         writer = peer()
-        executor = requester(writer)
-        task = asyncio.create_task(executor._request(WireMessageKind.envelope, {}))
+        link = message_link(writer, IDENTITY)
+        task = asyncio.create_task(link.request(WireMessageKind.envelope, {}))
         while not writer.send.called:
             await asyncio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert not executor._pending
+        assert not link._pending
         writer.close.assert_not_called()
 
     asyncio.run(run())
@@ -119,24 +125,20 @@ def test_unexpected_request_task_failure_closes_original_generation(failure: str
     async def run() -> None:
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
         original, replacement = peer(), peer()
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
-        )
-        endpoint.identity = identity
-        endpoint.writer = original
-        endpoint._responses = {}
-        endpoint._catalog_responses = {}
+        endpoint.identity = IDENTITY
+        link = message_link(original, IDENTITY)
+        endpoint.link = link
+
+        async def fail(*args: object, **kwargs: object) -> None:
+            endpoint.link = message_link(replacement, IDENTITY)
+            raise RuntimeError("private operation details")
+
+        handler = AsyncMock(side_effect=fail)
         if failure == "operation":
-
-            async def fail(*args: object) -> None:
-                endpoint.writer = replacement
-                raise RuntimeError("private operation details")
-
-            handler = AsyncMock(side_effect=fail)
             endpoint._read = handler  # type: ignore[method-assign]
             payload: Any = {
                 "child": {
-                    "executor_incarnation": "incarnation",
+                    "executor_incarnation": IDENTITY.executor_incarnation,
                     "child_id": "child",
                     "conversation_id": "conversation",
                 },
@@ -144,18 +146,10 @@ def test_unexpected_request_task_failure_closes_original_generation(failure: str
                 "params": {},
             }
         else:
-
-            async def fail_send(*args: object) -> None:
-                endpoint.writer = replacement
-                raise RuntimeError("private send details")
-
-            handler = AsyncMock(side_effect=fail_send)
-            endpoint._send = handler  # type: ignore[method-assign]
+            link.tell = handler  # type: ignore[method-assign]
             payload = {}
-        await asyncio.create_task(
-            endpoint._handle(
-                WireMessage(WireMessageKind.read_request, "request", payload), identity, original
-            )
+        await endpoint._handle(
+            WireMessage(WireMessageKind.read_request, "request", payload), IDENTITY, link
         )
         handler.assert_awaited_once()
         original.close.assert_called_once_with()
@@ -176,51 +170,38 @@ def test_request_task_cancellation_propagates() -> None:
         with pytest.raises(asyncio.CancelledError):
             await endpoint._handle(
                 WireMessage(WireMessageKind.health, "request", {}),
-                ExecutorIdentity(
-                    PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
-                ),
-                original,
+                IDENTITY,
+                message_link(original, IDENTITY),
             )
         original.close.assert_not_called()
 
     asyncio.run(run())
 
 
-def test_late_response_after_timeout_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    from planner.executor.wire import encode_message
-
+def test_late_response_after_cancellation_is_ignored() -> None:
     async def run() -> None:
-        monkeypatch.setattr(mac, "REQUEST_TIMEOUT_SECONDS", 0.02)
         writer = peer()
-        executor = requester(writer)
-        task = asyncio.create_task(executor._request(WireMessageKind.envelope, {}))
-        while not executor._pending:
+        link = message_link(writer, IDENTITY)
+        task = asyncio.create_task(link.request(WireMessageKind.envelope, {}))
+        while not writer.send.called:
             await asyncio.sleep(0)
-        request_id = next(iter(executor._pending))
-        with pytest.raises(TimeoutError):
+        request_id = next(iter(link._pending))
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
             await task
-        reader = MessageReader()
-        reader.feed_data(encode_message(WireMessage(WireMessageKind.receipt, request_id, {})))
-        reader.feed_eof()
-        with pytest.raises(ConnectionError):
-            await executor._read_loop(reader)
-        assert not executor._pending
+        await deliver(link, WireMessage(WireMessageKind.receipt, request_id, {}))
+        assert not link._pending and not link.is_closing()
 
     asyncio.run(run())
 
 
-# Catalog reads have different failure authority than durable operations. These
-# cases reuse the request fixtures above to prove the separate resource boundary.
 def catalog_endpoint(writer: Any) -> ExecutorEndpoint:
     endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
-    endpoint.writer = writer
+    endpoint.link = message_link(writer, IDENTITY)
     endpoint.identity = ExecutorIdentity(
         PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "12345678-1234-5678-1234-567812345678", 1
     )
     endpoint.ready = True
-    endpoint._catalog_responses = {}
-    endpoint._responses = {}
-    endpoint._send_lock = asyncio.Lock()
     endpoint._tasks = set()
     endpoint.clock_sample = None
     return endpoint
@@ -261,18 +242,18 @@ def test_catalog_absolute_deadline_never_closes_shared_writer(
         monkeypatch.setattr(vps, "CATALOG_CANCEL_TIMEOUT_SECONDS", 0.02)
         writer = peer()
         endpoint = catalog_endpoint(writer)
-        assert endpoint.identity is not None
+        assert endpoint.identity is not None and endpoint.link is not None
         if blocked == "drain":
             writer.send.side_effect = stalled_send
         if blocked == "lock":
-            await endpoint._send_lock.acquire()
+            await endpoint.link._lock.acquire()
         result = await endpoint.observe_catalog(catalog_request(endpoint.identity), attempt_id="a")
         assert isinstance(result, CatalogUnavailable)
         assert result.reason is ValidationReason.timeout
-        assert not endpoint._catalog_responses
+        assert not endpoint.link._pending
         writer.close.assert_not_called()
         if blocked == "lock":
-            endpoint._send_lock.release()
+            endpoint.link._lock.release()
         await settle_cancels(endpoint)
         writer.close.assert_not_called()
 
@@ -290,35 +271,36 @@ def test_catalog_revocation_cannot_write_replacement_or_accept_late_reply(
     async def run() -> None:
         original, replacement = peer(), peer()
         endpoint = catalog_endpoint(original)
-        assert endpoint.identity is not None
+        assert endpoint.identity is not None and endpoint.link is not None
         identity = endpoint.identity
         request = catalog_request(identity)
-        await endpoint._send_lock.acquire()
+        locked_link = endpoint.link
+        await locked_link._lock.acquire()
         task = asyncio.create_task(endpoint.observe_catalog(request, attempt_id="caller"))
-        while not endpoint._catalog_responses:
+        while not endpoint.link._pending:
             await asyncio.sleep(0)
-        request_id = next(iter(endpoint._catalog_responses))
+        request_id = next(iter(endpoint.link._pending))
         if revocation == "cancel":
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
         else:
-            endpoint.writer = replacement
+            endpoint.link.close()
+            endpoint.link = message_link(replacement, IDENTITY)
             endpoint.identity = replace(identity, connection_generation=2)
-        endpoint._send_lock.release()
+        locked_link._lock.release()
         if revocation == "generation":
             result = await task
             assert result.kind == "unavailable"
         await settle_cancels(endpoint)
-        assert endpoint.writer is not None
-        await endpoint._handle_message(
+        assert endpoint.link is not None
+        await deliver(
+            endpoint.link,
             WireMessage(WireMessageKind.catalog_response, request_id, as_object(request)),
-            endpoint.identity,
-            endpoint.writer,
         )
-        assert not endpoint._catalog_responses
+        assert not endpoint.link._pending
         replacement.send.assert_not_called()
-        original.close.assert_not_called()
+        assert original.close.call_count == (1 if revocation == "generation" else 0)
         replacement.close.assert_not_called()
 
     asyncio.run(run())
@@ -345,13 +327,13 @@ def test_catalog_reply_binds_context_schema_and_attempt_without_refreshing_time(
 
     from planner.conversation.contracts import ConversationBackendKey
     from planner.conversation.model_resolution.contracts import CatalogObservation, CatalogResponse
-    from planner.executor.contracts import ClockSample
     from planner.executor.mac import as_object
+    from planner.executor.protocol import ClockSample
 
     async def run() -> None:
         writer = peer()
         endpoint = catalog_endpoint(writer)
-        assert endpoint.identity is not None
+        assert endpoint.identity is not None and endpoint.link is not None
         identity = endpoint.identity
         request = catalog_request(identity)
         observer = ScriptedCatalogObserver(lambda: identity)
@@ -359,7 +341,7 @@ def test_catalog_reply_binds_context_schema_and_attempt_without_refreshing_time(
         task = asyncio.create_task(endpoint.observe_catalog(request, attempt_id="caller"))
         while not writer.send.called:
             await asyncio.sleep(0)
-        request_id = next(iter(endpoint._catalog_responses))
+        request_id = next(iter(endpoint.link._pending))
         result = await observer.observe(
             request.backend_key,
             workspace=request.expected_context.workspace,
@@ -405,7 +387,7 @@ def test_catalog_reply_binds_context_schema_and_attempt_without_refreshing_time(
                 "credential": "reject",
             }
         kind = WireMessageKind.health if mismatch == "kind" else WireMessageKind.catalog_response
-        await endpoint._handle_message(WireMessage(kind, request_id, payload), identity, writer)
+        await deliver(endpoint.link, WireMessage(kind, request_id, payload))
         received = await task
         if mismatch is None:
             assert isinstance(received, CatalogObservation)
@@ -423,7 +405,7 @@ def test_catalog_reply_binds_context_schema_and_attempt_without_refreshing_time(
 def catalog_native(writer: Any) -> MacExecutor:
     from tests.support.executor_catalog import ScriptedCatalogObserver
 
-    from planner.executor.contracts import ConnectionState
+    from planner.executor.protocol import ConnectionState
 
     executor = requester(writer)
     executor.identity = ExecutorIdentity(
@@ -442,8 +424,8 @@ def catalog_native(writer: Any) -> MacExecutor:
 def test_native_catalog_admission_rejects_unready_or_unscoped_authority(invalid: str) -> None:
     from tests.support.executor_catalog import ScriptedCatalogObserver
 
-    from planner.executor.contracts import ConnectionState
     from planner.executor.mac import as_object
+    from planner.executor.protocol import ConnectionState
 
     async def run() -> None:
         writer = peer()
@@ -486,8 +468,8 @@ def test_native_catalog_capacity_survives_cancellation_until_physical_cleanup(
 ) -> None:
     from tests.support.executor_catalog import ScriptedCatalogObserver
 
-    from planner.executor.contracts import ConnectionState
     from planner.executor.mac import as_object
+    from planner.executor.protocol import ConnectionState
 
     async def run() -> None:
         monkeypatch.setattr(mac, "MAX_CATALOG_OBSERVATIONS", 1)
@@ -516,7 +498,7 @@ def test_native_catalog_capacity_survives_cancellation_until_physical_cleanup(
             executor._catalog_frame(cancel)
         elif cause == "replacement_writer":
             replacement = peer()
-            executor._writer = replacement
+            executor._link = message_link(replacement, IDENTITY)
             executor._catalog_frame(
                 WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload)
             )

@@ -93,7 +93,7 @@ from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
 from planner.execution_identity import ChildReference
-from planner.executor.contracts import (
+from planner.executor.protocol import (
     AcceptanceReceipt,
     ChildCommand,
     ExecutorEffectAcceptor,

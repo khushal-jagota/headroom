@@ -504,7 +504,7 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
                 from pydantic import TypeAdapter
 
                 from planner.conversation.system import _HeldPrompt
-                from planner.executor.codec import encode_value
+                from planner.executor.protocol import encode_value
 
                 assert (
                     tickets.read_ticket(conn, ticket.id).employee_launch_reasoning_effort == "high"
@@ -720,7 +720,7 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
     from planner.conversation.system import _HeldPrompt
     from planner.core.authctx import RequestContext
     from planner.core.clock import TestClock
-    from planner.executor.codec import encode_value
+    from planner.executor.protocol import encode_value
     from planner.runtime import conversation_start
     from planner.tickets import api as ticket_api
     from planner.tickets import data as tickets

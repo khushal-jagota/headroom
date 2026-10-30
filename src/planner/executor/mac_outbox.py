@@ -20,7 +20,6 @@ from uuid import uuid4
 from pydantic import TypeAdapter
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
-from planner.executor.codec import encode_value, envelope_payload_digest
 from planner.executor.configuration import (
     FILE_CHUNK_BYTES,
     FILE_MODIFIED_WINDOW_NS,
@@ -29,7 +28,16 @@ from planner.executor.configuration import (
     OUTBOX_RETRY_SECONDS,
     ExecutorPaths,
 )
-from planner.executor.contracts import (
+from planner.executor.files import (
+    contained_path,
+    copy_verified,
+    directory_descriptor,
+    fsync_directory,
+    fsync_file,
+    regular_descriptor,
+    safe_component,
+)
+from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
     FileManifest,
@@ -43,17 +51,10 @@ from planner.executor.contracts import (
     ReceiptDisposition,
     WireMessage,
     WireMessageKind,
+    encode_message,
+    encode_value,
+    envelope_payload_digest,
 )
-from planner.executor.files import (
-    contained_path,
-    copy_verified,
-    directory_descriptor,
-    fsync_directory,
-    fsync_file,
-    regular_descriptor,
-    safe_component,
-)
-from planner.executor.wire import encode_message
 
 DATABASE_NAME = "outbox.sqlite3"
 SCHEMA = """
@@ -523,7 +524,7 @@ class MacOutbox:
             try:
                 response = await link.request(WireMessageKind.envelope, self._object(envelope))
                 if response.kind is WireMessageKind.missing_files:
-                    from planner.executor.contracts import FileManifest
+                    from planner.executor.protocol import FileManifest
 
                     missing = TypeAdapter(tuple[FileManifest, ...]).validate_python(
                         response.payload.get("files")

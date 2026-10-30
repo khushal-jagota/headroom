@@ -5,11 +5,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import cast
 from unittest.mock import patch
 
-from planner.executor.app_transport import ControlWebSocket
-from planner.executor.contracts import OutboxLink, QueuedEnvelope
+from planner.execution_identity import ExecutorIdentity
+from planner.executor.link import ControlWebSocket, Link
 from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import (
+    ControlMessageWriter,
+    OutboxLink,
+    QueuedEnvelope,
+    WireMessage,
+    encode_message,
+)
 
 
 class BinaryPeer:
@@ -56,3 +64,13 @@ async def paused_outbox(outbox: MacOutbox) -> AsyncIterator[None]:
             yield
         finally:
             release.set()
+
+
+def message_link(writer: object, identity: ExecutorIdentity) -> Link:
+    """Use the real matching and generation logic over the existing message double."""
+    return Link(identity, MessageReader(), cast(ControlMessageWriter, writer))
+
+
+async def deliver(link: Link, message: WireMessage) -> None:
+    cast(MessageReader, link._reader).feed_data(encode_message(message))
+    await asyncio.sleep(0)
