@@ -454,14 +454,12 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
     from planner.executor.runtime import NativeChildRegistry, _Child
 
     async def run() -> None:
-        valid = True
         prepared = False
 
         class Native:
             async def write_prompt(self, *args: object, **kwargs: object) -> None:
-                nonlocal valid, prepared
+                nonlocal prepared
                 prepared = True
-                valid = False
                 registry._retiring_children.add(reference.child_id)
                 check = current_emission_check()
                 assert check is not None
@@ -477,7 +475,6 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
             spool=FilesystemSpool(tmp_path / "spool"),
             factory=cast(Any, None),
             message_files=ConversationMessageFiles(tmp_path / "db"),
-            admission_observer=SimpleNamespace(verify_context=lambda _: valid),
         )
         child = _Child(
             reference,

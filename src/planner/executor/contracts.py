@@ -549,8 +549,6 @@ class WireMessageKind(StrEnum):
     catalog_response = "catalog_response"
     catalog_cancel = "catalog_cancel"
     health = "health"
-    quiesce = "quiesce"
-    quiescence = "quiescence"
     error = "error"
 
 

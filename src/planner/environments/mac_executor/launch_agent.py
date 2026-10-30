@@ -16,9 +16,8 @@ from planner.environments.mac_executor.contracts import (
 )
 
 
-def validate_executor_launch(launch: ExecutorLaunchOptions, *, check_files: bool) -> None:
+def validate_executor_launch(launch: ExecutorLaunchOptions) -> None:
     """Validate the explicit HTTPS origin and logical executor identity offline."""
-    del check_files  # There are no SSH credential or host-pin files.
     try:
         origin = urlsplit(launch.panels_server_url)
         port = origin.port
@@ -67,7 +66,7 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
         if any(not entry or not Path(entry).is_absolute() for entry in entries):
             raise MacExecutorConfigurationError("backend PATH requires absolute directories")
         backend_path = launch.backend_path
-    validate_executor_launch(launch, check_files=True)
+    validate_executor_launch(launch)
     arguments += [
         "--application-revision",
         launch.application_revision,

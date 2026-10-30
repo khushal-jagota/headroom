@@ -36,7 +36,7 @@ STATEMENTS = (
         connection_generation INTEGER NOT NULL, reachability TEXT NOT NULL,
         observed_at_ms INTEGER NOT NULL,
         answer_id TEXT UNIQUE, option_id TEXT, accepted_at_vps_ms INTEGER,
-        applied_at_mac_ms INTEGER, action_json TEXT, clock_sample_json TEXT,
+        applied_at_mac_ms INTEGER,
         CHECK((ask_kind='permission' AND questions_json IS NULL)
            OR (ask_kind='user_input' AND questions_json IS NOT NULL)),
         CHECK((answer_id IS NULL AND option_id IS NULL AND accepted_at_vps_ms IS NULL

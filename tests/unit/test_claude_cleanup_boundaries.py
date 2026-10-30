@@ -112,7 +112,6 @@ def test_claude_stop_result_controls_canonical_retirement(
         registry, clients = claude_registry(tmp_path, monkeypatch)
         observer = ScriptedCatalogObserver(lambda: IDENTITY)
         observer.model = "test"
-        registry.admission_observer = observer
         monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
         ticket = tickets.create_ticket(
             tmp_db,

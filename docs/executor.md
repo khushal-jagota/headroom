@@ -276,7 +276,7 @@ Claude cleanup retains the exact SDK client until disconnect succeeds.
 The adapter also retains the SDK process object and requires its exit before transport cleanup succeeds.
 An exception or cancellation preserves uncertainty and the cleanup identity, even if the SDK clears its own process field.
 An explicit later stop checks the same retained process. It cannot infer exit from an empty SDK field.
-These rules govern ordinary stop, source moves, and executor quiescence through the same adapter contract.
+These rules govern ordinary stop and executor quiescence through the same adapter contract.
 Late outcomes require exact retained command evidence for the original child and incarnation.
 That historical evidence grants no renewed execution, callback, event, or CLI authority.
 If the original command evidence is absent, delivery remains uncertain.

@@ -125,10 +125,8 @@ class NativeChildRegistry:
         message_files: ConversationMessageFiles,
         paths: ExecutorPaths | None = None,
         workspace_home: Path | None = None,
-        admission_observer: object | None = None,
     ) -> None:
         self.workspace_home = workspace_home or Path.home()
-        self.admission_observer = admission_observer
         self.paths = paths
         self.incarnation = incarnation
         self.spool = spool

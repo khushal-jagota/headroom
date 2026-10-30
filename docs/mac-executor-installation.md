@@ -286,7 +286,7 @@ PY
 ```
 
 If inspection refuses, preserve the root and stop. Do not repair or convert it through this installation procedure.
-Earlier draft journal formats have no reader or converter; see [the executor reference](executor.md#fresh-installation-and-retained-journals). Databases that ran earlier Mac/VPS branch migrations must be rebuilt.
+Earlier draft journal formats have no reader or converter. Databases that ran earlier Mac/VPS branch migrations must be rebuilt.
 
 ## Render and start one LaunchAgent
 
