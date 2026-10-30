@@ -25,9 +25,10 @@ from planner.executor.contracts import (
     EnvelopeKind,
     ExecutorIdentity,
     JsonObject,
+    OutboxEntry,
     QueuedEnvelope,
 )
-from planner.executor.journal import FilesystemSpool
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mutations import cli_mutation, write_ticket_mutation
 from planner.executor.store import ExecutorStore
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
@@ -78,7 +79,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
     install_probe_registry()
     seed_probe_worker_type(tmp_db)
     tmp_db.commit()
-    spool: FilesystemSpool | None = None
+    spool: MacOutbox | None = None
     try:
         database_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
         store = ExecutorStore(database_path)
@@ -131,12 +132,14 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         write = CliWrite(operation, arguments, child, TurnToken(child.conversation_id, 1))
         payload = encode_value(write)
         assert isinstance(payload, dict)
-        spool = FilesystemSpool(tmp_path / "mac_spool")
-        envelope = spool.mint_envelope(
-            conversation_id=child.conversation_id,
-            kind=EnvelopeKind.cli_write,
-            payload=payload,
-            submission_id="original_proposal",
+        spool = MacOutbox(tmp_path / "mac_spool")
+        envelope = spool.add(
+            OutboxEntry(
+                conversation_id=child.conversation_id,
+                kind=EnvelopeKind.cli_write,
+                payload=payload,
+                submission_id="original_proposal",
+            )
         )
         writer_calls: list[str] = []
         inject_cut = cut_before_receipt
@@ -226,7 +229,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         assert len(writer_calls) == 1 + int(cut_before_receipt)
         assert (
             tmp_db.execute(
-                "SELECT count(*) FROM executor_receipts WHERE sender_id=? AND submission_id=?",
+                "SELECT count(*) FROM mac_inbox_positions WHERE sender_id=? AND submission_id=?",
                 (envelope.sender_id, envelope.submission_id),
             ).fetchone()[0]
             == 1

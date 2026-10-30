@@ -238,7 +238,7 @@ def test_connection_reports_precise_session_phase_before_cleanup(
             fail("reconnect_ask")
             return WireMessage(kind, "reply", {"ready": True})
 
-        async def replay() -> None:
+        async def replay(link: object) -> None:
             fail("steady_state")
 
         monkeypatch.setattr(mac, "ExecutorAppClient", Mock(return_value=client))
@@ -249,7 +249,7 @@ def test_connection_reports_precise_session_phase_before_cleanup(
 
         monkeypatch.setattr(executor, "_read_loop", read_forever)
         monkeypatch.setattr(executor, "_request", request)
-        monkeypatch.setattr(executor, "_replay", replay)
+        monkeypatch.setattr(executor.spool, "send_pending", replay)
         try:
             with pytest.raises(ValueError) as caught:
                 await executor._connected()

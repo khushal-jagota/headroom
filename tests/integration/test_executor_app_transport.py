@@ -12,6 +12,7 @@ import aiohttp
 import pytest
 from starlette.responses import StreamingResponse
 from tests.integration.test_executor_end_to_end import boot, eventually
+from tests.support.executor_control import paused_outbox
 
 from planner.executor import app_transport
 from planner.executor.app_transport import ExecutorAppClient
@@ -304,8 +305,6 @@ def test_native_provider_report_reaches_core_once_without_blocking_steer(
     """Reuse the TLS host to prove native report dispatch and durable replay correlation."""
     import json
 
-    from pydantic import TypeAdapter
-
     from planner.conversation.contracts import (
         ConversationBackendKey,
         PromptDeliveryMode,
@@ -313,7 +312,7 @@ def test_native_provider_report_reaches_core_once_without_blocking_steer(
     )
     from planner.conversation.message_content import text_message_content
     from planner.core.db import connect
-    from planner.executor.contracts import QueuedEnvelope, WireMessageKind
+    from planner.executor.contracts import WireMessageKind
     from planner.executor.mac import as_object
 
     async def run() -> None:
@@ -321,13 +320,15 @@ def test_native_provider_report_reaches_core_once_without_blocking_steer(
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             turn = harness.native.turn
-            await harness.native.sink.provider_selection_reported(
-                turn,
-                provider=ConversationBackendKey.claude,
-                source_kind="response_model",
-                model="a-different-concrete-model",
-                child_lifetime="captured-native-lifetime",
-            )
+            async with paused_outbox(harness.mac.spool):
+                await harness.native.sink.provider_selection_reported(
+                    turn,
+                    provider=ConversationBackendKey.claude,
+                    source_kind="response_model",
+                    model="a-different-concrete-model",
+                    child_lifetime="captured-native-lifetime",
+                )
+                envelope = harness.mac.spool.pending()[-1]
             await eventually(
                 lambda: harness.events("provider_selection_reported") == 1,
                 "native model report did not reach the durable core",
@@ -348,13 +349,6 @@ def test_native_provider_report_reaches_core_once_without_blocking_steer(
                 assert payload["blocks_submission"] is False
             finally:
                 connection.close()
-            row = harness.mac.spool._db.execute(
-                "SELECT envelope_json FROM envelopes WHERE "
-                "json_extract(envelope_json, '$.payload.method')=?",
-                ("provider_selection_reported",),
-            ).fetchone()
-            assert row is not None
-            envelope = TypeAdapter(QueuedEnvelope).validate_json(row[0])
             replay = await harness.mac._request(WireMessageKind.envelope, as_object(envelope))
             assert replay.kind is WireMessageKind.receipt
             assert harness.events("provider_selection_reported") == 1
@@ -475,15 +469,19 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
             finally:
                 connection.close()
             uncertain = [
-                outcome for outcome in harness.mac.registry.outcomes.values()
+                outcome
+                for outcome in harness.mac.registry.outcomes.values()
                 if outcome.disposition.value == "uncertain"
             ]
             assert len(uncertain) == 1
             outcome = uncertain[0]
             assert harness.mac.registry.ask((outcome.command_id,))[0].outcome == outcome
-            assert await harness.mac.registry.execute_command(
-                harness.mac.registry._commands[outcome.command_id]
-            ) == outcome
+            assert (
+                await harness.mac.registry.execute_command(
+                    harness.mac.registry._commands[outcome.command_id]
+                )
+                == outcome
+            )
             assert harness.native.prompt_count == 2
             assert harness.events("prompt_delivery_uncertain") == 1
             remaining = await harness.system.held_prompts("c_scripted")

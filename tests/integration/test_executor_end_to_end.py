@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from tests.support.executor_control import paused_outbox
 from tests.support.executor_https import HttpsProxy, serve_executor_app
 
 from planner.conversation.backends.contracts import (
@@ -71,6 +73,7 @@ from planner.executor.contracts import (
     IpcRequest,
     JsonObject,
     JsonValue,
+    OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
     WireMessage,
@@ -1012,16 +1015,18 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                 conversation_module, "completed_backend_text_event", observe_completion
             )
             minted = []
-            mint = harness.mac.spool.mint_envelope
+            mint = harness.mac.spool.add
 
-            def observe_mint(**arguments: Any) -> QueuedEnvelope:
-                envelope = mint(**arguments)
+            def observe_mint(*args: Any, **arguments: Any) -> QueuedEnvelope:
+                envelope = mint(*args, **arguments)
                 minted.append(envelope)
                 return envelope
 
-            monkeypatch.setattr(harness.mac.spool, "mint_envelope", observe_mint)
+            monkeypatch.setattr(harness.mac.spool, "add", observe_mint)
             with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
-                before = connection.execute("SELECT count(*) FROM executor_receipts").fetchone()[0]
+                before = connection.execute("SELECT count(*) FROM mac_inbox_positions").fetchone()[
+                    0
+                ]
                 with tail.subscribe("c_scripted") as watcher:
                     await sink.agent_message_delta(turn, "Live text")
                     await sink.model_thinking_happened(turn)
@@ -1035,7 +1040,7 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                     )
                     assert not minted and not harness.mac.spool.pending()
                     assert (
-                        connection.execute("SELECT count(*) FROM executor_receipts").fetchone()[0]
+                        connection.execute("SELECT count(*) FROM mac_inbox_positions").fetchone()[0]
                         == before
                     )
                     resume = await hold_reconnection(harness, monkeypatch)
@@ -1126,37 +1131,73 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
         harness = await boot(tmp_path, monkeypatch)
         try:
             child = next(iter(harness.mac.registry.children.values())).reference
-            async with harness.mac._replay_lock:
-                malformed = harness.mac.spool.mint_envelope(
-                    conversation_id=child.conversation_id,
-                    kind=EnvelopeKind.child_stopped,
-                    payload={"child": as_object(child), "disposition": "unsupported"},
+            native_child = next(iter(harness.mac.registry.children.values()))
+            assert native_child.ticket_id is not None
+            artifact = harness.mac.paths.artifacts / native_child.ticket_id / "queued.txt"
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text("a refused write does not wait for these bytes")
+            async with paused_outbox(harness.mac.spool):
+                malformed = harness.mac.spool.add(
+                    OutboxEntry(
+                        conversation_id=child.conversation_id,
+                        kind=EnvelopeKind.child_stopped,
+                        payload={"child": as_object(child), "disposition": "unsupported"},
+                    )
                 )
-                unassigned = harness.mac.spool.mint_envelope(
-                    conversation_id=child.conversation_id,
-                    kind=EnvelopeKind.cli_write,
-                    payload=as_object(
-                        CliWrite("ticket.update", {}, replace(child, child_id="unassigned"), None)
+                unassigned = harness.mac.spool.add(
+                    OutboxEntry(
+                        conversation_id=child.conversation_id,
+                        kind=EnvelopeKind.cli_write,
+                        payload=as_object(
+                            CliWrite(
+                                "ticket.update", {}, replace(child, child_id="unassigned"), None
+                            )
+                        ),
                     ),
+                    ticket_id=native_child.ticket_id,
+                )
+                assert unassigned.file_dependencies
+                assigned_refusal = harness.mac.spool.add(
+                    OutboxEntry(
+                        conversation_id=child.conversation_id,
+                        kind=EnvelopeKind.cli_write,
+                        payload=as_object(CliWrite("ticket.unsupported", {}, child, None)),
+                    )
                 )
                 await harness.native.raise_ask()
                 following = harness.mac.spool.pending()[-1]
-                assert following.sequence == unassigned.sequence + 1
+                assert following.sequence == assigned_refusal.sequence + 1
 
             await eventually(
                 lambda: not harness.mac.spool.pending(),
                 "Permanent refusal stranded the next item in the conversation",
             )
-            for envelope, code in ((malformed, "validation"), (unassigned, "agent_forbidden")):
-                receipt = harness.endpoint.store.lookup_receipt(
-                    envelope.sender_id, envelope.submission_id
-                )
-                assert receipt is not None and receipt.disposition is ReceiptDisposition.refused
-                error = receipt.result["error"]
-                assert isinstance(error, dict) and error["code"] == code
-                # Duplicate malformed outcomes must return the first refusal without decoding again.
-                duplicate = await harness.endpoint.accept_envelope(envelope, harness.mac.identity)
-                assert duplicate == receipt
+            # Only the last position remains on the VPS. The CLI refusal is retained
+            # on the Mac for retry; obsolete sequences receive a plain acknowledgment.
+            refused = harness.mac.spool.lookup(unassigned.submission_id)
+            assert refused is not None and refused.receipt is not None
+            assert refused.receipt.disposition is ReceiptDisposition.refused
+            error = refused.receipt.result["error"]
+            assert isinstance(error, dict) and error["code"] == "agent_forbidden"
+            assigned = harness.mac.spool.lookup(assigned_refusal.submission_id)
+            assert assigned is not None and assigned.receipt is not None
+            assert assigned.receipt.disposition is ReceiptDisposition.refused
+            for envelope in (malformed, unassigned, assigned_refusal):
+                stale = await harness.endpoint.accept_envelope(envelope, harness.mac.identity)
+                assert stale.disposition is ReceiptDisposition.accepted and stale.result == {}
+            connection = connect(harness.endpoint.db_path)
+            try:
+                rows = connection.execute(
+                    "SELECT payload FROM conversation_events WHERE conversation_id=? "
+                    "AND kind='tool_call_finished'",
+                    (child.conversation_id,),
+                ).fetchall()
+                refusals = [json.loads(row[0]) for row in rows if "outbox_refusal_" in row[0]]
+                assert len(refusals) == 1
+                assert refusals[0]["tool_call_status"] == "failed"
+                assert "validation" in refusals[0]["detail"]
+            finally:
+                connection.close()
             accepted = harness.endpoint.store.lookup_receipt(
                 following.sender_id, following.submission_id
             )
@@ -1207,7 +1248,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                         close()
 
                     monkeypatch.setattr(writer, "close", restore_budget_and_close)
-            async with harness.mac._replay_lock:
+            async with paused_outbox(harness.mac.spool):
                 await harness.native.raise_ask()
                 pending = [
                     entry
@@ -2207,7 +2248,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
             identity = harness.endpoint.identity
             assert identity is not None
             connection = connect(harness.endpoint.db_path)
-            before = connection.execute("SELECT count(*) FROM executor_receipts").fetchone()[0]
+            before = connection.execute("SELECT count(*) FROM mac_inbox_positions").fetchone()[0]
             client = ExecutorAppClient(
                 harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
             )
@@ -2230,7 +2271,8 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
             await client.close()
             assert harness.endpoint.identity == identity and harness.endpoint.ready
             assert (
-                connection.execute("SELECT count(*) FROM executor_receipts").fetchone()[0] == before
+                connection.execute("SELECT count(*) FROM mac_inbox_positions").fetchone()[0]
+                == before
             )
             connection.close()
         finally:
@@ -2252,7 +2294,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             rejected = asyncio.Event()
             completed = 0
             send = harness.endpoint._send
-            replay = harness.mac._replay_envelope
+            replay = harness.mac.spool._send_one
 
             async def corrupt_ack(message: WireMessage) -> None:
                 if reject and message.kind is WireMessageKind.file_slot:
@@ -2276,9 +2318,9 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                     )
                 await send(message)
 
-            async def observe_rejection(envelope: QueuedEnvelope) -> None:
+            async def observe_rejection(link: Any, envelope: QueuedEnvelope) -> None:
                 try:
-                    await replay(envelope)
+                    await replay(link, envelope)
                 except ValueError:
                     rejected.set()
                     raise
@@ -2292,7 +2334,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                 return await request(kind, payload)
 
             monkeypatch.setattr(harness.endpoint, "_send", corrupt_ack)
-            monkeypatch.setattr(harness.mac, "_replay_envelope", observe_rejection)
+            monkeypatch.setattr(harness.mac.spool, "_send_one", observe_rejection)
             monkeypatch.setattr(harness.mac, "_request", count_completions)
             ticket_id = next(iter(harness.mac.registry.children.values())).ticket_id
             assert ticket_id is not None
@@ -2948,7 +2990,7 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
 
                 submission = "stopped_" + hashlib.sha256(stop.command_id.encode()).hexdigest()
                 stop_sequence = connection.execute(
-                    "SELECT sequence FROM executor_receipts WHERE submission_id=?", (submission,)
+                    "SELECT sequence FROM mac_inbox_positions WHERE submission_id=?", (submission,)
                 ).fetchone()[0]
                 final_event = next(
                     row
@@ -2964,9 +3006,7 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                     receipt = harness.endpoint.store.lookup_receipt(
                         row.sender_id, row.submission_id
                     )
-                    assert (
-                        receipt is not None and receipt.disposition is ReceiptDisposition.accepted
-                    )
+                    assert receipt is None  # The later stop has advanced the single inbox position.
                 assert not harness.endpoint.store.cleanup_evidence_uncertain(reference)
             finally:
                 connection.close()
@@ -3023,13 +3063,13 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             starts_before = harness.native.start_count
             prompts_before = harness.native.prompt_count
             journal_additions: list[EnvelopeKind] = []
-            mint = harness.mac.spool.mint_envelope
+            mint = harness.mac.spool.add
 
-            def count_journal(**arguments: Any) -> QueuedEnvelope:
-                journal_additions.append(arguments["kind"])
-                return mint(**arguments)
+            def count_journal(entry: Any, **arguments: Any) -> QueuedEnvelope:
+                journal_additions.append(entry.kind)
+                return mint(entry, **arguments)
 
-            monkeypatch.setattr(harness.mac.spool, "mint_envelope", count_journal)
+            monkeypatch.setattr(harness.mac.spool, "add", count_journal)
             result = await harness.endpoint.observe_catalog(request, attempt_id="connected-first")
             assert isinstance(result, CatalogObservation)
             assert result.rows[0].submitted_token == "gpt-scripted"
@@ -3205,7 +3245,7 @@ def test_reconnect_ready_precedes_retained_output_drain(
         harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
-            async with harness.mac._replay_lock:
+            async with paused_outbox(harness.mac.spool):
                 await harness.native.raise_ask()
                 queued = harness.mac.spool.pending()
                 assert len(queued) == 1

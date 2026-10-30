@@ -21,7 +21,7 @@ from planner.conversation.events import PermissionAskOption, UserInputAnswer, Us
 from planner.conversation.lifecycle import LifecycleStatus, LifecycleTransition
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
-from planner.executor.codec import encode_value
+from planner.executor.codec import encode_value, envelope_payload_digest
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AnswerApplication,
@@ -35,7 +35,6 @@ from planner.executor.contracts import (
     JsonObject,
     QueuedEnvelope,
 )
-from planner.executor.journal import envelope_payload_digest
 from planner.executor.store import ExecutorStore
 
 

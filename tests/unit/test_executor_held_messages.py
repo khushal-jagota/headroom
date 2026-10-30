@@ -47,9 +47,10 @@ from planner.executor.contracts import (
     EnvelopeKind,
     ExecutorIdentity,
     JsonObject,
+    OutboxEntry,
     QueuedEnvelope,
 )
-from planner.executor.journal import FilesystemSpool
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.native_messages import deliver_native_message
 from planner.executor.remote import RemoteBackendChild
 from planner.executor.store import ExecutorStore
@@ -142,7 +143,7 @@ class HeldFixture:
     connection: Connection
     path: str
     store: ExecutorStore
-    spool: FilesystemSpool
+    spool: MacOutbox
     native: ScriptedNative
     system: SqliteProcessConversationSystem = field(init=False)
     source: Principal
@@ -209,11 +210,13 @@ class HeldFixture:
         )
         payload = encode_value(write)
         assert isinstance(payload, dict)
-        envelope = self.spool.mint_envelope(
-            conversation_id="c_source",
-            kind=EnvelopeKind.cli_write,
-            payload=payload,
-            submission_id=submission_id,
+        envelope = self.spool.add(
+            OutboxEntry(
+                conversation_id="c_source",
+                kind=EnvelopeKind.cli_write,
+                payload=payload,
+                submission_id=submission_id,
+            )
         )
         return envelope, write
 
@@ -276,7 +279,7 @@ async def boot(connection: Connection, root: Path) -> HeldFixture:
         connection,
         path,
         store,
-        FilesystemSpool(root / "spool"),
+        MacOutbox(root / "spool"),
         ScriptedNative(),
         Principal(PrincipalKind.ticket, ticket.id),
         [],
@@ -342,6 +345,11 @@ def operation_result(fixture: HeldFixture, submission_id: str) -> dict[str, Any]
     return json.loads(row[0])  # type: ignore[no-any-return]
 
 
+def replay_result(fixture: HeldFixture, envelope: QueuedEnvelope) -> JsonObject:
+    stored = fixture.store.lookup_receipt(envelope.sender_id, envelope.submission_id)
+    return stored.result if stored is not None else {}
+
+
 def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
     tmp_db: Connection, tmp_path: Path
 ) -> None:
@@ -355,7 +363,9 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
                 held.sender_message_id for held in await fixture.system.held_prompts("c_target")
             ] == ["first", "second"]
             for (envelope, write), receipt in zip(entries, receipts, strict=True):
-                assert await fixture.deliver(envelope, write) == receipt
+                assert (await fixture.deliver(envelope, write)).result == replay_result(
+                    fixture, envelope
+                )
                 fixture.spool.acknowledge(receipt)
             assert fixture.spool.pending() == ()
             assert fixture.resolutions == 2
@@ -363,13 +373,15 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
             assert await fresh.held_prompts("c_target") == ()
-            for (envelope, write), receipt in zip(entries, receipts, strict=True):
+            for (envelope, write), _receipt in zip(entries, receipts, strict=True):
                 assert operation_result(fixture, envelope.submission_id) == {
                     "target": {"kind": "chief", "id": "chief"},
                     "conversation_id": "c_target",
                     "fate": "interrupted",
                 }
-                assert await fixture.deliver(envelope, write, system=fresh) == receipt
+                assert (
+                    await fixture.deliver(envelope, write, system=fresh)
+                ).result == replay_result(fixture, envelope)
             assert fixture.native.commands == before
             assert not await fixture.source_reply_credited(fresh)
         finally:
@@ -386,7 +398,7 @@ def test_native_terminal_held_outcome_retains_receipt_and_composed_reply_credit(
         fixture = await boot(tmp_db, tmp_path)
         try:
             envelope, write = fixture.entry("terminal", "Exact reply Ω")
-            receipt = await fixture.deliver(envelope, write)
+            await fixture.deliver(envelope, write)
             held = (await fixture.system.held_prompts("c_target"))[0]
             if action == "discard":
                 assert await fixture.system.discard_held_prompt("c_target", held.held_prompt_id)
@@ -407,7 +419,9 @@ def test_native_terminal_held_outcome_retains_receipt_and_composed_reply_credit(
             assert await fixture.source_reply_credited() is (action != "discard")
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
-            assert await fixture.deliver(envelope, write, system=fresh) == receipt
+            assert (await fixture.deliver(envelope, write, system=fresh)).result == replay_result(
+                fixture, envelope
+            )
             assert await fresh.held_prompts("c_target") == ()
             assert fixture.native.commands == before
         finally:
@@ -424,7 +438,7 @@ def test_unknown_native_dispatch_quarantines_live_line_and_is_not_retried_after_
         fixture = await boot(tmp_db, tmp_path)
         try:
             envelope, write = fixture.entry("uncertain", "Uncertain exact Ω")
-            receipt = await fixture.deliver(envelope, write)
+            await fixture.deliver(envelope, write)
             held = (await fixture.system.held_prompts("c_target"))[0]
             if action == "cancel_steer":
                 fixture.native.cancel_next_steer = True
@@ -464,7 +478,9 @@ def test_unknown_native_dispatch_quarantines_live_line_and_is_not_retried_after_
             fresh = await fixture.new_core()
             assert await fresh.held_prompts("c_target") == ()
             assert operation_result(fixture, "uncertain")["fate"] == "uncertain"
-            assert await fixture.deliver(envelope, write, system=fresh) == receipt
+            assert (await fixture.deliver(envelope, write, system=fresh)).result == replay_result(
+                fixture, envelope
+            )
             assert fixture.native.writes() == [
                 command for command in before if command.operation is ChildOperation.write_prompt
             ]
@@ -481,7 +497,7 @@ def test_known_safe_steer_requeue_keeps_live_order_but_loses_waiting_text_on_res
         fixture = await boot(tmp_db, tmp_path)
         try:
             first, first_write = fixture.entry("command", "/scripted Ω")
-            receipt = await fixture.deliver(first, first_write)
+            await fixture.deliver(first, first_write)
             second, second_write = fixture.entry("other", "Other held message")
             await fixture.deliver(second, second_write)
             initial = await fixture.system.held_prompts("c_target")
@@ -501,7 +517,9 @@ def test_known_safe_steer_requeue_keeps_live_order_but_loses_waiting_text_on_res
             assert await fresh.held_prompts("c_target") == ()
             assert operation_result(fixture, "command")["fate"] == "interrupted"
             assert operation_result(fixture, "other")["fate"] == "interrupted"
-            assert await fixture.deliver(first, first_write, system=fresh) == receipt
+            assert (
+                await fixture.deliver(first, first_write, system=fresh)
+            ).result == replay_result(fixture, first)
             assert fixture.native.commands == before
         finally:
             await fixture.close()
@@ -531,7 +549,9 @@ def test_lost_first_receipt_keeps_operation_binding_and_never_repeats_held_send(
             monkeypatch.setattr(fixture.store, "accept", accept)
             receipt = await fixture.deliver(envelope, write, system=fresh)
             assert receipt.result["fate"] == "interrupted"
-            assert await fixture.deliver(envelope, write, system=fresh) == receipt
+            assert (await fixture.deliver(envelope, write, system=fresh)).result == replay_result(
+                fixture, envelope
+            )
             assert fixture.resolutions == 1
             assert await fresh.held_prompts("c_target") == ()
             assert fixture.native.commands == before

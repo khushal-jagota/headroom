@@ -71,7 +71,7 @@ from planner.executor.contracts import (
     CommandOutcome,
     ExecutorIdentity,
 )
-from planner.executor.journal import FilesystemSpool
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
@@ -98,10 +98,17 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             create_schema(connection)
             project = create_project(connection, name="Native context", folder_path=tmp_path, now=1)
             ticket = tickets.create_ticket(
-                connection, title="Actual prompt context", worker_type="coding",
-                principal=OWNER_PRINCIPAL, now=1, title_max_chars=200,
-                employee_backend=backend.value, employee_launch_model="a-model",
-                selection_kind="concrete", locale=TicketLocale.macos, project_id=project.id,
+                connection,
+                title="Actual prompt context",
+                worker_type="coding",
+                principal=OWNER_PRINCIPAL,
+                now=1,
+                title_max_chars=200,
+                employee_backend=backend.value,
+                employee_launch_model="a-model",
+                selection_kind="concrete",
+                locale=TicketLocale.macos,
+                project_id=project.id,
             )
         finally:
             connection.close()
@@ -121,8 +128,13 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         connection = connect(db_path)
         try:
             tickets.write_ticket_conversation_start(
-                connection, ticket.id, conversation_id="c_native", backend=backend.value,
-                model="a-model", reasoning_effort=None, now=2,
+                connection,
+                ticket.id,
+                conversation_id="c_native",
+                backend=backend.value,
+                model="a-model",
+                reasoning_effort=None,
+                now=2,
             )
         finally:
             connection.close()
@@ -176,7 +188,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             )
 
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_native")
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         registry = NativeChildRegistry(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,

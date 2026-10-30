@@ -72,17 +72,19 @@ Both peers require this bootstrap.
 Code paths: `src/planner/executor/skills.py`, `src/planner/executor/remote.py`,
 `src/planner/executor/runtime.py`, `src/planner/executor/vps.py`.
 
-## The journal is transport, not a second Panels
+## The outbox keeps authored work until confirmation
 
 The Mac saves its authored work before transmission. Each submission keeps its
-identity and position within its conversation. The VPS commits the write and its
-first receipt together. If a receipt disappears, replay returns that first result.
+identity and a rising sender sequence. The VPS commits the write and its receipt
+together. It retains the latest sequence and receipt for each sender and conversation.
+The Mac sends one item per conversation at a time, so a lost receipt returns the
+stored result. An older sequence gets an acknowledgment without another effect.
 Permanent assignment or payload failures get a refused receipt, so the next item
 in that conversation can proceed. A lost connection, missing file bytes, or a busy
 database leaves the item pending for retry.
 Separate conversations retain separate order. Saving a backend event, callback
-application, stop proof, or CLI write wakes the sender immediately. The five-second retry timer still checks
-for existing work and does not create Tickets or other application work.
+application, stop proof, or CLI write commits before waking the sender. Up to four
+conversations send at once; one slow upload does not block the others.
 
 Prompt and steer calls use the Mac's direct result. An event reported before the
 prompt returns can finish admission without waiting for any queued output.
@@ -111,14 +113,15 @@ transport retries. Do not repeat the original write after an uncertain result.
 | --- | --- | --- |
 | `preparing` | The source task still owns preparation or publication. | 3 |
 | `queued` | The original envelope is durable and pending. | 3 |
-| `acknowledged` | A VPS receipt arrived, but its disposition and result are unavailable locally. | 3 |
 | `unknown` | Response delivery failed, or no tracked task or retained journal entry proves the state. | 3 |
 
 Unconfirmed output carries the original submission identity. Structured uncertainty
 also carries the IPC request identity. The existing initial queued output retains
 its submission ID, disposition, and acceptance fields. A retry has a separate IPC
 request ID and retains its target submission ID. An exact observed receipt returns
-the original result or refusal. An acknowledged entry alone does not prove success.
+the original result or refusal. Confirmed agent writes retain that receipt only
+while the run remains alive. Stopping the run or reopening the outbox removes
+confirmed rows. An unknown result never proves non-delivery.
 
 After an executor restart, an old capability can receive a canonical refusal. A
 missing entry does not prove that the write never reached the executor or VPS.
@@ -136,25 +139,31 @@ An accepted message uses the same memory-only held line as a VPS-sent message.
 The [conversation system](conversation-system.md#processes-honestly) owns its queue
 policy and restart outcomes. The native operation retains submission identity,
 original sender and recipient, and delivery outcome, without saving held content.
-The first receipt remains immutable for deduplication; the operation result records
+The current inbox receipt remains immutable; the operation result records
 later delivery, discard, or restart interruption. Neither restart nor submission
 replay re-sends lost held content.
 
-The outbound journal uses SQLite for envelopes, conversation positions, snapshots,
-and acknowledgment state. A transaction commits a submission and its snapshot references
-together. Indexed queries select each conversation's first pending submission, count
-waiting work, and check whether a conversation has waiting work without decoding
-the entire queue. The transport scheduler owns in-flight admission; unrelated
-conversations can progress while one waits.
+The outbox has one SQLite database with a sender row and an ordered items table,
+plus a folder of immutable file blobs. There are no entry folders, envelope copies,
+metadata files, identity ledger, or per-conversation counters. Adding an existing
+submission ID compares its content: identical content returns the original item;
+changed content is refused. Events get a stored UUID; callbacks and stop proofs
+keep their derived IDs. Indexed queries select each conversation's next item.
+No database transaction spans network I/O.
 
-SQLite uses a rollback journal (`journal_mode=DELETE`), `synchronous=EXTRA`, and
-`fullfsync=ON`. On macOS, regular-file persistence also requests `F_FULLFSYNC`
-after `fsync`; directory entries are synced after publication or removal. This
-requires a local filesystem and storage that honor these flush requests. Linux
-tests prove ordering and crash recovery, not physical Mac power-loss behavior.
+SQLite uses WAL, `synchronous=FULL`, and `fullfsync=ON`. On macOS, regular-file
+persistence also requests `F_FULLFSYNC` after `fsync`. Directory entries are synced
+after publication or removal. Actual power-loss durability still requires a real
+Mac and storage that honor these flush requests.
 
-Code paths: `src/planner/executor/journal.py`, `store.py`, `mutations.py`,
-`ipc_client.py`, `src/planner/cli/http.py`.
+Every permanent refusal is a receipt. A refused queued Panels write also appears
+as a failed Panels tool row in its source transcript. Telling the running agent
+about that later refusal remains a follow-up; no database row is a prompt.
+A Mac-authored message records `dispatching` before calling its recipient. If a
+repeat finds that state without an outcome, it records `uncertain` and sends nothing.
+
+Code paths: `src/planner/executor/mac_outbox.py`, `store.py`, `refusals.py`,
+`mutations.py`, `ipc_client.py`, `src/planner/cli/http.py`.
 
 SQLite work for remote acceptance runs on worker threads. Each operation opens,
 commits or rolls back, and closes its own connection on that thread. A busy
@@ -174,44 +183,16 @@ still use the durable outbox and replay after reconnect.
 Workers use ordinary file tools in a resolved Ticket directory. Publication
 captures immutable bytes. Transport consumes a `FileSnapshot` containing its
 manifest and local path. Snapshot bytes remain immutable until an authoritative
-receipt. Equal retained bytes share hard links between immutable spool entries.
-At completed tool, reply, turn, and CLI boundaries, capture compares content hashes
-with the latest retained manifest for the exact child and conversation. Unchanged
-pending files reuse the original publication and retained snapshots. Unchanged
-acknowledged files need no new capture or publication exchange. A return to earlier
-content after a change creates a fresh publication identity.
+receipt. Equal retained bytes share a content-addressed blob. Capture still runs
+at completed tool, reply, turn, and CLI boundaries through the existing snapshot
+helper. The outbox uploads only manifests the VPS reports missing, using the
+existing publication exchange. A lost receipt retries the original item, so already
+accepted file publications do not need another upload. Confirmation releases blobs
+that no waiting item references. Temporary and unreferenced blobs are swept on open.
 
-Pins keep pending dependencies alive through capture, enqueue, transfer, and receipt
-cleanup. Unsupported hard links use verified copies. A lost receipt retries the
-original identity. Retained envelope JSON reconstructs comparison state after restart.
-No watcher, timer, schema change, or Ticket-wide delivery gate is involved.
-The receiver still checks the assigned child, owner, path, length, and digest.
-New bytes receive publication acceptance before their dependent envelope.
-Ticket URLs remain mutable. The existing per-conversation replay and per-path
-reservations remain the ordering contract. A replacement child starts fresh comparison.
-
-Both directions use HTTP through the app service. The Mac uploads artifact snapshots with PUT and downloads input snapshots with GET.
-Input GET requests specify `Accept-Encoding: identity`, so the server sends the original snapshot bytes without compression.
-The downloader disables automatic decompression and refuses any response with a nonempty `Content-Encoding`.
-The control connection allocates generation-owned transfer IDs with a direction and manifest. The server resolves each ID to its own staging path.
-These reservations track integrity and lifecycle. They do not restrict the account's ordinary filesystem access.
-
-Four transfers can proceed concurrently. HTTP chunks retain the prior transport bound of 64 KiB. Local file copies retain their separate 256 KiB bound.
-The receiver checks the manifest length and digest. Short, excess, or incomplete content cannot receive publication acceptance.
-HTTP success proves byte transport only. The existing file completion and acceptance exchange still gates publication and native command dispatch.
-
-The VPS uses a private directory for each connection generation. Upload slots admit one writer; download slots contain immutable snapshots.
-The receiver makes a fresh verified copy before atomic publication and rechecks the generation, original child, manifest, and reservation.
-Input downloads also pass through receiver quarantine and verification before the dependent native command.
-Lost completion retains the original publication or command identity for reconciliation.
-
-Input downloads use a separate progress contract. Ordinary control requests retain their 30-second deadline.
-A download fails after 30 seconds without positive byte progress. Final verification and installation have a fixed 120-second deadline after download EOF.
-Repeated progress or health frames cannot extend finalization. Inputs can exceed the ordinary control deadline while bytes continue to advance.
-
-Cancellation fences command dispatch immediately. The VPS waits at most five seconds for the Mac to acknowledge transfer revocation.
-A missing acknowledgment leaves remote revocation unconfirmed. Cancellation cannot undo native effects after a command crosses the wire.
-Transfer failure leaves unrelated conversations connected. Genuine control connection failures retain their normal recovery path.
+The next file-sync change will replace the snapshot helper and publication exchange
+with the size-and-time index and direct file reception. This change retains the
+existing hash checks and capture-before-reference ordering.
 
 Generation loss closes admission before cleanup waits. Filesystem work can outlive logical failure or cancellation.
 The transfer retains its files, descriptors, and capacity until that work settles. Cleanup never deletes a resource that admitted work still uses.
@@ -219,7 +200,7 @@ Ordinary account access stays intact. Accepted bytes remain protected by receive
 
 Snapshots and hashes use bounded streams. One submission per conversation can
 proceed at a time. Separate conversations can progress while a large transfer
-waits. Snapshot pins retain bytes through receipt and release them after transfer.
+waits. The outbox retains blobs until its item has a confirmed receipt.
 The outbox holds no transaction across network I/O.
 
 Files and database rows have different commit boundaries. Complete orphan bytes
@@ -254,9 +235,8 @@ never resent. This relies on launchd's default cleanup of a job's process group
 when the job exits; the first real Mac/VPS run must verify that provider processes
 actually die on service restart or reboot. The scripted tests do not prove that.
 
-After readiness, each replay pass drains only the pending sequence prefix captured
-at its start, with one in-flight submission per conversation. New events stay
-durable for a later pass. Ordinary receipts preserve conversation order.
+After readiness, the outbox continuously sends waiting items. Each receipt frees
+one conversation to send its next item. New commits wake the sender immediately.
 
 Each Mac control request has one 30-second deadline covering send admission,
 transmission, and its response. A timeout closes that request's connection and
@@ -352,8 +332,9 @@ Python environment stay separate from persistent executor data. The lightweight 
 path does not start a Mac Panels server or create a Panels database. A protocol
 or journal-format mismatch refuses work before replay.
 
-Read-only journal inspection establishes compatibility, not authority to replace
-a process. Inspection errors refuse preflight. An update or rollback still needs
+Opening an outbox checks its SQLite format version before changing it.
+An older draft format must be rebuilt before this version can run. This check
+does not grant authority to replace a process. An update or rollback still needs
 fresh identity-bound quiescence. Active work, callbacks, uncertain operations,
 unfinished native calls, or unaccepted entries prevent readiness. Quiescence
 closes admission for new commands and CLI writes first. It accounts for source
@@ -387,7 +368,7 @@ check process evidence before service removal. An old receipt cannot authorize
 action against a replacement process. Missing or changed process evidence refuses cutover.
 An incompatible rollback preserves the journal and refuses mutation.
 
-Code paths: `src/planner/executor/entrypoint.py`, `cli.py`, `preflight.py`,
+Code paths: `src/planner/executor/entrypoint.py`, `cli.py`, `mac_outbox.py`,
 `configuration.py`, `mac.py`.
 
 ## Installation compatibility
@@ -397,15 +378,15 @@ Mac evidence and constants from the intended VPS package before installation cha
 The VPS health API reports the Mac identity. It supplies no independent VPS version evidence.
 Missing or incompatible evidence defers the operation. The handshake remains the final protocol guard.
 
-Read-only spool inspection establishes compatibility without migration or recovery.
+The outbox checks SQLite `user_version` on open and refuses incompatible formats.
 The [Mac operator runbook](mac-executor-installation.md) supplies the concrete checks.
 No automatic two-host update or general migration mechanism exists.
 
 ## Fresh installation and retained journals
 
-The installation path uses the current journal and outbox schema. Read-only
-preflight refuses unsupported or corrupt journals without mutation. There is no
-reader or converter for earlier draft formats.
+The installation path uses outbox format 4. There is no reader or converter for
+earlier draft formats. Preserve incompatible state for diagnosis; do not convert it
+as part of installation.
 
 ## Browser previews
 

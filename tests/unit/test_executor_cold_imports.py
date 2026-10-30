@@ -26,9 +26,8 @@ def cold_python(program: str) -> subprocess.CompletedProcess[str]:
 @pytest.mark.parametrize(
     "module",
     [
-        "planner.executor.preflight",
         "planner.executor.contracts",
-        "planner.executor.journal",
+        "planner.executor.mac_outbox",
         "planner.conversation.model_resolution.contracts",
         "planner.executor.runtime",
         "planner.executor.mac",

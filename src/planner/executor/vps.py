@@ -99,7 +99,7 @@ from planner.executor.remote import (
     RemoteInitialDeliveryCancelled,
 )
 from planner.executor.skills import read_canonical_skill_snapshot
-from planner.executor.store import ExecutorStore
+from planner.executor.store import ExecutorStore, MissingFiles
 from planner.executor.transfers import GenerationTransfers, settled_io, wait_for_settlement
 from planner.executor.wire import (
     parse_identity,
@@ -1168,30 +1168,32 @@ class ExecutorEndpoint:
     async def _accept_envelope(
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
-        previous = await settled_io(partial(self.store.preflight, envelope, identity=identity))
-        if previous is not None:
-            if (
-                envelope.kind is EnvelopeKind.child_stopped
-                and previous.disposition is ReceiptDisposition.accepted
-            ):
-                await self._resolve_command(
-                    TypeAdapter(CommandOutcome).validate_python(envelope.payload)
-                )
-            return previous
         try:
+            previous = await settled_io(
+                partial(self.store.preflight, envelope, identity=identity, check_files=False)
+            )
+            if previous is not None:
+                if (
+                    envelope.kind is EnvelopeKind.child_stopped
+                    and previous.disposition is ReceiptDisposition.accepted
+                ):
+                    await self._resolve_command(
+                        TypeAdapter(CommandOutcome).validate_python(envelope.payload)
+                    )
+                return previous
             return await self._apply_envelope(envelope, identity)
         except PlannerError as error:
-            if error.code is ErrorCode.gateway_offline:
-                raise
             refusal = error
-        except ValueError as error:
+        except (ValueError, KeyError, TypeError) as error:
             refusal = PlannerError(ErrorCode.validation, str(error))
 
         def refuse(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
             raise refusal
 
         return await settled_io(
-            partial(self.store.accept, envelope, refuse, now_ms(), identity=identity)
+            partial(
+                self.store.accept, envelope, refuse, now_ms(), identity=identity, check_files=False
+            )
         )
 
     async def _apply_envelope(
@@ -1202,6 +1204,10 @@ class ExecutorEndpoint:
             await settled_io(self._assignment, event.child)
             if event.child.conversation_id != envelope.conversation_id:
                 raise ValueError("event conversation conflicts with envelope")
+
+            # Missing bytes are a transport request, before entering the conversation's
+            # recording boundary (which correctly fences real persistence failures).
+            await settled_io(partial(self.store.preflight, envelope, identity=identity))
 
             def accept(row: QueuedEnvelope, write: Any, **publication: Any) -> AcceptanceReceipt:
                 def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
@@ -1380,7 +1386,8 @@ class ExecutorEndpoint:
                     identity=identity,
                 )
             )
-            await self._resolve_command(outcome, stop_proven=True)
+            if receipt.disposition is ReceiptDisposition.accepted:
+                await self._resolve_command(outcome, stop_proven=True)
             return receipt
         if envelope.kind is EnvelopeKind.answer_application:
             application = TypeAdapter(AnswerApplication).validate_python(envelope.payload)
@@ -1390,6 +1397,7 @@ class ExecutorEndpoint:
                 identity,
                 envelope.conversation_id,
             )
+            await settled_io(partial(self.store.preflight, envelope, identity=identity))
             return cast(
                 AcceptanceReceipt,
                 await self.runtime.system.receive_remote_answer_application(
@@ -1419,7 +1427,7 @@ class ExecutorEndpoint:
             self._assignment(outcome.child)
 
     def _command_outcome(self, conn: Any, outcome: CommandOutcome) -> JsonObject:
-        self.store.record_command_outcome_in_transaction(conn, outcome)
+        self.store.record_command_outcome_in_transaction(conn, outcome, output_confirmed=True)
         return {"recorded": True}
 
     async def _resolve_command(self, outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
@@ -1913,15 +1921,12 @@ class ExecutorEndpoint:
                 return
             elif message.kind is WireMessageKind.envelope:
                 envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
-                result, response_kind = (
-                    _object(
-                        await self.accept_envelope(
-                            envelope,
-                            identity,
-                        )
-                    ),
-                    WireMessageKind.receipt,
-                )
+                try:
+                    result = _object(await self.accept_envelope(envelope, identity))
+                    response_kind = WireMessageKind.receipt
+                except MissingFiles as missing:
+                    result = {"files": encode_value(missing.manifests)}
+                    response_kind = WireMessageKind.missing_files
             elif message.kind is WireMessageKind.command_outcome:
                 outcome = TypeAdapter(CommandOutcome).validate_python(message.payload)
                 if message.request_id != outcome.command_id:

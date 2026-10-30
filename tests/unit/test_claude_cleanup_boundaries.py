@@ -55,7 +55,7 @@ from planner.executor.contracts import (
     CommandOutcome,
     ReceiptDisposition,
 )
-from planner.executor.journal import FilesystemSpool
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets
@@ -83,7 +83,7 @@ def claude_registry(
 
     return NativeChildRegistry(
         incarnation=IDENTITY.executor_incarnation,
-        spool=FilesystemSpool(tmp_path / "spool"),
+        spool=MacOutbox(tmp_path / "spool"),
         factory=factory,
         paths=ExecutorPaths(tmp_path / "executor"),
         message_files=ConversationMessageFiles(tmp_path / "unused.db"),
@@ -140,10 +140,10 @@ def test_claude_stop_result_controls_canonical_retirement(
         async def send(command: ChildCommand) -> CommandOutcome:
             commands.append(command)
             outcome = await registry.execute_command(command)
-            for envelope in registry.spool.pending():
+            for envelope in cast(MacOutbox, registry.spool).pending():
                 receipt = await remote.accept_envelope(envelope, IDENTITY)
                 assert receipt.disposition is ReceiptDisposition.accepted
-                registry.spool.acknowledge(receipt)
+                cast(MacOutbox, registry.spool).acknowledge(receipt)
             return outcome
 
         remote.factory.send_command = send
@@ -229,7 +229,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             await system.shutdown()
             if native is not None:
                 await native.stop()
-            cast(FilesystemSpool, registry.spool).close()
+            cast(MacOutbox, registry.spool).close()
 
     asyncio.run(run())
 
@@ -269,7 +269,7 @@ def test_claude_disconnect_failure_cannot_confirm_quiescence(
         client = clients[0]
         original_disconnect = client.disconnect
         monkeypatch.setattr(client, "disconnect", disconnect_failure)
-        acknowledge_pending(cast(FilesystemSpool, registry.spool))
+        acknowledge_pending(cast(MacOutbox, registry.spool))
         try:
             with pytest.raises(RuntimeError, match="before native termination"):
                 await registry.quiesce()
@@ -280,6 +280,6 @@ def test_claude_disconnect_failure_cannot_confirm_quiescence(
         finally:
             monkeypatch.setattr(client, "disconnect", original_disconnect)
             await native.stop()
-            cast(FilesystemSpool, registry.spool).close()
+            cast(MacOutbox, registry.spool).close()
 
     asyncio.run(run())

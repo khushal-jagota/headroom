@@ -97,9 +97,9 @@ PY
 
 Check that the resolved commit equals the reviewed full SHA.
 Record the constants printed from the exact candidate source; they govern compatibility.
-The current candidate uses wire protocol 15 and journal format 3.
+The current candidate uses wire protocol 15 and outbox format 4.
 Both Mac and VPS peers must match the candidate's wire protocol before work, and
-the existing journal must pass the candidate's spool preflight below. Coordinate
+the existing journal must pass the candidate's SQLite version check below. Coordinate
 the peer transition through the Manager and installation Worker before any application.
 
 Each new native Worker start retains exact canonical database skills.
@@ -144,7 +144,7 @@ The handshake remains the final protocol guard.
 
 A genuine fresh installation has no existing executor, journal, service, or retained installation intent.
 Only that established case skips the installed-process shutdown steps.
-It still requires intended VPS evidence and read-only spool preflight before startup.
+It still requires intended VPS evidence and the SQLite version check before startup.
 
 ## Obtain successful graceful exit
 
@@ -274,14 +274,19 @@ This command preserves the source inputs, persistent data, and retained evidence
 Forced source replacement matters because successive revisions share project version `2.0.0`.
 No editable installation or source-path wrapper participates in runtime launch.
 
-Check the stopped persistent spool with the candidate's read-only inspector:
+Check the stopped persistent outbox version without opening it for writes:
 
 ```sh
 PLAN_EXECUTOR_ROOT="$EXECUTOR_ROOT" "$VENV/bin/python" - <<'PY'
+import sqlite3
 from planner.executor.configuration import SPOOL_FORMAT_VERSION, executor_paths
-from planner.executor.preflight import check_spool_compatibility
-check_spool_compatibility(executor_paths().root, SPOOL_FORMAT_VERSION)
-print("spool compatible")
+path = executor_paths().spool / "outbox.sqlite3"
+if path.exists():
+    with sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True) as database:
+        assert database.execute("PRAGMA user_version").fetchone()[0] == SPOOL_FORMAT_VERSION
+else:
+    assert not executor_paths().spool.exists() or not any(executor_paths().spool.iterdir())
+print("outbox version compatible")
 PY
 ```
 
@@ -404,7 +409,7 @@ Compare the final status with the original baseline. Never use `serve reset` or 
 Preserve verification data. Stop only exact test processes owned by the application Worker.
 
 Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/cli.py`,
-`src/planner/executor/preflight.py`, `requirements-build.txt`, `requirements-executor.txt`,
+`src/planner/executor/mac_outbox.py`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
 
 _Last verified: 2026-10-26. Commands checked against source; no live Mac operation occurred._

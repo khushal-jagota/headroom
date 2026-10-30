@@ -25,6 +25,7 @@ from planner.conversation.backends.contracts import TurnToken
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
 from planner.core.migrations.versions.mac_vps_execution import STATEMENTS
+from planner.executor.codec import envelope_payload_digest
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AnswerApplication,
@@ -47,7 +48,6 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.journal import envelope_payload_digest
 from planner.executor.publication import PublicationReceiver
 from planner.executor.store import ExecutorStore
 
@@ -149,22 +149,35 @@ def test_transient_storage_failure_has_no_receipt_and_retry_applies(store: Execu
 
 
 def test_order_gap_does_not_block_another_conversation(store: ExecutorStore) -> None:
-    with pytest.raises(PlannerError, match="Earlier"):
-        store.accept(envelope(2), effect, 1100, identity=IDENTITY)
+    second = store.accept(envelope(2), effect, 1100, identity=IDENTITY)
     store.accept(envelope(conversation="other"), effect, 1100, identity=IDENTITY)
-    store.accept(envelope(), effect, 1100, identity=IDENTITY)
-    store.accept(envelope(2), effect, 1100, identity=IDENTITY)
+    stale = store.accept(envelope(), effect, 1100, identity=IDENTITY)
+    assert stale.result == {}  # Global sender sequences need not be consecutive per conversation.
+    assert store.accept(envelope(2), effect, 1200, identity=IDENTITY) == second
+    connection = connect(store.db_path)
+    try:
+        assert [tuple(row) for row in connection.execute("SELECT id FROM effects ORDER BY id")] == [
+            ("conversation-2",),
+            ("other-1",),
+        ]
+    finally:
+        connection.close()
 
 
 def test_digest_binds_kind_and_routing_identity(store: ExecutorStore) -> None:
     original = envelope()
-    store.accept(original, effect, 1100, identity=IDENTITY)
-    with pytest.raises(PlannerError, match="digest"):
+    # Invalid content is a permanent refused receipt, rather than a poison queue head.
+    refused = store.accept(
+        replace(original, kind=EnvelopeKind.backend_event), effect, 1100, identity=IDENTITY
+    )
+    assert refused.disposition is ReceiptDisposition.refused
+    assert "digest" in str(refused.result)
+    assert (
         store.accept(
             replace(original, kind=EnvelopeKind.backend_event), effect, 1200, identity=IDENTITY
         )
-    with pytest.raises(PlannerError, match="digest"):
-        store.accept(replace(original, conversation_id="another"), effect, 1200, identity=IDENTITY)
+        == refused
+    )
 
 
 def test_stale_generation_cannot_write_after_replacement_and_old_close_is_harmless(

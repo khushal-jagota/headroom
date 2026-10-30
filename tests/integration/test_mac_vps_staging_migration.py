@@ -24,15 +24,13 @@ from planner.core.db import _alembic_config, _migration_engine
 
 FINAL_HEAD = "mac_vps_execution"
 SENTINELS: dict[str, tuple[object, ...]] = {
-    "executor_receipts": (
+    "mac_inbox_positions": (
         "sender",
-        "submission",
         "current",
         1,
-        "digest",
+        "submission",
         "accepted",
         json.dumps({"accepted": True, "opaque": "Exact α bytes"}),
-        123,
     ),
     "executor_child_assignments": (
         "incarnation",
@@ -47,6 +45,7 @@ SENTINELS: dict[str, tuple[object, ...]] = {
         "incarnation",
         "command",
         '{"status":"uncertain","opaque":"Exact α bytes"}',
+        0,
     ),
     "conversation_video_uploads": (
         "upload",
@@ -124,7 +123,7 @@ def test_retained_source_heads_join_without_losing_authority(
             _assert_sentinels(conn, set(SENTINELS))
             with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
                 conn.execute(
-                    "UPDATE executor_receipts SET sequence=0 WHERE submission_id='submission'"
+                    "UPDATE mac_inbox_positions SET sequence=0 WHERE submission_id='submission'"
                 )
             with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
                 conn.execute(

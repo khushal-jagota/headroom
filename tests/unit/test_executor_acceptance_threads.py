@@ -23,7 +23,7 @@ from tests.unit.test_executor_request_deadlines import peer
 from planner.core.clock import RealClock
 from planner.core.db import connect
 from planner.executor import store as store_module
-from planner.executor.codec import encode_value
+from planner.executor.codec import encode_value, envelope_payload_digest
 from planner.executor.contracts import (
     AcceptanceReceipt,
     CommandDisposition,
@@ -35,7 +35,6 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.journal import envelope_payload_digest
 from planner.executor.store import ExecutorStore
 from planner.executor.vps import ExecutorEndpoint
 

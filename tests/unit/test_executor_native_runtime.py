@@ -65,6 +65,7 @@ from planner.executor.contracts import (
     IpcOperation,
     IpcRequest,
     JsonObject,
+    OutboxEntry,
     QueuedEnvelope,
     Quiescence,
     QuiesceRequest,
@@ -72,8 +73,8 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.journal import FilesystemSpool
 from planner.executor.mac import MacExecutor, as_object
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
 from planner.tickets.contracts import TicketLocale
 
@@ -181,8 +182,8 @@ class ScriptedChild:
 @pytest.fixture
 def native_registry(
     tmp_path: Path,
-) -> Iterator[tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand]]:
-    spool = FilesystemSpool(tmp_path / "spool")
+) -> Iterator[tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand]]:
+    spool = MacOutbox(tmp_path / "spool")
     native = ScriptedChild()
     reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
 
@@ -227,7 +228,7 @@ def native_registry(
         spool.close()
 
 
-def acknowledge_pending(spool: FilesystemSpool) -> None:
+def acknowledge_pending(spool: MacOutbox) -> None:
     for row in spool.pending():
         spool.acknowledge(
             AcceptanceReceipt(
@@ -243,7 +244,7 @@ def acknowledge_pending(spool: FilesystemSpool) -> None:
 
 @pytest.mark.parametrize("boundary", ["incarnation", "start", "prompt", "prompt_lock"])
 def test_pre_dispatch_refusal_never_calls_native(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     boundary: str,
 ) -> None:
     async def run() -> None:
@@ -325,7 +326,7 @@ class _LocalSessionLoadRefused(SessionLoadFailed):
     ],
 )
 def test_native_typed_refusal_is_distinct_from_possible_emission(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
     failure: Exception,
     operation: ChildOperation,
@@ -371,7 +372,7 @@ def test_native_typed_refusal_is_distinct_from_possible_emission(
 
 
 def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and_drain(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -442,7 +443,7 @@ async def uncertain_automatic_compaction(
 
 
 def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -483,7 +484,7 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
     ],
 )
 def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_child(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
     missing_evidence: str,
 ) -> None:
@@ -538,7 +539,7 @@ def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_chi
 
 
 def test_historical_uncertainty_does_not_clear_another_child_active_turn(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -564,7 +565,7 @@ def test_historical_uncertainty_does_not_clear_another_child_active_turn(
 
 
 def test_restart_keeps_stop_receipts_and_discards_command_memory_and_child_authority(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -577,15 +578,8 @@ def test_restart_keeps_stop_receipts_and_discards_command_memory_and_child_autho
 
         acknowledge_pending(spool)
         assert (await registry.quiesce()).ready
-        before = spool._db.execute(
-            "SELECT submission_id,envelope_json,pending FROM envelopes ORDER BY submission_id"
-        ).fetchall()
-        assert before and all(row[2] == 0 for row in before)
+        assert spool._db.execute("SELECT COUNT(*) FROM items").fetchone() == (0,)
         assert registry.ask((command.command_id,))[0].outcome == first
-        assert all(
-            TypeAdapter(QueuedEnvelope).validate_json(row[1]).kind is EnvelopeKind.child_stopped
-            for row in before
-        )
         paths = ExecutorPaths(spool.root.parent)
         sender_id = spool.sender_id
         spool.close()
@@ -597,13 +591,8 @@ def test_restart_keeps_stop_receipts_and_discards_command_memory_and_child_autho
         )
         try:
             assert executor.spool.sender_id == sender_id
-            assert (
-                executor.spool._db.execute(
-                    "SELECT submission_id,envelope_json,pending FROM envelopes "
-                    "ORDER BY submission_id"
-                ).fetchall()
-                == before
-            )
+            assert executor.spool.pending_count() == 0
+            assert executor.spool._db.execute("SELECT COUNT(*) FROM items").fetchone() == (0,)
             assert executor.spool.pending_count() == 0
             assert executor.identity.executor_incarnation != start.child.executor_incarnation
             assert executor.registry.children == {}
@@ -624,7 +613,7 @@ def test_restart_keeps_stop_receipts_and_discards_command_memory_and_child_autho
 
 def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_path: Path) -> None:
     async def run() -> None:
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         native = ScriptedChild()
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
 
@@ -801,8 +790,8 @@ def test_incompatible_spool_does_not_mutate_any_path(tmp_path: Path) -> None:
     root.mkdir()
     (root / "metadata.json").write_text(json.dumps({"format": 999, "sender_id": str(uuid4())}))
     before = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*")}
-    with pytest.raises(ValueError, match="incompatible|metadata fields"):
-        FilesystemSpool(root)
+    with pytest.raises(ValueError, match="unsupported outbox format"):
+        MacOutbox(root)
     after = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*")}
     assert after == before
 
@@ -861,7 +850,7 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
                 await self.sink.vendor_session_cursor_rebound("cursor-at-stop")
 
         native = StartingChild()
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
 
         def factory(
@@ -947,9 +936,8 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
     wrapper: bool,
 ) -> None:
     async def run() -> None:
-        from planner.executor.contracts import FileSnapshot
 
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         native = ScriptedChild()
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
 
@@ -997,17 +985,11 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         )
         ask = registry.inventory()[0].pending_asks[0]
         answer = DurableAnswer("answer", ask, "allow", 1)
-        original = spool.mint_envelope
+        original = spool.add
         failed = False
 
-        def fail_outcome(
-            *,
-            conversation_id: str,
-            kind: EnvelopeKind,
-            payload: JsonObject,
-            snapshots: tuple[FileSnapshot, ...] = (),
-            submission_id: str | None = None,
-        ) -> QueuedEnvelope:
+        def fail_outcome(entry: OutboxEntry, *, ticket_id: str | None = None) -> QueuedEnvelope:
+            kind, payload = entry.kind, entry.payload
             nonlocal failed
             if (
                 kind == EnvelopeKind.answer_application
@@ -1016,15 +998,9 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             ):
                 failed = True
                 raise OSError("disk failed after callback")
-            return original(
-                conversation_id=conversation_id,
-                kind=kind,
-                payload=payload,
-                snapshots=snapshots,
-                submission_id=submission_id,
-            )
+            return original(entry, ticket_id=ticket_id)
 
-        monkeypatch.setattr(spool, "mint_envelope", fail_outcome)
+        monkeypatch.setattr(spool, "add", fail_outcome)
         outer = ChildCommand(
             answer.answer_id,
             reference,
@@ -1037,7 +1013,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
                 await registry.execute_command(outer)
             else:
                 await registry.apply_answer(answer)
-        monkeypatch.setattr(spool, "mint_envelope", original)
+        monkeypatch.setattr(spool, "add", original)
         await registry.flush_command_output((answer.answer_id,))
         assert native.answers == [("ask", "allow")]
         assert registry.inventory()[0].pending_asks == ()
@@ -1070,8 +1046,8 @@ def test_replay_protocol_error_surfaces_and_preserves_pending_conversation(
         )
         executor._handshake_accepted = True
         for conversation in ("c_a", "c_a"):
-            executor.spool.mint_envelope(
-                conversation_id=conversation, kind=EnvelopeKind.cli_write, payload={}
+            executor.spool.add(
+                OutboxEntry(conversation_id=conversation, kind=EnvelopeKind.cli_write, payload={})
             )
         visited: list[str] = []
 
@@ -1083,7 +1059,7 @@ def test_replay_protocol_error_surfaces_and_preserves_pending_conversation(
         monkeypatch.setattr(executor, "_request", transport)
         pending = executor.spool.pending()
         with pytest.raises(ValueError, match="invalid protocol response"):
-            await executor._replay()
+            await executor.spool.send_pending(executor)
         assert visited == ["c_a"]
         assert executor.spool.pending() == pending
         executor.spool.close()
@@ -1153,7 +1129,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
         row = next(row for row in executor.spool.pending() if row.submission_id == "write")
         assert {manifest.owner_id for manifest in row.file_dependencies} == {"t_own"}
         failure: JsonObject = {"code": "agent_forbidden", "message": "stale claim", "detail": {}}
-        executor._receipts["write"].set_result(
+        executor.spool.acknowledge(
             AcceptanceReceipt(
                 row.sender_id,
                 row.submission_id,
@@ -1224,7 +1200,7 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
     try:
         deadline = time.monotonic() + 10
         while not (root / "run" / "executor.sock").exists():
-            assert process.poll() is None
+            assert process.poll() is None, process.communicate(timeout=1)
             assert time.monotonic() < deadline
             time.sleep(0.01)
         health = exchange(IpcRequest("health", IpcOperation.health, None, None, {}))
@@ -1269,7 +1245,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             ConversationBackendKey.claude: mac_home / " claude config ",
         }[backend]
         paths = ExecutorPaths(mac_home / "executor-data")
-        spool = FilesystemSpool(paths.spool)
+        spool = MacOutbox(paths.spool)
         received: list[ResolvedConversationStart] = []
         constructed: list[ResolvedConversationStart] = []
 
@@ -1408,7 +1384,7 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
     relative: str,
 ) -> None:
     async def run() -> None:
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         created: list[bool] = []
 
         def factory(
@@ -1465,7 +1441,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
 ) -> None:
     from planner.conversation.backends.contracts import BackendUserInputRequest
     from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
-    from planner.executor.contracts import AnswerApplication, AskKind, AskReference, FileSnapshot
+    from planner.executor.contracts import AnswerApplication, AskKind, AskReference
 
     async def run() -> None:
         entered, release = asyncio.Event(), asyncio.Event()
@@ -1480,7 +1456,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
                 await release.wait()
 
         native = QuestionChild()
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
 
         def factory(
@@ -1566,17 +1542,11 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
             with pytest.raises(ValueError, match="incomplete"):
                 await registry.apply_answer(replace(answer, user_input_answers=invalid))
         assert maps == []
-        original = spool.mint_envelope
+        original = spool.add
         failed = False
 
-        def failing(
-            *,
-            conversation_id: str,
-            kind: EnvelopeKind,
-            payload: JsonObject,
-            snapshots: tuple[FileSnapshot, ...] = (),
-            submission_id: str | None = None,
-        ) -> QueuedEnvelope:
+        def failing(entry: OutboxEntry, *, ticket_id: str | None = None) -> QueuedEnvelope:
+            kind, payload = entry.kind, entry.payload
             nonlocal failed
             if (
                 failure is not None
@@ -1589,15 +1559,9 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
             ):
                 failed = True
                 raise OSError("disk failed after native map application")
-            return original(
-                conversation_id=conversation_id,
-                kind=kind,
-                payload=payload,
-                snapshots=snapshots,
-                submission_id=submission_id,
-            )
+            return original(entry, ticket_id=ticket_id)
 
-        monkeypatch.setattr(spool, "mint_envelope", failing)
+        monkeypatch.setattr(spool, "add", failing)
         outer = ChildCommand(
             answer.answer_id,
             reference,
@@ -1614,7 +1578,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
         if failure is not None:
             with pytest.raises(OSError, match="after native"):
                 await registry.execute_command(outer)
-            monkeypatch.setattr(spool, "mint_envelope", original)
+            monkeypatch.setattr(spool, "add", original)
         outcome = await registry.execute_command(outer)
         assert outcome.disposition == CommandDisposition.succeeded
         assert await registry.execute_command(outer) == outcome
@@ -1658,8 +1622,10 @@ def test_old_peer_is_refused_before_work_or_replay_and_preserves_spool(
             return await original(kind, payload)
 
         monkeypatch.setattr(executor, "_request", old_reply)
-        row = executor.spool.mint_envelope(
-            conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={"original": True}
+        row = executor.spool.add(
+            OutboxEntry(
+                conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={"original": True}
+            )
         )
         with pytest.raises(ProtocolRefused):
             await executor._connected()
@@ -1883,109 +1849,6 @@ def test_current_loss_survives_failed_reconnect_and_clears_only_when_reconciled_
     asyncio.run(run())
 
 
-def test_replay_keeps_one_head_per_conversation_and_progresses_past_bulk_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A stalled file upload cannot hold another conversation's control envelope."""
-    from planner.executor.contracts import (
-        AcceptanceReceipt,
-        FileScope,
-        FileTransfer,
-        ReceiptDisposition,
-    )
-    from planner.executor.files import snapshot_file
-
-    async def run() -> None:
-        executor = make_executor(tmp_path)
-        executor._handshake_accepted = True
-        source = tmp_path / "artifacts"
-        source.mkdir()
-        (source / "image").write_bytes(b"immutable")
-        snapshot = snapshot_file(
-            root=source, relative_path="image", scope=FileScope.ticket, owner_id="t_one"
-        )
-        child = ChildReference(executor.identity.executor_incarnation, str(uuid4()), "c_a")
-        first = executor.spool.mint_envelope(
-            conversation_id="c_a",
-            kind=EnvelopeKind.cli_write,
-            payload={"child": as_object(child)},
-            snapshots=(snapshot,),
-        )
-        second = executor.spool.mint_envelope(
-            conversation_id="c_a", kind=EnvelopeKind.cli_write, payload={}
-        )
-        independent = executor.spool.mint_envelope(
-            conversation_id="c_b", kind=EnvelopeKind.cli_write, payload={}
-        )
-        durable = executor.spool.snapshots(first.submission_id)[0].local_path
-        uploading, release, progressed = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        sent: list[str] = []
-
-        async def upload(transfer: FileTransfer, source: Path) -> None:
-            uploading.set()
-            await release.wait()
-            assert source.read_bytes() == b"immutable"
-
-        def receipt(row: QueuedEnvelope) -> AcceptanceReceipt:
-            return AcceptanceReceipt(
-                row.sender_id,
-                row.submission_id,
-                row.payload_sha256,
-                ReceiptDisposition.accepted,
-                {},
-                1,
-            )
-
-        async def transport(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-            if kind is WireMessageKind.file_manifest:
-                return WireMessage(
-                    WireMessageKind.file_slot,
-                    "slot",
-                    {
-                        "transfer_id": "authorized",
-                        "direction": "upload",
-                        "manifest": payload["manifest"],
-                    },
-                )
-            if kind is WireMessageKind.file_complete:
-                return WireMessage(
-                    WireMessageKind.file_accepted, "complete", cast(JsonObject, payload["manifest"])
-                )
-            row = TypeAdapter(QueuedEnvelope).validate_python(payload)
-            sent.append(row.submission_id)
-            if row == independent:
-                progressed.set()
-            return WireMessage(WireMessageKind.receipt, "receipt", as_object(receipt(row)))
-
-        from types import SimpleNamespace
-
-        from planner.executor.app_transport import ExecutorAppClient
-
-        executor._app_client = cast(ExecutorAppClient, SimpleNamespace(upload=upload))
-        monkeypatch.setattr(executor, "_request", transport)
-        task = asyncio.create_task(executor._replay())
-        try:
-            await asyncio.wait_for(uploading.wait(), 2)
-            await asyncio.wait_for(progressed.wait(), 2)
-            assert not task.done() and second.submission_id not in sent
-            # Reconciliation can persist a receipt during a live transfer. The pin
-            # protects its source bytes until the transfer coroutine leaves.
-            executor.spool.acknowledge(receipt(first))
-            assert durable.exists()
-            release.set()
-            await asyncio.wait_for(task, 2)
-            assert not durable.exists()
-            assert sent.index(first.submission_id) < sent.index(second.submission_id)
-            assert executor.spool.pending() == ()
-        finally:
-            release.set()
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-            executor.spool.close()
-
-    asyncio.run(run())
-
-
 def test_quiesce_counts_admitted_input_task_before_it_starts_and_refuses_new_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2198,14 +2061,14 @@ def test_cancelled_source_publication_remains_counted_until_durable_completion(
         # real IPC publication boundary and real filesystem journal here.
         child = SimpleNamespace(reference=reference, ticket_id=None, active_turn=None)
         monkeypatch.setattr(executor.registry, "authenticate", lambda *_: child)
-        original = executor.spool.mint_envelope
+        original = executor.spool.add
 
-        def mint(**kwargs: object) -> QueuedEnvelope:
+        def mint(*args: object, **kwargs: object) -> QueuedEnvelope:
             entered.set()
             assert release.wait(5)
-            return original(**kwargs)  # type: ignore[arg-type]
+            return original(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(executor.spool, "mint_envelope", mint)
+        monkeypatch.setattr(executor.spool, "add", mint)
         task = asyncio.create_task(
             executor.handle_ipc(
                 IpcRequest(
@@ -2256,7 +2119,7 @@ def test_native_absolute_workspace_refuses_missing_directory_or_file_before_chil
         workspace = tmp_path / "native-checkout"
         if is_file:
             workspace.write_text("not a directory")
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         created: list[bool] = []
 
         def factory(
@@ -2305,7 +2168,7 @@ def test_native_absolute_workspace_refuses_missing_directory_or_file_before_chil
 
 @pytest.mark.parametrize("snapshot_value", [None, {}, {"sources": [], "required_skill_names": []}])
 def test_missing_or_invalid_snapshot_refuses_before_provider_creation(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     snapshot_value: object,
 ) -> None:
     async def run() -> None:
@@ -2327,7 +2190,7 @@ def test_missing_or_invalid_snapshot_refuses_before_provider_creation(
 
 
 def test_native_start_replay_does_not_repeat_skill_bootstrap(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from planner.executor.skills import install_native_skill_snapshot
@@ -2358,7 +2221,7 @@ def test_native_start_replay_does_not_repeat_skill_bootstrap(
 
 
 def test_claude_bootstrap_uses_ordinary_account_home_when_unconfigured(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2445,7 +2308,7 @@ def test_mac_factory_selects_existing_provider_with_inherited_launch_environment
 
 
 def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_outcomes(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -2508,7 +2371,7 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
 
 
 def test_stop_fences_native_lock_waiter_keeps_final_event_and_refuses_second_owner(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -2565,7 +2428,7 @@ def test_stop_fences_native_lock_waiter_keeps_final_event_and_refuses_second_own
 
 
 def test_stop_waits_for_admitted_answer_publication(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
@@ -2787,103 +2650,8 @@ def test_input_progress_socket_failure_closes_original_writer_only(
     asyncio.run(run())
 
 
-def test_changed_capture_replay_reuses_receipts_after_lost_envelope_response(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from types import SimpleNamespace
-
-    from planner.executor.app_transport import ExecutorAppClient
-    from planner.executor.contracts import AcceptanceReceipt, FileManifest, ReceiptDisposition
-
-    async def run() -> None:
-        executor = make_executor(tmp_path)
-        executor._handshake_accepted = True
-        child = ChildReference(executor.identity.executor_incarnation, "child", "c_one")
-        directory = executor.paths.artifacts / "t_one"
-        directory.mkdir(parents=True)
-        (directory / "image").write_bytes(b"A")
-
-        def mint() -> QueuedEnvelope:
-            return executor.spool.mint_ticket_envelope(
-                paths=executor.paths,
-                ticket_id="t_one",
-                child=child,
-                kind=EnvelopeKind.cli_write,
-                payload={"child": as_object(child)},
-            )
-
-        first, second = mint(), mint()
-        accepted: set[str] = set()
-        manifests: list[str] = []
-        uploads: list[bytes] = []
-        envelopes: list[str] = []
-        lost = False
-
-        async def upload(slot: object, path: Path) -> None:
-            uploads.append(path.read_bytes())
-
-        async def transport(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-            nonlocal lost
-            if kind in (WireMessageKind.file_manifest, WireMessageKind.file_complete):
-                manifest = TypeAdapter(FileManifest).validate_python(payload["manifest"])
-                if kind is WireMessageKind.file_manifest:
-                    manifests.append(manifest.publication_id)
-                    if manifest.publication_id not in accepted:
-                        return WireMessage(
-                            WireMessageKind.file_slot,
-                            "slot",
-                            {
-                                "transfer_id": "upload",
-                                "direction": "upload",
-                                "manifest": payload["manifest"],
-                            },
-                        )
-                else:
-                    assert uploads == [b"A"]
-                    accepted.add(manifest.publication_id)
-                return WireMessage(WireMessageKind.file_accepted, "accepted", as_object(manifest))
-            row = TypeAdapter(QueuedEnvelope).validate_python(payload)
-            assert all(item.publication_id in accepted for item in row.file_dependencies)
-            envelopes.append(row.submission_id)
-            if not lost:
-                lost = True
-                raise ConnectionError("lost envelope receipt")
-            return WireMessage(
-                WireMessageKind.receipt,
-                "receipt",
-                as_object(
-                    AcceptanceReceipt(
-                        row.sender_id,
-                        row.submission_id,
-                        row.payload_sha256,
-                        ReceiptDisposition.accepted,
-                        {},
-                        1,
-                    )
-                ),
-            )
-
-        executor._app_client = cast(ExecutorAppClient, SimpleNamespace(upload=upload))
-        monkeypatch.setattr(executor, "_request", transport)
-        try:
-            with pytest.raises(ConnectionError, match="lost envelope"):
-                await executor._replay_envelope(first)
-            assert executor.spool.pending_count() == 2
-            await executor._replay_envelope(first)
-            await executor._replay_envelope(second)
-            assert manifests == [first.file_dependencies[0].publication_id] * 2
-            assert uploads == [b"A"]
-            assert envelopes == [first.submission_id, first.submission_id, second.submission_id]
-            assert mint().file_dependencies == ()
-            assert executor.spool.pending_count() == 1
-        finally:
-            executor.spool.close()
-
-    asyncio.run(run())
-
-
 def test_command_states_keep_one_provider_attempt_through_caller_loss(
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Gap: a reconnect must distinguish preparation from a possibly emitted command."""
