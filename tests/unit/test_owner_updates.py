@@ -502,11 +502,16 @@ def test_provider_rechecks_metadata_without_repeated_proof_download(
     assert metadata_reads == ["run", "artifacts"] * 3
 
 
-@pytest.mark.parametrize("state", ["dispatched", "cancelled", "applying"])
+@pytest.mark.parametrize(
+    ("state", "lifecycle_identity"),
+    [("dispatched", None), ("cancelled", None), ("applying", None),
+     ("applying", "prior-attempt"), ("applying", "request")],
+)
 def test_runner_preflight_failure_preserves_cancellation_and_uncertain_admission(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     state: str,
+    lifecycle_identity: str | None,
 ) -> None:
     from argparse import Namespace
     from typing import cast
@@ -518,6 +523,12 @@ def test_runner_preflight_failure_preserves_cancellation_and_uncertain_admission
     store.create(
         OwnerUpdateRequest("request", release(), "now", cast(UpdateRequestState, state), "now")
     )
+    if lifecycle_identity is not None:
+        lifecycle = DeploymentLifecycleStore(tmp_path / "data" / "deployment-lifecycle.json")
+        lifecycle.start(lifecycle_identity, SHA_B)
+        lifecycle.transition(lifecycle_identity, "verifying")
+        lifecycle.transition(lifecycle_identity, "app_healthy", serving_sha=SHA_B)
+    monkeypatch.delenv("PANELS_DEPLOYMENT_ID", raising=False)
     arguments = [
         "runner",
         "apply",
@@ -549,9 +560,11 @@ def test_runner_preflight_failure_preserves_cancellation_and_uncertain_admission
     assert receipt is not None
     if state == "dispatched":
         assert receipt.state == "failed"
+    elif lifecycle_identity == "request":
+        assert receipt.state == "applied"
     else:
         assert receipt.state == state
-    if state == "applying":
+    if state == "applying" and lifecycle_identity != "request":
         assert "Recovery required" in (receipt.detail or "")
 
 
@@ -654,3 +667,80 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
 def synthetic_runtime_admission(monkeypatch: pytest.MonkeyPatch) -> None:
     # Transaction tests use shell stubs. Real admission has separate focused tests.
     monkeypatch.setattr("planner.environments.deployment.admit_runtime", lambda *args: None)
+
+
+def test_cancellation_evidence_survives_replacement_with_bounded_retention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.environments import update_requests
+    from planner.environments.update_requests import CANCELLED_DETAIL
+
+    monkeypatch.setattr(update_requests, "MAX_CANCELLED_UPDATE_REPORTS", 2)
+    store = FileUpdateRequestStore(tmp_path / "request.json")
+    for number in range(4):
+        request_id = f"request-{number}"
+        store.create(OwnerUpdateRequest(request_id, release(), "now", "pending", "now"))
+        cancelled = store.transition(request_id, frozenset({"pending"}), "cancelled")
+        assert cancelled.detail == CANCELLED_DETAIL
+    assert store.read_for_reporting("request-0") is None
+    assert store.read_for_reporting("request-1") is not None
+    assert store.read_for_reporting("request-2") is not None
+    assert len(list((tmp_path / "cancelled-update-requests").glob("*.json"))) == 2
+    assert store.read_for_reporting("request-3") == store.read()
+    with pytest.raises(UpdateConflict):
+        store.transition("request-2", frozenset({"cancelled"}), "dispatched")
+
+    def refuse_prune() -> None:
+        raise OSError("pruning unavailable")
+
+    monkeypatch.setattr(store, "_prune_cancelled_reports", refuse_prune)
+    for number in range(4, 7):
+        request_id = f"request-{number}"
+        store.create(OwnerUpdateRequest(request_id, release(), "now", "pending", "now"))
+        store.transition(request_id, frozenset({"pending"}), "cancelled")
+    assert len(list((tmp_path / "cancelled-update-requests").glob("*.json"))) == 2
+    assert store.read_for_reporting("request-3") is None
+
+
+@pytest.mark.parametrize("operation", ["archive", "prune"])
+def test_reporting_failure_cannot_block_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    from planner.environments import update_requests
+
+    store = FileUpdateRequestStore(tmp_path / "request.json")
+    store.create(OwnerUpdateRequest("old", release(), "now", "cancelled", "now"))
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise OSError("report storage unavailable")
+
+    if operation == "archive":
+        from planner.environments.deployment_lifecycle import _atomic_write as atomic_write
+
+        def write(path: Path, value: dict[str, object]) -> None:
+            if path != store.path:
+                refuse()
+            atomic_write(path, value)
+
+        monkeypatch.setattr(update_requests, "_atomic_write", write)
+    else:
+        monkeypatch.setattr(store, "_prune_cancelled_reports", refuse)
+    replacement = OwnerUpdateRequest("new", release(), "now", "pending", "now")
+    assert store.create(replacement) == replacement
+    assert store.read() == replacement
+    if operation == "archive":
+        assert store.read_for_reporting("old") is None
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_uncertain_report_preserves_candidate_admission(
+    tmp_path: Path, committed: bool
+) -> None:
+    store = DeploymentLifecycleStore(tmp_path / "lifecycle.json")
+    store.start("attempt", SHA_B)
+    store.transition("attempt", "verifying")
+    if committed:
+        store.transition("attempt", "app_healthy", serving_sha=SHA_B)
+    store.transition("attempt", "unknown", detail="Final checks are uncertain.")
+    assert matching_commit(store, SHA_B) is committed
+    assert startup_requires_commit(store, SHA_B) is not committed

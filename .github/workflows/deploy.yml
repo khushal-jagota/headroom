@@ -769,6 +769,7 @@ jobs:
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install -r requirements.txt
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install --editable .
       - name: Apply pinned owner request
+        id: owner_apply
         env:
           UPDATE_REQUEST_ID: ${{ inputs.request_id }}
           UPDATE_PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
@@ -790,6 +791,7 @@ jobs:
             --app-sha "$UPDATE_APP_SHA" --artifact-digest "$UPDATE_ARTIFACT_DIGEST" \
             --archive-sha256 "$UPDATE_ARCHIVE_SHA256"
       - name: Provision agent skills after local adoption
+        id: owner_provision
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" -m planner environment provision-skills \
             --database-parent "$PANELS_CURRENT_ROOT/data" \
@@ -797,6 +799,7 @@ jobs:
             --codex-home "$PANELS_APP_HOME/.codex" \
             --claude-home "$PANELS_APP_HOME/.claude"
       - name: Check published HTTP/2
+        id: owner_published_route
         env:
           PANELS_PUBLISHED_ORIGIN: ${{ vars.PANELS_PUBLISHED_ORIGIN }}
         run: python3 scripts/check_published_http2.py
@@ -807,7 +810,11 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
-          PANELS_PRIOR_JOB_STATUS: ${{ job.status }}
+          UPDATE_REQUEST_ID: ${{ inputs.request_id }}
+          UPDATE_APP_SHA: ${{ inputs.commit_sha }}
+          UPDATE_APPLY_OUTCOME: ${{ steps.owner_apply.outcome }}
+          UPDATE_PROVISION_OUTCOME: ${{ steps.owner_provision.outcome }}
+          UPDATE_PUBLISHED_ROUTE_OUTCOME: ${{ steps.owner_published_route.outcome }}
         run: |
           set -euo pipefail
           # Read the serving app after post-health checks. Never restore or restart here.
@@ -831,35 +838,8 @@ jobs:
               pass
           PYTHON
           )"
-          # Health alone does not commit a candidate whose ordinary work is still held.
-          local_commit="$(python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" read \
-            --path "$PANELS_LIFECYCLE_PATH" | python3 -c '
-          import json, os, sys
-          record = json.load(sys.stdin)
-          committed = (record.get("deployment_id") == os.environ["PANELS_DEPLOYMENT_ID"]
-                       and record.get("requested_sha") == os.environ["PANELS_REQUESTED_SHA"]
-                       and record.get("serving_sha") == os.environ["PANELS_REQUESTED_SHA"]
-                       and record.get("phase") in {"app_healthy", "succeeded"})
-          print("true" if committed else "false")
-          ')"
-          serving_args=()
-          if [ -n "$serving_sha" ] && { [ "$local_commit" = true ] || [ "$serving_sha" != "$PANELS_REQUESTED_SHA" ]; }; then
-            serving_args=(--serving-sha "$serving_sha")
-          fi
-          if [ "$PANELS_PRIOR_JOB_STATUS" = success ] && [ "$local_commit" = true ] && [ "$serving_sha" = "$PANELS_REQUESTED_SHA" ]; then
-            phase=succeeded
-            code=deployment_succeeded
-            detail="The requested application is installed and post-health checks completed."
-          else
-            phase=failed
-            code=post_health_check_failed
-            if [ "$local_commit" = true ] && [ "$serving_sha" = "$PANELS_REQUESTED_SHA" ]; then
-              detail="The requested application is installed, but deployment checks did not complete."
-            else
-              detail="Deployment did not complete. Inspect the recorded serving release and recovery evidence."
-            fi
-          fi
-          python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" transition \
-            --path "$PANELS_LIFECYCLE_PATH" --deployment-id "$PANELS_DEPLOYMENT_ID" \
-            --phase "$phase" --code "$code" --detail "$detail" --preserve-terminal \
-            "${serving_args[@]}"
+          "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.update_reporting \
+            --current-root "$PANELS_CURRENT_ROOT" --request-id "$UPDATE_REQUEST_ID" \
+            --deployment-id "$PANELS_DEPLOYMENT_ID" --app-sha "$UPDATE_APP_SHA" \
+            --apply-outcome "$UPDATE_APPLY_OUTCOME" --provision-outcome "$UPDATE_PROVISION_OUTCOME" \
+            --published-route-outcome "$UPDATE_PUBLISHED_ROUTE_OUTCOME" --serving-sha "$serving_sha"

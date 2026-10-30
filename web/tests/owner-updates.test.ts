@@ -16,6 +16,14 @@ const status: UpdateStatus = { configured: true, available: release, request: nu
 // These gaps concern exact publication identity, cancellation state, and offering
 // adoption vs page refresh. Adapter and SSR checks need no connected browser host.
 describe("owner-controlled updates", () => {
+  it("reports cancellation neutrally and retains the next update controls", () => {
+    const html = render(UpdateActions, { props: { status: { ...status,
+      request: { ...request, state: "cancelled" } }, now: Date.now() } }).body;
+    expect(html).toContain("Update canceled before installation. The previous version stayed active.");
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain("Update failed");
+    expect(html).toContain("Update now");
+  });
   it("posts the exact selected publication identity and explicit activity confirmation", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify(request)));
     vi.stubGlobal("fetch", fetch);

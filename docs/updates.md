@@ -32,6 +32,12 @@ idle request returns to pending without stopping the service.
 Cancellation and claim are exclusive. Once the runner claims it, cancellation reports
 that application already began.
 
+A confirmed cancellation before runner claim reports: “Update canceled before installation.
+The previous version stayed active.” This is a neutral outcome, not a failed deployment
+or a rollback. Replacement preserves the canceled request as reporting evidence.
+The current request alone still controls update actions. The archive retains at most
+32 canceled requests. If an older receipt is absent, its report stays uncertain.
+
 Each request pins its publication, archive, proof, source SHA, and digests. It never
 silently changes to a newer release. A missing or expired publication requires a new
 selection. The owner can select a newer retained release directly without installing
@@ -44,6 +50,10 @@ The owner inspects repository runner evidence before a new request.
 A local **applied** result means that the app is installed. The deployment status
 separately reports the final workflow result. Failed skill or published-route checks
 leave the installed app in place and report that the workflow is incomplete.
+The finalizer reports each workflow check separately from application health. A failed
+skill or published-route check does not establish an unhealthy app. Missing admission
+or installation evidence stays explicit uncertainty. A stale finalizer cannot change
+a replacement attempt, even when both requests target the same application SHA.
 The browser offers a separate page refresh when its loaded app differs from the server.
 
 Code paths: `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`,

@@ -10,6 +10,12 @@ const status = (changes: Partial<DeploymentStatus> = {}): DeploymentStatus => ({
 });
 
 describe("deployment status precedence and expiry", () => {
+  it("keeps canceled updates neutral and uncertain evidence distinct from health failure", () => {
+    const canceled = status({ state: "idle", outcome: "cancelled" });
+    expect(resolveDeploymentStatus(canceled, "connected", now)).toBe("connected");
+    expect(resolveDeploymentStatus(canceled, "reconnecting", now)).toBe("reconnecting");
+    expect(resolveDeploymentStatus(status({ state: "unknown" }), "connected", now)).toBe("reconnecting");
+  });
   it("keeps failed deployments visible over fresh progress, recovery, and disconnection", () => {
     for (const outcome of ["failed", "rolled_back"] as const) {
       for (const state of ["preparing", "restarting", "back_up"] as const) {

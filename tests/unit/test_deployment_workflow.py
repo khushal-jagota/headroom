@@ -204,23 +204,58 @@ def test_parallel_suite_setup_and_evidence_keep_the_existing_native_and_mount_bo
     assert upload["with"]["include-hidden-files"] is True
 
 
-def test_post_health_failure_reports_installed_app_without_undoing_local_commit(
-    tmp_path: Path,
+@pytest.mark.parametrize("case", [
+    "later_check", "uncertain", "cancelled", "replacement", "same_sha_stale",
+    "health_failure", "recovery_failure", "success", "replacement_no_lifecycle",
+    "missing_receipt", "installed_uncertain", "apply_failure",
+])
+def test_adoption_finalizer_reports_own_evidence_without_service_actions(
+    tmp_path: Path, case: str,
 ) -> None:
-    """The real finalizer CLI must not turn local commit into workflow success."""
+    """Execute the workflow finalizer against disposable records, never provisioning."""
+    import json
     import os
     import subprocess
     import sys
+    from dataclasses import replace
+
+    from tests.unit.test_owner_updates import release
 
     from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+    from planner.environments.update_contracts import OwnerUpdateRequest
+    from planner.environments.update_requests import FileUpdateRequestStore
 
-    sha = "a" * 40
-    path = tmp_path / "deployment-lifecycle.json"
+    root = tmp_path / "current"
+    (root / "data").mkdir(parents=True)
+    sha = release().manifest.app_sha
+    path = root / "data" / "deployment-lifecycle.json"
     store = DeploymentLifecycleStore(path)
-    store.start("123-1", sha, expected_deployment_id=None)
-    store.transition("123-1", "verifying")
-    store.transition("123-1", "app_healthy", serving_sha=sha)
-    # Replace only the external health observation. Execute the actual lifecycle CLI.
+    requests = FileUpdateRequestStore(root / "data" / "owner-update-request.json")
+    request = OwnerUpdateRequest("first", release(), "now", "dispatched", "2026-10-30T00:00:00Z")
+    requests.create(request)
+    if case != "replacement_no_lifecycle":
+        store.start("123-1", sha, expected_deployment_id=None)
+    if case in {"later_check", "success", "installed_uncertain"}:
+        store.transition("123-1", "verifying")
+        store.transition("123-1", "app_healthy", serving_sha=sha)
+    elif case in {"health_failure", "recovery_failure"}:
+        store.transition("123-1", "failed", code=(
+            "candidate_unhealthy" if case == "health_failure" else "rollback_recovery_failed"
+        ), detail="Observed health or recovery failure.")
+    elif case in {"cancelled", "replacement", "same_sha_stale",
+                  "replacement_no_lifecycle", "missing_receipt"}:
+        requests.transition("first", frozenset({"dispatched"}), "cancelled")
+        if case != "cancelled":
+            requests.create(replace(request, request_id="replacement"))
+        if case == "same_sha_stale":
+            store.start("123-2", sha, expected_deployment_id="123-1")
+    if case == "missing_receipt":
+        for receipt in (root / "data" / "cancelled-update-requests").glob("*.json"):
+            receipt.unlink()
+    before_lifecycle = path.read_bytes() if path.exists() else None
+    before_request = requests.path.read_bytes()
+    # The existing external-health shim emits a supplied observation. No HTTP,
+    # service control, installation, or skill provisioning command can run here.
     tools = tmp_path / "tools"
     tools.mkdir()
     executable = tools / "python3"
@@ -234,40 +269,78 @@ def test_post_health_failure_reports_installed_app_without_undoing_local_commit(
     step = next(s for s in job["steps"] if s.get("name") == "Finalize owner adoption lifecycle")
     assert step["if"] == "${{ always() }}"
     assert job["steps"][-1] is step
+    apply_failed = case in {
+        "apply_failure", "health_failure", "recovery_failure", "cancelled",
+        "replacement", "same_sha_stale", "replacement_no_lifecycle", "missing_receipt",
+    }
     result = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", step["run"]],
         env=os.environ | {
             "PATH": str(tools) + os.pathsep + os.environ["PATH"],
             "FINALIZER_SERVING_SHA": sha,
-            "PANELS_PRIOR_JOB_STATUS": "failure",
-            "PANELS_REQUESTED_SHA": sha,
-            "PANELS_LIFECYCLE_PATH": str(path),
-            "PANELS_DEPLOYMENT_ID": "123-1",
-            "GITHUB_WORKSPACE": str(WORKFLOW.parents[2]),
-        },
-        text=True, capture_output=True, check=True,
+            "PANELS_CURRENT_ROOT": str(root),
+            "PANELS_DEPLOY_VENV": str(Path(sys.executable).parent.parent),
+            "PANELS_DEPLOYMENT_ID": "123-1", "UPDATE_REQUEST_ID": "first",
+            "UPDATE_APP_SHA": sha,
+            "UPDATE_APPLY_OUTCOME": "failure" if apply_failed else "success",
+            "UPDATE_PROVISION_OUTCOME": ("success" if case == "success" else
+                                         "skipped" if apply_failed or case == "installed_uncertain"
+                                         else "failure"),
+            "UPDATE_PUBLISHED_ROUTE_OUTCOME": "success" if case == "success" else "skipped",
+        }, text=True, capture_output=True, check=True,
     )
-    assert "post_health_check_failed" in result.stdout
+    report = json.loads(result.stdout)
     recorded = store.read().lifecycle
-    assert recorded is not None and recorded.phase == "failed"
-    assert recorded.serving_sha == sha
-    assert "installed" in (recorded.detail or "")
-    # A healthy endpoint before commit cannot open candidate work through finalization.
-    store.start("123-2", sha, expected_deployment_id="123-1")
-    store.transition("123-2", "verifying")
-    result = subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", step["run"]],
-        env=os.environ | {
-            "PATH": str(tools) + os.pathsep + os.environ["PATH"],
-            "FINALIZER_SERVING_SHA": sha,
-            "PANELS_PRIOR_JOB_STATUS": "failure",
-            "PANELS_REQUESTED_SHA": sha,
-            "PANELS_LIFECYCLE_PATH": str(path),
-            "PANELS_DEPLOYMENT_ID": "123-2",
-            "GITHUB_WORKSPACE": str(WORKFLOW.parents[2]),
-        },
-        text=True, capture_output=True, check=True,
-    )
-    recorded = store.read().lifecycle
-    assert recorded is not None and recorded.phase == "failed"
-    assert recorded.serving_sha is None
+    assert requests.path.read_bytes() == before_request
+    if case == "replacement_no_lifecycle":
+        assert recorded is None and not path.exists()
+        assert report["status"] == "superseded"
+        assert "Update canceled before installation" in report["detail"]
+        archived = requests.read_for_reporting("first")
+        assert archived is not None and archived.state == "cancelled"
+        return
+    assert recorded is not None
+    if case == "missing_receipt":
+        assert report["status"] == "superseded"
+        assert path.read_bytes() == before_lifecycle
+        assert "uncertain" in report["detail"]
+        assert "canceled" not in report["detail"]
+    elif case == "installed_uncertain":
+        assert recorded.phase == "unknown" and recorded.serving_sha == sha
+        assert "installed" in (recorded.detail or "")
+        from planner.environments.update_admission import matching_commit
+        assert matching_commit(store, sha)
+    elif case in {"replacement", "same_sha_stale"}:
+        assert report["status"] == "superseded"
+        assert path.read_bytes() == before_lifecycle
+        assert "Update canceled before installation" in report["detail"]
+    elif case in {"health_failure", "recovery_failure"}:
+        assert report["status"] == "preserved"
+        assert path.read_bytes() == before_lifecycle
+        assert recorded.code == (
+            "candidate_unhealthy" if case == "health_failure" else "rollback_recovery_failed"
+        )
+        assert store.project(sha).state == "problem"
+        assert store.project(sha).outcome == "failed"
+    elif case == "cancelled":
+        assert recorded.phase == "cancelled"
+        assert recorded.detail == (
+            "Update canceled before installation. The previous version stayed active."
+        )
+        assert store.project(sha).state == "idle"
+        assert store.project(sha).outcome == "cancelled"
+    elif case in {"uncertain", "apply_failure"}:
+        assert recorded.phase == "unknown"
+        assert recorded.serving_sha is None
+        assert "uncertain" in (recorded.detail or "")
+        assert store.project(sha).state == "unknown"
+        assert recorded.code == "admission_evidence_uncertain"
+        assert "health" not in (recorded.detail or "")
+        assert "rollback" not in (recorded.detail or "")
+    elif case == "later_check":
+        assert recorded.phase == "failed" and recorded.serving_sha == sha
+        assert recorded.code == "workflow_check_failed"
+        assert "agent skill provisioning" in (recorded.detail or "")
+        assert "installed" in (recorded.detail or "")
+    else:
+        assert recorded.phase == "succeeded" and recorded.serving_sha == sha

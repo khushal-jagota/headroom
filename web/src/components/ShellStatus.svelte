@@ -32,7 +32,7 @@
   const statusState = $derived(resolveDeploymentStatus(deployment.data, connectionState, clock));
   const baseStatusWord = $derived(resolveStatusCard(statusState, $releaseState));
   const hasOwnerUpdate = $derived(activeUpdateRequest(updates.data?.request) ||
-    (updates.data?.configured && usableUpdate(updates.data.available, clock)) || updates.data?.request?.state === "failed");
+    (updates.data?.configured && usableUpdate(updates.data.available, clock)) || ["failed", "cancelled"].includes(updates.data?.request?.state ?? ""));
   const statusWord = $derived(baseStatusWord ?? (hasOwnerUpdate ? "owner-update" : null));
   const statusKey = $derived(statusWord ?? (navigationHealth ? "navigation" : null));
   let displayedWord = $state<StatusCardKey | "navigation" | null>(null);
@@ -195,6 +195,9 @@
           {:else}
             <div class="status-base">{@render cardBody(card)}</div>
           {/if}
+        {/if}
+        {#if deployment.data?.detail && (displayedWord === "Problem" || (deployment.data?.state === "unknown" && displayedWord === "Reconnecting"))}
+          <div class="deployment-detail">{deployment.data.detail}</div>
         {/if}
         {#if (displayedWord === "owner-update" || displayedWord === "Problem") && updates.data}
           <UpdateActions status={updates.data} now={clock} />
