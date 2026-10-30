@@ -20,14 +20,13 @@ from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import ChangeSignallingConnection, connect, create_schema
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.contracts import (
     AcceptanceReceipt,
     BackendEvent,
     BackendEventMethod,
-    ChildReference,
     EnvelopeKind,
-    ExecutorIdentity,
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,

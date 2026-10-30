@@ -37,13 +37,8 @@ from planner.conversation.events import (
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, Principal
-from planner.executor.contracts import (
-    AcceptanceReceipt,
-    CliWrite,
-    ExecutorIdentity,
-    JsonObject,
-    QueuedEnvelope,
-)
+from planner.execution_identity import ExecutorIdentity
+from planner.executor.contracts import AcceptanceReceipt, CliWrite, JsonObject, QueuedEnvelope
 from planner.executor.store import ExecutorStore
 from planner.executor.transfers import settled_io
 from planner.message_delivery import api, service

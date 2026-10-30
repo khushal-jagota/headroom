@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 import anyio
 
-from planner.executor.transfers import wait_for_settlement
+from planner.core.task_settlement import wait_for_settlement
 
 
 async def owned_probe[Result](

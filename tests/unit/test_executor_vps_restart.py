@@ -33,18 +33,15 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
-    AskKind,
-    AskReference,
     ChildCommand,
     ChildInventory,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     CommandOutcome,
-    ExecutorIdentity,
     ReconnectResult,
     WireMessage,
     WireMessageKind,

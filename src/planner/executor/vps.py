@@ -20,6 +20,7 @@ from planner.conversation.backends.contracts import (
     AdmissionRefused,
     BackendEventSink,
     BackendSpawnFailed,
+    DeliveryCancelled,
 )
 from planner.conversation.contracts import (
     ResolvedConversationStart,
@@ -42,6 +43,14 @@ from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import wait_for_settlement
+from planner.execution_identity import (
+    AskKind,
+    AskReference,
+    ChildReference,
+    ExecutorIdentity,
+    parse_identity,
+)
 from planner.executor.codec import encode_value
 from planner.executor.configuration import (
     CATALOG_CANCEL_TIMEOUT_SECONDS,
@@ -54,15 +63,12 @@ from planner.executor.contracts import (
     AnswerApplication,
     AnswerPermission,
     AnswerUserInput,
-    AskKind,
-    AskReference,
     BackendEvent,
     BackendEventMethod,
     CanonicalSkillSnapshot,
     ChildCommand,
     ChildInventory,
     ChildOperation,
-    ChildReference,
     CliWrite,
     ClockSample,
     CommandDisposition,
@@ -74,7 +80,6 @@ from planner.executor.contracts import (
     EnvelopeRefusal,
     ExecutorHealth,
     ExecutorHealthRead,
-    ExecutorIdentity,
     FileDownloadRequest,
     FileScope,
     FileUploadRequest,
@@ -94,17 +99,10 @@ from planner.executor.contracts import (
 )
 from planner.executor.files import snapshot_file
 from planner.executor.mutations import write_ticket_mutation
-from planner.executor.remote import (
-    RemoteBackendChild,
-    RemoteBackendChildFactory,
-    RemoteInitialDeliveryCancelled,
-)
+from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore, MissingFiles
-from planner.executor.transfers import GenerationTransfers, settled_io, wait_for_settlement
-from planner.executor.wire import (
-    parse_identity,
-)
+from planner.executor.transfers import GenerationTransfers, settled_io
 from planner.tickets.contracts import TicketLocale
 
 
@@ -279,7 +277,7 @@ class ExecutorEndpoint:
             for emission in self._emission_tasks.get(command.command_id, ()):
                 emission.cancel()
             if not future.done() and command.command_id not in self._possibly_emitted_commands:
-                future.set_exception(RemoteInitialDeliveryCancelled())
+                future.set_exception(DeliveryCancelled())
         if prompt_may_have_sent and self.ready and self.writer is not None:
             identity = self.identity
             try:
@@ -884,7 +882,7 @@ class ExecutorEndpoint:
 
     async def send_command(self, command: ChildCommand) -> CommandOutcome:
         if self._initial_command_cancelled(command):
-            raise RemoteInitialDeliveryCancelled()
+            raise DeliveryCancelled()
         existing = self.pending_commands.get(command.command_id)
         if existing is not None:
             if existing[0] != command:

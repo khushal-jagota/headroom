@@ -13,8 +13,8 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.conversation.message_content import text_message_content
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.executor.contracts import ExecutorIdentity
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ExecutorIdentity
 from planner.executor.store import ExecutorStore
 from planner.runtime.conversation_start import send_to_ticket_conversation
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step

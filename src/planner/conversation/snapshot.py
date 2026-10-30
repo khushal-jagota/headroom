@@ -63,7 +63,7 @@ if TYPE_CHECKING:
         CatalogResult,
         CatalogWorkspaceBinding,
     )
-    from planner.executor.contracts import ExecutorIdentity
+    from planner.execution_identity import ExecutorIdentity
 
 
 @dataclass(frozen=True, slots=True)

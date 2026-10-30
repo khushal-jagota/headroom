@@ -34,10 +34,10 @@ from planner.conversation.model_resolution.contracts import (
     ModelSelection,
     SelectionKind,
 )
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ExecutorIdentity
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
-    ExecutorIdentity,
     OutboxEntry,
     StartRun,
     Steer,
@@ -123,12 +123,12 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
     )
     from planner.conversation.storage import ConversationStore
     from planner.core.db import connect, create_schema
+    from planner.execution_identity import ChildReference, ProtocolRefused, parse_identity
     from planner.executor.configuration import ExecutorPaths
     from planner.executor.contracts import (
         AcceptanceReceipt,
         ChildCommand,
         ChildOperation,
-        ChildReference,
         CommandDisposition,
         CommandOutcome,
         EnvelopeKind,
@@ -139,7 +139,6 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
     )
     from planner.executor.mac import MacExecutor
     from planner.executor.mac_outbox import MacOutbox
-    from planner.executor.wire import ProtocolRefused, parse_identity
 
     def payload_object(value: object) -> JsonObject:
         payload = encode_value(value)
@@ -411,12 +410,8 @@ def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
         ResolvedConversationStart,
     )
     from planner.conversation.message_files import ConversationMessageFiles
-    from planner.executor.contracts import (
-        ChildCommand,
-        ChildOperation,
-        ChildReference,
-        CommandDisposition,
-    )
+    from planner.execution_identity import ChildReference
+    from planner.executor.contracts import ChildCommand, ChildOperation, CommandDisposition
     from planner.executor.mac_outbox import MacOutbox
     from planner.executor.runtime import NativeChildRegistry
 
@@ -467,12 +462,8 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
     from planner.conversation.backends.contracts import TurnToken
     from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
-    from planner.executor.contracts import (
-        ChildCommand,
-        ChildOperation,
-        ChildReference,
-        CommandDisposition,
-    )
+    from planner.execution_identity import ChildReference
+    from planner.executor.contracts import ChildCommand, ChildOperation, CommandDisposition
     from planner.executor.mac_outbox import MacOutbox
     from planner.executor.runtime import NativeChildRegistry, _Child
 
@@ -543,12 +534,8 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
     from planner.conversation.backends.contracts import BackendPromptAccepted, TurnToken
     from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
-    from planner.executor.contracts import (
-        ChildCommand,
-        ChildOperation,
-        ChildReference,
-        CommandDisposition,
-    )
+    from planner.execution_identity import ChildReference
+    from planner.executor.contracts import ChildCommand, ChildOperation, CommandDisposition
     from planner.executor.mac_outbox import MacOutbox
     from planner.executor.runtime import NativeChildRegistry, _Child
 
@@ -641,6 +628,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
         BackendPromptAccepted,
         BackendPromptRejected,
         PromptWriteFailed,
+        RemoteCommandUncertain,
         TurnToken,
     )
     from planner.conversation.contracts import (
@@ -651,10 +639,11 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     from planner.conversation.events import ProviderSubmissionFact
     from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
+    from planner.execution_identity import ChildReference
     from planner.executor.configuration import ExecutorPaths
-    from planner.executor.contracts import ChildCommand, ChildReference, CommandDisposition
+    from planner.executor.contracts import ChildCommand, CommandDisposition
     from planner.executor.mac_outbox import MacOutbox
-    from planner.executor.remote import RemoteBackendChild, RemoteCommandUncertain
+    from planner.executor.remote import RemoteBackendChild
     from planner.executor.runtime import NativeChildRegistry
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "provider-home"))
@@ -731,8 +720,9 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
                 )
 
             if fate == "unknown":
-                with pytest.raises(RemoteCommandUncertain):
+                with pytest.raises(PromptWriteFailed) as uncertain:
                     await write()
+                assert isinstance(uncertain.value, RemoteCommandUncertain)
             elif fate == "rejected":
                 with pytest.raises(BackendPromptRejected) as refused:
                     await write()

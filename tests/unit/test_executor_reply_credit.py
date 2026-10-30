@@ -28,7 +28,8 @@ from planner.conversation.system import (
     _RunningTurn,
 )
 from planner.core.contracts import CHIEF_PRINCIPAL
-from planner.executor.contracts import ChildCommand, ChildReference, CommandOutcome
+from planner.execution_identity import ChildReference
+from planner.executor.contracts import ChildCommand, CommandOutcome
 from planner.executor.remote import RemoteBackendChild
 
 

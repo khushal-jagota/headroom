@@ -20,13 +20,12 @@ from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.clock import RealClock
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
-    ChildReference,
     CliWrite,
     EnvelopeKind,
-    ExecutorIdentity,
     OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,

@@ -27,11 +27,10 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore, StoredConversationEvent
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
+from planner.execution_identity import AskKind, ChildReference
 from planner.executor.contracts import (
-    AskKind,
     ChildCommand,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     CommandOutcome,
     ControlMessageWriter,
@@ -54,14 +53,10 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
         endpoint = ExecutorEndpoint(db_path, RealClock())
         endpoint.ready = True
         endpoint.writer = cast(ControlMessageWriter, SimpleNamespace(close=lambda: None, send=None))
+        from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+        from planner.execution_identity import ExecutorIdentity
         from planner.executor.codec import encode_value, envelope_payload_digest
-        from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-        from planner.executor.contracts import (
-            EnvelopeKind,
-            ExecutorIdentity,
-            JsonObject,
-            QueuedEnvelope,
-        )
+        from planner.executor.contracts import EnvelopeKind, JsonObject, QueuedEnvelope
 
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "original-incarnation", 1
@@ -479,8 +474,9 @@ def test_retirement_rolls_back_metadata_assignment_and_asks_together(
 ) -> None:
     """Gap: a crash after stop must not retain authority beside retired metadata."""
     from planner.conversation.backends.contracts import TurnToken
+    from planner.execution_identity import AskReference
     from planner.executor.codec import encode_value
-    from planner.executor.contracts import AskReachability, AskReference
+    from planner.executor.contracts import AskReachability
     from planner.executor.store import ExecutorStore
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])

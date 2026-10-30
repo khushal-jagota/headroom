@@ -16,7 +16,7 @@ from planner.conversation.model_resolution.contracts import (
     PrerequisiteStatus,
     SelectionKind,
 )
-from planner.executor.contracts import ExecutorIdentity
+from planner.execution_identity import ExecutorIdentity
 from planner.tickets.contracts import TicketLocale
 
 

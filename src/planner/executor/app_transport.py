@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
 from starlette.responses import StreamingResponse
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
+from planner.execution_identity import ExecutorIdentity, ProtocolRefused
 from planner.executor.configuration import (
     EXECUTOR_GENERATION_HEADER,
     EXECUTOR_ID_HEADER,
@@ -27,10 +28,10 @@ from planner.executor.configuration import (
     TRANSFER_CHUNK_BYTES,
     WS_HEARTBEAT_SECONDS,
 )
-from planner.executor.contracts import ExecutorIdentity, FileTransfer, WebSocketPeer, WireMessage
+from planner.executor.contracts import FileTransfer, WebSocketPeer, WireMessage
 from planner.executor.files import regular_descriptor
 from planner.executor.transfers import settled_io
-from planner.executor.wire import ProtocolRefused, decode_message, encode_message
+from planner.executor.wire import decode_message, encode_message
 
 
 def validate_server_url(value: str) -> str:

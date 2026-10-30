@@ -22,6 +22,7 @@ from click.testing import CliRunner
 
 from planner.cli.main import main
 from planner.conversation.backends.contracts import BackendChild
+from planner.execution_identity import ChildReference
 from planner.executor import ipc_client
 from planner.executor.cli import executor_group
 from planner.executor.configuration import ExecutorPaths
@@ -29,7 +30,6 @@ from planner.executor.contracts import (
     AcceptanceReceipt,
     ChildCommand,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     FileSnapshot,
     IpcOperation,

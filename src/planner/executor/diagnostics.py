@@ -8,12 +8,12 @@ from collections.abc import Callable
 import aiohttp
 from pydantic import ValidationError
 
+from planner.execution_identity import ProtocolRefused
 from planner.executor.contracts import (
     ConnectionFailureCategory,
     ConnectionFailureOrigin,
     ConnectionPhase,
 )
-from planner.executor.wire import ProtocolRefused
 
 
 def connection_exception_tag(error: Exception) -> str:

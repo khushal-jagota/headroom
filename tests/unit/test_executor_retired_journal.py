@@ -17,13 +17,13 @@ from planner.conversation.model_resolution.contracts import (
 )
 from planner.core.clock import Clock
 from planner.core.contracts import OWNER_PRINCIPAL
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ExecutorIdentity
 from planner.executor.contracts import (
     ChildCommand,
     ChildOperation,
     ControlMessageWriter,
     EnvelopeKind,
-    ExecutorIdentity,
     OutboxEntry,
     ReceiptDisposition,
     decode_command_arguments,

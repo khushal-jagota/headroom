@@ -8,10 +8,11 @@ import pytest
 from pydantic import ValidationError
 from tests.support.executor_control import BinaryPeer
 
+from planner.execution_identity import ProtocolRefused
 from planner.executor.app_transport import ControlWebSocket
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.contracts import WireMessage, WireMessageKind
-from planner.executor.wire import ProtocolRefused, decode_message, encode_message
+from planner.executor.wire import decode_message, encode_message
 
 
 def test_plain_control_messages_validate_and_bound_the_whole_payload() -> None:

@@ -21,17 +21,14 @@ from planner.conversation.events import PermissionAskOption, UserInputAnswer, Us
 from planner.conversation.lifecycle import LifecycleStatus, LifecycleTransition
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.codec import encode_value, envelope_payload_digest
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AnswerApplication,
-    AskKind,
-    AskReference,
     BackendEvent,
     BackendEventMethod,
-    ChildReference,
     EnvelopeKind,
-    ExecutorIdentity,
     JsonObject,
     QueuedEnvelope,
 )

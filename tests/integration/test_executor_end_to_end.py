@@ -61,19 +61,17 @@ from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
+from planner.execution_configuration import PROTOCOL_VERSION
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, ExecutorPaths
+from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
-    AskKind,
     AskReachability,
-    AskReference,
-    ChildReference,
     CommandDisposition,
     ConnectionState,
     ControlMessageWriter,
     EnvelopeKind,
-    ExecutorIdentity,
     IpcOperation,
     IpcRequest,
     JsonObject,
@@ -2166,9 +2164,10 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
 ) -> None:
     from uuid import uuid4
 
+    from planner.execution_identity import ExecutorIdentity
     from planner.executor.app_transport import ControlWebSocket, ExecutorAppClient
     from planner.executor.codec import encode_value
-    from planner.executor.contracts import ExecutorHealth, ExecutorIdentity
+    from planner.executor.contracts import ExecutorHealth
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)

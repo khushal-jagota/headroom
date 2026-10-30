@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
+from planner.execution_configuration import SPOOL_FORMAT_VERSION
 from planner.executor.codec import encode_value, envelope_payload_digest
 from planner.executor.configuration import (
     FILE_CHUNK_BYTES,
@@ -26,7 +27,6 @@ from planner.executor.configuration import (
     MAX_TRANSFERS,
     OUTBOX_BUSY_TIMEOUT_MS,
     OUTBOX_RETRY_SECONDS,
-    SPOOL_FORMAT_VERSION,
     ExecutorPaths,
 )
 from planner.executor.contracts import (

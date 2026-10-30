@@ -19,8 +19,8 @@ from planner.conversation.contracts import (
     PromptDeliveryUncertain,
 )
 from planner.core.db import connect
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.executor.contracts import ExecutorIdentity
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ExecutorIdentity
 from planner.executor.store import ExecutorStore
 from planner.runtime import conversation_start, worker_memory
 from planner.runtime.worker_memory_contracts import MemoryNoticeEligibility

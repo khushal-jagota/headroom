@@ -45,12 +45,12 @@ from planner.conversation.model_resolution.contracts import (
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
+from planner.execution_identity import ChildReference
 from planner.executor.codec import encode_value
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
     ChildCommand,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     CommandOutcome,
     ReceiptDisposition,

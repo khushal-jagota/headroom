@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from planner.conversation.admission.service import bind_command
 from planner.conversation.backends import contracts as backend
+from planner.conversation.backends.contracts import DeliveryCancelled, RemoteCommandUncertain
 from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
@@ -23,6 +24,7 @@ from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.contracts import Principal
+from planner.execution_identity import ChildReference, ProtocolRefused
 from planner.executor.codec import decode_prompt_result, decode_provider_submission, encode_value
 from planner.executor.contracts import (
     AnswerPermission,
@@ -32,7 +34,6 @@ from planner.executor.contracts import (
     ChildCommand,
     ChildCommandArguments,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     CommandOutcome,
     JsonObject,
@@ -44,7 +45,7 @@ from planner.executor.contracts import (
     WritePrompt,
 )
 from planner.executor.skills import validate_skill_snapshot
-from planner.executor.wire import ProtocolRefused, encode_message
+from planner.executor.wire import encode_message
 
 type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
 type SendCommand = Callable[[ChildCommand], Awaitable[CommandOutcome]]
@@ -156,12 +157,12 @@ class RemoteBackendChild:
         )
         if operation in (ChildOperation.start, ChildOperation.write_prompt):
             if self.initial_delivery_cancelled:
-                raise RemoteInitialDeliveryCancelled()
+                raise DeliveryCancelled()
             self.initial_commands.append(command)
             if self.record_command is not None:
                 await self.record_command(command)
             if self.initial_delivery_cancelled:
-                raise RemoteInitialDeliveryCancelled()
+                raise DeliveryCancelled()
         elif operation is ChildOperation.stop and self.record_command is not None:
             await self.record_command(command)
         if operation is ChildOperation.start:
@@ -341,11 +342,3 @@ class RemoteBackendChild:
 
     async def stop(self) -> None:
         await self._call(StopRun())
-
-
-class RemoteCommandUncertain(RuntimeError):
-    """The original native operation has no proven outcome. Do not redispatch it."""
-
-
-class RemoteInitialDeliveryCancelled(RuntimeError):
-    """Local shutdown owns disposition; this is not a native command outcome."""

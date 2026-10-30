@@ -36,10 +36,10 @@ from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
+from planner.execution_identity import ChildReference
 from planner.executor.contracts import (
     ChildCommand,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     CommandOutcome,
     StopRun,

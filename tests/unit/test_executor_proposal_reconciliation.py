@@ -17,13 +17,12 @@ from tests.support.probe import (
 from planner.conversation.backends.contracts import TurnToken
 from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
-    ChildReference,
     CliWrite,
     EnvelopeKind,
-    ExecutorIdentity,
     JsonObject,
     OutboxEntry,
     QueuedEnvelope,

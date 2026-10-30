@@ -8,12 +8,10 @@ import json
 import click
 from pydantic import TypeAdapter
 
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, executor_paths
-from planner.executor.contracts import (
-    ExecutorIdentity,
-    IpcOperation,
-    QuiesceRequest,
-)
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ExecutorIdentity
+from planner.executor.configuration import executor_paths
+from planner.executor.contracts import IpcOperation, QuiesceRequest
 from planner.executor.ipc_client import request
 
 

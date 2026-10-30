@@ -55,21 +55,16 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.codec import encode_value
-from planner.executor.configuration import (
-    NATIVE_WORKER_CONTEXT,
-    PROTOCOL_VERSION,
-    SPOOL_FORMAT_VERSION,
-    ExecutorPaths,
-)
+from planner.executor.configuration import NATIVE_WORKER_CONTEXT, ExecutorPaths
 from planner.executor.contracts import (
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
     ChildCommand,
     ChildOperation,
-    ChildReference,
     CommandOutcome,
-    ExecutorIdentity,
     Steer,
     WritePrompt,
 )

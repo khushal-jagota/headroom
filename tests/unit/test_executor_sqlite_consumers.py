@@ -14,11 +14,11 @@ from uuid import uuid4
 
 import pytest
 
+from planner.execution_identity import ChildReference
 from planner.executor import files
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
-    ChildReference,
     IpcOperation,
     IpcRequest,
     JsonObject,

@@ -107,6 +107,14 @@ class PromptWriteFailed(BackendAdapterError):
     """The prompt write did not complete, so an automatic retry is not safe."""
 
 
+class RemoteCommandUncertain(PromptWriteFailed):
+    """The original native operation has no proven outcome. Do not redispatch it."""
+
+
+class DeliveryCancelled(RuntimeError):
+    """Local shutdown owns disposition; this is not a native command outcome."""
+
+
 class BackendPromptRejected(BackendAdapterError):
     """The provider explicitly rejected this correlated prompt before admission."""
 

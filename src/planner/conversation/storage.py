@@ -92,10 +92,10 @@ from planner.core.commit_capture import register_capture_task, run_in_capture_th
 from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
+from planner.execution_identity import ChildReference
 from planner.executor.contracts import (
     AcceptanceReceipt,
     ChildCommand,
-    ChildReference,
     ExecutorEffectAcceptor,
     JsonObject,
     QueuedEnvelope,
