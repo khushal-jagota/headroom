@@ -41,7 +41,8 @@ def preserve_authored_request_examples(app: FastAPI) -> None:
                     media["examples"] = jsonable_encoder(body.openapi_examples, exclude_none=False)
         return document
 
-    app.openapi = openapi
+    # FastAPI supports a per-application OpenAPI method override.
+    app.openapi = openapi  # type: ignore[method-assign]
 
 
 def unknown_field_path(parent: str, name: object) -> str:

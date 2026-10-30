@@ -234,7 +234,9 @@ def test_authored_request_examples_preserve_only_request_values_across_cached_re
             media["examples"]["explicit"]["value"]["day"] = "mutated date"
         assert metadata.openapi_examples == original_examples
         assert metadata.openapi_examples is not None
-        assert metadata.openapi_examples["explicit"]["value"]["day"] == date(2026, 10, 30)
+        retained_value = metadata.openapi_examples["explicit"]["value"]
+        assert isinstance(retained_value, dict)
+        assert retained_value["day"] == date(2026, 10, 30)
 
 
 def test_published_examples_complete_writes_and_diagnose_recorded_failures(
