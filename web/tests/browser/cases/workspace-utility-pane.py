@@ -1738,7 +1738,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         deployment.update(state="problem", outcome="failed", detail=failure)
         signal()
         expect(card.get_by_text("Problem", exact=True)).to_be_visible()
-        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        expect(card.locator(".deployment-detail")).to_have_text(failure)
+        expect(card.locator(".deployment-detail")).to_be_visible()
         expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
         deployment.update(state="idle", outcome=None, detail=None)
         signal()
@@ -1792,7 +1793,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             assert posts[-1]["boot_sha"] == "a" * 40
             assert backend.provider.dispatched[-1].request_id == receipt.request_id
             expect(card.get_by_text("Problem", exact=True)).to_be_visible()
-            expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            expect(card.locator(".deployment-detail")).to_have_text(failure)
+            expect(card.locator(".deployment-detail")).to_be_visible()
             if activity == "busy":
                 # A failed request leaves an available publication usable for retry.
                 # Its failure and the deployment failure remain visible at each step.
@@ -1802,17 +1804,20 @@ def verify_owner_updates(browser, url, *, problem_only=False):
                 expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
                 card.get_by_role("button", name="Start update", exact=True).click()
                 expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
-                expect(card.get_by_text(failure, exact=True)).to_be_visible()
+                expect(card.locator(".deployment-detail")).to_have_text(failure)
+                expect(card.locator(".deployment-detail")).to_be_visible()
                 expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
                 assert len(backend.provider.dispatched) == before_dispatches + 1
                 page.screenshot(path=str(evidence / "problem-with-retry-confirmation.png"))
                 card.get_by_role("button", name="Proceed with update", exact=True).click()
                 expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
                 assert len(backend.provider.dispatched) == before_dispatches + 2
-                expect(card.get_by_text(failure, exact=True)).to_be_visible()
+                expect(card.locator(".deployment-detail")).to_have_text(failure)
+                expect(card.locator(".deployment-detail")).to_be_visible()
             card.get_by_role("button", name="Cancel update", exact=True).click()
             expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
-            expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            expect(card.locator(".deployment-detail")).to_have_text(failure)
+            expect(card.locator(".deployment-detail")).to_be_visible()
             assert backend.store.read().state == "cancelled"
 
         backend.activity.activity = "unknown"
@@ -1823,7 +1828,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         assert backend.store.read().state == "pending"
         assert backend.store.read().release == backend.provider.offered
         assert len(backend.provider.dispatched) == 3
-        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        expect(card.locator(".deployment-detail")).to_have_text(failure)
+        expect(card.locator(".deployment-detail")).to_be_visible()
         page.screenshot(path=str(evidence / "problem-with-pending-cancel.png"))
         pinned_receipt = backend.store.read()
         assert pinned_receipt is not None
@@ -1842,7 +1848,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         expect(card.get_by_text("fffffff", exact=False)).to_have_count(0)
         assert backend.store.read().state == "cancelled"
-        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        expect(card.locator(".deployment-detail")).to_have_text(failure)
+        expect(card.locator(".deployment-detail")).to_be_visible()
         if problem_only:
             assert errors == [], errors
             (evidence / "problem-composition-proof.json").write_text(json.dumps({
