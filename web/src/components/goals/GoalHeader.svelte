@@ -3,6 +3,7 @@
  import type {GoalResponse,GoalWriteFields} from '../../lib/goals/contracts';
  import type {InlineEditDraft} from '../../lib/inlineEditDraft';
  import {createGoalEditor} from '../../lib/goals/editing';
+ import {deadlineTone,deadlineColor} from '../../lib/goals/presentation';
  import {goalQueries} from '../../lib/goals/queries';
  import {queryClient} from '../../lib/queryClient';
  import {queries} from '../../lib/queryCatalogue';
@@ -113,10 +114,10 @@
     {#each projects.data?.projects??[] as project}<option value={project.id}>{project.name}</option>{/each}
    </select>
   </span>
-  <span class="metadata deadline" class:empty={!deadline}>
+  <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)}>
    <span class="control-size date-size" aria-hidden="true">{dateText(deadline)}</span>
    {#if !deadline}<span class="deadline-empty" aria-hidden="true">No deadline</span>{/if}
-   <input type="date" aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
+   <input type="date" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))} aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
   </span>
   <span class="metadata">
    <span class="control-size" aria-hidden="true">{(editFields.active.value??String(goal.active))==='true'?'Active':'Inactive'}</span>

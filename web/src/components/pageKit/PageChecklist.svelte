@@ -4,6 +4,7 @@
   import { fly } from "svelte/transition";
   import type { ChecklistBlock } from "../../lib/pageKit";
   import ChecklistSummary from "./ChecklistSummary.svelte";
+  import ChecklistDeadline from "../goals/ChecklistDeadline.svelte";
 
   import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
   const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
@@ -72,6 +73,7 @@
     action?: string;
     blocked: boolean;
     filedDone: boolean;
+    item: ChecklistBlock["items"][number];
   };
 
   const settleMs = 720;
@@ -105,7 +107,8 @@
       detail: item.detail,
       action: item.action,
       blocked: item.state === "blocked",
-      filedDone: item.state === "done"
+      filedDone: item.state === "done",
+      item
     }));
   }
 
@@ -271,9 +274,12 @@
                   </span>
                 </button>
                 <div class="step-main">
-                  <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
-                    <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
-                  </button>
+                  <div class="step-heading">
+                    <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
+                      <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
+                    </button>
+                    <ChecklistDeadline blockId={block.id} item={step.item}/>
+                  </div>
                   {#if expanded === step.id}
                     <div id="{uid}-{step.id}-panel" class="step-panel" role="region" aria-labelledby="{uid}-{step.id}-title" transition:grow={{ duration: 260 }}>
                       {#if step.detail?.trim() || (step.blocked && !done.includes(step.id)) || step.action?.trim()}
@@ -313,7 +319,10 @@
                           <svg class="check-mark" viewBox="0 0 22 22"><path d="M6.75 11.25 9.75 14.25 15.25 8.25" pathLength="1" /></svg>
                         </span>
                       </button>
-                      <div class="completed-title"><div id="{uid}-{step.id}-done" class="title-text">{step.title}</div></div>
+                      <div class="step-heading">
+                        <div class="completed-title"><div id="{uid}-{step.id}-done" class="title-text">{step.title}</div></div>
+                        <ChecklistDeadline blockId={block.id} item={step.item}/>
+                      </div>
                     </div>
                   </li>
                 {/each}
@@ -414,8 +423,14 @@
   }
   .check[aria-checked="true"] .check-mark path { stroke-dashoffset: 0; opacity: 1; }
   .step-main { display: grid; min-width: 0; }
+  .step-heading { display: flex; min-width: 0; align-items: start; gap: var(--space-2); }
+  .step-inner:has(:global([data-item-deadline])) > .check { margin-top: 2px; }
+  .step-heading:has(:global([data-item-deadline])) > .step-title,
+  .step-heading:has(:global([data-item-deadline])) > .completed-title { min-height: 44px; }
   .step-title, .completed-title {
     display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
     width: 100%;
     min-height: 40px;
     align-items: center;

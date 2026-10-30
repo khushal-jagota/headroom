@@ -1,6 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import {chartData,chartHeadline,chartTone,comparisonText,missingReadingText,readingSuffix,formatReading,formatTrimmedReading,formatAxisTick,inspectedReading} from '../src/lib/charts/presentation';
-import {updatePageBlock} from '../src/lib/goals/presentation';
+import {updatePageBlock,deadlineTone,deadlineColor} from '../src/lib/goals/presentation';
 import type {ChartBlock,MeasureValue,Block} from '../src/lib/goals/contracts';
 const chart:ChartBlock={type:'chart',id:'balance',kind:'line',placement:'primary',measure_id:'balance',target:0,direction:'atleast',format:{prefix:'€',decimals:2}};
 const value=(date:string,quantity:number|null):MeasureValue=>({date,measure_id:'balance',value:quantity,definition_revision:1,status:quantity===null?'missing_input':'value',inputs:[],missing_inputs:[],query_start_at:null,query_end_at:null,limitation:null,coverage_status:'not_applicable',coverage_reasons:[]});
@@ -227,4 +227,22 @@ it('separates word units while preserving authored suffixes and numeric formatti
  expect(formatAxisTick({...units,format:{prefix:'€',decimals:2}},2500)).toBe('€2.5k exception events');
  expect(formatAxisTick({...units,format:{prefix:'€',suffix:''}},2500)).toBe('€2.5k');
  expect(formatReading({...units,format:{prefix:'€',decimals:2}},-2.5)).toBe('€-2.50 exception events');
+});
+
+
+it('uses the supplied server date for deadline-only tones and gives saved completion precedence',()=>{
+ const today='2026-10-30';
+ expect(deadlineTone('2026-10-29',false,today)).toBe('bad');
+ expect(deadlineTone('2026-10-30',false,today)).toBe('attention');
+ expect(deadlineTone('2026-10-31',false,today)).toBe('neutral');
+ expect(deadlineTone(null,false,today)).toBe('neutral');
+ expect(deadlineTone(undefined,true,today)).toBe('neutral');
+ expect(deadlineTone('2026-10-29',true,today)).toBe('good');
+ expect(deadlineTone('2026-10-31',true,today)).toBe('good');
+ // A browser calendar or its current date never replaces an absent server calendar.
+ expect(deadlineTone('2026-10-29',true,undefined)).toBe('neutral');
+ expect(deadlineTone('2026-10-30',false,'2026-10-31')).toBe('bad');
+ expect(['bad','attention','good','neutral'].map(tone=>deadlineColor(tone as GoalResponse['status']))).toEqual([
+  'var(--accent-error)','var(--accent-attention)','var(--accent-done)','var(--text-muted)',
+ ]);
 });

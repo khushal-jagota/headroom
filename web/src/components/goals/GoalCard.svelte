@@ -1,6 +1,6 @@
 <script lang="ts">
  import {setContext,untrack} from 'svelte';
- import {refreshAtBoundary,goalDateText} from '../../lib/goals/presentation';
+ import {refreshAtBoundary,goalDateText,deadlineTone,deadlineColor} from '../../lib/goals/presentation';
  import {createQuery} from '@tanstack/svelte-query';
  import type {GoalResponse,ChartBlock} from '../../lib/goals/contracts';
  import {goalQueries} from '../../lib/goals/queries';
@@ -21,13 +21,14 @@
  setContext<PageContext>(PAGE_CONTEXT,{
   goalId,get revision(){return goal.revision;},narrow:false,
   get values(){return readings.data?.values??[];},get charts(){return readings.data?.charts;},
-  get completed(){return goal.completed;},get status(){return goal.status;},
+  get completed(){return goal.completed;},get status(){return goal.status;},get statusDate(){return goal.status_date;},
   updateBlock:editor.updateBlock,
-  checklistSession:(blockId,itemId)=>sessions.checklist(goalId,blockId,itemId)
+  checklistSession:(blockId,itemId)=>sessions.checklist(goalId,blockId,itemId),
+  checklistDeadlineSession:(blockId,itemId)=>sessions.checklistDeadline(goalId,blockId,itemId)
  });
 </script>
 <article class="goal-card" data-goal-card={goal.id}>
- <header class="card-head"><div class="goal-meta"><span>{projectName}</span>{#if projectName&&goal.deadline}<span aria-hidden="true">·</span>{/if}<span>{goal.deadline?`By ${goalDateText(goal.deadline)}`:'No deadline'}</span></div>
+ <header class="card-head"><div class="goal-meta"><span>{projectName}</span>{#if projectName&&goal.deadline}<span aria-hidden="true">·</span>{/if}<span data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{goal.deadline?`By ${goalDateText(goal.deadline)}`:'No deadline'}</span></div>
   <h2><a href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a></h2>
  </header>
  <div class="card-progress">{#if checklist}{#key checklist.id}<PageChecklist block={checklist} presentation="normal"/>{/key}{:else if chart}<PageChart block={chart} projection={readings.data?.charts?.[chart.id]} values={readings.data?.values??[]} goalId={goal.id} completed={goal.completed} status={goal.status} compact integrated/>{:else}<p>No readings yet</p>{/if}</div>

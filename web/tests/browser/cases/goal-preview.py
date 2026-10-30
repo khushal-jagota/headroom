@@ -1606,6 +1606,7 @@ def authored_goal_presentation(browser, url):
 
 def run(browser, urls):
     started = time.monotonic()
+    checklist_deadline_controls(browser, urls[0])
     fixture = GoalFixture()
     page = browser.new_page(viewport={"width": 1280, "height": 720})
     page.set_default_timeout(5000)
@@ -2322,7 +2323,11 @@ def native_goal_edits(browser, url):
             expect(checklist).to_have_attribute("data-presentation", "small")
             if phone and output:
                 checklist.screenshot(path=str(output / "phone-small-expanded.png"))
-            expect(checklist.get_by_role("textbox")).to_have_count(0)
+            # Item dates add native inputs. Authored checklist text stays read-only.
+            expect(checklist.locator(
+                '[contenteditable]:not([contenteditable="false"]), '
+                '[role="textbox"]:not(input[type="date"]), input:not([type="date"]), textarea'
+            )).to_have_count(0)
             expect(checklist.get_by_role(
                 "heading", name="Nested readiness", exact=True
             )).to_be_visible()
@@ -2342,7 +2347,11 @@ def native_goal_edits(browser, url):
             expect(checklist.get_by_role(
                 "heading", name="Nested ready", exact=True
             )).to_be_visible()
-            expect(checklist.get_by_role("textbox")).to_have_count(0)
+            # Item dates add native inputs. Authored checklist text stays read-only.
+            expect(checklist.locator(
+                '[contenteditable]:not([contenteditable="false"]), '
+                '[role="textbox"]:not(input[type="date"]), input:not([type="date"]), textarea'
+            )).to_have_count(0)
             assert block("native-checklist")["title"] == "Nested readiness"
             assert block("native-checklist")["doneTitle"] == "Nested ready"
             if output:
@@ -2470,3 +2479,350 @@ def native_goal_edits(browser, url):
             json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
         )
     print(f"native goal edits metadata/page desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
+
+
+class ChecklistDeadlineFixture(NativeGoalEditFixture):
+    """Date writes reuse the native goal fixture and its controlled HTTP boundary."""
+
+    def __init__(self):
+        GoalFixture.__init__(self)
+        self.fail_next = 0
+        self.reads = {}
+        self.calendar = TODAY
+        goal = self.goals["checklist"]
+        goal["deadline"] = TODAY
+        goal["page"]["blocks"] = [
+            {
+                "type": "checklist",
+                "id": "delivery",
+                "title": "Delivery",
+                "doneTitle": "Delivered",
+                "items": [
+                    {
+                        "id": "draft",
+                        "label": "Draft accepted",
+                        "state": "done",
+                        "deadline": YESTERDAY,
+                    },
+                    {"id": "publish", "label": "Publish guide", "state": "open", "deadline": TODAY},
+                    {
+                        "id": "review",
+                        "label": "Review guide",
+                        "state": "blocked",
+                        "deadline": YESTERDAY,
+                    },
+                    {
+                        "id": "future",
+                        "label": "Follow up",
+                        "state": "open",
+                        "deadline": "2026-11-02",
+                    },
+                    {"id": "undated", "label": "Collect notes", "state": "open"},
+                ],
+            },
+            {
+                "type": "checklist",
+                "id": "supporting",
+                "title": "Supporting steps",
+                "items": [
+                    {"id": "extra", "label": "Check links", "state": "open", "deadline": TODAY},
+                ],
+            },
+        ]
+
+    def advance_day(self):
+        self.calendar = "2026-10-31"
+        self.version += 1
+        for goal in self.goals.values():
+            goal["status_date"] = self.calendar
+
+
+def checklist_deadline_controls(browser, url):
+    """Prove native draft lifetimes and server-day refresh in the existing App host."""
+    started = time.monotonic()
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root) / "checklist-deadlines" if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    receipts = []
+
+    def run_mode(phone):
+        mode = "phone" if phone else "desktop"
+        context = browser.new_context(
+            viewport={"width": 390 if phone else 1440, "height": 844 if phone else 1000},
+            has_touch=phone,
+            is_mobile=phone,
+            reduced_motion="reduce",
+        )
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        fixture = ChecklistDeadlineFixture()
+        errors = []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        page.route("**/api/**", fixture.respond)
+
+        def wait_fixture(predicate, message):
+            deadline = time.monotonic() + 5
+            while not predicate():
+                assert time.monotonic() < deadline, (mode, message, fixture.writes)
+                page.wait_for_timeout(10)
+
+        def accepted_item(item_id="publish", block_id="delivery"):
+            block = next(
+                block
+                for block in fixture.goals["checklist"]["page"]["blocks"]
+                if block["id"] == block_id
+            )
+            return next(item for item in block["items"] if item["id"] == item_id)
+
+        def date_control(host, item_id="publish"):
+            return host.locator(f'[data-item-deadline="{item_id}"]')
+
+        def save_date(host, value, *, blur=False, item_id="publish"):
+            control = date_control(host, item_id)
+            field = control.locator('input[type="date"]')
+            before = len(fixture.writes)
+            field.fill(value)
+            if blur:
+                page.locator('[data-goal-page="checklist"] input[aria-label="By date"]').focus()
+            else:
+                field.press("Enter")
+            wait_fixture(lambda: len(fixture.writes) == before + 1, "One explicit date write")
+            expect(field).to_be_enabled()
+            wait_fixture(
+                lambda: accepted_item(item_id).get("deadline") == (value or None),
+                "Saved item deadline",
+            )
+            expect(control.locator('[role="alert"]')).to_have_count(0)
+            assert not fixture.goals["checklist"]["completed"]
+            assert fixture.goals["checklist"]["primary_checklist_block_id"] == "delivery"
+            return control
+
+        def refresh():
+            page.evaluate("document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))")
+
+        try:
+            page.goto(url + "#/workspace/goal/checklist", wait_until="domcontentloaded")
+            goal = page.locator('[data-goal-page="checklist"]')
+            primary = goal.locator('[aria-label="Completion checklist"] [data-block="checklist"]')
+            publish = date_control(primary)
+            expect(publish).to_have_attribute("data-tone", "attention")
+            expect(date_control(primary, "review")).to_have_attribute("data-tone", "bad")
+            expect(date_control(primary, "future")).to_have_attribute("data-tone", "neutral")
+            expect(date_control(primary, "undated")).to_have_attribute("data-tone", "neutral")
+            primary.get_by_role("button", name="1 completed", exact=True).click()
+            expect(date_control(primary, "draft")).to_have_attribute("data-tone", "good")
+            expect(goal.locator(".goal-heading [data-deadline-tone]")).to_have_attribute(
+                "data-deadline-tone", "attention"
+            )
+            assert primary.get_by_text("Add deadline", exact=True).count() == 0
+            assert (
+                "Due today" not in publish.locator(".date-face").inner_text()
+            )  # Status stays nonvisual.
+
+            # Native entry, intentional clear, and Escape never edit authored labels.
+            original = copy.deepcopy(fixture.goals["checklist"]["page"])
+            save_date(primary, "2026-11-03")
+            save_date(primary, "2026-10-29", blur=True)
+            expect(publish).to_have_attribute("data-tone", "bad")
+            before = len(fixture.writes)
+            field = publish.locator('input[type="date"]')
+            field.fill("2026-11-10")
+            field.press("Escape")
+            expect(field).to_have_value("2026-10-29")
+            assert len(fixture.writes) == before
+            field.focus()
+            clear = publish.get_by_role(
+                "button", name="Clear deadline for Publish guide", exact=True
+            )
+            clear.tap() if phone else clear.click()
+            wait_fixture(lambda: len(fixture.writes) == before + 1, "Clear submits once")
+            wait_fixture(lambda: accepted_item().get("deadline") is None, "Clear persists null")
+            expect(publish).to_have_attribute("data-tone", "neutral")
+            save_date(primary, TODAY)
+            for old, saved in zip(
+                original["blocks"][0]["items"],
+                fixture.goals["checklist"]["page"]["blocks"][0]["items"],
+                strict=True,
+            ):
+                assert {key: value for key, value in old.items() if key != "deadline"} == {
+                    key: value for key, value in saved.items() if key != "deadline"
+                }
+
+            # A native partial segment is not an intentional empty date.
+            before = len(fixture.writes)
+            field.focus()
+            field.press("ArrowRight")
+            field.press("Backspace")
+            assert field.evaluate("node => node.validity.badInput"), mode
+            page.locator('[data-goal-page="checklist"] input[aria-label="By date"]').focus()
+            expect(publish.get_by_role("alert")).to_contain_text("Enter a complete date")
+            assert len(fixture.writes) == before
+            page.evaluate("location.hash='#/workspace'")
+            expect(goal).to_have_count(0)
+            page.evaluate("location.hash='#/workspace/goal/checklist'")
+            expect(primary).to_be_visible()
+            # Workspace remount owns a new session manager. Preview dismissal below
+            # proves retained invalid drafts within the long-lived rail owner.
+            assert accepted_item()["deadline"] == TODAY
+
+            # Complete and reopen one dated item. Only accepted completion controls green.
+            row = primary.locator('[data-step="publish"]')
+            row.get_by_role("checkbox").click()
+            wait_fixture(lambda: accepted_item()["state"] == "done", "Accepted item completion")
+            if (
+                primary.get_by_role("button", name="2 completed", exact=True).get_attribute(
+                    "aria-expanded"
+                )
+                != "true"
+            ):
+                primary.get_by_role("button", name="2 completed", exact=True).click()
+            expect(date_control(primary)).to_have_count(1)
+            expect(date_control(primary)).to_have_attribute("data-tone", "good")
+            done_row = date_control(primary).locator("xpath=ancestor::li")
+            done_row.get_by_role("checkbox").click()
+            wait_fixture(lambda: accepted_item()["state"] == "open", "Reopened item")
+            expect(date_control(primary)).to_have_count(1)
+            expect(date_control(primary)).to_have_attribute("data-tone", "attention")
+
+            # The compact supplementary disclosure retains the full date interaction.
+            supporting = goal.locator('[data-block="checklist"][data-supplementary]')
+            if phone:
+                expect(supporting).to_have_attribute("data-presentation", "smallest")
+                supporting.locator("[data-checklist-toggle]").click()
+            expect(date_control(supporting, "extra")).to_have_attribute("data-tone", "attention")
+            if output:
+                primary.screenshot(path=str(output / f"{mode}-compact-controls.png"))
+                supporting.screenshot(path=str(output / f"{mode}-supplementary.png"))
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+            if not phone:
+                # Both current detail and rail metadata refresh from the server day.
+                title_color = goal.locator(".goal-heading h1").evaluate(
+                    "node => getComputedStyle(node).color"
+                )
+                ring_color = primary.locator(".ring-fill").evaluate(
+                    "node => getComputedStyle(node).stroke"
+                )
+                numeric = page.locator('a[data-goal-id="daily_quota"] small > span').first
+                numeric_color = numeric.evaluate("node => getComputedStyle(node).color")
+                fixture.advance_day()
+                refresh()
+                expect(date_control(primary)).to_have_attribute("data-tone", "bad")
+                expect(goal.locator(".goal-heading [data-deadline-tone]")).to_have_attribute(
+                    "data-deadline-tone", "bad"
+                )
+                expect(
+                    page.locator('a[data-goal-id="checklist"] [data-deadline-tone]')
+                ).to_have_attribute("data-deadline-tone", "bad")
+                assert (
+                    goal.locator(".goal-heading h1").evaluate(
+                        "node => getComputedStyle(node).color"
+                    )
+                    == title_color
+                )
+                assert (
+                    primary.locator(".ring-fill").evaluate("node => getComputedStyle(node).stroke")
+                    == ring_color
+                )
+                assert numeric.evaluate("node => getComputedStyle(node).color") == numeric_color
+
+                # Dismissal does not cancel submitted writes or lose invalid drafts.
+                page.evaluate("location.hash='#/workspace'")
+                panel = open_preview(page, "checklist")
+                control = date_control(panel)
+                expect(control).to_have_attribute("data-tone", "bad")
+                native = control.locator('input[type="date"]')
+                before = len(fixture.writes)
+                native.focus()
+                native.press("ArrowRight")
+                native.press("Backspace")
+                assert native.evaluate("node => node.validity.badInput")
+                dismiss(page)
+                panel = open_preview(page, "checklist")
+                expect(date_control(panel).get_by_role("alert")).to_contain_text(
+                    "Enter a complete date"
+                )
+                assert len(fixture.writes) == before
+                date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
+                fixture.hold = True
+                native = date_control(panel).locator('input[type="date"]')
+                native.fill("2026-11-04")
+                native.press("Enter")
+                wait_fixture(lambda: len(fixture.held) == 1, "Held date write")
+                expect(date_control(panel)).to_have_attribute("data-tone", "bad")
+                original_request = copy.deepcopy(fixture.writes[-1])
+                dismiss(page)
+                panel = open_preview(page, "checklist")
+                expect(date_control(panel).locator('input[type="date"]')).to_be_disabled()
+                fixture.reject_held()
+                expect(date_control(panel).get_by_role("alert")).to_contain_text(
+                    "Date was not saved"
+                )
+                assert len(fixture.writes) == before + 1
+                date_control(panel).get_by_role("button", name="Retry save", exact=True).click()
+                wait_fixture(
+                    lambda: accepted_item().get("deadline") == "2026-11-04", "Explicit retry saved"
+                )
+                assert fixture.writes[-1] == original_request
+                assert len(fixture.writes) == before + 2
+                expect(date_control(panel).get_by_role("alert")).to_have_count(0)
+                fixture.fail_next = 1
+                native = date_control(panel).locator('input[type="date"]')
+                native.fill("2026-11-05")
+                native.press("Enter")
+                expect(date_control(panel).get_by_role("alert")).to_contain_text(
+                    "Date was not saved"
+                )
+                date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
+                expect(native).to_have_value("2026-11-04")
+                # An external edit invalidates the focused draft. Recovery refreshes
+                # accepted data, but only a new explicit edit can use that revision.
+                native.fill("2026-11-06")
+                accepted_item("review")["detail"] = "Accepted neighboring context"
+                fixture.goals["checklist"]["revision"] += 1
+                fixture.version += 1
+                external_revision = fixture.goals["checklist"]["revision"]
+                native.press("Enter")
+                expect(date_control(panel).get_by_role("alert")).to_contain_text("Goal changed")
+                assert accepted_item()["deadline"] == "2026-11-04"
+                date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
+                native.fill("2026-11-07")
+                native.press("Enter")
+                wait_fixture(
+                    lambda: accepted_item().get("deadline") == "2026-11-07",
+                    "New explicit edit after conflict",
+                )
+                assert fixture.writes[-1][1]["expected_revision"] == external_revision
+                assert accepted_item("review")["detail"] == "Accepted neighboring context"
+                expect(date_control(panel).get_by_role("alert")).to_have_count(0)
+                if output:
+                    panel.screenshot(path=str(output / "desktop-small-preview.png"))
+                dismiss(page)
+                page.evaluate("location.hash='#/workspace/chief-of-staff'")
+                card = page.locator('[data-goal-card="checklist"]')
+                expect(card.locator("[data-deadline-tone]")).to_have_attribute(
+                    "data-deadline-tone", "bad"
+                )
+                expect(date_control(card)).to_have_attribute("data-tone", "neutral")
+                page.evaluate("location.hash='#/workspace/goals'")
+                table_row = page.locator("tbody tr").filter(
+                    has=page.get_by_role("link", name="Prepare the field guide", exact=True)
+                )
+                expect(table_row.locator("[data-deadline-tone]")).to_have_attribute(
+                    "data-deadline-tone", "bad"
+                )
+
+            assert errors == [], errors
+            receipts.append({"mode": mode, "writes": len(fixture.writes), "errors": errors})
+        finally:
+            context.close()
+
+    for phone in (False, True):
+        run_mode(phone)
+    elapsed = time.monotonic() - started
+    if output:
+        (output / "receipt.json").write_text(
+            json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
+        )
+    print(f"checklist deadlines native desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
