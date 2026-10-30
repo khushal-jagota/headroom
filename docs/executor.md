@@ -147,6 +147,14 @@ tests prove ordering and crash recovery, not physical Mac power-loss behavior.
 Code paths: `src/planner/executor/journal.py`, `store.py`, `mutations.py`,
 `ipc_client.py`, `src/planner/cli/http.py`.
 
+SQLite work for remote acceptance runs on worker threads. Each operation opens,
+commits or rolls back, and closes its own connection on that thread. A busy
+SQLite writer can delay acceptance without stopping the VPS event loop or
+control messages. Writes for the same conversation remain ordered, and cancelling
+an acceptance keeps its lock until the database operation has settled. A domain
+change and its first receipt still commit together after checking the connection
+generation. Backend events use the conversation write worker for that transaction.
+
 ## Files precede their references
 
 Workers use ordinary file tools in a resolved Ticket directory. Publication

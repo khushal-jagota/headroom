@@ -1,8 +1,8 @@
-"""Native ingestion must compose asynchronous preparation with one durable receipt.
+"""Native ingestion binds creation policy and its effect to one durable receipt.
 
 Store-level effect tests cannot prove the endpoint calls the canonical creation
-writer, awaits a cold model catalogue outside a write transaction, and skips all
-preparation on replay. These cases use the existing synthetic DB and catalogue.
+writer, fences the source assignment, and skips policy resolution on replay.
+These cases use the existing synthetic DB and model catalogue.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -37,8 +36,8 @@ from planner.executor.vps import ExecutorEndpoint
 
 class ScriptedPreparation:
     """Any provider preparation on this creation path is a regression."""
+
     calls = 0
-    after_probe: Callable[[], None] | None = None
 
     async def validate_launch_selection(self, *args: Any, **kwargs: Any) -> Any:
         self.calls += 1
@@ -71,17 +70,9 @@ def _setup(
     resolver = ScriptedPreparation()
     endpoint.runtime = SimpleNamespace(system=resolver)
     if refuse:
-        BackendStateStore(path).write_model_enablement(ConversationBackendKey.codex, "gpt-6-sol", False)
-    from planner.tickets import api as ticket_api
-    original_validation = ticket_api.validate_ticket_creation
-
-    async def validate(*args: Any, **kwargs: Any) -> Any:
-        result = await original_validation(*args, **kwargs)
-        if resolver.after_probe is not None:
-            resolver.after_probe()
-        return result
-
-    monkeypatch.setattr(ticket_api, "validate_ticket_creation", validate)
+        BackendStateStore(path).write_model_enablement(
+            ConversationBackendKey.codex, "gpt-6-sol", False
+        )
     payload = encode_value(
         CliWrite(
             "ticket.create",
@@ -206,7 +197,13 @@ def test_native_creation_source_closure_before_commit_is_a_durable_refusal(
 ) -> None:
     endpoint, preparation, envelope, identity = _setup(tmp_db, tmp_path, monkeypatch)
     original = ChildReference("incarnation", "child", "source-conversation")
-    preparation.after_probe = lambda: endpoint.store.close_child(original, 2000)
+    original_accept = endpoint.store.accept
+
+    def close_before_accept(*args: Any, **kwargs: Any) -> Any:
+        endpoint.store.close_child(original, 2000)
+        return original_accept(*args, **kwargs)
+
+    monkeypatch.setattr(endpoint.store, "accept", close_before_accept)
     receipt = asyncio.run(endpoint.accept_envelope(envelope, identity))
     assert receipt.disposition is ReceiptDisposition.refused
     assert "child assignment changed" in str(receipt.result)
