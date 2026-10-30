@@ -8,7 +8,6 @@ from datetime import datetime
 from pathlib import Path
 
 from planner.conversation.backends.codex_app_server.login import codex_home
-from planner.conversation.usage.localUsageLimits import LocalUsageLimits
 from planner.conversation.usage.UsageService import UsageService
 from planner.core.config import Config
 
@@ -30,5 +29,4 @@ def makeUsageService(config: Config, *, now: Callable[[], datetime]) -> UsageSer
         stateDir,
         transcriptDirs,
         now=lambda: now().timestamp() * 1000,
-        localUsageLimits=LocalUsageLimits(stateDir),
     )

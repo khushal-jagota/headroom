@@ -47,14 +47,12 @@ class UsageService:
         transcriptDirs: Any,
         *,
         ratesFetcher: Callable[[], Any] | None = None,
-        localUsageLimits: Any = None,
         settingsProvider: Callable[[], dict[str, Any]] | None = None,
         now: Callable[[], float] | None = None,
     ) -> None:
         self.stateDir = Path(stateDir)
         self.transcriptDirs = transcriptDirs
         self.ratesFetcher = ratesFetcher or fetchRates
-        self.localUsageLimits = localUsageLimits
         self.settingsProvider = settingsProvider or (lambda: {"usagePriceOverrides": {}})
         self.now = now or (lambda: time.time() * 1000)
         self.fileCache: dict[str, dict[str, Any]] = {}
@@ -164,31 +162,12 @@ class UsageService:
     ) -> list[dict[str, Any]]:
         with self.cacheLock:
             cached = self.fileCache.get(filePath)
-        file = dict(path=filePath, size=size, mtimeMs=mtimeMs)
-        adapter = self.localUsageLimits
-
-        def read(resumeFrom: Any, observe: bool = True) -> Any:
-            kwargs = (
-                {}
-                if adapter is None or not observe
-                else dict(
-                    resumeCallback=lambda resumed: adapter.beginFile(file, provider, resumed),
-                    observationCallback=lambda selected: adapter.observe(file, provider, selected),
-                )
-            )
-            parsed = readTranscriptRecords(filePath, provider, resumeFrom, **kwargs)
-            if adapter is not None and observe and parsed is not None:
-                adapter.finishFile(file, provider)
-            return parsed
-
         if (
             cached
             and cached["size"] == size
             and cached["mtimeMs"] == mtimeMs
             and cached["provider"] == provider
         ):
-            if adapter is not None and adapter.needsRead(file, provider):
-                read(None)  # Adapter-only recovery leaves the token cache unchanged.
             return (
                 cached["records"]
                 if not cached["tailRecords"]
@@ -199,19 +178,9 @@ class UsageService:
             if cached is not None and cached["provider"] == provider and size > cached["size"]
             else None
         )
-        adapterNeedsRepair = (
-            adapter is not None
-            and resumeFrom is not None
-            and cached is not None
-            and not adapter.canResume(
-                dict(path=filePath, size=cached["size"], mtimeMs=cached["mtimeMs"]), provider
-            )
-        )
-        parsed = read(resumeFrom, observe=not adapterNeedsRepair)
+        parsed = readTranscriptRecords(filePath, provider, resumeFrom)
         if parsed is None:
             return []
-        if adapterNeedsRepair:
-            read(None)  # Rebuild only the companion, preserving token resume/results.
         base = cached["records"] if parsed["resumed"] and cached is not None else []
         seen: set[str] = set()
         records = dedupeWithinFile([*base, *parsed["records"]], seen)
@@ -288,8 +257,6 @@ class UsageService:
                 "invalidWindow", f"sinceDay '{input['sinceDay']}' is not a valid date"
             )
         windowStartMs = hourlyWindow.get("sinceTimeMs", windowStart) - MTIME_SLACK_MS
-        if self.localUsageLimits is not None:
-            self.localUsageLimits.beginScan()
         _, scannedDirs = await asyncio.gather(
             self.ensureRates(False), asyncio.to_thread(self.collectDirs, windowStartMs, settings)
         )
@@ -364,8 +331,6 @@ class UsageService:
             if pruned > 0:
                 self.cacheDirty = True
         await asyncio.to_thread(self.persistScanCache)
-        if self.localUsageLimits is not None:
-            await asyncio.to_thread(self.localUsageLimits.finishScan)
         aggregated = aggregator.finish()
         readAt = isoTimestamp(self.now())
         finishedAtMs = self.now()
@@ -411,6 +376,4 @@ class UsageService:
 
             task.add_done_callback(finish)
         result = await asyncio.shield(task)
-        if self.localUsageLimits is not None:
-            self.localUsageLimits.adoptScan(task)
         return result

@@ -1,14 +1,17 @@
-"""Thin HTTP transport for the translated T3 summary and local allowance source."""
+"""Thin HTTP transport for the translated T3 summary and persisted provider allowances."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from planner.conversation.api import Runtime
+from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.usage.contracts.usage import UsageReadError
+from planner.conversation.usage.providerLimits import presentProviderLimits
 
 router = APIRouter(prefix="/usage", tags=["usage"])
 
@@ -59,22 +62,15 @@ async def read_usage_summary(
 
 
 @router.get("/limits")
-async def read_usage_limits(request: Request) -> dict[str, Any]:
-    # A cold Limits page also observes local history. This uses the same scanner,
-    # not a backend capability probe or the retired native refresh operation.
-    until = datetime.now(UTC).replace(second=0, microsecond=0)
-    since = until - timedelta(hours=24)
-    value = {
-        "sinceDay": since.date().isoformat(),
-        "untilDay": until.date().isoformat(),
-        "timeZone": "UTC",
-        "resolution": "hour",
-        "sinceTime": since.isoformat().replace("+00:00", "Z"),
-        "untilTime": until.isoformat().replace("+00:00", "Z"),
-    }
-    service = request.app.state.recorded_usage
-    await service.readSummary(value)
-    return cast(dict[str, Any], service.localUsageLimits.current())
+async def read_usage_limits(runtime: Runtime) -> dict[str, Any]:
+    if runtime.backend_state is None:
+        return {}
+    result: dict[str, Any] = {}
+    for backend in ConversationBackendKey:
+        observation = runtime.backend_state.read_usage(backend)
+        if observation is not None:
+            result[str(backend)] = presentProviderLimits(observation)
+    return result
 
 
 @router.post("/rates/refresh")
