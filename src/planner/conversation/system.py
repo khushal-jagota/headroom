@@ -69,6 +69,7 @@ from planner.conversation.backends.contracts import (
     PermissionAskRaisedArguments,
     PlanUpdatedArguments,
     PromptWriteFailed,
+    PromptWriteRefused,
     ProviderSelectionReportedArguments,
     SessionLoadFailed,
     TokenUsageReportedArguments,
@@ -1912,7 +1913,11 @@ class SqliteProcessConversationSystem:
             await self._drain_held_prompts(state)
             return PromptDeliveryRefused(
                 refusal_reason=refusal,
-                model_validation=self._validation_json(delivery.canonical_validation),
+                model_validation=(
+                    self._validation_json(delivery.canonical_validation)
+                    if refusal is PromptDeliveryRefusalReason.model_resolution_failed
+                    else None
+                ),
             )
 
         if immediate_refusal is not None:
@@ -1958,6 +1963,10 @@ class SqliteProcessConversationSystem:
             )
         except AdmissionRefused:
             steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.model_resolution_failed)
+        except PromptWriteRefused:
+            steer_outcome = BackendSteerRefused(
+                PromptDeliveryRefusalReason.write_to_backend_failed
+            )
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
         except asyncio.CancelledError:
@@ -2989,6 +2998,10 @@ class SqliteProcessConversationSystem:
             )
         except AdmissionRefused:
             steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.model_resolution_failed)
+        except PromptWriteRefused:
+            steer_outcome = BackendSteerRefused(
+                PromptDeliveryRefusalReason.write_to_backend_failed
+            )
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
         except asyncio.CancelledError:
@@ -3286,6 +3299,7 @@ class SqliteProcessConversationSystem:
                             sender=sender,
                             recipient=recipient,
                         ),
+                        lifecycle=(_prompt_fact(reservation.token, LifecycleStatus.unknown),),
                         executor_turn=metadata,
                     )
                 self._set_phase(state, _ConversationPhase.idle)
@@ -3356,7 +3370,11 @@ class SqliteProcessConversationSystem:
         await self._drain_held_prompts(state)
         return PromptDeliveryRefused(
             refusal_reason=refusal,
-            model_validation=self._validation_json(delivery.canonical_validation),
+            model_validation=(
+                self._validation_json(delivery.canonical_validation)
+                if refusal is PromptDeliveryRefusalReason.model_resolution_failed
+                else None
+            ),
         )
 
     @staticmethod
@@ -3833,8 +3851,18 @@ class SqliteProcessConversationSystem:
                     ) -> bool:
                         return self.verify_context(expected)
 
-                kwargs["model_change"] = validation.launch_token
-                kwargs["reasoning_effort_change"] = selection.reasoning_effort
+                kwargs["model_change"] = (
+                    validation.launch_token
+                    if kwargs.get("model_change") is not None
+                    or validation.launch_token != state.record.model
+                    else None
+                )
+                kwargs["reasoning_effort_change"] = (
+                    selection.reasoning_effort
+                    if effort is not None or effort_is_set
+                    or selection.reasoning_effort != state.record.reasoning_effort
+                    else None
+                )
                 with admission_scope(expectation, ConversationContext()):
                     delivered = await self._deliver_prompt_unsettled_verified(
                         state, turn_token, canonical_validation=validation, **kwargs
@@ -3959,8 +3987,18 @@ class SqliteProcessConversationSystem:
                     else None
                 ),
             )
-            kwargs["model_change"] = validation.launch_token
-            kwargs["reasoning_effort_change"] = selection.reasoning_effort
+            kwargs["model_change"] = (
+                validation.launch_token
+                if kwargs.get("model_change") is not None
+                or validation.launch_token != state.record.model
+                else None
+            )
+            kwargs["reasoning_effort_change"] = (
+                selection.reasoning_effort
+                if effort is not None or effort_is_set
+                or selection.reasoning_effort != state.record.reasoning_effort
+                else None
+            )
             from typing import cast
 
             from planner.conversation.admission.service import AdmissionContextObserver
@@ -4077,8 +4115,11 @@ class SqliteProcessConversationSystem:
         No lock is held here: spawning a process and loading a session take as long as they
         take, and the conversation stays readable while they do.
         """
-        effort_is_set = canonical_validation is not None or (
+        effort_is_set = (
             messages[0].reasoning_effort_is_set if messages else effort_presence_is_set()
+        ) or (
+            canonical_validation is not None
+            and canonical_validation.selection.reasoning_effort != state.record.reasoning_effort
         )
         interruption_notice = await self._persist(
             state,
@@ -4175,6 +4216,11 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=reasoning_effort_change,
                     automatic_compaction=automatic_compaction,
                 )
+        except PromptWriteRefused as refused:
+            return _PromptDeliveryAttempt(
+                PromptDeliveryRefusalReason.write_to_backend_failed,
+                refusal_detail=str(refused),
+            )
         except BackendPromptRejected as rejected:
             return _PromptDeliveryAttempt(
                 PromptDeliveryRefusalReason.backend_rejected_prompt,
@@ -4347,6 +4393,11 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=reasoning_effort_change,
                     automatic_compaction=automatic_compaction,
                 )
+        except PromptWriteRefused as refused:
+            return _PromptDeliveryAttempt(
+                PromptDeliveryRefusalReason.write_to_backend_failed,
+                refusal_detail=str(refused),
+            )
         except BackendPromptRejected as rejected:
             return _PromptDeliveryAttempt(
                 PromptDeliveryRefusalReason.backend_rejected_prompt,
@@ -4402,15 +4453,23 @@ class SqliteProcessConversationSystem:
         The rows are written before the turn is admitted, so nothing the backend says about
         this turn can be recorded ahead of the prompt that started it.
         """
-        sender_requested_change = (
+        delivery_carries_change = (
             model_change is not None
             or reasoning_effort_change is not None
             or effort_presence_is_set()
             or authored_selection_kind() is not None
             or any(message.selection_kind is not None for message in reservation.messages)
             or any(message.reasoning_effort_is_set for message in reservation.messages)
+            or (
+                canonical_validation is not None
+                and (
+                    canonical_validation.launch_token != state.record.model
+                    or canonical_validation.selection.reasoning_effort
+                    != state.record.reasoning_effort
+                )
+            )
         )
-        if canonical_validation is not None:
+        if canonical_validation is not None and delivery_carries_change:
             model_change = canonical_validation.launch_token
             reasoning_effort_change = canonical_validation.selection.reasoning_effort
         async with state.lock:
@@ -4418,16 +4477,9 @@ class SqliteProcessConversationSystem:
                 if reservation.shutdown_owned:
                     return False
                 if refusal is not None:
-                    # A write error cannot prove non-admission. Preserve the public
-                    # receipt mapping pending its separate contract decision.
-                    status = (
-                        LifecycleStatus.unknown
-                        if refusal is PromptDeliveryRefusalReason.write_to_backend_failed
-                        else LifecycleStatus.refused
-                    )
                     refused_facts = (
                         _turn_fact(reservation.token, LifecycleStatus.unavailable),
-                        _prompt_fact(reservation.token, status),
+                        _prompt_fact(reservation.token, LifecycleStatus.refused),
                     )
                     if not record_refusal:
                         await self._persist(
@@ -4485,7 +4537,7 @@ class SqliteProcessConversationSystem:
                     return False
 
                 carried_change: ModelChangedEventPayload | None = None
-                if model_change is not None or reasoning_effort_change is not None:
+                if delivery_carries_change:
                     running_on = state.record.model if model_change is None else model_change
                     if running_on is None:
                         # A change that does not name a model moves the one the record
@@ -4558,10 +4610,10 @@ class SqliteProcessConversationSystem:
                         ),
                         executor_turn=accepted_metadata,
                         original_ticket_selection=(
-                            original_selection if sender_requested_change else None
+                            original_selection if delivery_carries_change else None
                         ),
                         requested_ticket_validation=(
-                            canonical_validation if sender_requested_change else None
+                            canonical_validation if delivery_carries_change else None
                         ),
                         composed_content_delivered=composed_content_delivered,
                         model_change=carried_change,

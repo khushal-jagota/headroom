@@ -21,6 +21,7 @@ from tests.support.conversation_scripted_acp_agent import (
     ScriptedAcpAgentControl,
     scripted_acp_agent_launch,
 )
+from tests.support.executor_catalog import ScriptedCatalogObserver
 
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChildFactory,
@@ -51,10 +52,16 @@ from planner.conversation.message_content import (
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
-from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
+from planner.core.clock import RealClock
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.executor.codec import encode_value
-from planner.executor.configuration import NATIVE_WORKER_CONTEXT, ExecutorPaths
+from planner.executor.configuration import (
+    NATIVE_WORKER_CONTEXT,
+    PROTOCOL_VERSION,
+    SPOOL_FORMAT_VERSION,
+    ExecutorPaths,
+)
 from planner.executor.contracts import (
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
@@ -62,10 +69,15 @@ from planner.executor.contracts import (
     ChildOperation,
     ChildReference,
     CommandOutcome,
+    ExecutorIdentity,
 )
 from planner.executor.journal import FilesystemSpool
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.runtime import NativeChildRegistry
+from planner.executor.vps import ExecutorEndpoint
+from planner.projects.data import create_project
+from planner.tickets import data as tickets
+from planner.tickets.contracts import TicketLocale
 
 
 @pytest.mark.parametrize("backend", [ConversationBackendKey.claude, ConversationBackendKey.hermes])
@@ -84,10 +96,17 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         connection = connect(db_path)
         try:
             create_schema(connection)
+            project = create_project(connection, name="Native context", folder_path=tmp_path, now=1)
+            ticket = tickets.create_ticket(
+                connection, title="Actual prompt context", worker_type="coding",
+                principal=OWNER_PRINCIPAL, now=1, title_max_chars=200,
+                employee_backend=backend.value, employee_launch_model="a-model",
+                selection_kind="concrete", locale=TicketLocale.macos, project_id=project.id,
+            )
         finally:
             connection.close()
         store = ConversationStore(db_path)
-        identity = (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_native"))
+        identity = (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket.id))
         resolved = ResolvedConversationStart(
             "c_native",
             backend,
@@ -99,6 +118,14 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             workspace_path_policy=WorkspacePathPolicy.native_absolute,
         )
         await store.create_conversation(resolved)
+        connection = connect(db_path)
+        try:
+            tickets.write_ticket_conversation_start(
+                connection, ticket.id, conversation_id="c_native", backend=backend.value,
+                model="a-model", reasoning_effort=None, now=2,
+            )
+        finally:
+            connection.close()
         cursor = (
             SESSION_ID if backend is ConversationBackendKey.claude else "original-hermes-session"
         )
@@ -171,7 +198,16 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             message_files=ConversationMessageFiles(db_path),
             backend_child_factories={key: remote for key in ConversationBackendKey},
         )
-        recipient = Principal(PrincipalKind.ticket, "t_native")
+        endpoint = ExecutorEndpoint(db_path, RealClock())
+        executor_identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
+        )
+        endpoint.identity = executor_identity
+        endpoint.ready = True
+        endpoint.children[reference.child_id] = remote.recover(reference)
+        observer = ScriptedCatalogObserver(lambda: executor_identity)
+        system.configure_destination_validation(observer, endpoint=endpoint)
+        recipient = Principal(PrincipalKind.ticket, ticket.id)
 
         async def deliver(text: str, **options: Any) -> Any:
             return await system.send(
@@ -237,7 +273,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             generation = Path(environment["PLAN_NATIVE_SKILLS_DIR"])
             assert (generation / "panels/SKILL.md").read_text() == snapshot.sources[0].source_text
             assert environment["PLAN_TICKET_FILES_DIR"] == str(
-                tmp_path / "executor/artifacts/tickets/t_native"
+                tmp_path / "executor/artifacts/tickets" / ticket.id
             )
             assert native_starts[0].role_materials is not None
             assert native_starts[0].role_materials.role_text == "Old persisted Worker role."

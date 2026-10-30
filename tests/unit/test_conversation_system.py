@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
 
 import planner.conversation.system as conversation_system
 from planner.conversation.backends.contracts import (
@@ -33,7 +34,7 @@ from planner.conversation.backends.contracts import (
     BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
-    PromptWriteFailed,
+    PromptWriteRefused,
     SessionLoadFailed,
     TurnToken,
     UserInputAnswerWriteFailed,
@@ -261,10 +262,10 @@ class _FakeBackendChild:
         if self._backend.writes_raise_something_unnamed:
             raise RuntimeError("the adapter fell over")
         if self._backend.write_fails:
-            raise PromptWriteFailed(self._backend.conversation_id)
+            raise PromptWriteRefused(self._backend.conversation_id)
         if self._backend.write_failures_remaining:
             self._backend.write_failures_remaining -= 1
-            raise PromptWriteFailed(self._backend.conversation_id)
+            raise PromptWriteRefused(self._backend.conversation_id)
         if model_change is not None:
             self._backend.model = model_change
         if reasoning_effort_change is not None:
@@ -308,7 +309,7 @@ class _FakeBackendChild:
         if self._backend.steers_wait_for_release is not None:
             await self._backend.steers_wait_for_release.wait()
         if self._backend.write_fails:
-            raise PromptWriteFailed(self._backend.conversation_id)
+            raise PromptWriteRefused(self._backend.conversation_id)
         self._backend.steer_tokens.append(turn_token)
         self._backend.writes.append(_FakeBackendWrite(content=content, steered=True))
         return self._backend.steer_outcome
@@ -580,8 +581,11 @@ def harness(tmp_path: Path) -> Iterator[_Harness]:
     create_schema(conn)
     conn.close()
     built = _Harness(db_path)
-    yield built
-    asyncio.run(built.system.shutdown())
+    with conversation_test_loop() as runner:
+        try:
+            yield built
+        finally:
+            runner.run(built.system.shutdown())
 
 
 def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
@@ -590,7 +594,7 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     The time limit is a wedge detector: nothing here does real work, so anything near it
     is a system that has stopped rather than one that is slow.
     """
-    asyncio.run(asyncio.wait_for(exercise(), 20.0))
+    run_conversation_test(exercise)
 
 
 def _link_test_ticket_to_conversation(
@@ -1190,6 +1194,43 @@ async def _thinking_pulses_now(watching: ConversationTailSubscription) -> int:
 
 
 # --- the role text ------------------------------------------------------------------------
+
+
+def test_local_possible_emission_stays_uncertain_and_duplicate_never_writes_again(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local failure after possible emission cannot use the prewrite-refusal fallback."""
+    from planner.conversation.backends.contracts import PromptWriteFailed
+    from planner.conversation.events import PromptDeliveryRefusedEventPayload
+    from planner.conversation.lifecycle import LifecycleStatus
+
+    calls = 0
+
+    async def possible_emission(self: _FakeBackendChild, *args: Any, **kwargs: Any) -> None:
+        nonlocal calls
+        calls += 1
+        raise PromptWriteFailed("acknowledgment lost after possible transmission")
+
+    monkeypatch.setattr(_FakeBackendChild, "write_prompt", possible_emission)
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        for _ in range(2):
+            assert await harness.system.send(
+                "c", text_message_content("send once"), sender_label="owner",
+                sender_message_id="one-uncertain-message",
+            ) == PromptDeliveryUncertain()
+        assert calls == 1
+        assert any(
+            fact.status is LifecycleStatus.unknown
+            for fact in await harness.store.lifecycle_facts("c")
+        )
+        assert not any(
+            isinstance(event.payload, PromptDeliveryRefusedEventPayload)
+            for event in await harness.events("c")
+        )
+
+    _run(exercise)
 
 
 def test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one(

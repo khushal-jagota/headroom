@@ -114,9 +114,9 @@ Panels commits intent before a prompt, steer, answer, or cancellation reaches th
 backend. Intent proves no delivery. A prompt outcome says `started` only when the
 adapter reports a successful wire write. A steer says `injected` only when the adapter
 reports admission to its target turn. Unknown external outcomes remain `unknown`.
-The public ordinary-send API still maps `PromptWriteFailed` to refusal. That mapping
-can conceal admission uncertainty and requires a separate approved receipt change.
-The durable source does not change that public mapping or claim proven non-admission.
+A backend refusal before any prompt emission is recorded as refused. A correlated
+provider rejection is also a refusal. A failure after possible transmission remains
+uncertain, including on a local VPS backend; Panels never retries it automatically.
 
 Related lifecycle facts and notebook receipts share their existing SQLite transaction.
 Read positions, attention, notices, model changes, and skill bindings keep their existing

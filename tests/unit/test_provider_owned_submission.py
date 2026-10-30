@@ -58,7 +58,8 @@ def test_panels_alias_needs_mapping_but_custom_token_and_effort_do_not() -> None
     assert result.launch_token == "provider-future"
     assert result.selection.reasoning_effort == "provider-future-effort"
     mapped = bind_model_intent(
-        selection("sol", SelectionKind.panels_alias), models=(BackendModel("gpt-6-sol"), BackendModel("gpt-7-sol"))
+        selection("sol", SelectionKind.panels_alias),
+        models=(BackendModel("gpt-6-sol"), BackendModel("gpt-7-sol")),
     )
     assert mapped.launch_token == "gpt-7-sol"
     disabled = bind_model_intent(
@@ -230,7 +231,11 @@ def test_real_core_report_and_held_boundaries(
     async def write(self: Any, turn: Any, content: Any, **kwargs: Any) -> Any:
         nonlocal writes
         writes += 1
-        attempted_tokens.append(kwargs["model_change"])
+        # An unchanged write uses the model already installed by start, rather
+        # than inventing a carried model change. Keep checking its effective token.
+        attempted_tokens.append(
+            self._backend.model if kwargs["model_change"] is None else kwargs["model_change"]
+        )
         if case == "held_unknown" and writes > 1:
             raise PromptWriteFailed("acknowledgment absent after write")
         accepted = await original(self, turn, content, **kwargs)
