@@ -913,6 +913,229 @@ def manual_unit_spacing(browser, url):
     print(f"manual unit spacing desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
 
 
+def goal_presentation_fixture():
+    fixture = GoalFixture()
+    goal = fixture.goal("goal_wrenfixture", "Ship Wren to the iOS App Store", 6)
+    goal["primary_checklist_block_id"] = "release"
+    goal["page"]["blocks"] = [
+        {
+            "type": "checklist", "id": "release", "title": "Release readiness",
+            "items": [
+                {"id": "accepted", "label": "Scope accepted", "state": "done"},
+                {"id": "intake", "label": "Confirm intake", "state": "open"},
+                {"id": "review", "label": "Review release", "state": "open",
+                 "detail": "Read the release notes before submission."},
+                {"id": "blocked", "label": "Await entitlement", "state": "blocked"},
+                {"id": "action", "label": "Submit build", "state": "open",
+                 "action": "Submit for review"},
+            ],
+        },
+        {
+            "type": "text", "id": "intake-notes",
+            "text": "Release **intake** stays beside the checklist.\nKeep this second line.\n\n"
+                    "[Wren intake](/files/goals/goal_wrenfixture/artifacts/intake.md)\n\n"
+                    "[App Store guidance](https://example.org/app-store) and "
+                    "[Build bundle](/files/goals/goal_wrenfixture/artifacts/build.wrenbundle).",
+        },
+    ]
+    return fixture
+
+
+def centered_checklist_row(row):
+    # Use actual pointer hover and rendered glyph/control rectangles. The padded
+    # empty disclosure formerly shifted both centers six pixels above the surface.
+    row.locator("[data-title]").hover()
+    geometry = row.evaluate("""node => {
+        const surface = node.querySelector('.step-inner');
+        const rect = element => {
+            const box = element.getBoundingClientRect();
+            return {x:box.x, y:box.y, width:box.width, height:box.height,
+                    centerY:box.y + box.height / 2};
+        };
+        return {surface:rect(surface), title:rect(node.querySelector('.title-text')),
+                checkbox:rect(node.querySelector('.check-visual')),
+                hovered:surface.matches(':hover'),
+                background:getComputedStyle(surface).backgroundColor};
+    }""")
+    assert geometry["hovered"], geometry
+    assert geometry["background"] != "rgba(0, 0, 0, 0)", geometry
+    for part in ("title", "checkbox"):
+        assert abs(geometry[part]["centerY"] - geometry["surface"]["centerY"]) <= 1, geometry
+    return geometry
+
+
+def disclosure_motion(title, reduced):
+    # Observe the real Svelte disclosure, rather than replacing animation with a
+    # stylesheet assertion. Normal motion grows height; reduced motion fades.
+    samples = title.evaluate("""async node => {
+        node.click();
+        const samples = [];
+        const start = performance.now();
+        while (performance.now() - start < 340) {
+            await new Promise(requestAnimationFrame);
+            const panel = document.getElementById(node.getAttribute('aria-controls'));
+            if (panel) samples.push({height:panel.getBoundingClientRect().height,
+                full:panel.scrollHeight, opacity:Number(getComputedStyle(panel).opacity)});
+        }
+        return samples;
+    }""")
+    assert samples and samples[-1]["height"] > 0, samples
+    assert samples[-1]["opacity"] == 1, samples
+    assert any(0 < sample["opacity"] < 1 for sample in samples), samples
+    if not reduced:
+        assert any(0 < sample["height"] < samples[-1]["height"] - 1 for sample in samples), samples
+    return samples
+
+
+def authored_goal_presentation(browser, url):
+    started = time.monotonic()
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root) / "goal-presentation" if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    receipts = []
+    for phone, reduced in ((False, False), (False, True), (True, False), (True, True)):
+        mode = f"{'phone' if phone else 'desktop'}-{'reduced' if reduced else 'normal'}"
+        context = browser.new_context(
+            viewport={"width": 390 if phone else 1440, "height": 844 if phone else 1000},
+            has_touch=phone, is_mobile=phone,
+            reduced_motion="reduce" if reduced else "no-preference",
+        )
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        fixture = goal_presentation_fixture()
+        writes, errors = [], []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        page.on("request", lambda request, writes=writes: writes.append(
+            (request.method, request.url)
+        ) if request.method not in ("GET", "HEAD") else None)
+        page.route("**/api/**", fixture.respond)
+        page.route(
+            "**/files/goals/goal_wrenfixture/artifacts/intake.md",
+            lambda route: route.fulfill(
+                content_type="text/markdown",
+                body="# Wren intake\n\nThe release identity is Wren iOS.\n",
+            ),
+        )
+        try:
+            page.goto(url + "#/workspace/goal/goal_wrenfixture", wait_until="domcontentloaded")
+            goal = page.locator('[data-goal-page="goal_wrenfixture"]')
+            checklist = goal.get_by_role("region", name="Completion checklist")
+            expect(checklist.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "1")
+            # Saved done rows start in the completed group, without a write or a
+            # settlement delay. Existing native controls cover check/uncheck saves.
+            expect(checklist.get_by_role("button", name="1 completed", exact=True)).to_be_visible()
+            expect(checklist.get_by_role(
+                "checkbox", name="Scope accepted", exact=True
+            )).to_have_count(0)
+            active = checklist.locator('[data-step="intake"]')
+            expect(active.locator("[data-title]")).to_have_attribute("aria-expanded", "true")
+            geometry = centered_checklist_row(active)
+            if output:
+                page.screenshot(path=str(output / f"{mode}.png"))
+            motion = disclosure_motion(
+                checklist.get_by_role("button", name="Review release", exact=True), reduced
+            )
+            expect(checklist.get_by_text(
+                "Read the release notes before submission."
+            )).to_be_visible()
+            expect(goal.locator("[data-artifacts-band]")).to_have_count(0)
+
+            prose_geometry = None
+            if not reduced:
+                text = goal.locator('[data-block="text"]')
+                expect(text.locator("strong")).to_have_text("intake")
+                expect(text).to_contain_text("Keep this second line.")
+                expect(text.get_by_role(
+                    "link", name="App Store guidance", exact=True
+                )).to_have_attribute("href", "https://example.org/app-store")
+                download = text.get_by_role("link", name="Download build.wrenbundle", exact=True)
+                expect(download).to_have_attribute("download", "")
+                expect(download).to_have_attribute(
+                    "href", "/files/goals/goal_wrenfixture/artifacts/build.wrenbundle"
+                )
+                card = text.locator('[data-file-preview-kind="markdown"]')
+                card.scroll_into_view_if_needed()
+                if phone:
+                    expect(card.locator(".file-preview-name-link")).to_be_visible()
+                else:
+                    expect(card.get_by_role(
+                        "heading", name="Wren intake", exact=True
+                    )).to_be_visible()
+                    expect(card).to_contain_text("The release identity is Wren iOS.")
+                    expect(card.locator(".file-preview-document-body p")).to_have_css(
+                        "white-space", "normal"
+                    )
+                    prose_geometry = text.locator(".markdown-block > p").first.evaluate("""p => {
+                        const source = p.querySelector('strong').nextSibling;
+                        const top = phrase => {
+                            const range = document.createRange();
+                            const offset = source.textContent.indexOf(phrase);
+                            range.setStart(source, offset);
+                            range.setEnd(source, offset + 1);
+                            return range.getBoundingClientRect().y;
+                        };
+                        return {firstLine:top('checklist.'), secondLine:top('Keep this'),
+                                lineHeight:parseFloat(getComputedStyle(p).lineHeight)};
+                    }""")
+                    assert abs(prose_geometry["secondLine"] - prose_geometry["firstLine"]
+                               - prose_geometry["lineHeight"]) <= 1, prose_geometry
+                link = card.locator("a.file-preview-link:visible")
+                expect(link).to_have_text("Open intake.md")
+                original = page.url
+                link.click()
+                viewer = page.locator("[data-ticket-artifact]")
+                expect(viewer.get_by_role(
+                    "heading", name="Wren intake", exact=True
+                )).to_be_visible()
+                expect(viewer).to_contain_text("The release identity is Wren iOS.")
+                assert "/workspace/goal/goal_wrenfixture" in page.url
+                assert page.url != original
+                if output:
+                    page.screenshot(path=str(output / f"{mode}-artifact.png"))
+                viewer.get_by_role("button", name="Close", exact=True).click()
+                expect(viewer).to_have_count(0)
+                expect(page).to_have_url(original)
+                link.click()
+                expect(viewer).to_be_visible()
+                page.go_back()
+                expect(viewer).to_have_count(0)
+                expect(page).to_have_url(original)
+
+            if not phone and not reduced:
+                for identity, name, child in (
+                    ("blocked", "Await entitlement", ".blocked"),
+                    ("action", "Submit build", "[data-action]"),
+                ):
+                    row = checklist.locator(f'[data-step="{identity}"]')
+                    row.get_by_role("button", name=name, exact=True).click()
+                    expect(row.locator(child)).to_be_visible()
+                    expect(row.locator(".detail")).to_have_count(0)
+                # The shared native checklist renderer also owns the rail preview.
+                # Existing tests exercise its writes and dismissal lifecycle.
+                page.evaluate("location.hash='#/workspace'")
+                panel = open_preview(page, "goal_wrenfixture")
+                rail_geometry = centered_checklist_row(panel.locator('[data-step="intake"]'))
+                if output:
+                    panel.screenshot(path=str(output / "desktop-rail.png"))
+            else:
+                rail_geometry = None
+            assert writes == [], writes
+            assert fixture.writes == [], fixture.writes
+            assert errors == [], errors
+            receipts.append({"mode": mode, "geometry": geometry, "disclosure": motion,
+                             "prose_geometry": prose_geometry,
+                             "rail_geometry": rail_geometry, "writes": writes, "errors": errors})
+        finally:
+            context.close()
+    elapsed = time.monotonic() - started
+    if output:
+        (output / "receipt.json").write_text(
+            json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
+        )
+    print(f"goal checklist/artifact presentation: passed (+{elapsed:.2f}s)", flush=True)
+
+
 def run(browser, urls):
     started = time.monotonic()
     fixture = GoalFixture()
@@ -941,3 +1164,4 @@ def run(browser, urls):
     )
     agent_unit_spacing(browser, urls[0])
     manual_unit_spacing(browser, urls[0])
+    authored_goal_presentation(browser, urls[0])
