@@ -2018,8 +2018,12 @@ def native_goal_edits(browser, url):
             checklist = nested.locator('[data-block="checklist"]')
             if phone:
                 expect(checklist).to_have_attribute("data-presentation", "smallest")
+                if output:
+                    checklist.screenshot(path=str(output / "phone-smallest.png"))
                 checklist.locator('[data-checklist-toggle]').tap()
             expect(checklist).to_have_attribute("data-presentation", "small")
+            if phone and output:
+                checklist.screenshot(path=str(output / "phone-small-expanded.png"))
             expect(checklist.get_by_role("textbox")).to_have_count(0)
             expect(checklist.get_by_role("heading", name="Nested readiness", exact=True)).to_be_visible()
             row = checklist.locator('[data-step="native-step"]')
@@ -2039,6 +2043,8 @@ def native_goal_edits(browser, url):
             expect(checklist.get_by_role("textbox")).to_have_count(0)
             assert block("native-checklist")["title"] == "Nested readiness"
             assert block("native-checklist")["doneTitle"] == "Nested ready"
+            if output:
+                checklist.screenshot(path=str(output / f"{mode}-complete.png"))
 
             # Artifact cards stay outside the editing action. This is one quick
             # check of that collision, not a repeat of artifact presentation tests.

@@ -529,7 +529,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             timeout=WAIT_MS
         )
     assert overview_saved.value.ok
-    assert overview_saved.value.request.post_data_json["expected_revision"] == overview_revision
+    overview_body = overview_saved.value.request.post_data_json
+    assert isinstance(overview_body, dict)
+    assert overview_body["expected_revision"] == overview_revision
     overview_accepted = api.get(server, path)
     assert overview_accepted["revision"] == overview_revision + 1
     assert overview_accepted["page"]["blocks"][0]["items"][1]["state"] == "done"
