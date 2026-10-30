@@ -254,6 +254,10 @@ def consume_native_held_prompt_in_transaction(
             or held["sender_label"] != payload.sender_label
         ):
             raise ValueError("terminal sender event differs from canonical held bytes")
+        if isinstance(payload, PromptDeliveryUncertainEventPayload):
+            # Keep the original dispatch bytes for reconciliation, without reply
+            # credit or authority to emit them again.
+            continue
         admission = _ADMISSION.get()
         if (
             isinstance(payload, (PromptEventPayload, PromptDeliveryUncertainEventPayload))

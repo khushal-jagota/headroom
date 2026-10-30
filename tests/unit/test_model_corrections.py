@@ -241,14 +241,16 @@ def test_apply_rechecks_model_and_catalogue_changes(tmp_db: Connection, ticket: 
     target = CorrectionTarget(kind="ticket", id=ticket.id)
     correction = preview(tmp_db, target, system=system)
     assert correction.error is None
-    # Known effort removal is a canonical refusal, never an automatic model upgrade.
+    # Catalog metadata cannot veto the exact requested effort.
     system.observer.efforts = ()
-    assert "effort_incompatible" in (apply(tmp_db, correction, system=system).error or "")
+    assert apply(tmp_db, correction, system=system).applied
     system.observer.efforts = ("medium", "high")
+    correction = preview(tmp_db, target, system=system)
+    refreshed = tickets_data.read_ticket(tmp_db, ticket.id)
     tickets_data.write_employee_configuration(
         tmp_db,
         ticket.id,
-        expected_employee_configuration=employee_launch_configuration(ticket),
+        expected_employee_configuration=employee_launch_configuration(refreshed),
         employee_backend=ticket.employee_backend,
         employee_launch_model="gpt-6.0-sol",
         employee_launch_reasoning_effort=ticket.employee_launch_reasoning_effort,

@@ -909,11 +909,7 @@ def test_held_batch_keeps_only_the_system_directive_in_the_first_block(
     _run(exercise)
 
 
-
-
 # --- a failing turn gets one error-log line ----------------------------------------------
-
-
 
 
 def test_an_internal_notice_only_turn_does_not_create_a_recursive_notice(
@@ -960,11 +956,7 @@ def test_a_sender_cannot_spoof_notice_suppression_with_the_internal_prefix(
     _run(exercise)
 
 
-
-
 # --- the three modes against an idle and a busy agent ------------------------------------
-
-
 
 
 def test_a_refused_owner_steer_keeps_its_original_admission_position(
@@ -1013,8 +1005,6 @@ def test_a_refused_owner_steer_keeps_its_original_admission_position(
         assert record.owner_read_through_sequence == 1
 
     _run(exercise)
-
-
 
 
 # --- every refusal comes from its own cause, and reaches no backend ----------------------
@@ -1095,13 +1085,7 @@ def test_an_agents_news_never_lands_before_the_prompt_that_asked_for_it(
 # --- a send can carry a model or reasoning-effort change ---------------------------------
 
 
-
-
 # --- permission asks ----------------------------------------------------------------------
-
-
-
-
 
 
 def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
@@ -1134,12 +1118,6 @@ def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
 
 
 # --- is_running through the lifecycle -----------------------------------------------------
-
-
-
-
-
-
 
 
 def test_status_reads_finish_while_an_unrelated_record_is_being_adopted(
@@ -1195,8 +1173,6 @@ def test_status_reads_finish_while_an_unrelated_record_is_being_adopted(
 # --- saying the model is thinking ----------------------------------------------------------
 
 
-
-
 async def _thinking_pulses_now(watching: ConversationTailSubscription) -> int:
     """How many pulses are waiting for this watcher, taken until none is forthcoming.
 
@@ -1216,12 +1192,24 @@ async def _thinking_pulses_now(watching: ConversationTailSubscription) -> int:
 # --- the role text ------------------------------------------------------------------------
 
 
-
-
 def test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one(
     harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The role rides the first prompt that is actually delivered, not the first attempt."""
+
+    from planner.conversation.backends.contracts import BackendPromptRejected
+
+    original_write = _FakeBackendChild.write_prompt
+
+    async def known_rejection(
+        self: _FakeBackendChild, *args: Any, **kwargs: Any
+    ) -> BackendPromptAccepted:
+        if self._backend.write_fails:
+            raise BackendPromptRejected("provider proved non-admission")
+        return await original_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(_FakeBackendChild, "write_prompt", known_rejection)
 
     async def exercise() -> None:
         await _start(
@@ -1281,12 +1269,6 @@ A_LATER_MENU = (
 )
 
 
-
-
-
-
-
-
 def test_boundary_duplicate_waits_for_compaction_and_runs_once(
     harness: _Harness,
 ) -> None:
@@ -1312,10 +1294,6 @@ def test_boundary_duplicate_waits_for_compaction_and_runs_once(
         assert harness.backend("c").written_texts().count("at the boundary") == 1
 
     _run(exercise)
-
-
-
-
 
 
 @pytest.mark.parametrize("confirmed", (True, False), ids=("confirmed", "not-compacted"))
@@ -1367,10 +1345,6 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
         assert [prompt.sender for prompt in prompts[-2:]] == [OWNER_PRINCIPAL, ticket]
 
     _run(exercise)
-
-
-
-
 
 
 def test_accepted_compaction_recording_failure_retains_child_and_resumes_storage_only(
@@ -1445,8 +1419,6 @@ def test_dequeued_sender_identity_stays_admitted_until_the_prompt_row_exists(
     _run(exercise)
 
 
-
-
 def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
     harness: _Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1504,11 +1476,7 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
     _run(exercise)
 
 
-
-
 # --- killing a conversation's activity ----------------------------------------------------
-
-
 
 
 def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
@@ -1793,8 +1761,6 @@ def test_a_waiting_message_that_names_another_model_starts_its_own_turn(
 # --- an ending is one ending, and a cancel that failed is not a cancel --------------------
 
 
-
-
 # --- one agent per conversation, even mid-sweep -------------------------------------------
 
 
@@ -1950,13 +1916,14 @@ def test_promoted_send_now_claims_one_message_and_preserves_fifo(
             is None
         )
 
-        # What is left of the line keeps its order and runs as one turn.
+        # Promotion does not retarget either captured request. FIFO remains,
+        # while different original choices require separate turns.
         await harness.complete_turn("c")
-        assert harness.backend("c").written_texts() == (
-            "incumbent",
-            "selected",
-            "first\n\nowner:\nlast",
-        )
+        assert harness.backend("c").written_texts() == ("incumbent", "selected", "first")
+        assert harness.backend("c").model == "a-model"
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts() == ("incumbent", "selected", "first", "last")
+        assert harness.backend("c").model == "selected-model"
 
     _run(exercise)
 
@@ -2078,10 +2045,6 @@ def test_a_promoted_steer_credits_its_sender_while_the_target_turn_remains_activ
     _run(exercise)
 
 
-
-
-
-
 def test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2110,8 +2073,6 @@ def test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away(
         ]
 
     _run(exercise)
-
-
 
 
 def test_caller_cancellation_after_acceptance_preserves_receipt_and_duplicate_identity(
@@ -2456,8 +2417,6 @@ def test_preflight_metadata_error_retains_held_guidance_for_explicit_resume(
     _run(exercise)
 
 
-
-
 def test_accepted_queued_prompt_keeps_receipt_and_completion_behind_real_writer_lock(
     harness: _Harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -2637,8 +2596,6 @@ def test_turn_replacement_waits_for_accepted_steer_receipt_and_sender_obligation
     _run(exercise)
 
 
-
-
 def test_idle_write_refuses_a_send_reserved_before_backend_write(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness)
@@ -2660,8 +2617,6 @@ def test_idle_write_refuses_a_send_reserved_before_backend_write(harness: _Harne
         await sending
 
     _run(exercise)
-
-
 
 
 def test_held_promotion_and_locale_move_cannot_cross(
@@ -3176,6 +3131,7 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
         )
 
     _run(exercise)
+
 
 def test_review_reply_reads_only_displayed_run_on_queue_admission_and_later_delivery(
     harness: _Harness,

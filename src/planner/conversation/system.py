@@ -1664,7 +1664,17 @@ class SqliteProcessConversationSystem:
             )
         pending = state.reserved_turn
         dependency = pending if pending is not None and pending.token == token else None
-        if dependency is not None and dependency.token == nonadmitted_turn:
+        if dependency is not None and (
+            dependency.token == nonadmitted_turn
+            or (
+                state.phase is _ConversationPhase.idle
+                and state.child_is_quarantined
+                and state.executor_delivery_uncertain
+            )
+        ):
+            # A settled unknown acknowledgment has no outstanding local write
+            # to serialize. Its retained reservation cannot make exact source
+            # retirement wait for the admission fact that retirement must settle.
             dependency = None
         if token is None:
             # Without original metadata there is no identity-safe retirement commit.
@@ -1762,6 +1772,15 @@ class SqliteProcessConversationSystem:
             if state.executor_child_reference == reference:
                 state.executor_child_reference = None
                 state.child_is_quarantined = False
+                pending = state.reserved_turn
+                if (
+                    pending is not None
+                    and state.executor_delivery_uncertain
+                    and pending.token.turn_number == json.loads(metadata[1])["turn_number"]
+                ):
+                    state.last_ended_turn_token = pending.token
+                    state.reserved_turn = None
+                    pending.resolved.set()
             return True
 
     async def is_running(self, conversation_id: str) -> bool:
@@ -2677,16 +2696,43 @@ class SqliteProcessConversationSystem:
     ) -> PromptDeliveryQueued:
         """Put one admitted message at the tail. The conversation lock must be held."""
         from planner.core.db import connect
+        from planner.core.errors import ErrorCode
         from planner.tickets.validation.data import read_launch_selection
 
         original_selection = None
         conn = connect(self._store._db_path)
         try:
             row = conn.execute(
-                "SELECT id FROM tickets WHERE conversation_id=?", (state.record.conversation_id,)
+                "SELECT id,locale FROM tickets WHERE conversation_id=?",
+                (state.record.conversation_id,),
             ).fetchone()
+            captured = None
             if row is not None:
-                captured = read_launch_selection(conn, row[0])
+                try:
+                    captured = read_launch_selection(conn, row[0])
+                except PlannerError as error:
+                    if error.code not in (ErrorCode.validation, ErrorCode.not_found):
+                        raise
+            if captured is None and state.held_prompts:
+                # Generic conversations have no separately saved next-turn choice.
+                # Their last explicit queued choice is the deliberate carried intent.
+                captured = state.held_prompts[-1].original_selection
+            if captured is None and state.record.model:
+                from planner.tickets.contracts import TicketLocale
+
+                captured = ModelSelection(
+                    TicketLocale(row[1])
+                    if row is not None
+                    else TicketLocale.macos
+                    if state.executor_child_reference is not None
+                    else TicketLocale.vps,
+                    state.record.backend_key,
+                    state.record.model,
+                    SelectionKind.legacy_unclassified,
+                    state.record.reasoning_effort,
+                    f"conversation:{state.record.conversation_id}",
+                )
+            if captured is not None:
                 original_selection = replace(
                     captured,
                     submitted_token=model_change or captured.submitted_token,
@@ -3280,6 +3326,13 @@ class SqliteProcessConversationSystem:
                     lifecycle=(_prompt_fact(reservation.token, LifecycleStatus.unknown),),
                     executor_turn=metadata,
                 )
+            self._settle_held_deliveries(state, messages)
+            present = {held.held_prompt_id for held in state.held_prompts}
+            for message in reversed(messages):
+                if message.held_prompt_id and message.held_prompt_id not in present:
+                    state.held_prompts.appendleft(replace(message, delivery_uncertain=True))
+            self._set_phase(state, _ConversationPhase.idle)
+            self._publish_held_prompts_changed(state)
 
     async def _deliver_and_finalize(
         self,
@@ -3407,6 +3460,7 @@ class SqliteProcessConversationSystem:
                         ),
                         executor_turn=metadata,
                     )
+                self._set_phase(state, _ConversationPhase.idle)
                 # Preserve the unresolved reservation and quarantine; record the
                 # unknown delivery without inventing refusal or native execution.
                 return PromptDeliveryUncertain()
@@ -3697,8 +3751,6 @@ class SqliteProcessConversationSystem:
                         previous_alias_resolution=previous_alias_resolution,
                     )
             if validation.reason is ValidationReason.legacy_unscoped:
-                from planner.conversation.model_resolution.contracts import CorrectiveAction
-
                 validation = replace(
                     validation, corrective_action=CorrectiveAction.classify_selection
                 )
@@ -3983,7 +4035,40 @@ class SqliteProcessConversationSystem:
                 (state.record.conversation_id,),
             ).fetchone()
             if row is None:
-                return await self._deliver_prompt_unsettled_verified(state, turn_token, **kwargs)
+                if captured_held_selection is None:
+                    return await self._deliver_prompt_unsettled_verified(
+                        state, turn_token, **kwargs
+                    )
+                # Generic held messages also retain the exact authored/current request;
+                # their queue must not inherit a later conversation setting.
+                kwargs["model_change"] = captured_held_selection.submitted_token
+                kwargs["reasoning_effort_change"] = captured_held_selection.reasoning_effort
+                if (
+                    captured_held_selection.submitted_token == state.record.model
+                    and captured_held_selection.reasoning_effort == state.record.reasoning_effort
+                ):
+                    return await self._deliver_prompt_unsettled_verified(
+                        state, turn_token, **kwargs
+                    )
+                carried = CanonicalModelValidation(
+                    captured_held_selection,
+                    ValidationState.unresolved,
+                    ValidationReason.legacy_unscoped,
+                    CorrectiveAction.none,
+                    None,
+                    captured_held_selection.submitted_token,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                delivered = await self._deliver_prompt_unsettled_verified(
+                    state,
+                    turn_token,
+                    canonical_validation=carried,
+                    **kwargs,
+                )
+                return replace(delivered, canonical_validation=carried)
             ticket_id = row["id"]
             ticket = ticket_data.read_ticket(conn, ticket_id)
             if state.record.backend_key is ConversationBackendKey.hermes:
@@ -4046,8 +4131,20 @@ class SqliteProcessConversationSystem:
                     submitted_token=requested_token,
                 )
                 owns_permit = True
-            selection = read_launch_selection(conn, ticket_id)
-            original_selection = selection
+            try:
+                selection = read_launch_selection(conn, ticket_id)
+                original_selection = selection
+            except PlannerError as error:
+                if captured_held_selection is None or error.code not in (
+                    ErrorCode.validation,
+                    ErrorCode.not_found,
+                ):
+                    raise
+                # The newly captured conversation request remains exact even when
+                # historical Ticket settings never recorded a model. It cannot
+                # fabricate a source configuration for a departure CAS write.
+                selection = captured_held_selection
+                original_selection = None
             if captured_held_selection is not None:
                 selection = captured_held_selection
                 model = selection.submitted_token
@@ -4242,8 +4339,6 @@ class SqliteProcessConversationSystem:
                 )
         except (PlannerError, AdmissionRefused) as error:
             if isinstance(error, AdmissionRefused) and validation is not None:
-                from planner.conversation.model_resolution.contracts import CorrectiveAction
-
                 reason = ValidationReason(error.reason)
                 action = CorrectiveAction(error.corrective_action)
                 validation = replace(
@@ -4340,7 +4435,10 @@ class SqliteProcessConversationSystem:
 
                 raise RemoteInitialDeliveryCancelled()
             child = await self._ensure_child(
-                state, model=model_change, reasoning_effort=reasoning_effort_change
+                state,
+                model=model_change,
+                reasoning_effort=reasoning_effort_change,
+                reasoning_effort_is_set=canonical_validation is not None,
             )
         except BackendSpawnFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
@@ -4424,6 +4522,7 @@ class SqliteProcessConversationSystem:
                 automatic_compaction=automatic_compaction,
                 messages=messages,
                 interruption_notice=interruption_notice,
+                reasoning_effort_is_set=canonical_validation is not None,
             )
             return replace(
                 rebound,
@@ -4457,6 +4556,7 @@ class SqliteProcessConversationSystem:
         automatic_compaction: bool,
         messages: tuple[_HeldPrompt, ...] = (),
         interruption_notice: str | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> _PromptDeliveryAttempt:
         """Start the child again on the new values, under the same conversation, and write.
 
@@ -4518,7 +4618,10 @@ class SqliteProcessConversationSystem:
                 return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
         try:
             child = await self._ensure_child(
-                state, model=model_change, reasoning_effort=reasoning_effort_change
+                state,
+                model=model_change,
+                reasoning_effort=reasoning_effort_change,
+                reasoning_effort_is_set=reasoning_effort_is_set,
             )
         except BackendSpawnFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
@@ -5512,6 +5615,7 @@ class SqliteProcessConversationSystem:
         *,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendChild:
         """The conversation's live child, spawned and bound on first need.
 
@@ -5531,6 +5635,7 @@ class SqliteProcessConversationSystem:
                 self._configure_initial_command_recording(state, child, state.reserved_turn)
             return child
 
+        reasoning_effort_is_set = reasoning_effort_is_set or effort_presence_is_set()
         resolved_start = state.record.resolved_start()
         from planner.conversation.admission.service import current_admission_expectation
 
@@ -5541,13 +5646,13 @@ class SqliteProcessConversationSystem:
                 model=expectation.launch_token,
                 reasoning_effort=expectation.reasoning_effort,
             )
-        elif model is not None or reasoning_effort is not None:
+        elif model is not None or reasoning_effort is not None or reasoning_effort_is_set:
             resolved_start = replace(
                 resolved_start,
                 model=resolved_start.model if model is None else model,
                 reasoning_effort=(
                     resolved_start.reasoning_effort
-                    if reasoning_effort is None
+                    if reasoning_effort is None and not reasoning_effort_is_set
                     else reasoning_effort
                 ),
             )

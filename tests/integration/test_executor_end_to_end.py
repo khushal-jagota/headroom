@@ -2728,6 +2728,7 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_ack_loss(
                     ),
                     child=harness.ask.child,
                     turn=harness.native.turn,
+                    executor_identity=harness.endpoint.identity,
                 )
             if operation == "user_input_answer":
                 await harness.native.raise_user_input()

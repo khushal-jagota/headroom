@@ -22,7 +22,7 @@ from tests.integration.test_navigation_cumulative_migration import (
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "scoped_model_catalogs"
+FINAL_HEAD = "provider_owned_model_choices"
 SENTINELS: dict[str, tuple[object, ...]] = {
     "executor_receipts": (
         "sender",

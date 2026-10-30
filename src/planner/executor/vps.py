@@ -1102,6 +1102,12 @@ class ExecutorEndpoint:
                     command.arguments.get("admission_expectation", {})
                 )
                 check_expectation_policy(conn, expected)
+                if expected.executor_identity != self.identity:
+                    raise AdmissionRefused(
+                        "The destination connection changed before submission",
+                        reason="context_changed",
+                        corrective_action="verify_launch_context",
+                    )
             except (AdmissionRefused, ValueError, TypeError) as failure:
                 error = (
                     failure
