@@ -189,10 +189,13 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
   const ticks = integerTicks ? steady.ticks.filter(Number.isInteger) : steady.ticks;
 
   // Scrubbing: a new range lets go of the crosshair.
-  const [active, setActive] = useState<number | null>(null);
+  // Native edit focus can blur the plot while the mouse still owns inspection.
+  const [inspection, setInspection] = useState<{ source: "mouse" | "keyboard" | "touch"; index: number } | null>(null);
+  const pointerOrigin = useRef<string | null>(null);
+  const active = inspection?.index ?? null;
   const identities = data.map(item => item.key).join("\u0000");
   const [seenSignature, setSeenSignature] = useState(identities);
-  if (seenSignature !== identities) { setSeenSignature(identities); setActive(null); }
+  if (seenSignature !== identities) { setSeenSignature(identities); setInspection(null); }
   const index = active === null || empty ? null : Math.min(active, last);
   const scrubbing = index !== null;
 
@@ -364,21 +367,30 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
     if (!rect?.width || last < 1) return Math.max(0, last);
     const at=clamp((clientX-rect.left)/rect.width,0,1);return positions.reduce((best,x,i)=>Math.abs(x-at)<Math.abs(positions[best]-at)?i:best,0);
   };
+  const inspect = (source: "mouse" | "keyboard" | "touch", index: number) => {
+    setInspection(current => current?.source === source && current.index === index ? current : { source, index });
+  };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    pointerOrigin.current = null;
     if ((event.key === "Enter" || event.key === " ") && onSelect && !empty) { event.preventDefault(); onSelect(index ?? last); return; }
-    if (event.key === "Escape" && scrubbing) { event.preventDefault(); setActive(null); return; }
+    if (event.key === "Escape" && scrubbing) { event.preventDefault(); setInspection(null); return; }
     const from = index ?? last + 1, page = Math.max(1, Math.round(data.length / 6));
     const next = ({ ArrowLeft: from - 1, ArrowDown: from - 1, ArrowRight: index === null ? last : from + 1, ArrowUp: index === null ? last : from + 1, PageDown: from - page, PageUp: from + page, Home: 0, End: last } as Record<string, number>)[event.key];
     if (next === undefined || empty) return;
     event.preventDefault();
-    setActive(clamp(next, 0, last));
+    inspect("keyboard", clamp(next, 0, last));
   };
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (empty) return;
-    if (event.pointerType !== "mouse") event.currentTarget.setPointerCapture?.(event.pointerId);
-    setActive(pointAt(event.clientX));
+    pointerOrigin.current = event.pointerType;
+    if (empty || event.pointerType === "mouse") return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    inspect("touch", pointAt(event.clientX));
   };
-  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => { if (!empty && (event.pointerType === "mouse" || event.buttons)) setActive(pointAt(event.clientX)); };
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!empty && (event.pointerType === "mouse" || event.buttons)) {
+      inspect(event.pointerType === "mouse" ? "mouse" : "touch", pointAt(event.clientX));
+    }
+  };
 
   const format = (value: number, line: LineChartSeries) => !Number.isFinite(value) ? "No reading" : `${formatValue ? formatValue(value, line) : grouped.format(value)}${unit ? ` ${unit}` : ""}`;
   const reading = index === null ? null : data[index];
@@ -391,8 +403,9 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
   return <figure ref={figure} className={[styles.figure, className].filter(Boolean).join(" ")} aria-label={label} aria-busy={loading || undefined}>
     <div className={styles.chart} data-scrubbing={scrubbing || undefined} data-loading={loading || undefined}>
       <div ref={plot} className={styles.plot} style={{ height }} role="slider" tabIndex={empty ? -1 : 0} aria-label={`${label}, explore by ${categoryLabel.toLowerCase()}`} aria-orientation="horizontal" aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={(index ?? last) + 1} aria-valuetext={valueText}
-        onClick={event => { if (!empty) onSelect?.(pointAt(event.clientX)); }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={event => { if (event.pointerType !== "mouse") setActive(null); }} onPointerCancel={() => setActive(null)} onPointerLeave={event => { if (event.pointerType === "mouse") setActive(null); }} onKeyDown={onKeyDown} onBlur={() => setActive(null)}
-        onFocus={event => { if (event.currentTarget.matches(":focus-visible") && !empty) setActive(current => current ?? last); }}>
+        onClick={event => { if (!empty) onSelect?.(pointAt(event.clientX)); }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={event => { if (event.pointerType !== "mouse") setInspection(current => current?.source === "touch" ? null : current); }} onPointerCancel={event => { if (event.pointerType !== "mouse") setInspection(current => current?.source === "touch" ? null : current); }} onPointerLeave={event => { if (event.pointerType === "mouse") setInspection(current => current?.source === "mouse" ? null : current); }} onKeyDown={onKeyDown}
+        onBlur={() => { pointerOrigin.current = null; setInspection(current => current?.source === "mouse" ? current : null); }}
+        onFocus={event => { if (pointerOrigin.current === null && event.currentTarget.matches(":focus-visible") && !empty) setInspection(current => current ?? { source: "keyboard", index: last }); }}>
         <svg className={styles.svg} width="100%" height={height} aria-hidden="true" focusable="false">
           <defs>{series.filter(line=>line.compareTo || line.datedComparisons).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} gradientUnits="userSpaceOnUse" x1="0%" x2="100%" y1="0%" y2="0%"/>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>
           <AnimatePresence initial={false}>{ticks.slice(1).map(value => <Gridline key={value} value={value} scale={scale} height={height} />)}</AnimatePresence>

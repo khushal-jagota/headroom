@@ -14,13 +14,20 @@ def checklist_header_and_presentations(page):
     checklist = page.locator('[data-checklist-fixture] [data-block="checklist"]')
     page.emulate_media(reduced_motion="no-preference")
     for variant in ("empty", "partial", "complete"):
-        page.evaluate("window.__checklist(false);window.__checklistVariant(" + json.dumps(variant) + ");window.__checklist(true)")
+        page.evaluate(
+            "window.__checklist(false);window.__checklistVariant("
+            + json.dumps(variant)
+            + ");window.__checklist(true)"
+        )
         toggle = checklist.locator('[data-checklist-toggle]')
         expect(toggle).to_have_count(1)
         expect(toggle).to_have_accessible_name('Hide checklist')
         expect(toggle).to_have_attribute('aria-expanded', 'true')
         expect(checklist.get_by_role('progressbar')).to_have_count(1)
-        assert toggle.locator('button,input,[contenteditable],h1,h2,h3,[role=progressbar]').count() == 0
+        assert (
+            toggle.locator('button,input,[contenteditable],h1,h2,h3,[role=progressbar]').count()
+            == 0
+        )
         target = toggle.get_attribute('aria-controls')
         assert target and checklist.locator('[id="' + target + '"]').count() == 1
         box = toggle.bounding_box()
@@ -40,7 +47,9 @@ def checklist_header_and_presentations(page):
         expect(toggle).to_have_attribute('aria-expanded', 'true')
         if variant == 'complete':
             checklist.get_by_role('button', name='2 completed', exact=True).click()
-            expect(checklist.get_by_role('list', name='Completed items').get_by_role('checkbox')).to_have_count(2)
+            expect(
+                checklist.get_by_role('list', name='Completed items').get_by_role('checkbox')
+            ).to_have_count(2)
     page.evaluate("window.__checklist(false);window.__checklistVariant('partial');window.__checklistOptions(true);window.__checklist(true)")
     expect(checklist).to_have_attribute('data-presentation', 'normal')
     expect(checklist.get_by_role('checkbox', name='Publish', exact=True)).to_be_visible()

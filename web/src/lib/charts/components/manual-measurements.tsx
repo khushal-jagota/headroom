@@ -112,7 +112,10 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   useLayoutEffect(() => { if (foldable && !preferences.expanded && focusInside.current) host.current?.querySelector<HTMLButtonElement>('.support-summary')?.focus(); }, [foldable, preferences.expanded]);
   const cumulative = block.manual!.model === 'cumulative_target', reading = block.manual!.model === 'individual_readings';
   const [state, setState] = useState<ManualMeasureState | null>(null), stateRef = useRef<ManualMeasureState | null>(null);
-  const [inspectedDate, setInspectedDate] = useState<string | null>(null);
+  const [inspection, setInspection] = useState<{ source: 'mouse' | 'keyboard' | 'touch'; date: string } | null>(null);
+  const pointerOrigin = useRef<{ type: string; target: EventTarget } | null>(null);
+  const inspectedDate = inspection?.date ?? null;
+  const inspectMouse = (date: string) => setInspection(current => current?.source === 'mouse' && current.date === date ? current : { source: 'mouse', date });
   const [selectedDate, setSelectedDate] = useState<string | undefined>(session.current?.command.date), selectedRef = useRef<string | undefined>(session.current?.command.date);
   const [acceptedHistory, setAcceptedHistory] = useState<Map<string, MeasureValue>>(new Map()), acceptedHistoryRef = useRef(new Map<string, MeasureValue>());
   const history = useMemo(() => [...values.filter(value => value.measure_id !== block.measure_id || !acceptedHistory.has(value.date)), ...acceptedHistory.values()].sort((a, b) => a.date.localeCompare(b.date)), [values, acceptedHistory, block.measure_id]);
@@ -276,10 +279,14 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
           {target !== undefined && !block.reference?.length && <span className="target" style={{ bottom: (target - minimum) / span * 100 + '%' }}>{(target - minimum) / span > .08 ? formatCompactNumber(target) : ''}</span>}<span style={{ bottom: -minimum / span * 100 + '%' }}>0</span>
           {minimum < 0 && <span style={{ bottom: 0 }}>{formatCompactNumber(minimum)}</span>}
         </div><div className="bars" style={{ gridTemplateColumns: `repeat(${Math.max(1, dates.length)}, minmax(0, 1fr))` }} role="group" aria-label={`${title} by date`}>
-          {readings.map((value, index) => <button type="button" key={dates[index]} className="bar-pick" aria-pressed={selected === dates[index]} aria-label={`${dateLabel(dates[index])}, ${value == null ? 'no reading' : `${formatReading(block, value)} ${title.toLowerCase()}`}${targets[index] === undefined ? '' : `, target ${formatReading(block, targets[index]!)}`}`} onPointerEnter={event => { if (event.pointerType === 'mouse') setInspectedDate(dates[index]); }}
-            onPointerLeave={event => { if (event.pointerType === 'mouse' && !event.currentTarget.matches(':focus')) setInspectedDate(null); }}
-            onFocus={() => setInspectedDate(dates[index])} onBlur={() => setInspectedDate(null)} onKeyDown={event => { if (event.key === 'Escape') setInspectedDate(null); }}
-            onClick={() => { setInspectedDate(dates[index]); void select(dates[index]); }}>
+          {readings.map((value, index) => <button type="button" key={dates[index]} className="bar-pick" aria-pressed={selected === dates[index]} aria-label={`${dateLabel(dates[index])}, ${value == null ? 'no reading' : `${formatReading(block, value)} ${title.toLowerCase()}`}${targets[index] === undefined ? '' : `, target ${formatReading(block, targets[index]!)}`}`} onPointerEnter={event => { if (event.pointerType === 'mouse') inspectMouse(dates[index]); }}
+            onPointerMove={event => { if (event.pointerType === 'mouse') inspectMouse(dates[index]); }}
+            onPointerDown={event => { pointerOrigin.current = { type: event.pointerType, target: event.currentTarget }; }}
+            onPointerLeave={event => { if (event.pointerType === 'mouse') setInspection(current => current?.source === 'mouse' ? null : current); }}
+            onFocus={event => { const origin = pointerOrigin.current?.target === event.currentTarget ? pointerOrigin.current.type : null; if (origin !== 'mouse' && (origin !== null || event.currentTarget.matches(':focus-visible'))) setInspection({ source: origin === null ? 'keyboard' : 'touch', date: dates[index] }); }}
+            onBlur={event => { if (pointerOrigin.current?.target === event.currentTarget) pointerOrigin.current = null; setInspection(current => current?.source === 'mouse' ? current : null); }}
+            onKeyDown={event => { pointerOrigin.current = null; if (event.key === 'Escape') setInspection(null); }}
+            onClick={event => { const origin = pointerOrigin.current; pointerOrigin.current = null; if (origin?.target === event.currentTarget && origin.type !== 'mouse') setInspection({ source: 'touch', date: dates[index] }); void select(dates[index]); }}>
             <span className="bar-space"><motion.span className={'bar ' + (value == null ? 'missing' : '')} initial={false}
               style={minimum < 0 ? { position: 'absolute', bottom: (Math.min(0, value ?? 0) - minimum) / span * 100 + '%' } : undefined}
               animate={{ height: value == null || value === 0 ? 2 : Math.abs(value) / span * 100 + '%', backgroundColor: value == null ? 'var(--text-faintest)' : toneColor(value, targets[index]) }} transition={{ duration: reduce ? 0 : motionTokens.duration.standard }} /></span>

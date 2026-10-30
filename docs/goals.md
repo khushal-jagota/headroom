@@ -30,11 +30,13 @@ _Code paths:_ `src/planner/goals/`, `src/planner/core/request_guidance.py`, and 
 
 ## Native page edits
 
-The owner edits goal title and rationale in place. Project, deadline, active state, completion display, and quantitative thresholds use native inline controls. Each change uses the same revision-checked writer.
+The owner edits goal title and rationale in place. The header shows only the current Project, deadline, and active state values. Native inline controls retain accessible names, keyboard entry, and touch access. Their widths follow the current values, and the metadata shares a baseline. An empty deadline shows No deadline and retains the native date editor and picker. Each change uses the same revision-checked writer.
 
-Focus loss saves text, dates, and numeric thresholds. Enter saves single-line fields. Ctrl/Cmd+Enter saves multiline text. Escape discards the draft.
+Focus loss saves text and dates. Enter saves single-line fields. Ctrl/Cmd+Enter saves multiline text. Escape discards the draft.
 
 Native selects save explicit selection changes. Failed structured edits retain their value and expose Retry save and Discard edit.
+
+The header has no success-threshold or completion-display controls. Saved targets, comparison directions, and checklist bindings remain goal configuration through the existing agent and API writer. Metadata edits preserve that configuration.
 
 On the full goal page, visible authored strings outside charts also support native text edits. This includes nested sections, view labels, callouts, saved metric and property strings, row copy, and table copy. Stable block and item IDs remain intact. Table edits retain original row identity after display sorting. Generated counts, chart titles, and measurement readings keep their existing behavior.
 
@@ -64,7 +66,7 @@ Checklist and binary edits share the goal page's revision-checked writer. Queued
 
 Effective completion comes from the selected display's saved input. Panels derives it when it reads a goal. It does not save another completion flag. A binary display uses its saved checked input. A quantitative goal keeps its chart and uses that binary input for completion.
 
-A binary goal can select one saved checklist through the inline Completion display selector. The selector also lists checklists inside layouts. The selected checklist appears in the primary area with its existing item controls. Its original page block stays intact and appears only once. Other checklists remain ordinary page content.
+A binary goal can bind one saved checklist through the existing agent and API writer. Checklists inside layouts also support this binding. The selected checklist appears in the primary area with its existing item controls. Its original page block stays intact and appears only once. Other checklists remain ordinary page content.
 
 A selected checklist completes the goal only when it contains items and every item is done. An empty checklist stays incomplete. Open and blocked items keep it incomplete. Uncheck an item or add an unfinished item to reopen the goal. Active state stays independent of these results.
 
@@ -136,7 +138,11 @@ The unlisted application page `#/dev/goal-components` shows all 22 approved char
 
 A chart can bind approved manual controls to a shared manual measure. Daily quotas edit the selected date. Cumulative targets edit a dated snapshot of the latest total. Individual readings edit the selected observation. Targets remain chart configuration.
 
-Manual charts show comparisons through the shared hover or tap inspection. They omit the permanent Difference line and repeated date label. Date controls and inspection retain necessary dates. The selected date remains the edit context.
+Desktop pointer inspection follows hover. A click does not open, hide, toggle, or retain inspection. Pointer exit clears it even when the chart retains focus. Keyboard inspection remains available through focus and navigation. A manual date click still selects the edit date, and a line point can focus its value input. Those actions do not change inspection while the pointer stays over the chart. The selected date remains the edit context after inspection clears.
+
+Touch retains each chart's existing behavior. Line inspection follows contact and clears on release or cancellation. A manual line release also selects the edit date. Manual daily bars and gauges retain inspection after a tap until outside input. Canvas bars retain touch inspection until blur. Ring legends retain their chart-specific focus and tap paths, and ring segments retain the selected detail. These interactions apply to both the overview and individual goal page.
+
+Manual charts omit the permanent Difference line and repeated date label. Date controls and inspection retain necessary dates.
 
 The value is a native input over the shared animated counter. Enter or focus loss commits a changed valid draft. Escape restores the accepted value. A failed or invalid draft blocks date changes and increments. A pending commit finishes before the next explicit chart action. Writes use the accepted measure revision and an explicit date. Failed requests require an explicit retry. The browser does not retry writes automatically.
 

@@ -1,7 +1,7 @@
 /** Adapted from the approved sheet's components/goal-indicators.tsx.
  * Example menus and sample state are replaced by the canonical chart contract.
  */
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import type { ChartBlock, ChartSeries, CategoryChartRange, CategoryChartSummary, MeasureValue } from '../../goals/contracts';
 import type { LineChartDatum } from './line-chart-integrated';
@@ -33,7 +33,11 @@ export function ProgressCard({ block, value, summary }: { block: ChartBlock; val
 }
 
 export function TimeBudgetCard({ block, value, summary }: { block: ChartBlock; value: number | undefined; summary?: CategoryChartSummary; coverage_status?: MeasureValue['coverage_status'] }) {
-  const [active, setActive] = useState<number | null>(null);
+  // A segment tap persists. A legend tap follows focus and clears on blur.
+  const [inspection, setInspection] = useState<{ source: 'mouse' | 'keyboard' | 'touch-legend' | 'touch-segment'; key: number } | null>(null);
+  const pointerOrigin = useRef<{ type: string; target: EventTarget } | null>(null);
+  const active = inspection?.key ?? null;
+  const inspectMouse = (key: number) => setInspection(current => current?.source === 'mouse' && current.key === key ? current : { source: 'mouse', key });
   const budget = block.target;
   const validBudget = budget !== undefined && Number.isFinite(budget) && budget > 0;
   const remaining = block.binding ? summary?.difference == null ? undefined : -summary.difference : value === undefined || !validBudget ? undefined : budget - value;
@@ -47,7 +51,7 @@ export function TimeBudgetCard({ block, value, summary }: { block: ChartBlock; v
   const display = active === 1 ? (remaining === undefined ? undefined : Math.abs(remaining)) : value;
   return <div className="ring-layout allocation-layout">
     <div className="ring-chart" role="img" aria-label={value === undefined ? 'No reading' : !validBudget || remaining === undefined ? `${formatReading(block, value)} spent. Planned reading unavailable.` : `${formatReading(block, value)} spent of ${formatReading(block, budget)} planned. ${formatReading(block, Math.abs(remaining))} ${names[1].toLowerCase()}.`}>
-      <svg viewBox="0 0 200 200" aria-hidden="true" onPointerLeave={() => setActive(null)}>
+      <svg viewBox="0 0 200 200" aria-hidden="true" onPointerLeave={event => { if (event.pointerType === 'mouse') setInspection(current => current?.source === 'mouse' ? null : current); }}>
         {values.map((amount, i) => {
           const start = offset; offset += amount / budget!;
           return <g key={i}>
@@ -55,7 +59,9 @@ export function TimeBudgetCard({ block, value, summary }: { block: ChartBlock; v
               animate={{ strokeDasharray: `${Math.max(0, amount / budget! * circumference - (amount === budget ? 0 : 5))} ${circumference}`, strokeDashoffset: -start * circumference, stroke: i === 0 ? tone : 'var(--chart-budget-track)', strokeWidth: active === i ? 16 : 12, opacity: active === null || active === i ? 1 : .5 }}
               transition={transition} style={{ pointerEvents: 'none' }} />
             {amount > 0 && <circle data-segment={i} cx="100" cy="100" r="80" fill="none" stroke="transparent" strokeWidth="28" transform="rotate(-90 100 100)"
-              strokeDasharray={`${amount / budget! * circumference} ${circumference}`} strokeDashoffset={-start * circumference} style={{ pointerEvents: 'stroke' }} onPointerEnter={() => setActive(i)} onClick={() => setActive(i)} />}
+              strokeDasharray={`${amount / budget! * circumference} ${circumference}`} strokeDashoffset={-start * circumference} style={{ pointerEvents: 'stroke' }} onPointerEnter={event => { if (event.pointerType === 'mouse') inspectMouse(i); else setInspection({ source: 'touch-segment', key: i }); }}
+              onPointerMove={event => { if (event.pointerType === 'mouse') inspectMouse(i); }}
+              onPointerDown={event => { pointerOrigin.current = { type: event.pointerType, target: event.currentTarget }; }} onClick={event => { const origin = pointerOrigin.current; pointerOrigin.current = null; if (origin?.target === event.currentTarget && origin.type !== 'mouse') setInspection({ source: 'touch-segment', key: i }); }} />}
           </g>;
         })}
       </svg>
@@ -64,7 +70,14 @@ export function TimeBudgetCard({ block, value, summary }: { block: ChartBlock; v
     <div className="allocation-legend" data-active={active ?? undefined}>{names.map((name, i) => {
       const amount = i === 0 ? value : remaining === undefined ? undefined : Math.abs(remaining);
       return <motion.button key={i} type="button" data-selected={active === i}
-        onFocus={() => setActive(i)} onBlur={() => setActive(null)} onMouseEnter={() => setActive(i)} onMouseLeave={() => setActive(null)} onClick={() => setActive(i)}
+        onPointerEnter={event => { if (event.pointerType === 'mouse') inspectMouse(i); }}
+        onPointerMove={event => { if (event.pointerType === 'mouse') inspectMouse(i); }}
+        onPointerDown={event => { pointerOrigin.current = { type: event.pointerType, target: event.currentTarget }; }}
+        onPointerLeave={event => { if (event.pointerType === 'mouse') setInspection(current => current?.source === 'mouse' ? null : current); }}
+        onFocus={event => { const origin = pointerOrigin.current?.target === event.currentTarget ? pointerOrigin.current.type : null; if (origin !== 'mouse' && (origin !== null || event.currentTarget.matches(':focus-visible'))) setInspection({ source: origin === null ? 'keyboard' : 'touch-legend', key: i }); }}
+        onBlur={event => { if (pointerOrigin.current?.target === event.currentTarget) pointerOrigin.current = null; setInspection(current => current?.source === 'keyboard' || current?.source === 'touch-legend' ? null : current); }}
+        onKeyDown={event => { pointerOrigin.current = null; if (event.key === 'Escape') setInspection(null); }}
+        onClick={event => { const origin = pointerOrigin.current; pointerOrigin.current = null; if (origin?.target === event.currentTarget && origin.type !== 'mouse') setInspection({ source: 'touch-legend', key: i }); }}
         animate={{ opacity: active === null || active === i ? 1 : .5 }} transition={transition}
         aria-label={`${name}, ${amount === undefined ? 'No reading' : formatReading(block, amount)}`}>
         <i style={{ background: i === 0 ? tone : unavailableComparison ? 'var(--chart-muted)' : over ? 'var(--accent-error)' : 'var(--chart-budget-remaining)' }} /><span>{name}</span><strong>{amount === undefined ? '—' : formatReading(block, amount)}</strong>
@@ -74,12 +87,15 @@ export function TimeBudgetCard({ block, value, summary }: { block: ChartBlock; v
 }
 
 export function AllocationCard({ block, data, series, range, activeKey = null }: { block: ChartBlock; data: LineChartDatum[]; series: ChartSeries[]; range?: CategoryChartRange; activeKey?: string | null }) {
-  const [active, setActive] = useState<string | null>(null), transition = useTransition();
+  const [inspection, setInspection] = useState<{ source: 'mouse' | 'keyboard' | 'touch-legend' | 'touch-segment'; key: string } | null>(null);
+  const pointerOrigin = useRef<{ type: string; target: EventTarget } | null>(null);
+  const active = inspection?.key ?? null, transition = useTransition();
+  const inspectMouse = (key: string) => setInspection(current => current?.source === 'mouse' && current.key === key ? current : { source: 'mouse', key });
   const geometry = allocationData(data, series, range, activeKey);
   const { reading, total } = geometry;
   const percentage = block.allocation_mode === 'percentage';
   const entries = geometry.series.map((item, index) => ({ item, key: seriesKey(item, index), color: seriesColor(item, index) }));
-  if (active !== null && !entries.some(entry => entry.key === active)) setActive(null);
+  if (active !== null && !entries.some(entry => entry.key === active)) setInspection(null);
   const activeEntry = entries.find(entry => entry.key === active);
   const displayValue = (value: number | undefined) => value === undefined || (percentage && !total) ? undefined : percentage ? value / total! * 100 : value;
   const format = (value: number | undefined) => {
@@ -91,20 +107,36 @@ export function AllocationCard({ block, data, series, range, activeKey = null }:
   let offset = 0;
   return <div className="ring-layout allocation-layout">
     <div className="ring-chart" role="img" aria-label={entries.map(({ item, key }) => `${item.name}: ${format(reading?.values[key])}`).join(', ')}>
-      <svg viewBox="0 0 200 200" aria-hidden="true" onPointerLeave={() => setActive(null)}>{entries.map(({ item, key, color }, index) => {
+      <svg viewBox="0 0 200 200" aria-hidden="true" onPointerLeave={event => { if (event.pointerType === 'mouse') setInspection(current => current?.source === 'mouse' ? null : current); }}>{entries.map(({ item, key, color }, index) => {
         const amount = reading?.values[key], fraction = total && amount !== undefined ? amount / total : 0;
         const start = offset; offset += fraction;
         return <g key={key}>
           <motion.circle cx="100" cy="100" r="80" fill="none" transform="rotate(-90 100 100)" initial={false}
             animate={{ strokeDasharray: `${Math.max(0, fraction * circumference - (fraction === 1 ? 0 : 5))} ${circumference}`, strokeDashoffset: -start * circumference, strokeWidth: active === key ? 16 : 12, stroke: active === key ? seriesColor(item, index, 'allocation', true) : color, opacity: active === null || active === key ? 1 : .5 }} transition={transition} style={{ pointerEvents: 'none' }} />
           {fraction > 0 && <circle data-segment={key} cx="100" cy="100" r="80" fill="none" stroke="transparent" strokeWidth="28" transform="rotate(-90 100 100)"
-            strokeDasharray={`${fraction * circumference} ${circumference}`} strokeDashoffset={-start * circumference} style={{ pointerEvents: 'stroke' }} onPointerEnter={() => setActive(key)} onClick={() => setActive(key)} />}
+            strokeDasharray={`${fraction * circumference} ${circumference}`} strokeDashoffset={-start * circumference} style={{ pointerEvents: 'stroke' }} onPointerEnter={event => { if (event.pointerType === 'mouse') inspectMouse(key); else setInspection({ source: 'touch-segment', key }); }}
+              onPointerMove={event => { if (event.pointerType === 'mouse') inspectMouse(key); }}
+              onPointerDown={event => { pointerOrigin.current = { type: event.pointerType, target: event.currentTarget }; }} onClick={() => { if (pointerOrigin.current !== null && pointerOrigin.current.type !== 'mouse') setInspection({ source: 'touch-segment', key }); }} />}
         </g>;
       })}</svg>
       <div className="ring-center">{activeValue === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={activeValue} prefix={percentage ? undefined : block.format?.prefix} suffix={percentage ? '%' : readingSuffix(block)} decimals={percentage ? (activeEntry ? 1 : 0) : block.format?.decimals ?? 0} />}<span>{activeEntry?.item.name ?? (percentage ? 'Total' : block.total_label ?? 'Total')}</span></div>
     </div>
     <div className="allocation-legend" data-active={active ?? undefined}>{entries.map(({ item, key, color }) => <motion.button key={key} type="button" data-selected={active === key}
-      onFocus={() => setActive(key)} onBlur={() => setActive(null)} onMouseEnter={() => setActive(key)} onMouseLeave={() => setActive(null)} onClick={() => setActive(current => current === key ? null : key)}
+      onPointerEnter={event => { if (event.pointerType === 'mouse') inspectMouse(key); }}
+        onPointerMove={event => { if (event.pointerType === 'mouse') inspectMouse(key); }}
+      onPointerDown={event => { pointerOrigin.current = { type: event.pointerType, target: event.currentTarget }; }}
+      onPointerLeave={event => { if (event.pointerType === 'mouse') setInspection(current => current?.source === 'mouse' ? null : current); }}
+      onFocus={event => { const origin = pointerOrigin.current?.target === event.currentTarget ? pointerOrigin.current.type : null; if (origin !== 'mouse' && (origin !== null || event.currentTarget.matches(':focus-visible'))) setInspection({ source: origin === null ? 'keyboard' : 'touch-legend', key }); }}
+      onBlur={event => { if (pointerOrigin.current?.target === event.currentTarget) pointerOrigin.current = null; setInspection(current => current?.source === 'keyboard' || current?.source === 'touch-legend' ? null : current); }}
+      onKeyDown={event => {
+        pointerOrigin.current = null;
+        if (event.key === 'Escape') setInspection(null);
+        else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setInspection(current => current?.key === key ? null : { source: 'keyboard', key }); }
+      }}
+      onClick={event => {
+        const origin = pointerOrigin.current; pointerOrigin.current = null;
+        if (origin?.target === event.currentTarget && origin.type !== 'mouse') setInspection(current => current?.key === key ? null : { source: 'touch-legend', key });
+      }}
       animate={{ opacity: active === null || active === key ? 1 : .5 }} transition={transition}
       aria-label={`${item.name}, ${format(reading?.values[key])}${!percentage && total && reading?.values[key] !== undefined ? `, ${Math.round(reading.values[key]! / total * 100)} percent` : ''}`}>
       <i style={{ background: color }} /><span>{item.name}</span><strong>{format(reading?.values[key])}</strong>

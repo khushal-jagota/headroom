@@ -631,6 +631,18 @@ def agent_chart_fixture():
          "placement": "supporting", "title": "Captured event gauge",
          "measure_id": "comparison-events", "unit": "events", "format": {"decimals": 0},
          "target": 1, "direction": "atmost", "target_label": "limit"},
+        *[{"type": "chart", "kind": kind, "id": identity, "placement": "supporting",
+           "title": identity, "target": 20, "stacked": stacked,
+           "series": [
+               {"name": "First", "points": [{"label": YESTERDAY, "value": 2},
+                                               {"label": TODAY, "value": 3}]},
+               {"name": "Second", "points": [{"label": YESTERDAY, "value": 4},
+                                                {"label": TODAY, "value": 5}]},
+           ]}
+          for kind, identity, stacked in (("time-budget", "budget-events", False),
+                                         ("allocation", "allocation-events", False),
+                                         ("bar", "grouped-events", False),
+                                         ("bar", "stacked-events", True))],
     ]
     limitation = (
         "Captured events only; provider ingestion completeness is not established. "
@@ -685,6 +697,118 @@ def rendered_separator(suffix):
     assert geometry["whiteSpace"] in ("pre", "pre-wrap", "break-spaces"), geometry
     assert geometry["spaceWidth"] > 0, geometry
     return geometry
+
+
+def inspection_state(chart):
+    return chart.evaluate("""node => {
+        const canvas = node.querySelector('canvas');
+        const observed = canvas ? globalThis.__goalCanvasInspection(canvas) : null;
+        return {
+            canvas: observed ? {opacity: observed.opacity, active: observed.active} : null,
+            tips: [...node.querySelectorAll('[data-chart-tooltip], [role="tooltip"]')]
+                .filter(tip => Number(getComputedStyle(tip).opacity) > .99)
+                .map(tip => tip.textContent),
+            active: node.querySelector('.allocation-legend')?.getAttribute('data-active') ?? null,
+            headline: node.querySelector('.metric-value')?.getAttribute('data-current') ?? null,
+        };
+    }""")
+
+
+def expect_inspection(page, chart, visible):
+    deadline = time.monotonic() + 5
+    while True:
+        state = inspection_state(chart)
+        actual = bool(state["tips"] or state["active"] is not None or (
+            state["canvas"] and state["canvas"]["opacity"] > .99
+        ))
+        if actual == visible:
+            return state
+        assert time.monotonic() < deadline, (visible, state)
+        page.wait_for_timeout(10)
+
+
+def inspection_point(target, *, segment=False, canvas=False, fraction=.4):
+    target.scroll_into_view_if_needed()
+    box = target.bounding_box()
+    assert box
+    if canvas:
+        point = target.evaluate("node => globalThis.__goalCanvasInspection(node).point")
+        assert point
+        return box["x"] + point["x"], box["y"] + point["y"]
+    return (box["x"] + box["width"] * (.68 if segment else fraction),
+            box["y"] + box["height"] * (.15 if segment else .5))
+
+
+def desktop_inspection(page, chart, target, *, segment=False, canvas=False,
+                       keyboard=True, output=None, name="inspection", fraction=.4,
+                       after_click=None):
+    x, y = inspection_point(target, segment=segment, canvas=canvas, fraction=fraction)
+    page.mouse.move(x, y)
+    hovered = expect_inspection(page, chart, True)
+    # down/up deliberately preserve coordinates. A click cannot refresh, toggle,
+    # or clear the hover, including when a real action moves native focus.
+    page.mouse.down()
+    page.mouse.up()
+    if after_click:
+        after_click()
+    clicked = expect_inspection(page, chart, True)
+    assert clicked == hovered, (name, hovered, clicked)
+    if output:
+        chart.screenshot(path=str(output / f"{name}-clicked.png"))
+    page.mouse.move(0, 0)
+    exited = expect_inspection(page, chart, False)
+    if keyboard:
+        def leave_with_tab():
+            # A following date/legend can inspect too. Traverse native siblings
+            # until focus actually leaves this chart before asserting dismissal.
+            for _ in range(32):
+                page.keyboard.press("Tab")
+                if not chart.evaluate("node => node.contains(document.activeElement)"):
+                    return expect_inspection(page, chart, False)
+            raise AssertionError("Keyboard focus did not leave the chart")
+
+        # Enter through native keyboard traversal, then cross back to mouse.
+        target.focus()
+        page.keyboard.press("Tab")
+        page.keyboard.press("Shift+Tab")
+        if canvas:
+            page.keyboard.press("ArrowLeft")
+        expect_inspection(page, chart, True)
+        leave_with_tab()
+        # Isolate a mouse click from hover. Native focus is real, while renderer
+        # events use the browser DOM because physical movement itself must inspect.
+        target.dispatch_event("pointerdown", {"pointerType": "mouse", "button": 0})
+        target.focus()
+        target.dispatch_event("click", {"button": 0})
+        target.dispatch_event("pointerup", {"pointerType": "mouse", "button": 0})
+        expect_inspection(page, chart, False)
+        # A fresh keyboard entry must recover after the mouse origin marker.
+        page.keyboard.press("Tab")
+        page.keyboard.press("Shift+Tab")
+        if canvas:
+            page.keyboard.press("ArrowLeft")
+        expect_inspection(page, chart, True)
+        leave_with_tab()
+    return {"hover": hovered, "click": clicked, "exit": exited}
+
+
+def touch_inspection(page, session, chart, target, *, segment=False, canvas=False,
+                     contact=True, retained=True, outside=False, fraction=.4):
+    x, y = inspection_point(target, segment=segment, canvas=canvas, fraction=fraction)
+    session.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [
+        {"x": x, "y": y},
+    ]})
+    down = expect_inspection(page, chart, contact)
+    if canvas:
+        session.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [
+            {"x": x + 1, "y": y},
+        ]})
+        expect_inspection(page, chart, True)
+    session.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    up = expect_inspection(page, chart, retained)
+    page.touchscreen.tap(5, 5)
+    blurred = expect_inspection(page, chart, outside)
+    return {"contact": down, "release": up, "outside": blurred}
 
 
 def agent_unit_spacing(browser, url):
@@ -742,11 +866,16 @@ def agent_unit_spacing(browser, url):
                 )
                 rendered_counter(counter, value)
                 if output:
-                    primary.screenshot(path=str(output / f"{mode}-{value}-events.png"))
+                    # Element screenshots can scroll the chart during touch
+                    # contact and cancel the gesture. Capture its viewport instead.
+                    (page.screenshot if phone else primary.screenshot)(
+                        path=str(output / f"{mode}-{value}-events.png")
+                    )
                 if phone:
                     session.send("Input.dispatchTouchEvent", {
                         "type": "touchEnd", "touchPoints": [],
                     })
+                    expect_inspection(page, primary, False)
             supporting = page.locator('[data-chart-id="supporting-events"]')
             if phone:
                 summary = supporting.get_by_role(
@@ -807,10 +936,97 @@ def agent_unit_spacing(browser, url):
             gauge_space = rendered_separator(unit)
             if output:
                 gauge.screenshot(path=str(output / f"{mode}-gauge.png"))
+            inspection_started = time.monotonic()
+            inspections = {}
+            figure = gauge.locator("figure[tabindex]")
+            if phone:
+                inspections["gauge"] = touch_inspection(page, session, gauge, figure)
+            else:
+                inspections["gauge"] = desktop_inspection(
+                    page, gauge, figure, output=output, name="desktop-gauge"
+                )
+            for identity in (
+                "budget-events", "allocation-events", "grouped-events", "stacked-events"
+            ):
+                probe = page.locator(f'[data-chart-id="{identity}"]')
+                if phone:
+                    probe.get_by_role("button", name=re.compile(identity)).tap()
+                canvas = identity in ("grouped-events", "stacked-events")
+                if canvas:
+                    target = probe.locator("canvas")
+                    target.scroll_into_view_if_needed()
+                    configuration = target.evaluate(
+                        "node => globalThis.__goalCanvasInspection(node)"
+                    )
+                    assert configuration["stacked"] == (identity == "stacked-events")
+                    assert "click" not in configuration["events"], configuration
+                    assert {"mousemove", "mouseout", "touchstart", "touchmove"} <= set(
+                        configuration["events"]
+                    ), configuration
+                    # Grouped/stacked use one renderer. Prove the second mode's
+                    # event configuration without repeating its full input matrix.
+                    if identity == "stacked-events":
+                        continue
+                else:
+                    target = probe.locator(".allocation-legend button").last
+                if phone:
+                    inspections[identity] = touch_inspection(
+                        page, session, probe, target, canvas=canvas,
+                        contact=canvas, retained=identity != "allocation-events",
+                    )
+                    if not canvas:
+                        inspections[identity + "-segment"] = touch_inspection(
+                            page, session, probe, probe.locator(".ring-chart svg"),
+                            segment=True, outside=True,
+                        )
+                else:
+                    inspections[identity] = desktop_inspection(
+                        page, probe, target, canvas=canvas,
+                        output=output, name="desktop-" + identity,
+                    )
+                    if not canvas:
+                        # Moving from a focused legend to its sibling must not
+                        # let the first button's blur erase the second hover.
+                        target = probe.locator(".allocation-legend button").first
+                        inspections[identity + "-sibling"] = desktop_inspection(
+                            page, probe, target, keyboard=False,
+                        )
+                        inspections[identity + "-segment"] = desktop_inspection(
+                            page, probe, probe.locator(".ring-chart svg"), segment=True,
+                            keyboard=False,
+                        )
+            if not phone:
+                inspections["goal-line"] = desktop_inspection(
+                    page, primary, plot, keyboard=False,
+                    output=output, name="desktop-goal-line",
+                )
+            # Both hosts use the same automatic line renderer. Keep a single
+            # representative read-only proof in the overview, without a chart matrix.
+            page.goto(url + "#/workspace/chief-of-staff", wait_until="domcontentloaded")
+            overview = page.locator('[data-goal-card="goal_z0g497zt"] .card-progress')
+            target = overview.get_by_role("slider")
+            if phone:
+                inspections["overview-line"] = touch_inspection(
+                    page, session, overview, target, retained=False,
+                )
+                x, y = inspection_point(target)
+                session.send("Input.dispatchTouchEvent", {
+                    "type": "touchStart", "touchPoints": [{"x": x, "y": y}],
+                })
+                expect_inspection(page, overview, True)
+                session.send("Input.dispatchTouchEvent", {"type": "touchCancel", "touchPoints": []})
+                expect_inspection(page, overview, False)
+            else:
+                inspections["overview-line"] = desktop_inspection(
+                    page, overview, target, output=output, name="desktop-overview-line"
+                )
+            inspection_seconds = time.monotonic() - inspection_started
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             assert fixture.writes == [], fixture.writes
             assert errors == [], errors
-            receipts.append({"mode": mode, "counter": zero, "gauge": gauge_space, "errors": errors})
+            receipts.append({"mode": mode, "counter": zero, "gauge": gauge_space,
+                             "inspection_seconds": inspection_seconds,
+                             "inspections": inspections, "errors": errors})
         finally:
             context.close()
     elapsed = time.monotonic() - started
@@ -874,6 +1090,9 @@ def manual_unit_spacing(browser, url):
         ]
         page.route("**/api/**", fixture.respond)
         renders = {}
+        inspections = {}
+        inspection_seconds = 0
+        session = context.new_cdp_session(page) if phone else None
         try:
             for model in ("daily_quota", "cumulative_target", "individual_readings"):
                 page.goto(url + f"#/workspace/goal/{model}", wait_until="domcontentloaded")
@@ -924,7 +1143,18 @@ def manual_unit_spacing(browser, url):
                     missing.focus()
                     expect(actual_tip).to_have_text("No reading")
                     expect(value).to_have_attribute("data-reading", "12")
-                    (yesterday.tap if phone else yesterday.click)()
+                    inspection_started = time.monotonic()
+                    if phone:
+                        # Release selects and inspects. Blur dismisses only the tip.
+                        page.touchscreen.tap(5, 5)
+                        inspections["goal-bars"] = touch_inspection(
+                            page, session, chart, yesterday, contact=False,
+                        )
+                    else:
+                        inspections["goal-bars"] = desktop_inspection(
+                            page, chart, yesterday, output=output, name="desktop-goal-bars",
+                        )
+                    inspection_seconds += time.monotonic() - inspection_started
                     expect(value).to_have_attribute("data-reading", "22")
                     expect(value).to_have_attribute("aria-label", "Daily Quota for 29 Oct")
                     expect(yesterday).to_have_attribute("aria-pressed", "true")
@@ -965,7 +1195,6 @@ def manual_unit_spacing(browser, url):
                     renders[identity] = probe.aria_snapshot()
 
             plot = chart.get_by_role("slider")
-            session = context.new_cdp_session(page) if phone else None
             if phone:
                 plot.scroll_into_view_if_needed()
                 box = plot.bounding_box()
@@ -989,10 +1218,14 @@ def manual_unit_spacing(browser, url):
             )
             renders["inspection"] = {"text": chart.inner_text(), "aria": chart.aria_snapshot()}
             if output:
-                chart.screenshot(path=str(output / f"{mode}-line-inspection.png"))
+                (page.screenshot if phone else chart.screenshot)(
+                    path=str(output / f"{mode}-line-inspection.png")
+                )
             if phone:
-                # Touch inspection ends without an explicit reading selection.
+                # Release clears inspection and retains the action's edit date.
                 session.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+                expect_inspection(page, chart, False)
+                expect(value).to_have_attribute("data-reading", "22.5")
             else:
                 plot.press("Enter")
                 expect(chart.get_by_role("textbox")).to_have_attribute("data-reading", "22.5")
@@ -1023,9 +1256,46 @@ def manual_unit_spacing(browser, url):
                 expect(chart.locator('[data-dot="actual"]')).to_have_css(
                     "fill", resolved_chart_color(page, "--accent-done")
                 )
+                inspection_started = time.monotonic()
+                inspections["goal-manual-line"] = desktop_inspection(
+                    page, chart, plot, keyboard=False, fraction=5 / 6,
+                    output=output, name="desktop-manual-line",
+                    after_click=lambda value=value: expect(value).to_be_focused(),
+                )
+                expect(value).to_be_focused()
+                expect(value).to_have_attribute("data-reading", "22.5")
+                inspection_seconds += time.monotonic() - inspection_started
             assert fixture.writes == [], fixture.writes
+            inspection_started = time.monotonic()
+            page.goto(url + "#/workspace/chief-of-staff", wait_until="domcontentloaded")
+            overview = page.locator('[data-goal-card="daily_quota"] .card-progress')
+            yesterday = overview.get_by_role("button", name=re.compile("^29 Oct,"))
+            if phone:
+                inspections["overview-bars"] = touch_inspection(
+                    page, session, overview, yesterday, contact=False,
+                )
+            else:
+                inspections["overview-bars"] = desktop_inspection(
+                    page, overview, yesterday, keyboard=False,
+                    output=output, name="desktop-overview-bars",
+                )
+            value = overview.get_by_role("textbox")
+            expect(value).to_have_attribute("data-reading", "22")
+            expect(yesterday).to_have_attribute("aria-pressed", "true")
+            value.fill("9")
+            value.press("Enter")
+            expect(value).to_have_attribute("data-reading", "9")
+            path, body = fixture.writes[-1]
+            assert path == "/api/measures/daily_quota/manual-writes"
+            assert (body["date"], body["operation"], body["value"]) == (YESTERDAY, "replace", 9)
+            assert body["expected_definition_revision"] == 0
+            assert body["expected_write_revision"] == 0
+            assert len(fixture.writes) == 1, fixture.writes
+            inspection_seconds += time.monotonic() - inspection_started
             assert errors == [], errors
-            receipts.append({"mode": mode, "renders": renders, "errors": errors})
+            receipts.append({"mode": mode, "renders": renders, "errors": errors,
+                             "inspection_seconds": inspection_seconds,
+                             "inspections": inspections, "writes": fixture.writes})
         finally:
             context.close()
     elapsed = time.monotonic() - started
@@ -1202,7 +1472,9 @@ def authored_goal_presentation(browser, url):
             page.goto(url + "#/workspace/goal/goal_wrenfixture", wait_until="domcontentloaded")
             goal = page.locator('[data-goal-page="goal_wrenfixture"]')
             checklist = goal.get_by_role("region", name="Completion checklist")
-            expect(checklist.locator("[data-presentation]")).to_have_attribute("data-presentation", "normal")
+            expect(checklist.locator("[data-presentation]")).to_have_attribute(
+                "data-presentation", "normal"
+            )
             expect(checklist.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "1")
             # Saved done rows start in the completed group, without a write or a
             # settlement delay. Existing native controls cover check/uncheck saves.
@@ -1298,7 +1570,9 @@ def authored_goal_presentation(browser, url):
                 # Existing tests exercise its writes and dismissal lifecycle.
                 page.evaluate("location.hash='#/workspace'")
                 panel = open_preview(page, "goal_wrenfixture")
-                expect(panel.locator("[data-block=checklist]")).to_have_attribute("data-presentation", "small")
+                expect(panel.locator("[data-block=checklist]")).to_have_attribute(
+                    "data-presentation", "small"
+                )
                 rail_geometry = centered_checklist_row(panel.locator('[data-step="intake"]'))
                 if output:
                     panel.screenshot(path=str(output / "desktop-rail.png"))
@@ -1610,6 +1884,10 @@ def native_goal_edits(browser, url):
         def field_write(field, value, action, goal_id=identity):
             before = len(fixture.writes)
             revision = fixture.goals[goal_id]["revision"]
+            configuration = {
+                key: copy.deepcopy(fixture.goals[goal_id][key])
+                for key in ("primary_chart", "primary_checklist_block_id")
+            }
             with page.expect_response(
                 lambda response: (
                     urlsplit(response.url).path == f"/api/goals/{goal_id}"
@@ -1641,6 +1919,8 @@ def native_goal_edits(browser, url):
             path, body = fixture.writes[-1]
             assert path == f"/api/goals/{goal_id}", (path, body)
             assert body == {field: value, "expected_revision": revision}, body
+            for key, accepted in configuration.items():
+                assert fixture.goals[goal_id][key] == accepted, (field, key)
 
         def text_action(locator, value, multiline=False):
             locator.fill(value)
@@ -1663,8 +1943,8 @@ def native_goal_edits(browser, url):
             target[field_path[-1]] = value
             field_write("page", expected, lambda: text_action(locator, value, multiline))
 
-        def refresh():
-            key = f"/api/goals/{identity}"
+        def refresh(goal_id=identity):
+            key = f"/api/goals/{goal_id}"
             before = fixture.reads.get(key, 0)
             with page.expect_response(
                 lambda response: (
@@ -1683,6 +1963,10 @@ def native_goal_edits(browser, url):
             title = goal.get_by_role("textbox", name="Goal title", exact=True)
             why = goal.get_by_role("textbox", name="Why this goal matters", exact=True)
             expect(why).to_be_visible()
+            for label in ("Completion display", "Success threshold", "Threshold direction"):
+                expect(goal.get_by_label(label, exact=True)).to_have_count(0)
+            for label in ("Project", "By date", "State"):
+                expect(goal.get_by_label(label, exact=True)).to_be_visible()
             assert why.bounding_box()["height"] > 0
             field_write(
                 "title", "Native Wren release", lambda: text_action(title, "Native Wren release")
@@ -1748,6 +2032,11 @@ def native_goal_edits(browser, url):
                 expect(why.locator("strong")).to_have_count(0)
                 deadline = goal.get_by_label("By date", exact=True)
                 field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
+                expect(deadline).to_have_value("")
+                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                deadline.click()
+                expect(deadline).to_be_focused()
+                deadline.press("Escape")
                 field_write(
                     "deadline",
                     "2027-02-03",
@@ -1772,26 +2061,15 @@ def native_goal_edits(browser, url):
                     True,
                     lambda: goal.get_by_label("State", exact=True).select_option("true"),
                 )
-                # Selection traverses section -> segmented view -> nested checklist.
-                field_write(
-                    "primary_checklist_block_id",
-                    "native-checklist",
-                    lambda: goal.get_by_label("Completion display", exact=True).select_option(
-                        "native-checklist"
-                    ),
-                )
-                field_write(
-                    "primary_checklist_block_id",
-                    None,
-                    lambda: goal.get_by_label("Completion display", exact=True).select_option(""),
-                )
-                field_write(
-                    "primary_checklist_block_id",
-                    "release",
-                    lambda: goal.get_by_label("Completion display", exact=True).select_option(
-                        "release"
-                    ),
-                )
+                # Configuration comes from an agent/source update. Owner metadata
+                # saves must preserve nested, absent, and top-level checklist bindings.
+                for selected in ("native-checklist", None, "release"):
+                    fixture.goals[identity]["primary_checklist_block_id"] = selected
+                    fixture.goals[identity]["revision"] += 1
+                    fixture.version += 1
+                    refresh()
+                    reason = f"Keep configured completion: {selected}"
+                    field_write("why", reason, lambda reason=reason: text_action(why, reason, True))
 
                 # A pristine focus cycle must not retain an obsolete edit revision.
                 title.focus()
@@ -1888,34 +2166,32 @@ def native_goal_edits(browser, url):
                     assert fixture.goals[identity]["title"] == "Accepted after goal switch"
                     assert fixture.goals["daily_quota"]["title"] == other_title
                     assert path == f"/api/goals/{identity}"
-                    target = quantitative.get_by_label("Success threshold", exact=True)
-                    for number, key in ((0, "Enter"), (0.125, "Tab")):
+                    for label in ("Success threshold", "Threshold direction"):
+                        expect(quantitative.get_by_label(label, exact=True)).to_have_count(0)
+                    # Agent-owned zero/fraction targets and direction survive an
+                    # ordinary metadata patch and an authoritative reload.
+                    for number, direction in ((0, "atleast"), (0.125, "atmost")):
                         chart = copy.deepcopy(fixture.goals["daily_quota"]["primary_chart"])
                         chart["target"] = number
+                        chart["direction"] = direction
+                        fixture.goals["daily_quota"]["primary_chart"] = chart
+                        fixture.goals["daily_quota"]["revision"] += 1
+                        fixture.version += 1
+                        refresh("daily_quota")
+                        reason = f"Keep configured target: {number} {direction}"
                         field_write(
-                            "primary_chart",
-                            chart,
-                            lambda number=number, key=key: (
-                                target.fill(str(number)),
-                                target.press(key),
-                            ),
+                            "why", reason,
+                            lambda reason=reason: text_action(quantitative.get_by_role(
+                                "textbox", name="Why this goal matters", exact=True
+                            ), reason, True),
                             "daily_quota",
                         )
-                    chart = copy.deepcopy(fixture.goals["daily_quota"]["primary_chart"])
-                    chart["direction"] = "atmost"
-                    field_write(
-                        "primary_chart",
-                        chart,
-                        lambda: quantitative.get_by_label(
-                            "Threshold direction", exact=True
-                        ).select_option("atmost"),
-                        "daily_quota",
-                    )
-                    count = len(fixture.writes)
-                    target.fill("3.75")
-                    target.press("Escape")
-                    expect(target).to_have_value("0.125")
-                    assert len(fixture.writes) == count
+                    page.reload(wait_until="domcontentloaded")
+                    quantitative = workspace("daily_quota")
+                    expect(quantitative.get_by_role(
+                        "textbox", name="Why this goal matters", exact=True
+                    )).to_have_text(reason)
+                    assert fixture.goals["daily_quota"]["primary_chart"] == chart
                     goal = workspace()
 
             else:
@@ -1924,6 +2200,15 @@ def native_goal_edits(browser, url):
                     "A direct reason",
                     lambda: (why.tap(), why.fill("A direct reason"), why.press("Tab")),
                 )
+                deadline = goal.get_by_label("By date", exact=True)
+                field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
+                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                deadline.tap()
+                expect(deadline).to_be_focused()
+                deadline.press("Escape")
+                field_write("deadline", "2026-12-31", lambda: (
+                    deadline.fill("2026-12-31"), deadline.press("Enter"),
+                ))
 
             # Every renderer category receives one persisted authored edit. Full
             # page equality proves that neighboring fields and stable IDs survive.
@@ -2027,7 +2312,9 @@ def native_goal_edits(browser, url):
             if phone and output:
                 checklist.screenshot(path=str(output / "phone-small-expanded.png"))
             expect(checklist.get_by_role("textbox")).to_have_count(0)
-            expect(checklist.get_by_role("heading", name="Nested readiness", exact=True)).to_be_visible()
+            expect(checklist.get_by_role(
+                "heading", name="Nested readiness", exact=True
+            )).to_be_visible()
             row = checklist.locator('[data-step="native-step"]')
             detail_button = row.get_by_role("button", name="Native item", exact=True)
             if detail_button.get_attribute("aria-expanded") != "true":
@@ -2041,13 +2328,17 @@ def native_goal_edits(browser, url):
             expect(checklist.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "1")
             assert block("native-checklist")["items"][0]["state"] == "done"
             assert len(fixture.writes) == count + 1
-            expect(checklist.get_by_role("heading", name="Nested ready", exact=True)).to_be_visible()
+            expect(checklist.get_by_role(
+                "heading", name="Nested ready", exact=True
+            )).to_be_visible()
             expect(checklist.get_by_role("textbox")).to_have_count(0)
             assert block("native-checklist")["title"] == "Nested readiness"
             assert block("native-checklist")["doneTitle"] == "Nested ready"
             if output:
                 expect(checklist.get_by_text("Saving checklist…", exact=True)).to_have_count(0)
-                expect(checklist.get_by_role("button", name="1 completed", exact=True)).to_be_visible()
+                expect(checklist.get_by_role(
+                    "button", name="1 completed", exact=True
+                )).to_be_visible()
                 checklist.screenshot(path=str(output / f"{mode}-complete.png"))
 
             # Artifact cards stay outside the editing action. This is one quick
@@ -2090,25 +2381,46 @@ def native_goal_edits(browser, url):
             page.locator(".board-workspace-right").evaluate("node => node.scrollTop=0")
             heading_geometry = goal.locator(".goal-heading").evaluate("""header => {
                 const why=header.querySelector('.why'), editor=why.querySelector('.ed');
-                const selector=header.querySelector('[aria-label="Completion display"]');
-                const label=selector.closest('label');
                 const w=why.getBoundingClientRect(), e=editor.getBoundingClientRect();
-                const c=label.getBoundingClientRect();
-                return {wrapperHeight:w.height,editorHeight:e.height,gap:c.top-e.bottom,
-                    marginTop:parseFloat(getComputedStyle(label).marginTop)};
+                const context=header.querySelector('.goal-context');
+                return {wrapperHeight:w.height,editorHeight:e.height,
+                    alignment:getComputedStyle(context).alignItems,
+                    controls:[...context.querySelectorAll('input,select')].map(control=>{
+                        const c=control.getBoundingClientRect();
+                        const sizer=control.parentElement.querySelector('.control-size');
+                        const size=sizer.getBoundingClientRect();
+                        return {name:control.getAttribute('aria-label'),width:c.width,
+                            measuredWidth:size.width,top:c.top,bottom:c.bottom,
+                            appearance:getComputedStyle(control).appearance};
+                    }), viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth};
             }""")
             print(f"{mode} native header geometry: {heading_geometry}", flush=True)
             assert abs(heading_geometry["wrapperHeight"] - heading_geometry["editorHeight"]) <= 1, (
                 mode,
                 heading_geometry,
             )
-            assert abs(heading_geometry["gap"] - heading_geometry["marginTop"]) <= 1, (
-                mode,
-                heading_geometry,
-            )
+            assert heading_geometry["alignment"] == "baseline", heading_geometry
+            assert [control["name"] for control in heading_geometry["controls"]] == [
+                "Project", "By date", "State",
+            ], heading_geometry
+            for control in heading_geometry["controls"]:
+                assert abs(control["width"] - control["measuredWidth"]) <= 1, control
+                assert control["appearance"] == "none", control
+            assert heading_geometry["scrollWidth"] <= heading_geometry["viewport"], heading_geometry
             if output:
+                goal.locator(".goal-heading").screenshot(path=str(output / f"{mode}-metadata.png"))
                 page.screenshot(path=str(output / f"{mode}.png"), full_page=True)
             if phone:
+                page.set_viewport_size({"width": 320, "height": 844})
+                expect(goal.get_by_label("Project", exact=True)).to_be_visible()
+                expect(goal.get_by_label("By date", exact=True)).to_be_visible()
+                expect(goal.get_by_label("State", exact=True)).to_be_visible()
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                if output:
+                    goal.locator(".goal-heading").screenshot(
+                        path=str(output / "phone-320-metadata.png")
+                    )
+                page.set_viewport_size({"width": 390, "height": 844})
                 page.evaluate("location.hash='#/workspace'")
             rail = page.locator(".goals-rail")
             expect(rail).to_be_visible()

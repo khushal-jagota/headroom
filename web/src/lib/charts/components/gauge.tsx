@@ -48,7 +48,9 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '
   const targetAngle = (start + span * (targetFraction ?? 0)) * Math.PI / 180;
   const targetAt = (r: number) => ({ x: 50 + r * Math.sin(targetAngle), y: 50 - r * Math.cos(targetAngle) });
   const targetInner = targetAt(35), targetOuter = targetAt(49);
-  const [inspecting, setInspecting] = useState(false);
+  const [inspectionSource, setInspectionSource] = useState<'mouse' | 'keyboard' | 'touch' | null>(null);
+  const inspecting = inspectionSource !== null;
+  const pointerOrigin = useRef<string | null>(null);
   const tooltipId = useId();
   const targetPath = `M ${targetInner.x} ${targetInner.y} L ${targetOuter.x} ${targetOuter.y}`;
   const bands = [...thresholds ?? []].sort((a, b) => a.from - b.from);
@@ -62,7 +64,7 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '
   const tipRef = useRef<HTMLDivElement>(null);
   const tipTargetX = useMotionValue(0), tipTargetY = useMotionValue(0);
   const tipX = useSpring(tipTargetX, motionTokens.spring.responsive), tipY = useSpring(tipTargetY, motionTokens.spring.responsive);
-  function inspect(clientX?: number, clientY?: number) {
+  function inspect(source: 'mouse' | 'keyboard' | 'touch', clientX?: number, clientY?: number) {
     const box = ref.current?.getBoundingClientRect();
     if (!box) return;
     const tw = tipRef.current?.offsetWidth ?? 160, th = tipRef.current?.offsetHeight ?? 80;
@@ -74,7 +76,7 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '
     const y = Math.max(0, Math.min(py - th / 2, box.height - th));
     tipTargetX.set(x); tipTargetY.set(y);
     if (!inspecting || reduceMotion) { tipX.jump(x); tipY.jump(y); }
-    setInspecting(true);
+    setInspectionSource(source);
   }
   const sweep = useMotionValue(0);
   const count = useMotionValue(0);
@@ -126,9 +128,13 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '
   }, [digitsWidth, reduceMotion]);
 
   return <figure ref={ref} tabIndex={0} className={[styles.figure, styles[activeTone], styles.inspectable].join(" ")} aria-label={`${label}: ${value} of ${safeMax}${band ? `, ${band.label}` : ""}`} aria-describedby={inspecting?tooltipId:undefined}
-    onPointerEnter={e=>inspect(e.clientX,e.clientY)} onPointerMove={e=>inspect(e.clientX,e.clientY)} onPointerDown={e=>inspect(e.clientX,e.clientY)}
-    onPointerLeave={e=>{if(e.currentTarget!==document.activeElement)setInspecting(false)}} onFocus={()=>inspect()} onBlur={()=>setInspecting(false)}
-    onKeyDown={e=>{if(e.key==='Escape'){setInspecting(false);e.stopPropagation()}}}>
+    onPointerEnter={event => inspect(event.pointerType === 'mouse' ? 'mouse' : 'touch', event.clientX, event.clientY)}
+    onPointerMove={event => inspect(event.pointerType === 'mouse' ? 'mouse' : 'touch', event.clientX, event.clientY)}
+    onPointerDown={event => { pointerOrigin.current = event.pointerType; if (event.pointerType !== 'mouse') inspect('touch', event.clientX, event.clientY); }}
+    onPointerLeave={event => { if (event.pointerType === 'mouse') setInspectionSource(current => current === 'mouse' ? null : current); }}
+    onFocus={event => { if (pointerOrigin.current !== 'mouse' && (pointerOrigin.current !== null || event.currentTarget.matches(':focus-visible'))) inspect(pointerOrigin.current === null ? 'keyboard' : 'touch'); }}
+    onBlur={() => { pointerOrigin.current = null; setInspectionSource(current => current === 'mouse' ? current : null); }}
+    onKeyDown={event => { pointerOrigin.current = null; if (event.key === 'Escape') { setInspectionSource(null); event.stopPropagation(); } }}>
     <div className={styles.visual}>
       <svg viewBox="0 0 100 90" role="meter" aria-label={label} aria-valuemin={min} aria-valuemax={safeMax} aria-valuenow={Math.min(safeMax, Math.max(min, value))} aria-valuetext={`${formatValue(displayValue)}${band ? `, ${band.label}` : ""}${target ? `, ${target.label}` : ""}`} focusable="false"><path className={styles.track} d={track} /><motion.path className={styles.arc} d={path} style={{ opacity: arcOpacity }} />
         {showTarget && target && <g data-gauge-target={target.value}>
