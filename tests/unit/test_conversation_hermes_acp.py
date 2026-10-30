@@ -543,8 +543,15 @@ async def _start_a_due_hermes_conversation(
             "commands": [{"name": "compress", "description": "Compress conversation context"}],
         },
     )
-    before = await subject.conversation_record("c")
-    assert before is not None
+    # The control-socket ACK precedes the ACP catalog event. Sweep only after
+    # that event has committed and released the conversation's ordering lock.
+    while True:
+        before = await subject.conversation_record("c")
+        assert before is not None
+        if any(entry.display_text == "/compress" for entry in before.composer_catalog):
+            break
+        await asyncio.sleep(0)
+    await subject.settle()
     assert before.latest_agent_activity_sequence > 0
     clock.advance(50 * 60)
     await subject.sweep_idle_children()

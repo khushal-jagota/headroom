@@ -415,7 +415,6 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
     trigger: str,
 ) -> None:
     """The same TLS host crosses held caller, native uncertainty, core ownership and replay."""
-    import json
 
     from planner.conversation.backends.contracts import PromptWriteFailed, TurnToken
     from planner.conversation.contracts import (
@@ -495,13 +494,13 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
             assert harness.native.prompt_count == 2
             connection = connect(harness.endpoint.db_path)
             try:
-                runtime = json.loads(
+                assert (
                     connection.execute(
-                        "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                        "SELECT delivery_uncertain FROM mac_runs WHERE conversation_id=?",
                         ("c_scripted",),
                     ).fetchone()[0]
+                    == 1
                 )
-                assert runtime["delivery_uncertain"] is True
                 assert (
                     connection.execute(
                         "SELECT count(*) FROM ticket_launch_authority WHERE command_id IS NOT NULL",

@@ -426,11 +426,7 @@ class BackendChild(Protocol):
 
     @property
     def stop_outside_lock(self) -> bool:
-        """Whether termination needs conversation callbacks to run while it waits.
-
-        Until the turn-table split, these children also participate in the
-        RetainedDeliveryChild contract for atomic delivery and retirement facts.
-        """
+        """Whether termination needs conversation callbacks to run while it waits."""
         ...
 
     async def withdraw_delivery(self) -> bool:
@@ -594,11 +590,25 @@ class BackendChild(Protocol):
         """
 
 
+@dataclass(frozen=True, slots=True)
+class RetainedBackendRun:
+    """Identity and custody only. A retained run never restores a live turn."""
+
+    reference: ChildReference
+    turn: TurnToken
+    delivery_uncertain: bool
+    retirement_confirmed: bool
+
+
 @runtime_checkable
 class RetainedBackendChildFactory(Protocol):
     """Recover an exact retained child without allocating or starting an agent."""
 
     def recover(self, reference: ChildReference) -> BackendChild | None: ...
+
+    def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
+        """Read durable custody, including confirmed retirement, without starting work."""
+        ...
 
 
 class BackendChildFactory(Protocol):

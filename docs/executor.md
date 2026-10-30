@@ -83,11 +83,11 @@ running. Stopping still means terminating the exact agent, with the final ordere
 stop receipt as proof. Local children stop when detached. A child declares whether
 its stop must wait outside the conversation lock so final output can be recorded.
 
-The turn-table split remains separate work: conversation still records retained
-child identities, command preparation, uncertainty, and retirement with its turn
-facts. The answer refactor still owns saved-answer state and the executor-backed
-question views. These retained rows and callbacks are not yet the final module
-boundary.
+Run control saves each Mac run before sending its first command. It owns the
+child identity, delivery uncertainty and stop proof. Conversation owns turn
+numbers, endings, questions and reply credit. Its backend factory exposes retained
+custody for recovery without restoring a running turn. Saved answers and the
+executor-backed question views still await their separate refactor.
 
 ## Native skills and artifact paths
 
@@ -105,7 +105,7 @@ A failed bootstrap refuses the backend start.
 A new start, including a resumed provider session, reads current database rows.
 Transport retries keep the snapshot that belongs to the original start command.
 A short link outage keeps the existing child and does not repeat bootstrap.
-A VPS restart closes the old run and requires an exact-child stop before a fresh start.
+A VPS restart ends the old conversation turn and requires an exact-child stop before a fresh start.
 Later starts can update the account's shared skill paths.
 
 The Mac runner adds the host instructions immediately before handing a prompt or
@@ -293,7 +293,7 @@ within the same VPS process keeps the current run. Reconnect checks the exact
 children, turns, and callbacks before replaying queued events and saved answers.
 
 A VPS restart interrupts every old Mac run and closes its callbacks. It does not
-reattach the turn. Child assignment and retained turn identity commit together
+reattach the turn. Child assignment and retained run identity commit together
 before the first command can be emitted, so startup always knows which child to
 stop. Reconnect inventory triggers an exact-child stop and records its outcome.
 Until termination is proved, that conversation remains fenced against fresh work.
@@ -353,9 +353,9 @@ A refused required native publication keeps cleanup uncertain for that exact chi
 Ordinary domain refusals do not affect cleanup evidence.
 
 Confirmed retirement closes the exact assignment and preserves its retirement fact in one transaction.
-Later metadata and delayed inventory cannot revive that identity.
+Late command preparation and delayed inventory cannot revive that identity.
 A surviving VPS process keeps its existing idle and active child proxies across link loss.
-A restarted VPS uses open assignments only to stop the old children.
+A restarted VPS uses saved run identities only to stop the old children.
 The next explicit prompt starts a fresh child with the retained provider session cursor.
 An explicit new stop can confirm an absent exact child only after all earlier work and journal receipts settle.
 An old uncertain command always retains its first outcome. A failed cleanup keeps quarantine and blocks replacement.
@@ -364,7 +364,7 @@ The adapter also retains the SDK process object and requires its exit before tra
 An exception or cancellation preserves uncertainty and the cleanup identity, even if the SDK clears its own process field.
 An explicit later stop checks the same retained process. It cannot infer exit from an empty SDK field.
 These rules govern ordinary stop and executor quiescence through the same adapter contract.
-Late stop proofs require exact retained command evidence for the original child and incarnation.
+Late stop proofs require the exact pending stop command for the original child and incarnation.
 That historical evidence grants no renewed execution, callback, event, or CLI authority.
 If the original command evidence is absent, delivery remains uncertain.
 The [retained initial-prompt procedure](initial-mac-prompt-cancellation.md) replaces only the isolated verification app.
@@ -516,7 +516,8 @@ Domain writes still require the original assigned child's authority. Native auth
 Mac and VPS packages must use the current protocol before replay.
 The Mac retains its native children during app restarts and short link outages,
 and reconnects through one command-and-child ask, readiness, and outbox draining.
-After a VPS restart, that ask causes each old child to be stopped before fresh work.
+After a VPS restart, that ask causes every saved old run to be stopped before fresh work,
+including a child absent from the Mac's inventory.
 There is no fallback transport. Lost replies leave native effects unconfirmed rather than repeating them.
 
 Both ends use the same Link in `src/planner/executor/link.py`. It matches replies,
@@ -586,3 +587,5 @@ child reference and current turn token. Pending ask controls require the exact
 child, turn, request kind, request ID, and pending snapshot membership.
 `answer_available` means the VPS can accept the answer, even while disconnected. One callback's
 evidence cannot authorize another callback, including a reused ID on an old child.
+
+_Last verified: 2026-10-30._

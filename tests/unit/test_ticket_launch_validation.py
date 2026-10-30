@@ -8,7 +8,6 @@ durable prompt sender fixture; no provider, browser or additional server host.
 from __future__ import annotations
 
 import asyncio
-import json
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -16,7 +15,6 @@ from sqlite3 import Connection
 from typing import cast
 
 import pytest
-from pydantic import TypeAdapter
 from tests.unit.test_conversation_system import _Harness
 from tests.unit.test_db import _migration_tree_through
 from tests.unit.test_manager_wakes import _DurableStartedConversationSystem, _item_and_ticket
@@ -400,14 +398,13 @@ def test_reopen_edit_and_retirement_preserve_captured_command_and_uncertain_outc
     )
     child = ChildReference("executor-legacy", "child-old", "legacy-conversation")
     command = ChildCommand("legacy-unknown", child, ChildOperation.stop, None, StopRun())
-    runtime = {"initial_commands": [TypeAdapter(ChildCommand).dump_python(command, mode="json")]}
     tmp_db.execute(
-        "INSERT INTO executor_core_turns VALUES(?,?,?,?)",
+        "INSERT INTO mac_runs VALUES(?,?,?,'ticket',?,1,1,'stopping')",
         (
             child.conversation_id,
-            TypeAdapter(ChildReference).dump_json(child).decode(),
-            "{}",
-            json.dumps(runtime),
+            child.executor_incarnation,
+            child.child_id,
+            ticket_id,
         ),
     )
     unknown = CommandOutcome(command.command_id, child, CommandDisposition.uncertain, {})
@@ -419,18 +416,14 @@ def test_reopen_edit_and_retirement_preserve_captured_command_and_uncertain_outc
     )
     tmp_db.commit()
     disk = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    original_runtime = tmp_db.execute("SELECT runtime_json FROM executor_core_turns").fetchone()[0]
     original_outcome = tmp_db.execute(
         "SELECT outcome_json FROM executor_command_outcomes"
     ).fetchone()[0]
     reopened = connect(disk)
     try:
         projects.update_project(reopened, "project_vylo", folder_path="/changed", now=100)
-        ExecutorStore.close_child_in_transaction(reopened, child, 100, retained_commands=(command,))
-        assert (
-            reopened.execute("SELECT runtime_json FROM executor_core_turns").fetchone()[0]
-            == original_runtime
-        )
+        ExecutorStore.close_child_in_transaction(reopened, child, 100)
+        assert reopened.execute("SELECT stop_state FROM mac_runs").fetchone()[0] == "closed"
         assert (
             reopened.execute("SELECT outcome_json FROM executor_command_outcomes").fetchone()[0]
             == original_outcome

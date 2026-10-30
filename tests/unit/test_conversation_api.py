@@ -50,6 +50,7 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
     CodexModelCatalogUnavailable,
 )
 from planner.conversation.backends.contracts import (
+    BackendChildFactory,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -336,6 +337,7 @@ class _Harness:
         *,
         signal_composition: SignalRuntimeComposition | None = None,
         cleanup: AsyncExitStack | None = None,
+        backend_child_factory: BackendChildFactory | None = None,
     ) -> None:
         self.db_path = db_path
         self.store = ConversationStore(
@@ -357,7 +359,8 @@ class _Harness:
             store=self.store,
             message_files=self.message_files,
             backend_child_factories={
-                backend_key: self._make_child for backend_key in ConversationBackendKey
+                backend_key: backend_child_factory or self._make_child
+                for backend_key in ConversationBackendKey
             },
             live_tail=self.live_tail,
             runtime_ownership=None if signal_composition is None else signal_composition.ownership,
@@ -1170,9 +1173,6 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
             evidence = endpoint.inbox.store.runs.ask_evidence(ask)
             assert evidence is not None and evidence.applied_at_mac_ms is None
             endpoint.inbox.store.runs.close_child(ask.child, 102)
-            metadata = await harness.store.read_executor_turn("c")
-            assert metadata is not None
-            await harness.store.save_executor_turn("c", metadata)
             assert not endpoint.runs.owns_conversation("c")
             assert (await client.post(path, json=exact)).json() == {"landed": True}
             changed = (
@@ -1611,7 +1611,7 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
             (
                 AskReachability.child_gone,
                 AskReachability.callback_gone,
-                AskReachability.uncertain,
+                AskReachability.callback_gone,
             ),
             strict=True,
         ):

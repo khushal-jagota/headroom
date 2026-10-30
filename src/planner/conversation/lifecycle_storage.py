@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import fcntl
 import inspect
-import json
 import sqlite3
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -150,20 +149,9 @@ def _invoke_participant(
 
 def native_execution_is_unresolved(conn: sqlite3.Connection, conversation_id: str) -> bool:
     """A VPS restart does not prove that an independently hosted child stopped."""
-    row = conn.execute(
-        "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
-        (conversation_id,),
-    ).fetchone()
-    if row is not None:
-        try:
-            if json.loads(str(row[0])).get("source_retired") is not True:
-                return True
-        except (ValueError, TypeError, AttributeError):
-            return True
     return (
         conn.execute(
-            "SELECT 1 FROM executor_child_assignments "
-            "WHERE conversation_id=? AND closed_at_ms IS NULL",
+            "SELECT 1 FROM mac_runs WHERE conversation_id=? AND stop_state!='closed'",
             (conversation_id,),
         ).fetchone()
         is not None

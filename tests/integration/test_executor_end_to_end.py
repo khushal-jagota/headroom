@@ -1218,7 +1218,14 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
             )
             assert accepted is not None and accepted.disposition is ReceiptDisposition.accepted
             assert harness.events("permission_asked") == 1
-            assert harness.endpoint.runs.store.cleanup_evidence_uncertain(child)
+            with connect(harness.endpoint.db_path) as connection:
+                assert (
+                    connection.execute(
+                        "SELECT stop_state FROM mac_runs WHERE conversation_id=?",
+                        (child.conversation_id,),
+                    ).fetchone()[0]
+                    == "unproved"
+                )
         finally:
             await harness.close()
 
@@ -2610,9 +2617,13 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
             interrupt = asyncio.create_task(old_system.interrupt("c_scripted"))
             await asyncio.wait_for(cancel_entered.wait(), 2)
             evidence = harness.endpoint.runs.store.ask_evidence(ask)
-            assert evidence is not None and evidence.reachability is AskReachability.callback_gone
+            assert evidence is not None and evidence.applied_at_mac_ms is None
+            # Conversation facts revoke answer authority before native cancel waits;
+            # the Mac's last reachability observation is no second copy of that fact.
+            assert not harness.endpoint.runs.store.answer_target_is_open(ask)
             context = harness.endpoint.runs.store.turn_context("c_scripted")
-            assert context is not None and context.callbacks_revoked and not context.ended
+            assert context is not None and not context.ended
+            assert context.pending_permission_ask_ids == context.pending_user_input_ids == ()
             # A callback announced after revocation cannot create a newly answerable ask.
             await harness.native.raise_user_input("request_late")
             # Simulate a crash without permitting the pending native cancellation to finish.
@@ -2969,7 +2980,13 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                         row.sender_id, row.submission_id
                     )
                     assert receipt is None  # The later stop has advanced the single inbox position.
-                assert not harness.endpoint.runs.store.cleanup_evidence_uncertain(reference)
+                assert (
+                    connection.execute(
+                        "SELECT stop_state FROM mac_runs WHERE conversation_id=?",
+                        (reference.conversation_id,),
+                    ).fetchone()[0]
+                    == "closed"
+                )
             finally:
                 connection.close()
         finally:
