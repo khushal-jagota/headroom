@@ -1900,6 +1900,9 @@ def native_goal_edits(browser, url):
                 lambda response: (
                     urlsplit(response.url).path == f"/api/goals/{goal_id}"
                     and response.request.method == "PATCH"
+                    and response.request.post_data_json == {
+                        field: value, "expected_revision": revision
+                    }
                 )
             ) as response:
                 action()
