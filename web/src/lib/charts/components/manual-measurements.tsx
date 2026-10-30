@@ -216,12 +216,6 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
         basis: cumulative ? 'latest' : 'date', operation: 'increment', delta, ...(cumulative ? { preflight: true } : {}) });
     } catch (cause) { setError(manualErrorMessage(cause)); }
   }); }
-  const current = cumulative ? await adapter.read() : basis;
-      await send({ request_id: crypto.randomUUID(), date: cumulative ? current.current_date : basis.date,
-        expected_definition_revision: basis.definition_revision, basis: cumulative ? 'latest' : 'date', operation: 'increment', delta });
-    } catch (cause) { setError(manualErrorMessage(cause)); }
-    finally { setPending(false); }
-  }); }
   const current = state ? manualAcceptedValue(state, cumulative) : undefined, target = selectedTarget(block, preferences.range)!;
   const today = state?.current_date ?? history.at(-1)?.date;
   const dates = block.ranges?.length ? chartData(block, history, preferences.range).map(datum => datum.key) : today ? Array.from({ length: 7 }, (_, index) => dayBefore(today, 6 - index)) : [];
