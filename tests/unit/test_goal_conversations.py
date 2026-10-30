@@ -39,6 +39,7 @@ from planner.notifications.data import queue_deliveries
 from planner.projects.data import create_project
 from planner.runtime.conversation_start import read_agent_conversation, reset_agent_conversation
 from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
+from planner.runtime.workspaces import register_workspace_root
 
 
 class GoalHarness(_Harness):
@@ -244,3 +245,56 @@ def test_goal_cli_identity_and_address_are_distinct_from_ticket_and_manager(
     result = CliRunner().invoke(main, ["send-message", "--goal", "goal_two", "--message", "hello"])
     assert result.exit_code == 0, result.output
     assert sent[0][2]["target"] == {"kind": "goal", "id": "goal_two"}
+
+
+def test_chief_and_goals_use_current_workspace_only_for_fresh_or_reset_conversations(
+    tmp_db: Connection, tmp_path: Path, fake_clock: Clock
+) -> None:
+    project = create_project(tmp_db, name="Isolated agents", now=1)
+    goals = [
+        create_goal(
+            tmp_db, {"project_id": project.id, "title": title}, principal=OWNER_PRINCIPAL, now=1
+        )
+        for title in ("Existing", "Fresh")
+    ]
+    path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    roots = [tmp_path / name for name in ("workspace-a", "workspace-b")]
+    for root in roots:
+        root.mkdir()
+    harness = GoalHarness(path)
+    recipients = [CHIEF_PRINCIPAL, Principal(PrincipalKind.goal, goals[0].id)]
+    keys = ["chief_of_staff", goal_agent_key(goals[0].id)]
+
+    async def speak(recipient: Principal, text: str) -> str:
+        result = await send_message(
+            harness.system, tmp_db, fake_clock, RequestContext(OWNER_PRINCIPAL), recipient, text
+        )
+        assert result.conversation_id is not None
+        await harness.settle()
+        await harness.complete_turn(result.conversation_id)
+        return result.conversation_id
+
+    async def exercise() -> None:
+        try:
+            with register_workspace_root(str(path), roots[0]):
+                original_ids = [await speak(recipient, "Begin") for recipient in recipients]
+                assert [start.workspace_folder for start in harness.starts] == [roots[0], roots[0]]
+            with register_workspace_root(str(path), roots[1]):
+                for recipient, original_id in zip(recipients, original_ids, strict=True):
+                    assert await speak(recipient, "Continue") == original_id
+                assert len(harness.starts) == 2
+                fresh_id = await speak(Principal(PrincipalKind.goal, goals[1].id), "New goal")
+                assert harness.starts[-1].workspace_folder == roots[1]
+                for key, recipient, original_id in zip(keys, recipients, original_ids, strict=True):
+                    await reset_agent_conversation(harness.system, tmp_db, key)
+                    reset_id = await speak(recipient, "Start after reset")
+                    assert reset_id not in (original_id, fresh_id)
+                    assert harness.starts[-1].workspace_folder == roots[1]
+                    old = await harness.store.read_conversation(original_id)
+                    assert old is not None
+                    assert old.workspace_folder == roots[0]
+                    assert await harness.events(original_id)
+        finally:
+            await harness.system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), timeout=15))

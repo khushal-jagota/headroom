@@ -28,9 +28,7 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.runtime import conversation_start
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
-from planner.skill_sources import provision_native_backend_skills
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -54,7 +52,6 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     conn = connect(str(db_path))
     create_schema(conn)
     conn.close()
-    provision_native_backend_skills(workspace / ".agents", db_path.parent)
     (workspace / "AGENTS.md").write_text(
         "This workspace belongs only to an isolated Panels lifecycle proof. "
         "Read Panels skills from this workspace's .agents/skills directory. "
@@ -63,7 +60,6 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "The explicit reply requirement uses panels send-message. "
         "Do not inspect or edit other workspaces.\n"
     )
-    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: workspace)
     monkeypatch.setenv("PATH", f"{ROOT / '.venv' / 'bin'}:{os.environ['PATH']}")
     # Login shells reset PATH. This proof-only shell function keeps the exact Panels
     # command spelling while recording which installed CLI actually executes it.
@@ -90,6 +86,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         env={
             "PLAN_TEST_MODE": "1",
             "PLAN_DB_PATH": str(db_path),
+            "PLAN_WORKSPACE_ROOT": str(workspace),
             "PLAN_PORT": str(port),
             "PLAN_LOGS_DIR": str(runtime / "logs"),
             "PLAN_DISPATCHER_LOCK_PATH": str(runtime / "dispatcher.lock"),

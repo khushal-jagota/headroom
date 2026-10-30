@@ -109,7 +109,7 @@ async def deliver_batch(
                 if target.kind is PrincipalKind.manager:
                     item = managers_data.read_manager(conn, target.id).item
                     agent_key = item.manager_agent_key
-                    resolved = conversation_start.manager_resolve(item)
+                    resolved = conversation_start.manager_resolve(conn, item)
                     required_manager_id = target.id
                 elif target.kind is PrincipalKind.chief:
                     agent_key = CHIEF_SETTINGS_KEY

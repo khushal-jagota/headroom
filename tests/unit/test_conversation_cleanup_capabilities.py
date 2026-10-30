@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
+from contextlib import closing as closing_connection
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -32,6 +33,7 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.measure_sources.contracts import SourceRuntime
+from planner.runtime.workspaces import register_workspace_root, workspace_root_for_connection
 from planner.server_lifecycle import runtime as application_runtime
 
 
@@ -51,11 +53,14 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
 ) -> None:
     db_path = tmp_path / "planner.db"
     _create_database(db_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     config = load_config(
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
             "PLAN_DB_PATH": str(db_path),
+            "PLAN_WORKSPACE_ROOT": str(workspace),
             "PLAN_LOGS_DIR": str(tmp_path / "logs"),
             "PLAN_HERMES_HOME": str(tmp_path / "hermes"),
             "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "dispatcher.lock"),
@@ -142,6 +147,8 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
         await context.__aenter__()
         runtime = app.state.conversation
         assert isinstance(runtime, ConversationRuntime)
+        with closing_connection(conn_factory()) as conn:
+            assert workspace_root_for_connection(conn) == workspace
         await runtime.system.start_conversation(
             ConversationStartRequest(
                 conversation_id="live",
@@ -232,6 +239,8 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
             ownership = acquire_runtime_ownership(str(db_path))
             ownership.close()
             assert app.state.conversation is None
+            with register_workspace_root(str(db_path), None):
+                pass
         finally:
             writer_release.set()
             await writer
