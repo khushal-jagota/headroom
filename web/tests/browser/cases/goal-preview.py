@@ -793,7 +793,7 @@ def agent_unit_spacing(browser, url):
                 gauge.get_by_role("button", name=re.compile("Captured event gauge")).tap()
             meter = gauge.get_by_role("meter")
             meter.scroll_into_view_if_needed()
-            expect(meter).to_have_attribute("aria-valuetext", "0 events, Within limit, 1 limit")
+            expect(meter).to_have_attribute("aria-valuetext", "0 events, Within limit, 1 events limit")
             expect(gauge.locator("figure")).to_have_class(re.compile(r".*success.*"))
             expect(gauge.locator(".observation-details")).to_contain_text(
                 "Source coverage for 2026-10-29: unknown."
