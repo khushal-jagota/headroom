@@ -66,8 +66,8 @@ def resolve_provider(
     else:
         searches.append((requester, requester.dynamic.runpath))
     for owner, entries in searches:
-        def origin(_match: re.Match[str]) -> str:
-            return str(owner.path.parent)
+        def origin(_match: re.Match[str], directory: str = str(owner.path.parent)) -> str:
+            return directory
 
         for entry in entries:
             expanded = re.sub(
