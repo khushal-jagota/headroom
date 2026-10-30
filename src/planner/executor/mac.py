@@ -89,8 +89,8 @@ from planner.executor.contracts import (
     QuiescenceReceipt,
     QuiesceRequest,
     ReceiptDisposition,
-    ReconciliationInventory,
-    ReconciliationResult,
+    ReconnectAsk,
+    ReconnectResult,
     UnconfirmedCliResult,
     WireMessage,
     WireMessageKind,
@@ -349,7 +349,7 @@ class MacExecutor:
                 continue
             if not self._handshake_accepted and message.kind in (
                 WireMessageKind.command,
-                WireMessageKind.command_outcome_ack,
+                WireMessageKind.reconnect_ask,
             ):
                 raise ProtocolRefused("peer sent work before validated handshake")
             if message.kind == WireMessageKind.health and "clock_probe" in message.payload:
@@ -370,8 +370,22 @@ class MacExecutor:
                 task = asyncio.create_task(self._command(message))
                 self._command_tasks.add(task)
                 task.add_done_callback(self._command_tasks.discard)
-            elif message.kind == WireMessageKind.command_outcome_ack:
-                self.registry.confirm_command(str(message.payload["command_id"]))
+            elif message.kind is WireMessageKind.reconnect_ask:
+                ask = TypeAdapter(ReconnectAsk).validate_python(message.payload)
+                await self.registry.flush_command_output(ask.command_ids)
+                await self._send(
+                    WireMessage(
+                        WireMessageKind.reconnect_result,
+                        message.request_id,
+                        as_object(
+                            ReconnectResult(
+                                self.identity,
+                                self.registry.ask(ask.command_ids),
+                                self.registry.inventory(),
+                            )
+                        ),
+                    )
+                )
             else:
                 future = self._pending.get(message.request_id)
                 if future is not None and not future.done():
@@ -531,7 +545,14 @@ class MacExecutor:
 
     async def _command(self, message: WireMessage) -> None:
         command = TypeAdapter(ChildCommand).validate_python(message.payload)
-        outcome = await self.registry.execute_command(command)
+        try:
+            outcome = await self.registry.execute_command(command)
+        except (OSError, ValueError):
+            # Required output may not have reached disk. Reconnect retries that
+            # publication before answering the ask; it never repeats the provider call.
+            if self._writer is not None:
+                self._writer.close()
+            return
         with contextlib.suppress(ConnectionError, BrokenPipeError):
             await self._send(
                 WireMessage(WireMessageKind.command_outcome, message.request_id, as_object(outcome))
@@ -717,42 +738,6 @@ class MacExecutor:
             if future is not None and not future.done():
                 future.set_result(receipt)
 
-    async def _reconcile(self) -> None:
-        inventory = self.registry.inventory(self.identity, include_pending=False)
-        # Stream children and retained outcomes, never the potentially unbounded spool.
-        # VPS aggregates these within the fenced generation before ready admission.
-        batches = []
-        for child in inventory.children:
-            pieces = [
-                replace(child, pending_asks=(ask,), pending_user_input_ids=())
-                for ask in child.pending_asks
-            ]
-            pieces += [
-                replace(child, pending_asks=(), pending_user_input_ids=(request_id,))
-                for request_id in child.pending_user_input_ids
-            ]
-            if not pieces:
-                pieces = [child]
-            batches += [
-                ReconciliationInventory(self.identity, (piece,), (), ()) for piece in pieces
-            ]
-        batches += [
-            ReconciliationInventory(self.identity, (), (), (outcome,))
-            for outcome in inventory.retained_command_outcomes
-        ]
-        batches.append(ReconciliationInventory(self.identity, (), (), ()))
-        for batch in batches:
-            response = await self._request(WireMessageKind.reconcile_inventory, as_object(batch))
-            result = TypeAdapter(ReconciliationResult).validate_python(response.payload)
-            if result.identity != self.identity:
-                raise ValueError("stale reconciliation generation")
-            for receipt in result.receipts:
-                await asyncio.to_thread(self.spool.acknowledge, receipt)
-            for command_id in result.acknowledged_command_ids:
-                self.registry.confirm_command(command_id)
-            for answer in result.answers:
-                await self.registry.apply_answer(answer)
-
     async def _connected(self) -> None:
         phase = ConnectionPhase.app_connect
 
@@ -801,15 +786,7 @@ class MacExecutor:
                     )
                     if opened.kind is not WireMessageKind.transport_opened:
                         raise ValueError("file generation refused")
-                    phase = ConnectionPhase.reconcile1
-                    await self._reconcile()
-                    phase = ConnectionPhase.replay1
-                    await self._replay()
-                    phase = ConnectionPhase.reconcile2
-                    await self._reconcile()
-                    phase = ConnectionPhase.replay2
-                    await self._replay()
-                    phase = ConnectionPhase.ready_ack
+                    phase = ConnectionPhase.reconnect_ask
                     await self._request(WireMessageKind.reconciliation_ready, as_object(identity))
                     self.lost_at_ms = None
                     self.state = ConnectionState.ready
@@ -817,8 +794,6 @@ class MacExecutor:
                     while not self._stop.is_set():
                         # Clear before draining so publications during replay stay signalled.
                         self.registry.outbound_ready.clear()
-                        await self._replay()
-                        await self._reconcile()
                         await self._replay()
                         with contextlib.suppress(TimeoutError):
                             await asyncio.wait_for(

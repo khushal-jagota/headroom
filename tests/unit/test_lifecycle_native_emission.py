@@ -80,13 +80,12 @@ def expectation(workspace: Path) -> AdmissionExpectation:
     )
 
 
-def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
+def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
     tmp_path: Path,
 ) -> None:
-    """Required args change core command JSON, while spool-2 carries outcomes.
+    """Retained initial commands and ordered stop output survive their actual stores.
 
-    The uncovered risk is serialization/reopen/replay, not another provider or TLS
-    campaign. Retain the independent review proof against these actual two stores.
+    Provider results stay in memory; reopening output never invokes the provider.
     """
     from pydantic import TypeAdapter
 
@@ -191,24 +190,13 @@ def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
         paths = ExecutorPaths(tmp_path / "native")
         spool = FilesystemSpool(paths.spool)
         outcomes = (
-            CommandOutcome("legacy-known", child, CommandDisposition.succeeded, {"old": True}),
-            CommandOutcome("legacy-unknown", child, CommandDisposition.uncertain, {"old": True}),
-            CommandOutcome(
-                "new-known",
-                child,
-                CommandDisposition.refused,
-                {
-                    "error_type": "AdmissionRefused",
-                    "reason": "context_changed",
-                    "corrective_action": "verify_launch_context",
-                },
-            ),
-            CommandOutcome("new-unknown", child, CommandDisposition.uncertain, {"new": True}),
+            CommandOutcome("first-stop", child, CommandDisposition.succeeded, {}),
+            CommandOutcome("later-stop", child, CommandDisposition.succeeded, {}),
         )
         envelopes = tuple(
             spool.mint_envelope(
                 conversation_id=child.conversation_id,
-                kind=EnvelopeKind.command_outcome,
+                kind=EnvelopeKind.child_stopped,
                 payload=payload_object(value),
             )
             for value in outcomes
@@ -273,14 +261,10 @@ def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
             await executor._replay()
             original = {entry.submission_id: encode_value(entry) for entry in envelopes}
             replayed_original = [entry for entry in submitted if entry["submission_id"] in original]
-            assert len(replayed_original) == 4
+            assert len(replayed_original) == 2
             assert all(entry == original[entry["submission_id"]] for entry in replayed_original)
-            assert (
-                sum(entry["payload"]["disposition"] == "uncertain" for entry in replayed_original)
-                == 2
-            )
             assert executor.spool.pending_count() == 0 and not executor.registry.children
-            assert PROTOCOL_VERSION == 14 and SPOOL_FORMAT_VERSION == 2
+            assert PROTOCOL_VERSION == 15 and SPOOL_FORMAT_VERSION == 3
             with pytest.raises(ProtocolRefused):
                 parse_identity(
                     encode_value(
@@ -291,7 +275,7 @@ def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
                 parse_identity(
                     encode_value(replace(executor.identity, connection_generation=1))
                 ).protocol_version
-                == 14
+                == 15
             )
         finally:
             executor.spool.close()

@@ -96,7 +96,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                 if len([c for c in emitted if c.operation is ChildOperation.stop]) == 2:
                     stopped_again.set()
             elif command.operation is ChildOperation.start:
-                endpoint._resolve_command(
+                await endpoint._resolve_command(
                     CommandOutcome(
                         command.command_id, command.child, CommandDisposition.succeeded, {}
                     )
@@ -173,7 +173,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
             # A late native result is evidence only; local reservation never reopens.
             prompt = next((c for c in emitted if c.operation is ChildOperation.write_prompt), None)
             if prompt is not None:
-                endpoint._resolve_command(
+                await endpoint._resolve_command(
                     CommandOutcome(prompt.command_id, reference, CommandDisposition.succeeded, {})
                 )
                 assert state.running_turn is None and state.reserved_turn is None
@@ -199,11 +199,11 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                     final_stop.command_id, reference, CommandDisposition.succeeded, {}
                 )
                 # A direct result alone cannot prove the original FIFO receipt.
-                endpoint._resolve_command(outcome)
+                await endpoint._resolve_command(outcome)
                 assert recovered.initial_shutdown_task is not None
                 assert not recovered.initial_shutdown_task.done()
                 payload = cast(JsonObject, encode_value(outcome))
-                submission = "outcome_" + hashlib.sha256(final_stop.command_id.encode()).hexdigest()
+                submission = "stopped_" + hashlib.sha256(final_stop.command_id.encode()).hexdigest()
                 digest = envelope_payload_digest(
                     payload,
                     (),
@@ -211,7 +211,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                     conversation_id="c_cancel",
                     sequence=1,
                     submission_id=submission,
-                    kind=EnvelopeKind.command_outcome,
+                    kind=EnvelopeKind.child_stopped,
                 )
                 await endpoint.accept_envelope(
                     QueuedEnvelope(
@@ -219,7 +219,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                         "c_cancel",
                         1,
                         submission,
-                        EnvelopeKind.command_outcome,
+                        EnvelopeKind.child_stopped,
                         payload,
                         digest,
                     ),
@@ -282,6 +282,7 @@ def test_preparation_kill_settles_sender_and_old_continuation_cannot_run_after_s
             )
             original_ensure = system._ensure_child
             blocked = True
+
             async def ensure(*args: Any, **kwargs: Any) -> Any:
                 nonlocal blocked
                 if blocked:
@@ -289,6 +290,7 @@ def test_preparation_kill_settles_sender_and_old_continuation_cannot_run_after_s
                     entered.set()
                     await release.wait()
                 return await original_ensure(*args, **kwargs)
+
             monkeypatch.setattr(system, "_ensure_child", ensure)
             first = asyncio.create_task(
                 system.send(
@@ -401,9 +403,9 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
     reference = ChildReference(IDENTITY.executor_incarnation, "closed-child", "closed-conversation")
     endpoint.store.register_child(reference, "ticket", "closed-ticket", 1)
     command = ChildCommand(
-        "original-prompt-command",
+        "original-stop-command",
         reference,
-        ChildOperation.write_prompt,
+        ChildOperation.stop,
         TurnToken(reference.conversation_id, 1),
         {},
     )
@@ -435,14 +437,14 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
             conversation_id=reference.conversation_id,
             sequence=sequence,
             submission_id=submission_id,
-            kind=EnvelopeKind.command_outcome,
+            kind=EnvelopeKind.child_stopped,
         )
         return QueuedEnvelope(
             "native",
             reference.conversation_id,
             sequence,
             submission_id,
-            EnvelopeKind.command_outcome,
+            EnvelopeKind.child_stopped,
             payload,
             digest,
         )
@@ -455,17 +457,17 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
         assert endpoint.store.child_assignment(reference) is None
         with pytest.raises(PlannerError, match="assignment"):
             endpoint._assignment(reference)
-        with pytest.raises(PlannerError, match="assignment"):
-            await endpoint.accept_envelope(
-                envelope(replace(actual, command_id="invented-command"), sequence=2), IDENTITY
-            )
+        refused = await endpoint.accept_envelope(
+            envelope(replace(actual, command_id="invented-command"), sequence=2), IDENTITY
+        )
+        assert refused.disposition is ReceiptDisposition.refused
         # The first native result cannot be rewritten, even through historical admission.
         conflict = await endpoint.accept_envelope(
-            envelope(replace(actual, disposition=CommandDisposition.uncertain), sequence=2),
+            envelope(replace(actual, disposition=CommandDisposition.uncertain), sequence=3),
             IDENTITY,
         )
         assert conflict.disposition is ReceiptDisposition.refused
-        assert "conflicts" in str(conflict.result)
+        assert "successful exact-child stop" in str(conflict.result)
         stored = json.loads(
             tmp_db.execute("SELECT outcome_json FROM executor_command_outcomes").fetchone()[0]
         )
@@ -506,8 +508,14 @@ def test_retirement_rolls_back_metadata_assignment_and_asks_together(
     )
     close = ExecutorStore.close_child_in_transaction
 
-    def fail_after_close(connection: Connection, child: ChildReference, now_ms: int) -> None:
-        close(connection, child, now_ms)
+    def fail_after_close(
+        connection: Connection,
+        child: ChildReference,
+        now_ms: int,
+        *,
+        retained_commands: tuple[ChildCommand, ...] = (),
+    ) -> None:
+        close(connection, child, now_ms, retained_commands=retained_commands)
         raise RuntimeError("injected retirement failure")
 
     async def run() -> None:

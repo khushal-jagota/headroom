@@ -57,11 +57,7 @@ class ConnectionPhase(StrEnum):
     app_connect = "app_connect"
     hello = "hello"
     transport_open = "transport_open"
-    reconcile1 = "reconcile1"
-    replay1 = "replay1"
-    reconcile2 = "reconcile2"
-    replay2 = "replay2"
-    ready_ack = "ready_ack"
+    reconnect_ask = "reconnect_ask"
     steady_state = "steady_state"
 
 
@@ -279,7 +275,7 @@ class FileSnapshot:
 class EnvelopeKind(StrEnum):
     backend_event = "backend_event"
     cli_write = "cli_write"
-    command_outcome = "command_outcome"
+    child_stopped = "child_stopped"
     answer_application = "answer_application"
 
 
@@ -427,20 +423,22 @@ class ChildInventory:
 
 
 @dataclass(frozen=True, slots=True)
-class ReconciliationInventory:
-    identity: ExecutorIdentity
-    children: tuple[ChildInventory, ...]
-    queued_envelopes: tuple[QueuedEnvelope, ...]
-    retained_command_outcomes: tuple[CommandOutcome, ...]
+class CommandState:
+    command_id: str
+    phase: Literal["unknown", "preparing", "invoking", "finished"]
+    outcome: CommandOutcome | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class ReconciliationResult:
+class ReconnectAsk:
+    command_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReconnectResult:
     identity: ExecutorIdentity
-    receipts: tuple[AcceptanceReceipt, ...]
-    answers: tuple[DurableAnswer, ...]
-    ask_evidence: tuple[AskEvidence, ...]
-    acknowledged_command_ids: tuple[str, ...]
+    commands: tuple[CommandState, ...]
+    children: tuple[ChildInventory, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,8 +534,8 @@ class WireMessageKind(StrEnum):
     input_cancelled = "input_cancelled"
     input_failed = "input_failed"
     protocol_refused = "protocol_refused"
-    reconcile_inventory = "reconcile_inventory"
-    reconcile_result = "reconcile_result"
+    reconnect_ask = "reconnect_ask"
+    reconnect_result = "reconnect_result"
     reconciliation_ready = "reconciliation_ready"
     live_backend_event = "live_backend_event"
     envelope = "envelope"
@@ -547,7 +545,6 @@ class WireMessageKind(StrEnum):
     file_accepted = "file_accepted"
     command = "command"
     command_outcome = "command_outcome"
-    command_outcome_ack = "command_outcome_ack"
     read_request = "read_request"
     read_response = "read_response"
     catalog_request = "catalog_request"

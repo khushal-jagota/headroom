@@ -84,8 +84,8 @@ from planner.executor.contracts import (
     LiveReadRequest,
     QueuedEnvelope,
     ReceiptDisposition,
-    ReconciliationInventory,
-    ReconciliationResult,
+    ReconnectAsk,
+    ReconnectResult,
     RemoteInputTransferFailed,
     WireMessage,
     WireMessageKind,
@@ -139,8 +139,6 @@ class ExecutorEndpoint:
         self._emission_tasks: dict[str, set[asyncio.Task[bool]]] = {}
         self._input_tasks: dict[str, set[asyncio.Task[None]]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
-        self._inventory: dict[str, ChildInventory] = {}
-        self._retained_inventory: dict[str, CommandOutcome] = {}
         self._send_lock = asyncio.Lock()
         self._input_transfer_locks: dict[str, asyncio.Lock] = {}
         self._conversation_locks: dict[str, asyncio.Lock] = {}
@@ -262,22 +260,6 @@ class ExecutorEndpoint:
         if proxy is not None and proxy.reference == child:
             self.children.pop(child.child_id, None)
             self.sinks.pop(child.child_id, None)
-        item = self._inventory.get(child.child_id)
-        if item is not None and item.child == child:
-            self._inventory.pop(child.child_id, None)
-
-    def _outcome_requires_receipt(self, outcome: CommandOutcome) -> bool:
-        pending = self.pending_commands.get(outcome.command_id)
-        return (
-            pending is not None
-            and pending[0].child == outcome.child
-            and pending[0].operation is ChildOperation.stop
-        ) or self.store.is_retirement_outcome(outcome)
-
-    def _outcome_hint_acknowledged(self, outcome: CommandOutcome) -> bool:
-        return not self._outcome_requires_receipt(
-            outcome
-        ) or self.store.has_accepted_command_outcome(outcome)
 
     def _initial_command_cancelled(self, command: ChildCommand) -> bool:
         return command.command_id in self._revoked_input_commands or (
@@ -892,7 +874,7 @@ class ExecutorEndpoint:
                     )
                     or command.child != answer.ask.child
                     or command.turn != answer.ask.turn
-                    or command.command_id != "apply_" + answer.answer_id
+                    or command.command_id != answer.answer_id
                 ):
                     return
                 await writer.send(
@@ -924,7 +906,7 @@ class ExecutorEndpoint:
         ):
             return
         command = ChildCommand(
-            "apply_" + answer.answer_id,
+            answer.answer_id,
             answer.ask.child,
             ChildOperation.answer_user_input
             if answer.ask.kind is AskKind.user_input
@@ -1189,7 +1171,7 @@ class ExecutorEndpoint:
         previous = await settled_io(partial(self.store.preflight, envelope, identity=identity))
         if previous is not None:
             if (
-                envelope.kind is EnvelopeKind.command_outcome
+                envelope.kind is EnvelopeKind.child_stopped
                 and previous.disposition is ReceiptDisposition.accepted
             ):
                 await self._resolve_command(
@@ -1268,6 +1250,25 @@ class ExecutorEndpoint:
                             request.questions,
                             now_ms(),
                         )
+                    if result.get("applied") is True and event.turn is not None:
+                        if event.method is BackendEventMethod.permission_ask_raised:
+                            self.store.observe_callback_in_transaction(
+                                conn,
+                                AskReference(
+                                    event.child, event.turn, ask.ask_id, AskKind.permission
+                                ),
+                                identity,
+                                now_ms(),
+                            )
+                        elif event.method is BackendEventMethod.user_input_requested:
+                            self.store.observe_callback_in_transaction(
+                                conn,
+                                AskReference(
+                                    event.child, event.turn, request.request_id, AskKind.user_input
+                                ),
+                                identity,
+                                now_ms(),
+                            )
                     if event.method is BackendEventMethod.turn_ended and event.turn is not None:
                         self.store.revoke_turn_callbacks_in_transaction(
                             conn, event.child, event.turn, identity, now_ms()
@@ -1360,44 +1361,16 @@ class ExecutorEndpoint:
                     connection.close()
             return receipt
 
-        if envelope.kind is EnvelopeKind.command_outcome:
+        if envelope.kind is EnvelopeKind.child_stopped:
             outcome = TypeAdapter(CommandOutcome).validate_python(envelope.payload)
             if outcome.child.conversation_id != envelope.conversation_id:
                 raise ValueError("command outcome conversation conflicts with envelope")
-            retired_refusal = await settled_io(self._validate_outcome_assignment, outcome, identity)
-            application_payload = outcome.result.get("answer_application")
-            if not retired_refusal and isinstance(application_payload, dict):
-                application = TypeAdapter(AnswerApplication).validate_python(application_payload)
-                if application.ask.child != outcome.child or outcome.command_id not in (
-                    application.answer_id,
-                    "apply_" + application.answer_id,
-                ):
-                    raise ValueError("answer application conflicts with command child or identity")
-                await settled_io(
-                    self._require_application_assignment,
-                    application,
-                    identity,
-                    envelope.conversation_id,
-                )
-
-                def record(connection: Any, applied: AnswerApplication) -> None:
-                    self.store.record_application_in_transaction(connection, applied)
-                    self.store.record_command_outcome_in_transaction(connection, outcome)
-
-                receipt = await self.runtime.system.receive_remote_answer_application(
-                    application,
-                    envelope,
-                    lambda row, write, **publication: self.store.accept(
-                        row,
-                        write,
-                        now_ms(),
-                        identity=identity,
-                        **publication,
-                    ),
-                    record,
-                )
-                await self._resolve_command(outcome)
-                return cast(AcceptanceReceipt, receipt)
+            await settled_io(self._validate_outcome_assignment, outcome, identity)
+            if outcome.disposition is not CommandDisposition.succeeded:
+                raise ValueError("child_stopped requires successful exact-child stop")
+            pending = self.pending_commands.get(outcome.command_id)
+            if pending is not None and pending[0].operation is not ChildOperation.stop:
+                raise ValueError("child_stopped conflicts with pending command")
             receipt = await settled_io(
                 partial(
                     self.store.accept,
@@ -1407,7 +1380,7 @@ class ExecutorEndpoint:
                     identity=identity,
                 )
             )
-            await self._resolve_command(outcome)
+            await self._resolve_command(outcome, stop_proven=True)
             return receipt
         if envelope.kind is EnvelopeKind.answer_application:
             application = TypeAdapter(AnswerApplication).validate_python(envelope.payload)
@@ -1436,39 +1409,29 @@ class ExecutorEndpoint:
 
     def _validate_outcome_assignment(
         self, outcome: CommandOutcome, identity: ExecutorIdentity
-    ) -> bool:
-        retired_refusal = (
-            outcome.disposition is CommandDisposition.refused
-            and outcome.result
-            == {
-                "error_type": "BackendSpawnFailed",
-                "error_message": "source child identity was retired",
-            }
-            and outcome.child.executor_incarnation == identity.executor_incarnation
-            and self.store.has_closed_child_assignment(outcome.child)
-        )
-        answer = self.store.answer_by_id(outcome.command_id.removeprefix("apply_"))
-        historical_answer_outcome = (
-            answer is not None
-            and answer.ask.child == outcome.child
-            and outcome.child.executor_incarnation == identity.executor_incarnation
-            and self.store.has_closed_child_assignment(outcome.child)
-        )
-        historical_initial_outcome = (
-            outcome.child.executor_incarnation == identity.executor_incarnation
-            and self.store.has_closed_child_assignment(outcome.child)
-            and self.store.has_retained_command(outcome)
-        )
-        if not (retired_refusal or historical_answer_outcome or historical_initial_outcome):
+    ) -> None:
+        # Closed assignments admit only their retained exact stop proof.
+        # They grant no callback, command-result or new native-work authority.
+        if not (
+            self.store.has_closed_child_assignment(outcome.child)
+            and self.store.is_retirement_outcome(outcome)
+        ):
             self._assignment(outcome.child)
-        return retired_refusal
 
     def _command_outcome(self, conn: Any, outcome: CommandOutcome) -> JsonObject:
         self.store.record_command_outcome_in_transaction(conn, outcome)
         return {"recorded": True}
 
-    async def _resolve_command(self, outcome: CommandOutcome) -> None:
-        if not await settled_io(self._outcome_hint_acknowledged, outcome):
+    async def _resolve_command(self, outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
+        pending = self.pending_commands.get(outcome.command_id)
+        if pending is None or pending[0].child != outcome.child:
+            return
+        if (
+            pending[0].operation is ChildOperation.stop
+            and outcome.disposition is CommandDisposition.succeeded
+            and not stop_proven
+            and not await settled_io(self.store.has_accepted_command_outcome, outcome)
+        ):
             return
         if outcome.disposition is not CommandDisposition.uncertain:
             self._newly_recorded_commands.pop(outcome.command_id, None)
@@ -1642,6 +1605,60 @@ class ExecutorEndpoint:
             await self._dispatch_answer(answer)
         return True
 
+    async def _reconnect(
+        self, identity: ExecutorIdentity, writer: ControlMessageWriter
+    ) -> set[str]:
+        pending = {
+            key: command
+            for key, (command, future) in tuple(self.pending_commands.items())
+            if not future.done()
+            and command.child.executor_incarnation == identity.executor_incarnation
+        }
+        response = await self._request(
+            WireMessageKind.reconnect_ask, _object(ReconnectAsk(tuple(pending)))
+        )
+        if not await self._reconciliation_current(identity, writer):
+            raise ConnectionError("reconnect generation changed")
+        if response.kind is not WireMessageKind.reconnect_result:
+            raise ValueError("reconnect ask refused")
+        result = TypeAdapter(ReconnectResult).validate_python(response.payload)
+        if result.identity != identity or tuple(x.command_id for x in result.commands) != tuple(
+            pending
+        ):
+            raise ValueError("reconnect command identities changed")
+        unknown: set[str] = set()
+        for state in result.commands:
+            if state.phase == "finished":
+                if state.outcome is None or state.outcome.command_id != state.command_id:
+                    raise ValueError("finished command lacks its result")
+                if state.outcome.child != pending[state.command_id].child:
+                    raise ValueError("finished command child changed")
+                await self._resolve_command(state.outcome)
+            elif state.outcome is not None:
+                raise ValueError("unfinished command has an outcome")
+            elif state.phase == "unknown":
+                unknown.add(state.command_id)
+        children: list[ChildInventory] = []
+        seen: set[str] = set()
+        for item in result.children:
+            if item.child.child_id in seen:
+                raise ValueError("duplicate reconnect child")
+            seen.add(item.child.child_id)
+            if await settled_io(self._closed_reconciliation_child, item.child, identity):
+                self.retire_child(item.child)
+                continue
+            if not await self._reconciliation_current(identity, writer):
+                raise ConnectionError("reconnect generation changed")
+            children.append(item)
+            if item.child.child_id not in self.children:
+                proxy = self.recover_child(item.child)
+                self.children[item.child.child_id] = proxy
+                await self.runtime.system.stop_interrupted_remote_child(item.child, proxy)
+        if not await self._reconciliation_current(identity, writer):
+            raise ConnectionError("reconnect generation changed")
+        await settled_io(self.store.observe_children, identity, tuple(children), now_ms())
+        return unknown
+
     async def _session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
         identity = None
         try:
@@ -1676,8 +1693,6 @@ class ExecutorEndpoint:
                 await self._close_transport(old_identity)
             if self.writer is not writer or self.identity != identity:
                 return
-            self._inventory = {}
-            self._retained_inventory = {}
             if (
                 old_identity is not None
                 and old_identity.executor_incarnation != identity.executor_incarnation
@@ -1837,120 +1852,11 @@ class ExecutorEndpoint:
                         {},
                         WireMessageKind.transport_opened,
                     )
-            elif message.kind is WireMessageKind.reconcile_inventory:
-                inventory = TypeAdapter(ReconciliationInventory).validate_python(message.payload)
-                if inventory.identity != identity:
-                    raise ValueError("stale reconciliation generation")
-                await settled_io(self.store.verify_connection, identity)
-                if self.writer is not writer or self.identity != identity:
-                    return
-                for item in inventory.children:
-                    closed = await settled_io(
-                        self._closed_reconciliation_child, item.child, identity
-                    )
-                    if self.writer is not writer or self.identity != identity:
-                        return
-                    if closed:
-                        self.retire_child(item.child)
-                        continue
-                    previous = self._inventory.get(item.child.child_id)
-                    if previous is not None and previous.active_turn == item.active_turn:
-                        item = replace(
-                            item,
-                            pending_asks=tuple(
-                                dict.fromkeys((*previous.pending_asks, *item.pending_asks))
-                            ),
-                            pending_user_input_ids=tuple(
-                                dict.fromkeys(
-                                    (*previous.pending_user_input_ids, *item.pending_user_input_ids)
-                                )
-                            ),
-                        )
-                    self._inventory[item.child.child_id] = item
-                    if item.child.child_id not in self.children:
-                        # No proxy means this VPS process did not launch this child.
-                        # Its retained identity authorizes only exact-child retirement.
-                        proxy = self.recover_child(item.child)
-                        self.children[item.child.child_id] = proxy
-                        await self.runtime.system.stop_interrupted_remote_child(item.child, proxy)
-                    if not await self._reconciliation_current(identity, writer):
-                        return
-                    closed = await settled_io(
-                        self._closed_reconciliation_child, item.child, identity
-                    )
-                    if self.writer is not writer or self.identity != identity:
-                        return
-                    if closed:
-                        self.retire_child(item.child)
-                for outcome in inventory.retained_command_outcomes:
-                    previous_outcome = self._retained_inventory.get(outcome.command_id)
-                    if previous_outcome is not None and previous_outcome != outcome:
-                        raise ValueError(
-                            "conflicting retained command outcome across inventory chunks"
-                        )
-                    historical = outcome.child.executor_incarnation != identity.executor_incarnation
-                    if historical:
-                        if not await settled_io(self.store.has_retained_command, outcome):
-                            raise ValueError(
-                                "historical outcome lacks exact retained command metadata"
-                            )
-                        if not await settled_io(self.store.has_accepted_command_outcome, outcome):
-                            raise ValueError(
-                                "historical outcome lacks matching accepted canonical receipt"
-                            )
-                    else:
-                        await settled_io(self._closed_reconciliation_child, outcome.child, identity)
-                    if not await self._reconciliation_current(identity, writer):
-                        return
-                    self._retained_inventory[outcome.command_id] = outcome
-                    if not historical:
-                        await self._resolve_command(outcome)
-                if not inventory.children and not inventory.retained_command_outcomes:
-                    if not await self._reconciliation_current(identity, writer):
-                        return
-                    children = tuple(self._inventory.values())
-                    retained_outcomes = self._retained_inventory
-                    self._inventory = {}
-                    self._retained_inventory = {}
-
-                    def reconcile() -> ReconciliationResult:
-                        merged = replace(
-                            inventory,
-                            children=tuple(
-                                item
-                                for item in children
-                                if not self._closed_reconciliation_child(item.child, identity)
-                            ),
-                            retained_command_outcomes=tuple(retained_outcomes.values()),
-                        )
-                        return self.store.reconcile(merged, now_ms())
-
-                    reconciliation = await settled_io(reconcile)
-                    if not await self._reconciliation_current(identity, writer):
-                        return
-                    for command_id in reconciliation.acknowledged_command_ids:
-                        retained_outcome = retained_outcomes.get(command_id)
-                        if retained_outcome is not None and not await settled_io(
-                            self._outcome_hint_acknowledged, retained_outcome
-                        ):
-                            continue
-                        if not await self._send_reconciliation(
-                            WireMessage(
-                                WireMessageKind.command_outcome_ack,
-                                command_id,
-                                {"command_id": command_id},
-                            ),
-                            identity,
-                            writer,
-                        ):
-                            return
-                    result = _object(
-                        ReconciliationResult(identity, reconciliation.receipts, (), (), ())
-                    )
-                else:
-                    result = _object(ReconciliationResult(identity, (), (), (), ()))
-                response_kind = WireMessageKind.reconcile_result
             elif message.kind is WireMessageKind.reconciliation_ready:
+                registered_before_ask = set(self.pending_commands)
+                unknown = await self._reconnect(identity, writer)
+                if not await self._reconciliation_current(identity, writer):
+                    return
                 # FIFO puts the ready ACK before any newly admitted command.
                 if hasattr(self.store, "mark_ready"):
                     await settled_io(self.store.mark_ready, identity, now_ms())
@@ -1966,6 +1872,13 @@ class ExecutorEndpoint:
                     )
                     if self.writer is not writer or self.identity != identity:
                         return
+                    # Retirement can register a command while mark_ready or the ACK
+                    # yields. Capture it before opening ordinary dispatch admission.
+                    reconnect_commands = tuple(
+                        pending
+                        for command_id, pending in self.pending_commands.items()
+                        if command_id in unknown or command_id not in registered_before_ask
+                    )
                     self.ready = True
                 if self.writer is not writer or self.identity != identity:
                     return
@@ -1973,7 +1886,7 @@ class ExecutorEndpoint:
                     await self._dispatch_answer(answer)
                 # Resending a stable command to the same live registry is safe:
                 # the registry retains its pending task and first outcome.
-                for command, future in tuple(self.pending_commands.values()):
+                for command, future in reconnect_commands:
                     if (
                         not future.done()
                         and command.child.executor_incarnation == identity.executor_incarnation
@@ -2011,13 +1924,10 @@ class ExecutorEndpoint:
                 )
             elif message.kind is WireMessageKind.command_outcome:
                 outcome = TypeAdapter(CommandOutcome).validate_python(message.payload)
+                if message.request_id != outcome.command_id:
+                    raise ValueError("command result ID conflicts with reply")
                 await self._resolve_command(outcome)
-                if not await settled_io(self._outcome_hint_acknowledged, outcome):
-                    return
-                result, response_kind = (
-                    {"command_id": outcome.command_id},
-                    WireMessageKind.command_outcome_ack,
-                )
+                return
             elif message.kind is WireMessageKind.read_request:
                 read = TypeAdapter(LiveReadRequest).validate_python(message.payload)
                 result, response_kind = await self._read(read), WireMessageKind.read_response
@@ -2029,17 +1939,7 @@ class ExecutorEndpoint:
             else:
                 raise ValueError("unsupported executor frame")
             if self.writer is writer and self.identity == identity:
-                try:
-                    response = WireMessage(response_kind, message.request_id, result)
-                    if message.kind is WireMessageKind.reconcile_inventory:
-                        if not await self._send_reconciliation(response, identity, writer):
-                            return
-                    else:
-                        await self._send(response)
-                except BaseException:
-                    raise
-                else:
-                    pass
+                await self._send(WireMessage(response_kind, message.request_id, result))
         except (sqlite3.OperationalError, OSError):
             writer.close()
         except (ValueError, PlannerError, KeyError, TypeError) as error:
@@ -2051,10 +1951,7 @@ class ExecutorEndpoint:
                     if isinstance(error, PlannerError)
                     else {"error": {"code": "validation", "message": str(error)}},
                 )
-                if message.kind is WireMessageKind.reconcile_inventory:
-                    await self._send_reconciliation(response, identity, writer)
-                else:
-                    await self._send(response)
+                await self._send(response)
 
     async def _read(self, read: LiveReadRequest) -> JsonObject:
         if not read.path.startswith(

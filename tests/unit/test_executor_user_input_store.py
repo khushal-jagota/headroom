@@ -23,7 +23,6 @@ from planner.executor.contracts import (
     ChildInventory,
     ChildReference,
     ExecutorIdentity,
-    ReconciliationInventory,
 )
 from planner.executor.store import ExecutorStore
 
@@ -82,11 +81,8 @@ def store(tmp_path: Path) -> ExecutorStore:
 
 
 def ready(store: ExecutorStore) -> None:
-    store.reconcile(
-        ReconciliationInventory(
-            IDENTITY, (ChildInventory(CHILD, TURN, (PERMISSION,), (REQUEST.ask_id,)),), (), ()
-        ),
-        1001,
+    store.observe_children(
+        IDENTITY, (ChildInventory(CHILD, TURN, (PERMISSION,), (REQUEST.ask_id,)),), 1001
     )
     store.mark_ready(IDENTITY, 1002)
 
@@ -166,12 +162,7 @@ def test_input_callback_liveness_is_exact_and_terminal(
 ) -> None:
     store.publish_user_input_request(REQUEST, QUESTIONS, 1000)
     # A process and same-id permission callback do not prove this question callback.
-    store.reconcile(
-        ReconciliationInventory(
-            IDENTITY, (ChildInventory(CHILD, TURN, (PERMISSION,), ()),), (), ()
-        ),
-        1001,
-    )
+    store.observe_children(IDENTITY, (ChildInventory(CHILD, TURN, (PERMISSION,), ()),), 1001)
     store.mark_ready(IDENTITY, 1002)
     evidence = store.ask_evidence(REQUEST)
     assert evidence is not None and evidence.reachability == AskReachability.callback_gone
@@ -195,8 +186,8 @@ def test_complete_map_first_selection_after_loss_survives_restart_and_closure(
     store.mark_lost(IDENTITY, 1011)
     replacement = replace(IDENTITY, connection_generation=2)
     store.begin_connection(replacement, 9999999)
-    result = store.reconcile(ReconciliationInventory(replacement, (), (), ()), 10000000)
-    assert result.answers == ()
+    store.observe_children(replacement, (), 10000000)
+    assert not store.answer_is_deliverable(answer, replacement)
     assert store.recorded_answer(REQUEST) == answer
     evidence = store.ask_evidence(REQUEST)
     assert evidence is not None and evidence.reachability == AskReachability.child_gone
@@ -204,13 +195,10 @@ def test_complete_map_first_selection_after_loss_survives_restart_and_closure(
     # An identical first choice is readable while offline; it is never replaced.
     assert store.choose_user_input_answer(REQUEST, tuple(reversed(ANSWERS)), 1, 10000001) == answer
     restored = ExecutorStore(store.db_path)
-    result = restored.reconcile(
-        ReconciliationInventory(
-            replacement, (ChildInventory(CHILD, TURN, (), (REQUEST.ask_id,)),), (), ()
-        ),
-        10000002,
+    restored.observe_children(
+        replacement, (ChildInventory(CHILD, TURN, (), (REQUEST.ask_id,)),), 10000002
     )
-    assert result.answers == ()
+    assert not store.answer_is_deliverable(answer, replacement)
     evidence = restored.ask_evidence(REQUEST)
     assert evidence is not None and evidence.reachability == AskReachability.child_gone
     application = AnswerApplication(answer.answer_id, REQUEST, 10000003)
@@ -218,12 +206,7 @@ def test_complete_map_first_selection_after_loss_survives_restart_and_closure(
     restored.record_application(application, identity=replacement)
     with pytest.raises(PlannerError, match="recorded answer"):
         restored.record_application(replace(application, ask=PERMISSION), identity=replacement)
-    assert (
-        restored.reconcile(
-            ReconciliationInventory(
-                replacement, (ChildInventory(CHILD, TURN, (), (REQUEST.ask_id,)),), (), ()
-            ),
-            10000004,
-        ).answers
-        == ()
+    restored.observe_children(
+        replacement, (ChildInventory(CHILD, TURN, (), (REQUEST.ask_id,)),), 10000004
     )
+    assert not restored.answer_is_deliverable(answer, replacement)

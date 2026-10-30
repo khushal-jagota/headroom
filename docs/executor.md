@@ -27,8 +27,8 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 14, the journal format is version 2, and the SQLite
-outbox schema is version 2. Each accepts only its current version. Unsupported
+The wire protocol is version 15, the journal format is version 3, and the SQLite
+outbox schema is version 3. Each accepts only its current version. Unsupported
 versions refuse before work or mutation; no conversion runs.
 
 Migration `mac_vps_execution` installs the final schema directly after staging's
@@ -80,14 +80,13 @@ first receipt together. If a receipt disappears, replay returns that first resul
 Permanent assignment or payload failures get a refused receipt, so the next item
 in that conversation can proceed. A lost connection, missing file bytes, or a busy
 database leaves the item pending for retry.
-Separate conversations retain separate order. Saving a backend event, command result,
-or CLI write wakes the sender immediately. The five-second retry timer still checks
+Separate conversations retain separate order. Saving a backend event, callback
+application, stop proof, or CLI write wakes the sender immediately. The five-second retry timer still checks
 for existing work and does not create Tickets or other application work.
 
-Prompt and steer calls can use the Mac's direct result before its journal receipt
-arrives. An event reported before the prompt returns can then finish admission
-without waiting for a result queued behind it. Stop and retirement results still
-require their journal receipt.
+Prompt and steer calls use the Mac's direct result. An event reported before the
+prompt returns can finish admission without waiting for any queued output.
+Stop and retirement require the final ordered stop receipt.
 
 A CLI write can outlast its connection. The client keeps its original request ID as
 the submission ID after any possible send, including partial-send failure, timeout,
@@ -255,12 +254,9 @@ never resent. This relies on launchd's default cleanup of a job's process group
 when the job exits; the first real Mac/VPS run must verify that provider processes
 actually die on service restart or reboot. The scripted tests do not prove that.
 
-Each replay pass drains only the pending sequence prefix captured at its start,
-with one in-flight submission per conversation. New events stay durable for a
-later pass. Both passes before readiness use their own prefix, so new child
-output cannot extend either pass indefinitely. Each captured prefix still needs
-its ordinary delivery and receipts; there is no wall-clock readiness bound. After readiness,
-ordinary replay passes continue delivering the retained work in conversation order.
+After readiness, each replay pass drains only the pending sequence prefix captured
+at its start, with one in-flight submission per conversation. New events stay
+durable for a later pass. Ordinary receipts preserve conversation order.
 
 Each Mac control request has one 30-second deadline covering send admission,
 transmission, and its response. A timeout closes that request's connection and
@@ -276,18 +272,19 @@ An unanswered callback keeps its wait.
 A missing child does not receive a replacement answer, a refusal, or a made-up
 turn ending.
 
-After reconnect, the VPS acknowledges accepted retained command outcomes through
-the existing command acknowledgment path. Later registry inventories omit those
-outcomes. Journal receipt cleanup and registry confirmation remain separate.
-Neither acknowledgment repeats the native operation. An outcome from an older
-executor incarnation must match the exact retained command, its first result, and
-an accepted canonical envelope receipt. A refused native operation can still have
-an accepted evidence receipt. Confirmation removes registry evidence; it grants
-no child, callback, or waiting caller authority and does not close assignments.
-The retained command metadata covers only the current turn. Missing metadata or
-a missing matching receipt keeps the evidence unconfirmed and its uncertainty
-intact. Journal cleanup remains separate; ordinary replay follows successful
-inventory reconciliation.
+Each connection asks the Mac once for pending command IDs and its live children.
+The Mac holds command state in memory for its process lifetime. An unknown ID can
+be sent again with exactly the same ID and content. A preparing or invoking command
+keeps its existing waiter. A finished command returns its first result. Ordinary
+command results use direct replies and this reconnect answer; they do not enter
+the outbox or need result acknowledgments. No periodic inventory pass rewrites
+question rows. A Mac restart ends its runs and leaves possible delivery uncertain.
+
+Saved answers use their answer ID as their only command ID. Reconnect checks the
+original child, turn and callback before sending one. Native callback application
+remains a separate durable output fact. An answer is never redirected to a replacement.
+Connection readiness precedes ordinary outbox draining; ongoing output cannot
+hold the ready acknowledgment behind an ever-growing replay prefix.
 
 Conversation shutdown fences its initial command before it waits for input cleanup or a native result.
 Immediate dispatch and reconnect replay check the same fence, including after awaited input preparation.
@@ -297,8 +294,9 @@ Cancellation preserves the original native outcome and command identity. It does
 
 An ordinary stop uses its own recorded command identity against the original child reference.
 The Mac fences that exact child before cleanup and waits for admitted native work and its final publications.
-The original stop outcome needs an accepted canonical journal receipt before the VPS confirms retirement.
-Direct outcome frames and reconnect inventory cannot replace that receipt.
+The Mac puts a final `child_stopped` item after the exact child's admitted output.
+Accepting that item resolves the stop waiter and proves that earlier output arrived.
+A direct stop result or reconnect answer cannot replace that receipt.
 A refused required native publication keeps cleanup uncertain for that exact child across retries and restarts.
 Ordinary domain refusals do not affect cleanup evidence.
 
@@ -314,7 +312,7 @@ The adapter also retains the SDK process object and requires its exit before tra
 An exception or cancellation preserves uncertainty and the cleanup identity, even if the SDK clears its own process field.
 An explicit later stop checks the same retained process. It cannot infer exit from an empty SDK field.
 These rules govern ordinary stop and executor quiescence through the same adapter contract.
-Late outcomes require exact retained command evidence for the original child and incarnation.
+Late stop proofs require exact retained command evidence for the original child and incarnation.
 That historical evidence grants no renewed execution, callback, event, or CLI authority.
 If the original command evidence is absent, delivery remains uncertain.
 The [retained initial-prompt procedure](initial-mac-prompt-cancellation.md) replaces only the isolated verification app.
@@ -368,21 +366,21 @@ identity after awaited shutdown work.
 Commands for another executor incarnation receive a definitive refusal before
 native execution. After admission closes, new starts and prompts also receive
 refusals before native execution. A prompt waits for its child's current operation,
-then checks admission again. These outcomes retain their ordinary journal entries,
-receipts, and duplicate protection. Unaccepted entries still prevent exit.
+then checks admission again. These outcomes retain their in-memory result and duplicate protection. They do not
+create journal entries. Unaccepted agent output still prevents exit.
 
-A missing child or an unknown native effect remains uncertain. Confirmation of
-an outcome and receipt of its journal entry do not resolve that uncertainty.
-For maintenance exit, an acknowledged uncertain outcome stops blocking only after
+A missing child or an unknown native effect remains uncertain. Receiving a result
+does not resolve that uncertainty. For maintenance exit, an uncertain outcome stops blocking only after
 a successful stop command for its exact executor incarnation, child, and conversation.
 That exact child must also be absent from the live registry. A failed stop, a missing
 child alone, or a stop for another reference does not qualify. All other work and
 journal entries must still settle before exit.
 
 Error text alone cannot prove that dispatch never occurred. Historical uncertain
-outcomes retain their original bytes and unknown effects. Duplicate commands retain
-their first result without another native call. An executor restart preserves the
-journal and its receipts but creates a fresh identity without old child authority.
+outcomes retain their original result and unknown effects for the Mac process lifetime.
+Duplicate commands retain their first result without another native call. An executor
+restart preserves agent output and its receipts but creates a fresh identity without
+old child or command authority.
 
 A committed controlled exit returns zero. The LaunchAgent keeps successful intentional exits stopped. The operator must
 check process evidence before service removal. An old receipt cannot authorize
@@ -452,8 +450,8 @@ Domain writes still require the original assigned child's authority. Native auth
 
 Mac and VPS packages must use the current protocol before replay.
 The Mac retains its native children during app restarts and short link outages,
-and reconnects through inventory, reconciliation, replay, and readiness. After a
-VPS restart, inventory instead causes each old child to be stopped before fresh work.
+and reconnects through one command-and-child ask, readiness, and outbox draining.
+After a VPS restart, that ask causes each old child to be stopped before fresh work.
 There is no fallback transport. Lost replies leave native effects unconfirmed rather than repeating them.
 
 Connection diagnostics omit credentials, addresses, paths, exception messages, and remote payloads.

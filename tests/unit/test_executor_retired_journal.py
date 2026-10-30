@@ -17,13 +17,14 @@ from planner.conversation.model_resolution.contracts import (
 )
 from planner.core.clock import Clock
 from planner.core.contracts import OWNER_PRINCIPAL
-from planner.core.errors import PlannerError
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     ChildCommand,
     ChildOperation,
+    ControlMessageWriter,
     EnvelopeKind,
     ExecutorIdentity,
+    ReceiptDisposition,
 )
 from planner.executor.journal import FilesystemSpool
 from planner.executor.mac import as_object
@@ -63,7 +64,7 @@ def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> Exec
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
     result = ExecutorEndpoint(path, cast(Clock, SimpleNamespace()))
     result.identity = identity
-    result.writer = cast(asyncio.StreamWriter, Writer())
+    result.writer = cast(ControlMessageWriter, Writer())
     result.ready = True
     result.store.begin_connection(identity, 1)
     result.store.mark_ready(identity, 2)
@@ -71,7 +72,7 @@ def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> Exec
 
 
 @pytest.mark.parametrize("bad_case", range(4))
-def test_retired_delayed_start_refusal_journal_is_accepted_with_no_live_child_authority(
+def test_retired_delayed_start_refuses_without_live_child_authority(
     tmp_db: Connection,
     native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
     bad_case: int,
@@ -96,29 +97,21 @@ def test_retired_delayed_start_refusal_journal_is_accepted_with_no_live_child_au
         assert (await registry.execute_command(stop)).disposition is CommandDisposition.succeeded
         (stopped,) = spool.pending()
         spool.acknowledge(await remote.accept_envelope(stopped, identity))
-        registry.confirm_command(stop.command_id)
         remote.store.close_child(start.child, 4)
         outcome = await registry.execute_command(start)
         assert outcome.disposition is CommandDisposition.refused
         assert native.starts == 0
-        (envelope,) = registry.spool.pending()
-        receipt = await remote.accept_envelope(envelope, identity)
-        registry.spool.acknowledge(receipt)
         assert registry.spool.pending() == ()
-        reconciliation = remote.store.reconcile(registry.inventory(identity), 5)
-        assert reconciliation.acknowledged_command_ids == (start.command_id,)
-        for command_id in reconciliation.acknowledged_command_ids:
-            registry.confirm_command(command_id)
-        assert registry.inventory(identity).retained_command_outcomes == ()
-        # A closed identity only settles a conclusive no-effect refusal. It grants
-        # neither a native event, CLI write, uncertain outcome nor applied answer.
+        assert registry.ask((start.command_id,))[0].outcome == outcome
+        assert await registry.execute_command(start) == outcome
+        # Its direct refusal grants no authority to publish fresh child output.
         bad_payloads = [
             (
-                EnvelopeKind.command_outcome,
+                EnvelopeKind.child_stopped,
                 replace(outcome, command_id="unknown", disposition=CommandDisposition.uncertain),
             ),
             (
-                EnvelopeKind.command_outcome,
+                EnvelopeKind.child_stopped,
                 replace(outcome, command_id="answer", result={"answer_application": {}}),
             ),
             (EnvelopeKind.cli_write, CliWrite("ticket.propose", {}, start.child, None)),
@@ -136,7 +129,8 @@ def test_retired_delayed_start_refusal_journal_is_accepted_with_no_live_child_au
         row = registry.spool.mint_envelope(
             conversation_id=start.child.conversation_id, kind=kind, payload=as_object(payload)
         )
-        with pytest.raises(PlannerError, match="no VPS assignment"):
-            await remote.accept_envelope(row, identity)
+        receipt = await remote.accept_envelope(row, identity)
+        assert receipt.disposition is ReceiptDisposition.refused
+        assert remote.store.child_assignment(start.child) is None
 
     asyncio.run(run())

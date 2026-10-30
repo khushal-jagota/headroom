@@ -12,11 +12,11 @@ from planner.executor.configuration import OUTBOX_BUSY_TIMEOUT_MS, SPOOL_FORMAT_
 from planner.executor.files import fsync_directory, fsync_file
 
 DATABASE_NAME = "outbox.sqlite3"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SCHEMA = """
 CREATE TABLE outbox_metadata (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    format INTEGER NOT NULL CHECK(format = 2),
+    format INTEGER NOT NULL CHECK(format = 3),
     sender_id TEXT NOT NULL
 );
 CREATE TABLE conversations (
@@ -64,7 +64,9 @@ def initialize_database(connection: sqlite3.Connection, sender_id: str) -> None:
     # DDL and identity publish together. A partial empty database never means a new sender.
     connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA)
     try:
-        connection.execute("INSERT INTO outbox_metadata VALUES (1, ?, ?)", (2, sender_id))
+        connection.execute(
+            "INSERT INTO outbox_metadata VALUES (1, ?, ?)", (SPOOL_FORMAT_VERSION, sender_id)
+        )
         connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         connection.commit()
     except BaseException:

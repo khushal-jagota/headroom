@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter
 
+from planner.executor.configuration import SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,
@@ -23,7 +24,7 @@ from planner.executor.contracts import (
     QueuedEnvelope,
     ReceiptDisposition,
 )
-from planner.executor.files import fsync_directory, snapshot_file
+from planner.executor.files import fsync_directory, snapshot_file, snapshot_ticket
 from planner.executor.journal import FilesystemSpool, envelope_payload_digest
 from planner.executor.outbox_storage import DATABASE_NAME
 from planner.executor.preflight import check_spool_compatibility
@@ -182,7 +183,7 @@ os._exit(0)
     assert (root / "spool" / (DATABASE_NAME + "-journal")).stat().st_size > 0
     before = contents(root)
     with pytest.raises(ValueError, match="recovery required"):
-        check_spool_compatibility(root, 2)
+        check_spool_compatibility(root, SPOOL_FORMAT_VERSION)
     assert contents(root) == before
     spool = FilesystemSpool(root / "spool")
     assert spool.pending() == (row,)
@@ -422,7 +423,7 @@ def test_equal_event_bytes_share_inodes_across_restart_and_pinned_cleanup(tmp_pa
     spool.close()
 
     before = contents(tmp_path / "spool")
-    check_spool_compatibility(tmp_path / "spool", 2)
+    check_spool_compatibility(tmp_path / "spool", SPOOL_FORMAT_VERSION)
     assert contents(tmp_path / "spool") == before
     spool = FilesystemSpool(tmp_path / "spool")
     artifact.write_bytes(original)
@@ -649,13 +650,14 @@ def test_failed_ticket_capture_does_not_advance_comparison_state(
         spool.close()
 
 
-def test_format_one_remains_untouched_and_unsupported(tmp_path: Path) -> None:
+@pytest.mark.parametrize("old_format", [1, 2])
+def test_old_formats_remain_untouched_and_unsupported(tmp_path: Path, old_format: int) -> None:
     root = tmp_path / "spool"
     root.mkdir()
-    (root / "metadata.json").write_text('{"format":1,"sender_id":"old"}')
+    (root / "metadata.json").write_text(json.dumps({"format": old_format, "sender_id": "old"}))
     before = contents(tmp_path)
     with pytest.raises(ValueError, match="incompatible spool"):
-        check_spool_compatibility(tmp_path, 2)
+        check_spool_compatibility(tmp_path, SPOOL_FORMAT_VERSION)
     assert contents(tmp_path) == before
 
 
@@ -674,7 +676,7 @@ def test_capture_recompares_if_an_envelope_commits_during_file_inspection(
     child = ChildReference("incarnation", "child", "c_one")
     payload = {"child": TypeAdapter(ChildReference).dump_python(child, mode="json")}
     spool = FilesystemSpool(paths.spool)
-    original = journal.snapshot_ticket
+    original = snapshot_ticket
     interleaved = False
 
     def capture(*args: object, **kwargs: object) -> tuple[FileSnapshot, ...]:
