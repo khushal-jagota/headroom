@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, Protocol, TypedDict
 
 if TYPE_CHECKING:
+    from planner.conversation.events import ConversationEventPayload
     from planner.conversation.model_resolution.contracts import SelectionKind
 
 from planner.conversation.message_content import MessageContent
@@ -641,6 +642,12 @@ class NativeMessageOperation:
     sender_id: str
     submission_id: str
     composed_confirmed: bool = False
+    in_commit: (
+        Callable[
+            [sqlite3.Connection, str, ConversationEventPayload, NativeMessageAdmission | None], None
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -733,7 +740,6 @@ class ConversationSystem(Protocol):
         counts as idle; callers serialize its association when creating or unlinking it.
         """
         ...
-
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation named by the request's conversation id.

@@ -238,11 +238,12 @@ def create_app(
         )
         if os.environ.get("PLAN_EXECUTOR_MODE") == "remote":
             from planner.executor.routing import LocaleBackendChildFactory
-            from planner.executor.vps import ExecutorEndpoint
+            from planner.executor.vps_runs import MacRuns
+            from planner.executor.vps_transport import VpsExecutor
 
-            executor_endpoint = ExecutorEndpoint(config.db_path, clock)
+            executor_endpoint = VpsExecutor(config.db_path, clock)
             backend_factories = {
-                key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.factory)
+                key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
                 for key, local in backend_factories.items()
             }
         app.state.executor_endpoint = executor_endpoint
@@ -257,15 +258,9 @@ def create_app(
         ) as conversation:
             audit_conn = conn_factory()
             try:
-                audit_conn.execute(
-                    "UPDATE executor_connections SET connection_state='disconnected',lost_at_ms=? "
-                    "WHERE active=1",
-                    (int(_wall_time() * 1000),),
-                )
-                audit_conn.execute(
-                    "UPDATE executor_asks SET reachability='uncertain' "
-                    "WHERE reachability='reachable'"
-                )
+                from planner.executor.vps_runs import MacRuns
+
+                MacRuns.interrupt_after_restart(audit_conn, int(_wall_time() * 1000))
                 audit_conn.commit()
                 tickets_data.audit_ticket_registry_integrity(audit_conn)
                 reconcile_managed_skill_versions(audit_conn)
@@ -281,9 +276,8 @@ def create_app(
             if executor_endpoint is not None:
                 from dataclasses import replace
 
-                conversation = replace(conversation, executor_endpoint=executor_endpoint)
-                executor_endpoint.runtime = conversation
-                executor_endpoint.app = app
+                conversation = replace(conversation, executor_endpoint=executor_endpoint.runs)
+                executor_endpoint.configure(conversation.system, app)
             from planner.conversation.model_resolution.observer import ProductionCatalogObserver
             from planner.tickets.contracts import TicketLocale
 
@@ -293,7 +287,7 @@ def create_app(
                         destination=TicketLocale.vps,
                         panels_server_url=f"http://{HOST}:{config.port}",
                     ),
-                    endpoint=executor_endpoint,
+                    endpoint=None if executor_endpoint is None else executor_endpoint.catalog,
                 )
             app.state.conversation = conversation
             await asyncio.to_thread(video_uploads.recover_and_cleanup)

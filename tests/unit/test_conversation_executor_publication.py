@@ -33,7 +33,7 @@ from planner.executor.protocol import (
     encode_value,
     envelope_payload_digest,
 )
-from planner.executor.store import ExecutorStore
+from planner.executor.vps_inbox import InboxStore
 
 
 def _envelope(sequence: int, kind: EnvelopeKind, value: object) -> QueuedEnvelope:
@@ -86,12 +86,12 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
             token = state.running_turn.token
             child = ChildReference("native-process", "native-child", "c")
             state.executor_child_reference = child
-            store = ExecutorStore(str(harness.db_path))
+            store = InboxStore(str(harness.db_path))
             identity = ExecutorIdentity(
                 PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native-process", 1
             )
-            store.begin_connection(identity, 100)
-            store.register_child(child, "chief", "chief", 100)
+            store.runs.begin_connection(identity, 100)
+            store.runs.register_child(child, "chief", "chief", 100)
             ask = AskReference(child, token, "reused-provider-id", kind)
             questions = (UserInputQuestion("q", "Scope", "Choose", (), False, True),)
             arguments = (
@@ -123,9 +123,11 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
                     conn = connection
                     result = writer(conn, envelope)
                     if kind is AskKind.permission:
-                        store.publish_ask_in_transaction(conn, ask, ("allow",), 101)
+                        store.runs.publish_ask_in_transaction(conn, ask, ("allow",), 101)
                     else:
-                        store.publish_user_input_request_in_transaction(conn, ask, questions, 101)
+                        store.runs.publish_user_input_request_in_transaction(
+                            conn, ask, questions, 101
+                        )
                     return cast(JsonObject, result)
 
                 return store.accept(row, effect, 101, identity=identity, **publication)
@@ -167,22 +169,22 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
                 if v.conversation_id == "c"
             )
             assert latest.awaiting_answer
-            context = store.turn_context("c")
+            context = store.runs.turn_context("c")
             assert context is not None
             assert ask.ask_id in (
                 context.pending_permission_ask_ids
                 if kind is AskKind.permission
                 else context.pending_user_input_ids
             )
-            store.mark_lost(identity, 102)
+            store.runs.mark_lost(identity, 102)
             choice = (
-                store.choose_answer(ask, "allow", 1, 103)
+                store.runs.choose_answer(ask, "allow", 1, 103)
                 if kind is AskKind.permission
-                else store.choose_user_input_answer(
+                else store.runs.choose_user_input_answer(
                     ask, (UserInputAnswer("q", ("answer",)),), 1, 103
                 )
             )
-            evidence = store.ask_evidence(ask)
+            evidence = store.runs.ask_evidence(ask)
             assert evidence is not None and evidence.applied_at_mac_ms is None
             application = AnswerApplication(choice.answer_id, ask, 104)
             applied_envelope = _envelope(2, EnvelopeKind.answer_application, application)
@@ -194,19 +196,19 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
             identity = ExecutorIdentity(
                 PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native-process", 2
             )
-            store.begin_connection(identity, 104)
+            store.runs.begin_connection(identity, 104)
             applied = await harness.system.receive_remote_answer_application(
                 application,
                 applied_envelope,
                 accept_application,
-                store.record_application_in_transaction,
+                store.runs.record_application_in_transaction,
             )
             assert (
                 await harness.system.receive_remote_answer_application(
                     application,
                     applied_envelope,
                     accept_application,
-                    store.record_application_in_transaction,
+                    store.runs.record_application_in_transaction,
                 )
                 == applied
             )
@@ -244,7 +246,7 @@ def test_restart_closes_native_request_before_initial_signal_snapshot(
 
     from planner.conversation.contracts import SignalSnapshot
     from planner.executor.protocol import ChildCommand, CommandOutcome
-    from planner.executor.remote import RemoteBackendChild
+    from planner.executor.vps_remote_child import MacRemoteChild
 
     path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
 
@@ -261,9 +263,7 @@ def test_restart_closes_native_request_before_initial_signal_snapshot(
         async def no_native_dispatch(command: ChildCommand) -> CommandOutcome:
             raise AssertionError("VPS restart must not dispatch native work")
 
-        state.child = RemoteBackendChild(
-            child, no_native_dispatch, lambda start: canonical_snapshot()
-        )
+        state.child = MacRemoteChild(child, no_native_dispatch, lambda start: canonical_snapshot())
         metadata = source.system._executor_turn_metadata(state, state.running_turn)
         assert metadata is not None
         await source.store.save_executor_turn("c", metadata)
@@ -341,7 +341,7 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
         CommandOutcome,
         ReceiptDisposition,
     )
-    from planner.executor.remote import RemoteBackendChild
+    from planner.executor.vps_remote_child import MacRemoteChild
 
     async def exercise() -> None:
         path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
@@ -354,12 +354,12 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
             assert state.running_turn is not None
             reference = ChildReference("native-process", "cleanup-child", "c")
             token = state.running_turn.token
-            native = ExecutorStore(str(path))
+            native = InboxStore(str(path))
             identity = ExecutorIdentity(
                 PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
             )
-            native.begin_connection(identity, 1)
-            native.register_child(reference, "chief", "chief", 1)
+            native.runs.begin_connection(identity, 1)
+            native.runs.register_child(reference, "chief", "chief", 1)
 
             stops: list[str] = []
 
@@ -370,9 +370,7 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
                     command.command_id, reference, CommandDisposition.succeeded, {}
                 )
 
-            state.child = RemoteBackendChild(
-                reference, stop_result, lambda start: canonical_snapshot()
-            )
+            state.child = MacRemoteChild(reference, stop_result, lambda start: canonical_snapshot())
             state.executor_child_reference = reference
             metadata = harness.system._executor_turn_metadata(state, state.running_turn)
             assert metadata is not None
@@ -384,7 +382,7 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
                 if options.get("retired_child") is not None:
                     # The core already read the clean marker. The next canonical
                     # receipt wins before the atomic closure writer starts.
-                    assert not native.cleanup_evidence_uncertain(reference)
+                    assert not native.runs.cleanup_evidence_uncertain(reference)
                     event = BackendEvent(reference, BackendEventMethod.turn_ended, token, {})
                     queued = _envelope(1, EnvelopeKind.backend_event, event)
 
@@ -404,15 +402,17 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
             assert not state.lock.locked()
             assert state.child is not None and state.child_is_quarantined
             assert state.executor_child_reference == reference
-            assert native.child_assignment(reference) is not None
-            assert native.cleanup_evidence_uncertain(reference)
+            assert native.runs.child_assignment(reference) is not None
+            assert native.runs.cleanup_evidence_uncertain(reference)
             assert harness.store.recording_failures("c") == ()
             await asyncio.wait_for(harness.system.kill("c"), 2)
             assert state.initial_shutdown_task is not None
             await asyncio.wait_for(asyncio.shield(state.initial_shutdown_task), 2)
             assert len(stops) == 2 and len(set(stops)) == 2
-            assert state.child_is_quarantined and native.child_assignment(reference) is not None
-            assert ExecutorStore(str(path)).cleanup_evidence_uncertain(reference)
+            assert (
+                state.child_is_quarantined and native.runs.child_assignment(reference) is not None
+            )
+            assert InboxStore(str(path)).runs.cleanup_evidence_uncertain(reference)
         finally:
             # A failed cleanup stays quarantined. Teardown only releases this
             # test process and must not schedule a second retirement attempt.

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from planner.executor.vps_runs import MacRuns
+
 import sqlite3
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, closing
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any
+from typing import IO
 
 from planner import database_modules
 from planner.conversation.backend_state import BackendStateStore
@@ -174,7 +179,7 @@ class ConversationRuntime:
     message_files: ConversationMessageFiles
     database_path: str
     sse_heartbeat_ms: int
-    executor_endpoint: Any = None
+    executor_endpoint: MacRuns | None = None
     backend_state: BackendStateStore | None = None
     # Absent when this process has no backend that can start a sign-in. The routes say
     # so rather than pretending the affordance exists.
@@ -231,6 +236,7 @@ def build_conversation_runtime(
     )
 
     backend_state = BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
+
     async def codex_app_server_argv() -> tuple[str, ...] | None:
         """How to run a codex app-server here, read when a sign-in starts, not at boot.
 

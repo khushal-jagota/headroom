@@ -29,7 +29,7 @@ from planner.executor.protocol import (
     QueuedEnvelope,
     encode_value,
 )
-from planner.executor.store import ExecutorStore
+from planner.executor.vps_inbox import InboxStore
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale, WorkerStepClaim
@@ -81,12 +81,12 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
     spool: MacOutbox | None = None
     try:
         database_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-        store = ExecutorStore(database_path)
+        store = InboxStore(database_path)
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "mac_process", 1
         )
-        store.begin_connection(identity, 1000)
-        store.mark_ready(identity, 1001)
+        store.runs.begin_connection(identity, 1000)
+        store.runs.mark_ready(identity, 1001)
         ticket = data.create_ticket(
             tmp_db,
             title="Mac collaborative proposal",
@@ -122,7 +122,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         assert len(openers_before) == 1 and openers_before[0][1] == user_stage
         assert _wakes(tmp_db, ticket.id) == []
         child = ChildReference(identity.executor_incarnation, "assigned_child", "c_mac_worker")
-        store.register_child(child, worker.kind.value, worker.id, 1002)
+        store.runs.register_child(child, worker.kind.value, worker.id, 1002)
         operation, arguments = cli_mutation(
             "POST",
             f"/api/tickets/{ticket.id}/propose",
@@ -146,7 +146,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         def writer(connection: Connection, envelope: QueuedEnvelope) -> JsonObject:
             nonlocal inject_cut
             writer_calls.append(envelope.submission_id)
-            assignment = store.child_assignment(write.child)
+            assignment = store.runs.child_assignment(write.child)
             assert assignment is not None
             principal = Principal(PrincipalKind(assignment[0]), assignment[1])
             result = write_ticket_mutation(connection, write, principal, fake_clock)
@@ -217,9 +217,9 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         reconnected = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, identity.executor_incarnation, 2
         )
-        store.mark_lost(identity, 1005)
-        store.begin_connection(reconnected, 2000)
-        store.mark_ready(reconnected, 2001)
+        store.runs.mark_lost(identity, 1005)
+        store.runs.begin_connection(reconnected, 2000)
+        store.runs.mark_ready(reconnected, 2001)
         for _ in range(2):
             assert store.accept(envelope, writer, 2002, identity=reconnected) == receipt
             assert data.read_ticket(tmp_db, ticket.id) == next_claim

@@ -38,8 +38,8 @@ from planner.executor.protocol import (
     WireMessageKind,
     decode_command_arguments,
 )
-from planner.executor.remote import RemoteBackendChildFactory
-from planner.executor.vps import ExecutorEndpoint
+from planner.executor.vps_remote_child import MacRemoteChildFactory
+from planner.executor.vps_transport import VpsExecutor
 
 
 @pytest.mark.parametrize("boundary", ["prompt_frame"])
@@ -50,8 +50,8 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
 
     async def run() -> None:
-        endpoint = ExecutorEndpoint(db_path, RealClock())
-        endpoint.ready = True
+        endpoint = VpsExecutor(db_path, RealClock())
+        endpoint.runs.ready = True
         from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
         from planner.execution_identity import ExecutorIdentity
         from planner.executor.protocol import (
@@ -65,12 +65,12 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "original-incarnation", 1
         )
-        endpoint.link = message_link(
+        endpoint.runs.link = message_link(
             SimpleNamespace(close=lambda: None, send=None, is_closing=lambda: False), identity
         )
-        endpoint.store.begin_connection(identity, 1)
+        endpoint.inbox.store.runs.begin_connection(identity, 1)
         reference = ChildReference("original-incarnation", "original-child", "c_cancel")
-        endpoint.store.register_child(reference, "ticket", "test-ticket", 1)
+        endpoint.inbox.store.runs.register_child(reference, "ticket", "test-ticket", 1)
         entered, release, stopped, stopped_again = (
             asyncio.Event(),
             asyncio.Event(),
@@ -80,9 +80,9 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
         emitted: list[ChildCommand] = []
 
         async def frame(message: WireMessage) -> None:
-            assert endpoint.link is not None
+            assert endpoint.runs.link is not None
             if message.kind is WireMessageKind.withdraw:
-                endpoint.link._pending[message.request_id].set_result(
+                endpoint.runs.link._pending[message.request_id].set_result(
                     WireMessage(
                         WireMessageKind.withdraw_result, message.request_id, {"withdrawn": []}
                     )
@@ -99,18 +99,18 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                 if len([c for c in emitted if c.operation is ChildOperation.stop]) == 2:
                     stopped_again.set()
             elif command.operation is ChildOperation.start:
-                await endpoint._resolve_command(
+                await endpoint.runs._resolve_command(
                     CommandOutcome(
                         command.command_id, command.child, CommandDisposition.succeeded, {}
                     )
                 )
 
-        monkeypatch.setattr(endpoint.link._writer, "send", frame)
-        factory = RemoteBackendChildFactory(
+        monkeypatch.setattr(endpoint.runs.link._writer, "send", frame)
+        factory = MacRemoteChildFactory(
             lambda start, sink: reference,
-            endpoint.send_command,
+            endpoint.runs.send_command,
             lambda start: canonical_snapshot(),
-            endpoint.cancel_initial_delivery,
+            endpoint.runs.cancel_initial_delivery,
         )
         system = SqliteProcessConversationSystem(
             store=ConversationStore(db_path),
@@ -149,7 +149,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
             assert state.reserved_turn is None and state.running_turn is None
             assert state.child_is_quarantined and state.child is not None
             assert state.executor_child_reference == reference
-            assert endpoint.store.child_assignment(reference) is not None
+            assert endpoint.inbox.store.runs.child_assignment(reference) is not None
             release.set()
             for command in emitted:
                 if command.operation is ChildOperation.write_prompt:
@@ -175,7 +175,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
             # A late native result is evidence only; local reservation never reopens.
             prompt = next((c for c in emitted if c.operation is ChildOperation.write_prompt), None)
             if prompt is not None:
-                await endpoint._resolve_command(
+                await endpoint.runs._resolve_command(
                     CommandOutcome(prompt.command_id, reference, CommandDisposition.succeeded, {})
                 )
                 assert state.running_turn is None and state.reserved_turn is None
@@ -201,7 +201,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                     final_stop.command_id, reference, CommandDisposition.succeeded, {}
                 )
                 # A direct result alone cannot prove the original FIFO receipt.
-                await endpoint._resolve_command(outcome)
+                await endpoint.runs._resolve_command(outcome)
                 assert recovered.initial_shutdown_task is not None
                 assert not recovered.initial_shutdown_task.done()
                 payload = cast(JsonObject, encode_value(outcome))
@@ -215,7 +215,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                     submission_id=submission,
                     kind=EnvelopeKind.child_stopped,
                 )
-                await endpoint.accept_envelope(
+                await endpoint.inbox.accept(
                     QueuedEnvelope(
                         "native",
                         "c_cancel",
@@ -230,7 +230,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                 assert recovered.initial_shutdown_task is not None
                 await asyncio.wait_for(recovered.initial_shutdown_task, 2)
                 assert not recovered.child_is_quarantined
-                assert endpoint.store.child_assignment(reference) is None
+                assert endpoint.inbox.store.runs.child_assignment(reference) is None
                 metadata = await restored._store.read_executor_turn("c_cancel")
                 assert metadata is not None
                 runtime = json.loads(metadata[2])
@@ -268,7 +268,7 @@ def test_preparation_kill_settles_sender_and_old_continuation_cannot_run_after_s
                 {"composed_content_delivered": True},
             )
 
-        factory = RemoteBackendChildFactory(
+        factory = MacRemoteChildFactory(
             lambda start, sink: ChildReference("incarnation", "successor", "c_preparation"),
             send,
             lambda start: canonical_snapshot(),
@@ -400,10 +400,10 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
     )
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    endpoint = ExecutorEndpoint(db_path, RealClock())
-    endpoint.store.begin_connection(IDENTITY, 1)
+    endpoint = VpsExecutor(db_path, RealClock())
+    endpoint.inbox.store.runs.begin_connection(IDENTITY, 1)
     reference = ChildReference(IDENTITY.executor_incarnation, "closed-child", "closed-conversation")
-    endpoint.store.register_child(reference, "ticket", "closed-ticket", 1)
+    endpoint.inbox.store.runs.register_child(reference, "ticket", "closed-ticket", 1)
     command = ChildCommand(
         "original-stop-command",
         reference,
@@ -427,7 +427,7 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
         ),
     )
     tmp_db.commit()
-    endpoint.store.close_child(reference, 2)
+    endpoint.inbox.store.runs.close_child(reference, 2)
 
     def envelope(outcome: CommandOutcome, *, sequence: int) -> QueuedEnvelope:
         payload = cast(JsonObject, encode_value(outcome))
@@ -453,18 +453,18 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
 
     async def run() -> None:
         actual = CommandOutcome(command.command_id, reference, CommandDisposition.succeeded, {})
-        receipt = await endpoint.accept_envelope(envelope(actual, sequence=1), IDENTITY)
+        receipt = await endpoint.inbox.accept(envelope(actual, sequence=1), IDENTITY)
         assert receipt.disposition is ReceiptDisposition.accepted
         assert tmp_db.execute("SELECT count(*) FROM executor_command_outcomes").fetchone()[0] == 1
-        assert endpoint.store.child_assignment(reference) is None
+        assert endpoint.inbox.store.runs.child_assignment(reference) is None
         with pytest.raises(PlannerError, match="assignment"):
-            endpoint._assignment(reference)
-        refused = await endpoint.accept_envelope(
+            endpoint.runs.authority(reference)
+        refused = await endpoint.inbox.accept(
             envelope(replace(actual, command_id="invented-command"), sequence=2), IDENTITY
         )
         assert refused.disposition is ReceiptDisposition.refused
         # The first native result cannot be rewritten, even through historical admission.
-        conflict = await endpoint.accept_envelope(
+        conflict = await endpoint.inbox.accept(
             envelope(replace(actual, disposition=CommandDisposition.uncertain), sequence=3),
             IDENTITY,
         )
@@ -486,14 +486,15 @@ def test_retirement_rolls_back_metadata_assignment_and_asks_together(
     from planner.execution_identity import AskReference
     from planner.executor.protocol import AskReachability, encode_value
     from planner.executor.store import ExecutorStore
+    from planner.executor.vps_inbox import InboxStore
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     reference = ChildReference("retired-incarnation", "retired-child", "c_atomic_retirement")
     turn = TurnToken(reference.conversation_id, 1)
-    executors = ExecutorStore(db_path)
-    executors.register_child(reference, "ticket", "retirement-ticket", 1)
+    executors = InboxStore(db_path)
+    executors.runs.register_child(reference, "ticket", "retirement-ticket", 1)
     ask = AskReference(reference, turn, "retirement-ask", AskKind.permission)
-    executors.publish_ask(ask, ("allow", "deny"), 1)
+    executors.runs.publish_ask(ask, ("allow", "deny"), 1)
     store = ConversationStore(db_path)
     metadata = (
         json.dumps(encode_value(reference)),
@@ -531,15 +532,15 @@ def test_retirement_rolls_back_metadata_assignment_and_asks_together(
                     reference.conversation_id, (), executor_turn=retired, retired_child=reference
                 )
         assert await store.read_executor_turn(reference.conversation_id) == metadata
-        assert executors.child_assignment(reference) == ("ticket", "retirement-ticket")
-        evidence = executors.ask_evidence(ask)
+        assert executors.runs.child_assignment(reference) == ("ticket", "retirement-ticket")
+        evidence = executors.runs.ask_evidence(ask)
         assert evidence is not None and evidence.reachability is AskReachability.uncertain
         await store.transition_lifecycle(
             reference.conversation_id, (), executor_turn=retired, retired_child=reference
         )
         assert await store.read_executor_turn(reference.conversation_id) == retired
-        assert executors.child_assignment(reference) is None
-        evidence = executors.ask_evidence(ask)
+        assert executors.runs.child_assignment(reference) is None
+        evidence = executors.runs.ask_evidence(ask)
         assert evidence is not None and evidence.reachability is AskReachability.child_gone
         await store.finish_writes()
 

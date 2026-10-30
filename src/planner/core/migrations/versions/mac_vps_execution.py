@@ -21,7 +21,7 @@ STATEMENTS = (
     """CREATE TABLE mac_inbox_positions (
         sender_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
         sequence INTEGER NOT NULL CHECK(sequence>0), submission_id TEXT NOT NULL,
-        disposition TEXT NOT NULL CHECK(disposition IN ('accepted','refused','uncertain')),
+        disposition TEXT NOT NULL CHECK(disposition IN ('dispatching','accepted','refused','uncertain')),
         result_json TEXT NOT NULL,
         PRIMARY KEY(sender_id,conversation_id))""",
     """CREATE TABLE executor_child_assignments (
@@ -44,12 +44,6 @@ STATEMENTS = (
            OR (answer_id IS NOT NULL AND accepted_at_vps_ms IS NOT NULL
                AND ((ask_kind='permission' AND option_id IS NOT NULL AND user_input_answers_json IS NULL)
                     OR (ask_kind='user_input' AND option_id IS NULL AND user_input_answers_json IS NOT NULL)))))""",
-    """CREATE TABLE executor_native_messages (
-        sender_id TEXT NOT NULL, submission_id TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
-        principal_json TEXT NOT NULL, recipient_json TEXT NOT NULL, source_turn_json TEXT,
-        state TEXT NOT NULL CHECK(state IN ('bound','dispatching','completed')),
-        result_json TEXT, created_at_ms INTEGER NOT NULL,
-        PRIMARY KEY(sender_id,submission_id))""",
     """CREATE TABLE executor_core_turns (
         conversation_id TEXT PRIMARY KEY, child_json TEXT NOT NULL,
         turn_json TEXT NOT NULL, runtime_json TEXT NOT NULL)""",
@@ -57,7 +51,6 @@ STATEMENTS = (
         executor_incarnation TEXT NOT NULL, command_id TEXT NOT NULL,
         outcome_json TEXT NOT NULL, output_confirmed INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(executor_incarnation,command_id))""",
-
 )
 
 

@@ -1440,7 +1440,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             ConversationAccess.full,
             workspace_path_policy=policy,
         )
-        from planner.executor.remote import RemoteBackendChild
+        from planner.executor.vps_remote_child import MacRemoteChild
 
         forwarded: list[ChildCommand] = []
 
@@ -1450,7 +1450,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
 
         # Exercise VPS encoding and Mac hydration with distinct home directories.
         monkeypatch.setattr(Path, "home", staticmethod(lambda: vps_home))
-        remote = RemoteBackendChild(reference, send, lambda start: canonical_snapshot())
+        remote = MacRemoteChild(reference, send, lambda start: canonical_snapshot())
         if backend is ConversationBackendKey.hermes:
             await remote.start(resolved, vendor_session_cursor="retained-native-session")
         else:
@@ -2094,7 +2094,7 @@ def test_native_absolute_workspace_refuses_missing_directory_or_file_before_chil
     tmp_path: Path, is_file: bool
 ) -> None:
     async def run() -> None:
-        from planner.executor.remote import RemoteBackendChild
+        from planner.executor.vps_remote_child import MacRemoteChild
 
         workspace = tmp_path / "native-checkout"
         if is_file:
@@ -2134,7 +2134,7 @@ def test_native_absolute_workspace_refuses_missing_directory_or_file_before_chil
             return await registry.run(command)
 
         with pytest.raises(BackendSpawnFailed, match="Mac workspace unavailable"):
-            await RemoteBackendChild(reference, send, lambda _: canonical_snapshot()).start(
+            await MacRemoteChild(reference, send, lambda _: canonical_snapshot()).start(
                 resolved, vendor_session_cursor=None
             )
         assert isinstance(forwarded[0].arguments, StartRun)

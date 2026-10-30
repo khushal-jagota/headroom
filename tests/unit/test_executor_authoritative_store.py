@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Barrier
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from tests.support.executor_control import MessageReader
 
@@ -49,7 +49,7 @@ from planner.executor.protocol import (
     WireMessageKind,
     envelope_payload_digest,
 )
-from planner.executor.store import ExecutorStore
+from planner.executor.vps_inbox import InboxStore
 
 IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
 CHILD = ChildReference("incarnation", "child", "conversation")
@@ -57,7 +57,7 @@ ASK = AskReference(CHILD, TurnToken("conversation", 1), "ask", AskKind.permissio
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> ExecutorStore:
+def store(tmp_path: Path) -> InboxStore:
     path = str(tmp_path / "vps.sqlite")
     connection = connect(path)
     try:
@@ -66,9 +66,9 @@ def store(tmp_path: Path) -> ExecutorStore:
         connection.execute("CREATE TABLE effects (id TEXT PRIMARY KEY)")
     finally:
         connection.close()
-    result = ExecutorStore(path)
-    result.begin_connection(IDENTITY, 1000)
-    persist_pending_turn(result, ASK)
+    result = InboxStore(path)
+    result.runs.begin_connection(IDENTITY, 1000)
+    persist_pending_turn(result.runs, ASK)
     return result
 
 
@@ -100,13 +100,13 @@ def inventory(
     return identity, children
 
 
-def ready_ask(store: ExecutorStore) -> None:
-    store.publish_ask(ASK, ("allow", "deny"), 1000)
-    store.observe_children(*inventory(ChildInventory(CHILD, ASK.turn, (ASK,), ())), 1001)
-    store.mark_ready(IDENTITY, 1002)
+def ready_ask(store: InboxStore) -> None:
+    store.runs.publish_ask(ASK, ("allow", "deny"), 1000)
+    store.runs.observe_children(*inventory(ChildInventory(CHILD, ASK.turn, (ASK,), ())), 1001)
+    store.runs.mark_ready(IDENTITY, 1002)
 
 
-def test_effect_and_first_result_survive_lost_ack_and_changed_stage(store: ExecutorStore) -> None:
+def test_effect_and_first_result_survive_lost_ack_and_changed_stage(store: InboxStore) -> None:
     first = store.accept(envelope(), effect, 1100, identity=IDENTITY)
 
     def refuse_now(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
@@ -121,7 +121,7 @@ def test_effect_and_first_result_survive_lost_ack_and_changed_stage(store: Execu
 
 
 def test_permanent_refusal_rolls_back_partial_effect_and_is_original_result(
-    store: ExecutorStore,
+    store: InboxStore,
 ) -> None:
     def refuses(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
         effect(connection, envelope)
@@ -137,7 +137,7 @@ def test_permanent_refusal_rolls_back_partial_effect_and_is_original_result(
         connection.close()
 
 
-def test_transient_storage_failure_has_no_receipt_and_retry_applies(store: ExecutorStore) -> None:
+def test_transient_storage_failure_has_no_receipt_and_retry_applies(store: InboxStore) -> None:
     def fails(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
         effect(connection, envelope)
         raise sqlite3.OperationalError("disk failure")
@@ -148,7 +148,7 @@ def test_transient_storage_failure_has_no_receipt_and_retry_applies(store: Execu
     assert store.accept(envelope(), effect, 1200, identity=IDENTITY).disposition == "accepted"
 
 
-def test_order_gap_does_not_block_another_conversation(store: ExecutorStore) -> None:
+def test_order_gap_does_not_block_another_conversation(store: InboxStore) -> None:
     second = store.accept(envelope(2), effect, 1100, identity=IDENTITY)
     store.accept(envelope(conversation="other"), effect, 1100, identity=IDENTITY)
     stale = store.accept(envelope(), effect, 1100, identity=IDENTITY)
@@ -164,7 +164,7 @@ def test_order_gap_does_not_block_another_conversation(store: ExecutorStore) -> 
         connection.close()
 
 
-def test_digest_binds_kind_and_routing_identity(store: ExecutorStore) -> None:
+def test_digest_binds_kind_and_routing_identity(store: InboxStore) -> None:
     original = envelope()
     # Invalid content is a permanent refused receipt, rather than a poison queue head.
     refused = store.accept(
@@ -181,16 +181,16 @@ def test_digest_binds_kind_and_routing_identity(store: ExecutorStore) -> None:
 
 
 def test_stale_generation_cannot_write_after_replacement_and_old_close_is_harmless(
-    store: ExecutorStore,
+    store: InboxStore,
 ) -> None:
     replacement = replace(IDENTITY, connection_generation=2)
-    store.begin_connection(replacement, 1100)
+    store.runs.begin_connection(replacement, 1100)
     with pytest.raises(PlannerError, match="stale"):
         store.accept(envelope(), effect, 1100, identity=IDENTITY)
-    store.mark_lost(IDENTITY, 1200)
+    store.runs.mark_lost(IDENTITY, 1200)
     store.accept(envelope(), effect, 1200, identity=replacement)
-    store.mark_lost(replacement, 1300)
-    store.mark_lost(replacement, 1400)
+    store.runs.mark_lost(replacement, 1300)
+    store.runs.mark_lost(replacement, 1400)
     connection = connect(store.db_path)
     try:
         assert (
@@ -201,18 +201,18 @@ def test_stale_generation_cannot_write_after_replacement_and_old_close_is_harmle
 
 
 def test_first_answer_after_loss_is_durable_without_current_generation_or_readiness(
-    store: ExecutorStore,
+    store: InboxStore,
 ) -> None:
     ready_ask(store)
-    store.mark_lost(IDENTITY, 1100)
+    store.runs.mark_lost(IDENTITY, 1100)
     with pytest.raises(PlannerError, match="option"):
-        store.choose_answer(ASK, "not-an-option", 999, 1102)
-    answer = store.choose_answer(ASK, "allow", 999, 1103)
+        store.runs.choose_answer(ASK, "not-an-option", 999, 1102)
+    answer = store.runs.choose_answer(ASK, "allow", 999, 1103)
     assert answer.accepted_at_vps_ms == 1103
-    assert store.choose_answer(ASK, "allow", 1, 1110) == answer
-    assert not store.answer_is_deliverable(answer, IDENTITY)
+    assert store.runs.choose_answer(ASK, "allow", 1, 1110) == answer
+    assert not store.runs.answer_is_deliverable(answer, IDENTITY)
     with pytest.raises(PlannerError, match="already"):
-        store.choose_answer(ASK, "deny", 1, 1110)
+        store.runs.choose_answer(ASK, "deny", 1, 1110)
 
 
 @pytest.mark.parametrize(
@@ -230,20 +230,20 @@ def test_first_answer_after_loss_is_durable_without_current_generation_or_readin
     ],
 )
 def test_first_answer_requires_open_assignment_and_exact_persisted_pending_turn(
-    store: ExecutorStore,
+    store: InboxStore,
     closure: str,
 ) -> None:
     ready_ask(store)
     if closure == "assignment":
-        store.close_child(CHILD, 1100)
+        store.runs.close_child(CHILD, 1100)
     elif closure in {"ended", "source_retired", "delivery_uncertain"}:
-        persist_pending_turn(store, ASK, runtime_overrides={closure: True})
+        persist_pending_turn(store.runs, ASK, runtime_overrides={closure: True})
     elif closure == "pending":
-        persist_pending_turn(store, ASK, runtime_overrides={"pending_permission_ask_ids": []})
+        persist_pending_turn(store.runs, ASK, runtime_overrides={"pending_permission_ask_ids": []})
     elif closure == "child":
-        persist_pending_turn(store, replace(ASK, child=replace(CHILD, child_id="replacement")))
+        persist_pending_turn(store.runs, replace(ASK, child=replace(CHILD, child_id="replacement")))
     elif closure == "turn":
-        persist_pending_turn(store, replace(ASK, turn=TurnToken("conversation", 2)))
+        persist_pending_turn(store.runs, replace(ASK, turn=TurnToken("conversation", 2)))
     else:
         connection = connect(store.db_path)
         try:
@@ -254,107 +254,107 @@ def test_first_answer_requires_open_assignment_and_exact_persisted_pending_turn(
         finally:
             connection.close()
     with pytest.raises(PlannerError):
-        store.choose_answer(ASK, "allow", 1, 1200)
-    assert store.recorded_answer(ASK) is None
+        store.runs.choose_answer(ASK, "allow", 1, 1200)
+    assert store.runs.recorded_answer(ASK) is None
 
 
-def test_identical_answer_receipt_survives_closure_and_application(store: ExecutorStore) -> None:
+def test_identical_answer_receipt_survives_closure_and_application(store: InboxStore) -> None:
     ready_ask(store)
-    answer = store.choose_answer(ASK, "allow", 1, 1100)
-    store.close_child(CHILD, 1101)
-    assert not store.answer_is_deliverable(answer, IDENTITY)
-    store.record_application(AnswerApplication(answer.answer_id, ASK, 1102), identity=IDENTITY)
-    assert store.choose_answer(ASK, "allow", 2, 9999) == answer
+    answer = store.runs.choose_answer(ASK, "allow", 1, 1100)
+    store.runs.close_child(CHILD, 1101)
+    assert not store.runs.answer_is_deliverable(answer, IDENTITY)
+    store.runs.record_application(AnswerApplication(answer.answer_id, ASK, 1102), identity=IDENTITY)
+    assert store.runs.choose_answer(ASK, "allow", 2, 9999) == answer
     with pytest.raises(PlannerError, match="already"):
-        store.choose_answer(ASK, "deny", 2, 9999)
-    assert not store.answer_is_deliverable(answer, IDENTITY)
+        store.runs.choose_answer(ASK, "deny", 2, 9999)
+    assert not store.runs.answer_is_deliverable(answer, IDENTITY)
 
 
-def test_concurrent_first_choices_commit_one_original_receipt(store: ExecutorStore) -> None:
+def test_concurrent_first_choices_commit_one_original_receipt(store: InboxStore) -> None:
     ready_ask(store)
-    store.mark_lost(IDENTITY, 1100)
+    store.runs.mark_lost(IDENTITY, 1100)
 
     barrier = Barrier(2)
 
     def choose(option: str) -> object:
         barrier.wait(timeout=2)
         try:
-            return store.choose_answer(ASK, option, 1, 1200)
+            return store.runs.choose_answer(ASK, option, 1, 1200)
         except PlannerError as error:
             return error
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes = tuple(pool.map(choose, ("allow", "deny")))
     assert sum(isinstance(result, PlannerError) for result in outcomes) == 1
-    answer = store.recorded_answer(ASK)
+    answer = store.runs.recorded_answer(ASK)
     assert answer is not None and answer in outcomes
-    assert store.choose_answer(ASK, answer.option_id or "", 1, 9999) == answer
+    assert store.runs.choose_answer(ASK, answer.option_id or "", 1, 9999) == answer
 
 
 @pytest.mark.parametrize("terminal", [AskReachability.child_gone, AskReachability.callback_gone])
 def test_terminal_evidence_survives_loss_reconnect_reconcile_and_late_observation(
-    store: ExecutorStore,
+    store: InboxStore,
     terminal: AskReachability,
 ) -> None:
     ready_ask(store)
-    store.observe_children(
+    store.runs.observe_children(
         *inventory()
         if terminal == AskReachability.child_gone
         else inventory(ChildInventory(CHILD, ASK.turn, (), ())),
         1100,
     )
-    store.mark_lost(IDENTITY, 1101)
+    store.runs.mark_lost(IDENTITY, 1101)
     replacement = replace(IDENTITY, connection_generation=2)
-    store.begin_connection(replacement, 1200)
-    store.observe_children(
+    store.runs.begin_connection(replacement, 1200)
+    store.runs.observe_children(
         *inventory(ChildInventory(CHILD, ASK.turn, (ASK,), ()), identity=replacement), 1201
     )
     connection = connect(store.db_path)
     try:
-        store.observe_callback_in_transaction(connection, ASK, replacement, 1202)
+        store.runs.observe_callback_in_transaction(connection, ASK, replacement, 1202)
     finally:
         connection.close()
-    evidence = store.ask_evidence(ASK)
+    evidence = store.runs.ask_evidence(ASK)
     assert evidence is not None and evidence.reachability == terminal
     with pytest.raises(PlannerError):
-        store.choose_answer(ASK, "allow", 2, 1203)
+        store.runs.choose_answer(ASK, "allow", 2, 1203)
 
 
 def test_old_durable_answer_reconciles_once_and_retains_application(
-    store: ExecutorStore,
+    store: InboxStore,
 ) -> None:
     ready_ask(store)
-    answer = store.choose_answer(ASK, "allow", 1, 1100)
-    store.mark_lost(IDENTITY, 1101)
+    answer = store.runs.choose_answer(ASK, "allow", 1, 1100)
+    store.runs.mark_lost(IDENTITY, 1101)
     replacement = replace(IDENTITY, connection_generation=2)
-    store.begin_connection(replacement, 3600000)
-    store.observe_children(
+    store.runs.begin_connection(replacement, 3600000)
+    store.runs.observe_children(
         *inventory(ChildInventory(CHILD, ASK.turn, (ASK,), ()), identity=replacement), 3600001
     )
-    assert store.unapplied_answers() == (answer,)
-    assert store.ask_evidence(ASK).reachability == AskReachability.reachable  # type: ignore[union-attr]
-    store.record_application(
+    assert store.runs.unapplied_answers() == (answer,)
+    assert store.runs.ask_evidence(ASK).reachability == AskReachability.reachable  # type: ignore[union-attr]
+    store.runs.record_application(
         AnswerApplication(answer.answer_id, ASK, 3600110), identity=replacement
     )
-    store.observe_children(*inventory(identity=replacement), 3600300)
-    assert store.unapplied_answers() == ()
-    evidence = store.ask_evidence(ASK)
+    store.runs.observe_children(*inventory(identity=replacement), 3600300)
+    assert store.runs.unapplied_answers() == ()
+    evidence = store.runs.ask_evidence(ASK)
     assert evidence is not None
     assert evidence.applied_at_mac_ms == 3600110
 
 
-def test_missing_child_and_missing_callback_publish_distinct_evidence(store: ExecutorStore) -> None:
+def test_missing_child_and_missing_callback_publish_distinct_evidence(store: InboxStore) -> None:
     ready_ask(store)
-    store.observe_children(*inventory(ChildInventory(CHILD, ASK.turn, (), ())), 1200)
-    evidence = store.ask_evidence(ASK)
+    store.runs.observe_children(*inventory(ChildInventory(CHILD, ASK.turn, (), ())), 1200)
+    evidence = store.runs.ask_evidence(ASK)
     assert evidence is not None
     assert evidence.reachability == AskReachability.callback_gone
-    store.observe_children(*inventory(), 1300)
-    evidence = store.ask_evidence(ASK)
+    store.runs.observe_children(*inventory(), 1300)
+    evidence = store.runs.ask_evidence(ASK)
     assert evidence is not None
     assert evidence.reachability == AskReachability.callback_gone
     with pytest.raises(PlannerError, match="closed or unknown"):
-        store.choose_answer(ASK, "allow", 1, 1400)
+        store.runs.choose_answer(ASK, "allow", 1, 1400)
 
 
 def manifest(contents: bytes) -> FileManifest:
@@ -368,7 +368,7 @@ def manifest(contents: bytes) -> FileManifest:
 
 
 def test_session_file_cleanup_failure_still_releases_transport_root(
-    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    store: InboxStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import asyncio
     import os
@@ -386,11 +386,11 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
         as_object,
         encode_message,
     )
-    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.vps_transport import VpsExecutor
 
     async def run() -> None:
-        endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
-        endpoint.store = store
+        endpoint = VpsExecutor(str(tmp_path / "vps.sqlite"), RealClock())
+        endpoint.inbox.store = store
         identity = replace(IDENTITY, executor_incarnation=str(uuid4()))
         reader = MessageReader()
         reader.feed_data(
@@ -422,7 +422,7 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
 
         writer = peer()
         writer.send = AsyncMock(side_effect=setup_generation)
-        monkeypatch.setattr(endpoint, "_measure_clock", AsyncMock())
+        monkeypatch.setattr(endpoint.catalog, "_measure_clock", AsyncMock())
         try:
             with pytest.raises(OSError, match="service cleanup failed"):
                 await endpoint._session(reader, writer)
@@ -430,18 +430,18 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
             assert not root_path.exists()
             assert not endpoint._transports and not endpoint._transport_roots
             assert not endpoint._upload_transfers
-            assert endpoint.link is None and not endpoint.ready
+            assert endpoint.runs.link is None and not endpoint.runs.ready
         finally:
             root.cleanup()
-            for task in tuple(endpoint._tasks):
+            for task in tuple(endpoint.catalog._tasks):
                 task.cancel()
-            await asyncio.gather(*endpoint._tasks, return_exceptions=True)
+            await asyncio.gather(*endpoint.catalog._tasks, return_exceptions=True)
 
     asyncio.run(run())
 
 
 def test_cancelled_input_snapshot_is_removed_after_copy_settles(
-    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    store: InboxStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Cancellation before a descriptor exists must still reclaim the completed snapshot."""
     import asyncio
@@ -454,17 +454,15 @@ def test_cancelled_input_snapshot_is_removed_after_copy_settles(
     from planner.executor.files import snapshot_file
     from planner.executor.link_files import GenerationTransfers
     from planner.executor.protocol import WritePrompt
-    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.vps_transport import VpsExecutor
 
     async def run() -> None:
-        store.register_child(CHILD, "ticket", "test-ticket", 1)
-        endpoint = ExecutorEndpoint(store.db_path, RealClock())
+        store.runs.register_child(CHILD, "ticket", "test-ticket", 1)
+        endpoint = VpsExecutor(store.db_path, RealClock())
         source = tmp_path / "inputs" / "file"
         source.parent.mkdir()
         source.write_bytes(b"input")
-        endpoint.runtime = SimpleNamespace(
-            message_files=SimpleNamespace(path_of=lambda *args: source)
-        )
+        endpoint.message_files = cast(Any, SimpleNamespace(path_of=lambda *args: source))
         service = GenerationTransfers(IDENTITY, tmp_path / "transfers", lambda: True)
         endpoint._transports[IDENTITY] = service
         command = ChildCommand(
@@ -479,7 +477,10 @@ def test_cancelled_input_snapshot_is_removed_after_copy_settles(
                 mode=PromptDeliveryMode.queue,
             ),
         )
-        endpoint.pending_commands["prompt"] = command, asyncio.get_running_loop().create_future()
+        endpoint.runs.pending_commands["prompt"] = (
+            command,
+            asyncio.get_running_loop().create_future(),
+        )
         entered, release = threading.Event(), threading.Event()
 
         def held(**kwargs: Any) -> Any:
@@ -487,7 +488,7 @@ def test_cancelled_input_snapshot_is_removed_after_copy_settles(
             assert release.wait(5)
             return snapshot_file(**kwargs)
 
-        monkeypatch.setattr("planner.executor.vps.snapshot_file", held)
+        monkeypatch.setattr("planner.executor.vps_transport.snapshot_file", held)
         copying = asyncio.create_task(
             endpoint._file(
                 WireMessage(
@@ -516,7 +517,7 @@ def test_cancelled_input_snapshot_is_removed_after_copy_settles(
 
 
 def test_stop_hints_wait_for_exact_original_canonical_receipt(
-    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    store: InboxStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import asyncio
     import json
@@ -524,7 +525,7 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
 
     from planner.core.clock import RealClock
     from planner.executor.protocol import ChildCommand, WireMessage, as_object, encode_value
-    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.vps_transport import VpsExecutor
 
     async def run() -> None:
         command = ChildCommand(
@@ -536,21 +537,20 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
         )
         outcome = CommandOutcome(command.command_id, CHILD, CommandDisposition.succeeded, {})
         persist_pending_turn(
-            store, ASK, runtime_overrides={"initial_commands": [encode_value(command)]}
+            store.runs, ASK, runtime_overrides={"initial_commands": [encode_value(command)]}
         )
-        endpoint = ExecutorEndpoint(store.db_path, RealClock())
-        endpoint.store = store
-        endpoint.identity = IDENTITY
+        endpoint = VpsExecutor(store.db_path, RealClock())
+        endpoint.inbox.store = store
+        endpoint.runs.identity = IDENTITY
         writer = peer()
-        endpoint.link = message_link(writer, IDENTITY)
+        endpoint.runs.link = message_link(writer, IDENTITY)
         future = asyncio.get_running_loop().create_future()
-        endpoint.pending_commands[command.command_id] = command, future
+        endpoint.runs.pending_commands[command.command_id] = command, future
         send = AsyncMock()
-        monkeypatch.setattr(endpoint.link._writer, "send", send)
-        monkeypatch.setattr(endpoint, "_send_reconciliation", send)
+        monkeypatch.setattr(endpoint.runs.link._writer, "send", send)
         connection = connect(store.db_path)
         try:
-            store.record_command_outcome_in_transaction(connection, outcome)
+            store.runs.record_command_outcome_in_transaction(connection, outcome)
         finally:
             connection.close()
         submission = "stopped_" + hashlib.sha256(command.command_id.encode()).hexdigest()
@@ -569,16 +569,16 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
             ),
         )
         store.accept(unrelated, effect, 1100, identity=IDENTITY)
-        assert not store.has_accepted_command_outcome(outcome)
+        assert not store.runs.has_accepted_command_outcome(outcome)
         await endpoint._handle_message(
             WireMessage(WireMessageKind.command_outcome, command.command_id, as_object(outcome)),
             IDENTITY,
-            endpoint.link,
+            endpoint.runs.link,
         )
         assert not future.done() and send.await_count == 0
-        await endpoint._resolve_command(outcome)
+        await endpoint.runs._resolve_command(outcome)
         assert not future.done()
-        assert store.child_assignment(CHILD) is not None
+        assert store.runs.child_assignment(CHILD) is not None
         payload = cast(JsonObject, encode_value(outcome))
         canonical = QueuedEnvelope(
             "canonical-sender",
@@ -597,10 +597,10 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
                 kind=EnvelopeKind.child_stopped,
             ),
         )
-        receipt = await endpoint.accept_envelope(canonical, IDENTITY)
+        receipt = await endpoint.inbox.accept(canonical, IDENTITY)
         assert receipt.disposition is ReceiptDisposition.accepted
         assert future.done() and future.result() == outcome
-        assert store.has_accepted_command_outcome(outcome)
+        assert store.runs.has_accepted_command_outcome(outcome)
         assert store.lookup_receipt(canonical.sender_id, submission) == receipt
         # The accepted stop preserves its original outcome and leaves canonical
         # assignment closure to the core retirement transaction.
@@ -630,7 +630,7 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
     ],
 )
 def test_refused_native_evidence_marker_survives_domain_rollback_and_metadata_turns(
-    store: ExecutorStore, kind: EnvelopeKind
+    store: InboxStore, kind: EnvelopeKind
 ) -> None:
     import json
     from typing import cast
@@ -668,7 +668,7 @@ def test_refused_native_evidence_marker_survives_domain_rollback_and_metadata_tu
 
     receipt = store.accept(queued, refuse, 1100, identity=IDENTITY)
     assert receipt.disposition is ReceiptDisposition.refused
-    assert store.cleanup_evidence_uncertain(CHILD) is (kind is not EnvelopeKind.cli_write)
+    assert store.runs.cleanup_evidence_uncertain(CHILD) is (kind is not EnvelopeKind.cli_write)
     connection = connect(store.db_path)
     try:
         assert connection.execute("SELECT count(*) FROM effects").fetchone()[0] == 0
@@ -685,12 +685,12 @@ def test_refused_native_evidence_marker_survives_domain_rollback_and_metadata_tu
         )
     finally:
         connection.close()
-    assert store.cleanup_evidence_uncertain(CHILD) is (kind is not EnvelopeKind.cli_write)
+    assert store.runs.cleanup_evidence_uncertain(CHILD) is (kind is not EnvelopeKind.cli_write)
     assert store.lookup_receipt(queued.sender_id, queued.submission_id) == receipt
 
 
 def test_retirement_metadata_is_monotonic_and_stale_child_cannot_replace_fresh(
-    store: ExecutorStore,
+    store: InboxStore,
 ) -> None:
     import json
 
@@ -746,8 +746,8 @@ def test_retirement_metadata_is_monotonic_and_stale_child_cannot_replace_fresh(
     finally:
         connection.close()
     fresh = replace(CHILD, child_id="fresh")
-    store.close_child(CHILD, 1200)
-    store.register_child(fresh, "ticket", "test-ticket", 1201)
+    store.runs.close_child(CHILD, 1200)
+    store.runs.register_child(fresh, "ticket", "test-ticket", 1201)
     connection = connect(store.db_path)
     try:
         fresh_metadata = (json.dumps(encode_value(fresh)), unmarked[1], old[2])
@@ -768,7 +768,7 @@ def test_retirement_metadata_is_monotonic_and_stale_child_cannot_replace_fresh(
 
 
 def test_postcommit_error_preserves_durable_effect_and_receipt(
-    store: ExecutorStore, monkeypatch: pytest.MonkeyPatch
+    store: InboxStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.executor import store as store_module
 
@@ -809,7 +809,7 @@ def test_postcommit_error_preserves_durable_effect_and_receipt(
         connection.close()
 
 
-def test_preflight_never_establishes_acceptance(store: ExecutorStore) -> None:
+def test_preflight_never_establishes_acceptance(store: InboxStore) -> None:
     assert store.preflight(envelope(), identity=IDENTITY) is None
     assert store.lookup_receipt("sender", "conversation-1") is None
     receipt = store.accept(envelope(), effect, 1100, identity=IDENTITY)
@@ -826,24 +826,25 @@ def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
 
     from planner.core.clock import RealClock
     from planner.executor.protocol import AcceptanceReceipt, WireMessage, encode_value
-    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.vps_transport import VpsExecutor
 
     async def exercise() -> None:
-        endpoint = ExecutorEndpoint(str(tmp_path / "unused.sqlite"), RealClock())
+        endpoint = VpsExecutor(str(tmp_path / "unused.sqlite"), RealClock())
         writer = peer()
-        endpoint.identity, endpoint.link = IDENTITY, message_link(writer, IDENTITY)
-        endpoint.store = Mock()
-        endpoint.store.unapplied_answers.return_value = ()
+        endpoint.runs.identity, endpoint.runs.link = IDENTITY, message_link(writer, IDENTITY)
+        endpoint.inbox.store = Mock()
+        endpoint.runs.store = endpoint.inbox.store.runs
+        endpoint.inbox.store.runs.unapplied_answers.return_value = ()
         from planner.executor.protocol import ReconnectResult, as_object
 
-        endpoint.link.request = AsyncMock(  # type: ignore[method-assign]
+        endpoint.runs.link.request = AsyncMock(  # type: ignore[method-assign]
             return_value=WireMessage(
                 WireMessageKind.reconnect_result,
                 "ask",
                 as_object(ReconnectResult(IDENTITY, (), ())),
             )
         )
-        endpoint.runtime = SimpleNamespace(system=SimpleNamespace())
+        endpoint.bind_conversations(cast(Any, SimpleNamespace()))
         head = envelope()
         frame = WireMessage(WireMessageKind.envelope, "head", cast(JsonObject, encode_value(head)))
         control = WireMessage(WireMessageKind.reconciliation_ready, "control", {})
@@ -862,12 +863,12 @@ def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
                 123,
             )
 
-        endpoint.accept_envelope = accept  # type: ignore[method-assign]
-        task = asyncio.create_task(endpoint._handle_message(frame, IDENTITY, endpoint.link))
+        endpoint.inbox.accept = accept  # type: ignore[method-assign]
+        task = asyncio.create_task(endpoint._handle_message(frame, IDENTITY, endpoint.runs.link))
         await entered.wait()
-        await endpoint._handle_message(control, IDENTITY, endpoint.link)
+        await endpoint._handle_message(control, IDENTITY, endpoint.runs.link)
         assert not task.done()
-        assert endpoint.ready
+        assert endpoint.runs.ready
         release.set()
         await task
         writer.close.assert_not_called()
@@ -887,14 +888,15 @@ def test_superseded_ingress_cannot_reach_handler_or_close_replacement(
     from tests.unit.test_machine_ui_reads import _hello
 
     from planner.core.clock import RealClock
-    from planner.executor import vps
+    from planner.executor import vps_transport as vps
     from planner.executor.protocol import WireMessage
 
     async def exercise() -> None:
-        endpoint = vps.ExecutorEndpoint(str(tmp_path / "unused.sqlite"), RealClock())
+        endpoint = vps.VpsExecutor(str(tmp_path / "unused.sqlite"), RealClock())
         original, replacement = peer(), peer()
-        endpoint.store = Mock()
-        endpoint._measure_clock = AsyncMock()  # type: ignore[method-assign]
+        endpoint.inbox.store = Mock()
+        endpoint.runs.store = endpoint.inbox.store.runs
+        endpoint.catalog._measure_clock = AsyncMock()  # type: ignore[method-assign]
         endpoint._close_transport = AsyncMock()  # type: ignore[method-assign]
         endpoint._handle = AsyncMock()  # type: ignore[method-assign]
         calls = 0
@@ -905,9 +907,9 @@ def test_superseded_ingress_cannot_reach_handler_or_close_replacement(
             calls += 1
             if calls == 1:
                 return _hello()
-            assert endpoint.link is not None
-            endpoint.link.close()
-            endpoint.link = message_link(replacement, IDENTITY)
+            assert endpoint.runs.link is not None
+            endpoint.runs.link.close()
+            endpoint.runs.link = message_link(replacement, IDENTITY)
             return frame
 
         original.receive = AsyncMock(side_effect=read)
@@ -915,14 +917,14 @@ def test_superseded_ingress_cannot_reach_handler_or_close_replacement(
         endpoint._handle.assert_not_called()
         replacement.close.assert_not_called()
         original.close.assert_called_once_with()
-        await asyncio.gather(*endpoint._tasks)
+        await asyncio.gather(*endpoint.catalog._tasks)
 
     asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("invalid", [None, "generation", "child", "command_ids", "unfinished"])
 def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
-    store: ExecutorStore, monkeypatch: pytest.MonkeyPatch, invalid: str | None
+    store: InboxStore, monkeypatch: pytest.MonkeyPatch, invalid: str | None
 ) -> None:
     """Gap: one snapshot replaces outcome ACK/chunk aggregation without granting stale authority."""
     import asyncio
@@ -930,11 +932,11 @@ def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
 
     from planner.core.clock import RealClock
     from planner.executor.protocol import CommandState, ReconnectResult, as_object
-    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.vps_transport import VpsExecutor
 
     async def run() -> None:
-        endpoint = ExecutorEndpoint(store.db_path, RealClock())
-        endpoint.identity, endpoint.link = IDENTITY, message_link(peer(), IDENTITY)
+        endpoint = VpsExecutor(store.db_path, RealClock())
+        endpoint.runs.identity, endpoint.runs.link = IDENTITY, message_link(peer(), IDENTITY)
         commands = tuple(
             ChildCommand(
                 phase,
@@ -946,7 +948,7 @@ def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
             for phase in ("unknown", "preparing", "invoking", "finished")
         )
         for command in commands:
-            endpoint.pending_commands[command.command_id] = (
+            endpoint.runs.pending_commands[command.command_id] = (
                 command,
                 asyncio.get_running_loop().create_future(),
             )
@@ -977,16 +979,16 @@ def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
         request = AsyncMock(
             return_value=WireMessage(WireMessageKind.reconnect_result, "ask", as_object(result))
         )
-        monkeypatch.setattr(endpoint.link, "request", request)
+        monkeypatch.setattr(endpoint.runs.link, "request", request)
         if invalid is not None:
             with pytest.raises(ValueError):
-                await endpoint._reconnect(IDENTITY, endpoint.link)
-            assert all(not f.done() for _, f in endpoint.pending_commands.values())
+                await endpoint.runs._reconnect(IDENTITY, endpoint.runs.link)
+            assert all(not f.done() for _, f in endpoint.runs.pending_commands.values())
         else:
-            assert await endpoint._reconnect(IDENTITY, endpoint.link) == {"unknown"}
-            assert endpoint.pending_commands["finished"][1].result() == outcome
+            assert await endpoint.runs._reconnect(IDENTITY, endpoint.runs.link) == {"unknown"}
+            assert endpoint.runs.pending_commands["finished"][1].result() == outcome
             assert all(
-                not endpoint.pending_commands[key][1].done()
+                not endpoint.runs.pending_commands[key][1].done()
                 for key in ("unknown", "preparing", "invoking")
             )
         request.assert_awaited_once_with(
@@ -997,7 +999,7 @@ def test_one_reconnect_ask_resolves_finished_and_keeps_inflight_commands(
 
 
 def test_ready_ack_includes_stop_registered_after_reconnect_ask(
-    store: ExecutorStore, monkeypatch: pytest.MonkeyPatch
+    store: InboxStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gap: retirement can register while the ready ACK yields, after the ask snapshot."""
     import asyncio
@@ -1007,13 +1009,13 @@ def test_ready_ack_includes_stop_registered_after_reconnect_ask(
     from tests.unit.test_executor_request_deadlines import peer
 
     from planner.core.clock import RealClock
-    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.vps_transport import VpsExecutor
 
     async def run() -> None:
-        endpoint = ExecutorEndpoint(store.db_path, RealClock())
+        endpoint = VpsExecutor(store.db_path, RealClock())
         writer = peer()
-        endpoint.identity, endpoint.link = IDENTITY, message_link(writer, IDENTITY)
-        endpoint.runtime = SimpleNamespace(system=SimpleNamespace())
+        endpoint.runs.identity, endpoint.runs.link = IDENTITY, message_link(writer, IDENTITY)
+        endpoint.bind_conversations(cast(Any, SimpleNamespace()))
         command = ChildCommand(
             "late-stop",
             CHILD,
@@ -1027,27 +1029,27 @@ def test_ready_ack_includes_stop_registered_after_reconnect_ask(
         async def ready(message: WireMessage) -> None:
             nonlocal caller
             assert message.kind is WireMessageKind.reconciliation_ready
-            assert not endpoint.ready
-            caller = asyncio.create_task(endpoint.send_command(command))
+            assert not endpoint.runs.ready
+            caller = asyncio.create_task(endpoint.runs.send_command(command))
             await asyncio.sleep(0)
-            assert command.command_id in endpoint.pending_commands
+            assert command.command_id in endpoint.runs.pending_commands
 
         async def emit(*args: object) -> bool:
-            assert endpoint.ready
-            endpoint.pending_commands[command.command_id][1].set_result(outcome)
+            assert endpoint.runs.ready
+            endpoint.runs.pending_commands[command.command_id][1].set_result(outcome)
             return True
 
         writer.send.side_effect = ready
-        monkeypatch.setattr(endpoint, "_reconnect", AsyncMock(return_value=set()))
+        monkeypatch.setattr(endpoint.runs, "_reconnect", AsyncMock(return_value=set()))
         emitted = AsyncMock(side_effect=emit)
-        monkeypatch.setattr(endpoint, "_emit_command", emitted)
+        monkeypatch.setattr(endpoint.runs, "_emit_command", emitted)
         try:
             await endpoint._handle_message(
                 WireMessage(WireMessageKind.reconciliation_ready, "ready", {}),
                 IDENTITY,
-                endpoint.link,
+                endpoint.runs.link,
             )
-            emitted.assert_awaited_once_with(command, IDENTITY, endpoint.link)
+            emitted.assert_awaited_once_with(command, IDENTITY, endpoint.runs.link)
             assert caller is not None and await asyncio.wait_for(caller, 1) == outcome
         finally:
             if caller is not None and not caller.done():
@@ -1082,9 +1084,9 @@ def file_envelope(sequence: int, file: FileManifest) -> QueuedEnvelope:
 
 
 def test_file_install_precedes_effect_and_old_item_cannot_overwrite_newer(
-    store: ExecutorStore, tmp_path: Path
+    store: InboxStore, tmp_path: Path
 ) -> None:
-    store.register_child(CHILD, "ticket", "test-ticket", 1)
+    store.runs.register_child(CHILD, "ticket", "test-ticket", 1)
     receipts = []
     rows = []
     for sequence, data in enumerate((b"old", b"new"), 1):
@@ -1113,9 +1115,9 @@ def test_file_install_precedes_effect_and_old_item_cannot_overwrite_newer(
 
 
 def test_rename_before_database_rollback_recovers_without_upload(
-    store: ExecutorStore, tmp_path: Path
+    store: InboxStore, tmp_path: Path
 ) -> None:
-    store.register_child(CHILD, "ticket", "test-ticket", 1)
+    store.runs.register_child(CHILD, "ticket", "test-ticket", 1)
     file = manifest(b"complete")
     source = tmp_path / "source"
     source.write_bytes(b"complete")
@@ -1134,8 +1136,8 @@ def test_rename_before_database_rollback_recovers_without_upload(
     )
 
 
-def test_upload_checks_bytes_path_and_assignment(store: ExecutorStore, tmp_path: Path) -> None:
-    store.register_child(CHILD, "ticket", "test-ticket", 1)
+def test_upload_checks_bytes_path_and_assignment(store: InboxStore, tmp_path: Path) -> None:
+    store.runs.register_child(CHILD, "ticket", "test-ticket", 1)
     file = manifest(b"complete")
     source = tmp_path / "source"
     for data in (b"short", b"corrupt!", b"complete plus"):
@@ -1153,7 +1155,7 @@ def test_upload_checks_bytes_path_and_assignment(store: ExecutorStore, tmp_path:
 
 
 def test_upload_cancellation_keeps_transfer_until_private_copy_settles(
-    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    store: InboxStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The replaced completion exchange must still own an admitted copy on cancellation."""
     import asyncio
@@ -1163,10 +1165,10 @@ def test_upload_cancellation_keeps_transfer_until_private_copy_settles(
     from planner.core.clock import RealClock
     from planner.executor.link_files import GenerationTransfers
     from planner.executor.protocol import FileUploadRequest
-    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.vps_transport import VpsExecutor
 
     async def run() -> None:
-        endpoint = ExecutorEndpoint(store.db_path, RealClock())
+        endpoint = VpsExecutor(store.db_path, RealClock())
         service = GenerationTransfers(IDENTITY, tmp_path / "transfers", lambda: True)
         endpoint._transports[IDENTITY] = service
         file = manifest(b"complete")
@@ -1181,7 +1183,7 @@ def test_upload_cancellation_keeps_transfer_until_private_copy_settles(
 
         await service.upload(slot.transfer_id, chunks())
         entered, release = threading.Event(), threading.Event()
-        original = endpoint.store.store_upload
+        original = endpoint.inbox.store.store_upload
 
         def held(manifest: FileManifest, source: Path) -> None:
             entered.set()
@@ -1189,7 +1191,7 @@ def test_upload_cancellation_keeps_transfer_until_private_copy_settles(
             assert source.exists()
             original(manifest, source)
 
-        monkeypatch.setattr(endpoint.store, "store_upload", held)
+        monkeypatch.setattr(endpoint.inbox.store, "store_upload", held)
         copying = asyncio.create_task(endpoint.store_upload(IDENTITY, slot.transfer_id))
         assert await asyncio.to_thread(entered.wait, 2)
         copying.cancel()
@@ -1200,9 +1202,9 @@ def test_upload_cancellation_keeps_transfer_until_private_copy_settles(
             await copying
         assert slot.transfer_id not in service.transfers
         assert not endpoint._receiver_work
-        assert not endpoint.store.file_target(file).exists()
-        endpoint.store.install_files((file,))
-        assert endpoint.store.file_target(file).read_bytes() == b"complete"
+        assert not endpoint.inbox.store.file_target(file).exists()
+        endpoint.inbox.store.install_files((file,))
+        assert endpoint.inbox.store.file_target(file).read_bytes() == b"complete"
         await service.close()
 
     asyncio.run(run())

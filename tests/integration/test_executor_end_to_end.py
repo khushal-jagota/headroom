@@ -77,7 +77,6 @@ from planner.executor.protocol import (
     IpcOperation,
     IpcRequest,
     JsonObject,
-    JsonValue,
     OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
@@ -89,7 +88,7 @@ from planner.executor.protocol import (
     decode_command_arguments,
     encode_value,
 )
-from planner.executor.vps import ExecutorEndpoint
+from planner.executor.vps_transport import VpsExecutor
 
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
@@ -191,7 +190,7 @@ class ScriptedNativeChild:
         )
 
 
-class CutReceiptEndpoint(ExecutorEndpoint):
+class CutReceiptEndpoint(VpsExecutor):
     """Cut after the real canonical transaction, before its receipt reaches Mac."""
 
     def __init__(self, db_path: str) -> None:
@@ -202,25 +201,17 @@ class CutReceiptEndpoint(ExecutorEndpoint):
         self.cut_input = False
         self.input_cut_count = 0
 
-    async def _accept_envelope(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
-    ) -> AcceptanceReceipt:
-        if self.cut_user_input_application:
-            application: JsonValue = None
+    async def _handle_message(
+        self, message: WireMessage, identity: ExecutorIdentity, writer: Link
+    ) -> None:
+        if self.cut_user_input_application and message.kind is WireMessageKind.envelope:
+            envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
             if envelope.kind is EnvelopeKind.answer_application:
-                application = envelope.payload
-            if isinstance(application, dict):
-                ask = application.get("ask")
+                ask = envelope.payload.get("ask")
                 if isinstance(ask, dict) and ask.get("kind") == "user_input":
                     self.cut_user_input_application = False
                     self.cut_submission = envelope.submission_id
-        return await super()._accept_envelope(envelope, identity)
-
-    async def _send_reconciliation(
-        self, message: WireMessage, identity: ExecutorIdentity, writer: Link
-    ) -> bool:
-        sent = await super()._send_reconciliation(message, identity, writer)
-        return sent
+        await super()._handle_message(message, identity, writer)
 
     async def _session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
         original = writer.send
@@ -233,8 +224,8 @@ class CutReceiptEndpoint(ExecutorEndpoint):
             ):
                 self.cut_input = False
                 self.input_cut_count += 1
-                assert self.link is not None
-                self.link.close()
+                assert self.runs.link is not None
+                self.runs.link.close()
                 return
             if (
                 message.kind == WireMessageKind.receipt
@@ -243,8 +234,8 @@ class CutReceiptEndpoint(ExecutorEndpoint):
             ):
                 self.cut_submission = None
                 self.cut_count += 1
-                assert self.link is not None
-                self.link.close()
+                assert self.runs.link is not None
+                self.runs.link.close()
                 return
             await original(message)
 
@@ -304,14 +295,14 @@ class ExecutorHarness:
 
     async def wait_input_reachable(self) -> None:
         def reachable() -> bool:
-            evidence = self.endpoint.store.ask_evidence(self.input_ask)
+            evidence = self.endpoint.runs.store.ask_evidence(self.input_ask)
             return evidence is not None and evidence.reachability is AskReachability.reachable
 
         await eventually(reachable, "Input callback did not get current evidence")
 
     async def wait_ask_reachable(self) -> None:
         def reachable() -> bool:
-            evidence = self.endpoint.store.ask_evidence(self.ask)
+            evidence = self.endpoint.runs.store.ask_evidence(self.ask)
             return evidence is not None and evidence.reachability == AskReachability.reachable
 
         await eventually(reachable, "No current callback evidence for the real pending ask")
@@ -324,12 +315,10 @@ class ExecutorHarness:
         self.system._runtime_ownership.close()
         self.endpoint = CutReceiptEndpoint(self.endpoint.db_path)
         self.system = make_core(self.endpoint)
-        self.endpoint.runtime = SimpleNamespace(
-            system=self.system, message_files=ConversationMessageFiles(self.endpoint.db_path)
-        )
+        self.endpoint.bind_conversations(self.system)
         self.transport_app.state.executor_endpoint = self.endpoint
         if wait_ready:
-            await eventually(lambda: self.endpoint.ready, "VPS core restart did not reconcile")
+            await eventually(lambda: self.endpoint.runs.ready, "VPS core restart did not reconcile")
 
     async def close(self) -> None:
         try:
@@ -339,8 +328,8 @@ class ExecutorHarness:
 
     async def _close(self) -> None:
         self.mac.gateway._stop.set()
-        if self.endpoint.link is not None:
-            self.endpoint.link.close()
+        if self.endpoint.runs.link is not None:
+            self.endpoint.runs.link.close()
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self.task, 3)
         if not self.task.done():
@@ -355,14 +344,14 @@ class ExecutorHarness:
             await asyncio.wait_for(system.shutdown(), 2)
 
 
-def make_core(endpoint: ExecutorEndpoint) -> SqliteProcessConversationSystem:
+def make_core(endpoint: VpsExecutor) -> SqliteProcessConversationSystem:
     system = SqliteProcessConversationSystem(
         store=ConversationStore(endpoint.db_path),
-        backend_child_factories={key: endpoint.factory for key in ConversationBackendKey},
+        backend_child_factories={key: endpoint.runs for key in ConversationBackendKey},
         message_files=ConversationMessageFiles(endpoint.db_path),
     )
     # All transport fixtures are native. Local discovery is never called here.
-    system._catalog_endpoint = endpoint
+    system._catalog_endpoint = endpoint.catalog
     return system
 
 
@@ -414,9 +403,7 @@ async def boot(
         connection.close()
     endpoint = CutReceiptEndpoint(db_path)
     system = make_core(endpoint)
-    endpoint.runtime = SimpleNamespace(
-        system=system, message_files=ConversationMessageFiles(endpoint.db_path)
-    )
+    endpoint.bind_conversations(system)
     native = ScriptedNativeChild()
     native.emit_early_event = emit_early_event
     from fastapi import FastAPI
@@ -480,7 +467,7 @@ async def boot(
     )
     try:
         await eventually(
-            lambda: endpoint.ready and mac.gateway.state == ConnectionState.ready,
+            lambda: endpoint.runs.ready and mac.gateway.state == ConnectionState.ready,
             "Initial Mac/VPS handshake did not become ready",
         )
         await system.start_conversation(
@@ -601,7 +588,9 @@ def test_early_prompt_event_and_idle_publications_do_not_wait_for_retry_timer(
                     == "awake"
                 )
             assert harness.mac.identity.connection_generation == generation
-            assert harness.mac.gateway.state is ConnectionState.ready and harness.endpoint.ready
+            assert (
+                harness.mac.gateway.state is ConnectionState.ready and harness.endpoint.runs.ready
+            )
             assert harness.native.prompt_count == 2
         finally:
             await harness.close()
@@ -730,7 +719,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 assert len(clients) == index
                 assert len(prompts(old)) == 1 and prompts(old)[-1] == old_prompt
                 assert not old.disconnected
-                assert harness.endpoint.store.child_assignment(old_reference) is not None
+                assert harness.endpoint.runs.store.child_assignment(old_reference) is not None
                 cleanup_release.set()
                 await asyncio.wait_for(sending, 5)
                 await eventually(
@@ -741,7 +730,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 assert replacement.options.resume == session
                 assert replacement.options.model == "claude-new"
                 assert replacement.options.effort == ("low" if index == 1 else "high")
-                assert harness.endpoint.store.child_assignment(old_reference) is None
+                assert harness.endpoint.runs.store.child_assignment(old_reference) is None
                 assert len(prompts(replacement)) == 1
                 prompt = prompts(replacement)[0]
                 assert prompt.startswith("[Authenticated Panels reply requirement]\n")
@@ -822,7 +811,7 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
     async def run() -> None:
         started = time.monotonic()
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         conn = connect(harness.endpoint.db_path)
         try:
@@ -1084,7 +1073,7 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                     with pytest.raises(TimeoutError):
                         await asyncio.wait_for(watcher.next_item(), 0.05)
                     assert (
-                        harness.endpoint.store.lookup_receipt(
+                        harness.endpoint.inbox.store.lookup_receipt(
                             pending[0].sender_id, pending[0].submission_id
                         )
                         is not None
@@ -1103,24 +1092,24 @@ def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
             generation = harness.mac.identity.connection_generation
-            answer = harness.endpoint.store.choose_answer(
+            answer = harness.endpoint.runs.store.choose_answer(
                 harness.ask,
                 "allow",
                 generation,
                 1000,
             )
-            assert harness.endpoint.link is not None
-            harness.endpoint.link.close()
+            assert harness.endpoint.runs.link is not None
+            harness.endpoint.runs.link.close()
             await eventually(
                 lambda: (
                     harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.ready
+                    and harness.endpoint.runs.ready
                 ),
                 "Link did not reconcile",
             )
@@ -1130,12 +1119,12 @@ def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
             )
 
             def application_recorded() -> bool:
-                evidence = harness.endpoint.store.ask_evidence(harness.ask)
+                evidence = harness.endpoint.runs.store.ask_evidence(harness.ask)
                 return evidence is not None and evidence.applied_at_mac_ms is not None
 
             await eventually(application_recorded, "Callback application did not become canonical")
             assert harness.native.start_count == harness.native.prompt_count == 1
-            assert harness.endpoint.store.recorded_answer(harness.ask) == answer
+            assert harness.endpoint.runs.store.recorded_answer(harness.ask) == answer
             assert harness.events("permission_asked") == 1
         finally:
             await harness.close()
@@ -1153,7 +1142,7 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
         from planner.executor.protocol import CliWrite, as_object
 
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             child = next(iter(harness.mac.runner._children.values())).reference
@@ -1209,7 +1198,7 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
             assert assigned is not None and assigned.receipt is not None
             assert assigned.receipt.disposition is ReceiptDisposition.refused
             for envelope in (malformed, unassigned, assigned_refusal):
-                stale = await harness.endpoint.accept_envelope(envelope, harness.mac.identity)
+                stale = await harness.endpoint.inbox.accept(envelope, harness.mac.identity)
                 assert stale.disposition is ReceiptDisposition.accepted and stale.result == {}
             connection = connect(harness.endpoint.db_path)
             try:
@@ -1224,12 +1213,12 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
                 assert "validation" in refusals[0]["detail"]
             finally:
                 connection.close()
-            accepted = harness.endpoint.store.lookup_receipt(
+            accepted = harness.endpoint.inbox.store.lookup_receipt(
                 following.sender_id, following.submission_id
             )
             assert accepted is not None and accepted.disposition is ReceiptDisposition.accepted
             assert harness.events("permission_asked") == 1
-            assert harness.endpoint.store.cleanup_evidence_uncertain(child)
+            assert harness.endpoint.runs.store.cleanup_evidence_uncertain(child)
         finally:
             await harness.close()
 
@@ -1244,11 +1233,11 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             if receipt_failure != "disconnect":
-                original_send = harness.endpoint.link._writer.send
+                original_send = harness.endpoint.runs.link._writer.send
 
                 async def fail_receipt(message: WireMessage) -> None:
                     if (
@@ -1262,7 +1251,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                         return
                     await original_send(message)
 
-                monkeypatch.setattr(harness.endpoint.link._writer, "send", fail_receipt)
+                monkeypatch.setattr(harness.endpoint.runs.link._writer, "send", fail_receipt)
                 if receipt_failure == "silent":
                     monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 0.2)
                     writer = harness.mac.gateway._link
@@ -1288,18 +1277,18 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
             await eventually(
                 lambda: harness.endpoint.cut_count == 1, "Receipt cut was not exercised"
             )
-            first_receipt = harness.endpoint.store.lookup_receipt(
+            first_receipt = harness.endpoint.inbox.store.lookup_receipt(
                 pending[0].sender_id, pending[0].submission_id
             )
             assert first_receipt is not None
             assert first_receipt.payload_sha256 == pending[0].payload_sha256
             await eventually(
-                lambda: not harness.mac.outbox.pending() and harness.endpoint.ready,
+                lambda: not harness.mac.outbox.pending() and harness.endpoint.runs.ready,
                 "Committed entry did not replay and acknowledge",
             )
             assert harness.events("permission_asked") == 1
             assert harness.native.answers == []
-            receipt = harness.endpoint.store.lookup_receipt(
+            receipt = harness.endpoint.inbox.store.lookup_receipt(
                 pending[0].sender_id, pending[0].submission_id
             )
             assert receipt == first_receipt
@@ -1308,10 +1297,10 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                 raise AssertionError("duplicate submission invoked backend event writer")
 
             monkeypatch.setattr(
-                harness.endpoint.runtime.system, "receive_remote_backend_event", duplicate_effect
+                harness.endpoint.conversations, "receive_remote_backend_event", duplicate_effect
             )
             assert (
-                await harness.endpoint.accept_envelope(pending[0], harness.mac.identity)
+                await harness.endpoint.inbox.accept(pending[0], harness.mac.identity)
                 == first_receipt
             )
             assert harness.native.start_count == harness.native.prompt_count == 1
@@ -1327,7 +1316,7 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             await asyncio.wait_for(harness.endpoint.close(), 2)
@@ -1360,7 +1349,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         release = asyncio.Event()
         late_delivery: asyncio.Task[PromptDeliveryFate] | None = None
@@ -1371,7 +1360,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
             old_turn = harness.native.turn
             old_mac = harness.mac
             reached = asyncio.Event()
-            send_command = harness.endpoint.send_command
+            send_command = harness.endpoint.runs.send_command
 
             async def hold_command(command: ChildCommand) -> CommandOutcome:
                 if command.operation is ChildOperation.steer:
@@ -1379,7 +1368,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
                     await release.wait()
                 return await send_command(command)
 
-            monkeypatch.setattr(harness.endpoint, "send_command", hold_command)
+            monkeypatch.setattr(harness.endpoint.runs, "send_command", hold_command)
             late_delivery = asyncio.create_task(
                 harness.system.send(
                     "c_scripted",
@@ -1390,8 +1379,8 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
             )
             await asyncio.wait_for(reached.wait(), 3)
             old_mac.gateway._stop.set()
-            assert harness.endpoint.link is not None
-            harness.endpoint.link.close()
+            assert harness.endpoint.runs.link is not None
+            harness.endpoint.runs.link.close()
             await asyncio.wait_for(harness.task, 3)
 
             # Model service death with a fresh registry and incarnation. This
@@ -1410,14 +1399,15 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
             harness.mac = replacement
             harness.task = asyncio.create_task(replacement.run())
             await eventually(
-                lambda: harness.endpoint.identity == replacement.identity,
+                lambda: harness.endpoint.runs.identity == replacement.identity,
                 "Replacement hello did not reach the VPS",
             )
             release.set()
             assert isinstance(await asyncio.wait_for(late_delivery, 3), PromptDeliveryUncertain)
             await eventually(
                 lambda: (
-                    harness.endpoint.ready and replacement.gateway.state is ConnectionState.ready
+                    harness.endpoint.runs.ready
+                    and replacement.gateway.state is ConnectionState.ready
                 ),
                 "Replacement Mac did not reconcile",
             )
@@ -1430,8 +1420,8 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
             ]
             assert len(endings) == 1
             assert endings[0].ending is ConversationTurnEnding.interrupted
-            assert harness.endpoint.store.has_closed_child_assignment(ask.child)
-            evidence = harness.endpoint.store.ask_evidence(ask)
+            assert harness.endpoint.runs.store.has_closed_child_assignment(ask.child)
+            evidence = harness.endpoint.runs.store.ask_evidence(ask)
             assert evidence is not None and evidence.reachability is AskReachability.child_gone
             state = harness.system._conversations["c_scripted"]
             assert not state.child_is_quarantined
@@ -1461,7 +1451,7 @@ def test_binary_artifact_is_complete_before_dependent_backend_row(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             ticket_id = next(iter(harness.mac.runner._children.values())).ticket_id
@@ -1499,7 +1489,7 @@ def test_remote_replayed_usage_compaction_and_ending_preserve_core_rules(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             sink = harness.native.sink
@@ -1518,7 +1508,7 @@ def test_remote_replayed_usage_compaction_and_ending_preserve_core_rules(
                 error_summary=None,
                 standard_error_tail=None,
             )
-            await eventually(lambda: harness.endpoint.ready, "link did not reconnect")
+            await eventually(lambda: harness.endpoint.runs.ready, "link did not reconnect")
             await eventually(lambda: harness.events("turn_ended") == 1, "ending did not commit")
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "ending receipt did not drain"
@@ -1527,10 +1517,10 @@ def test_remote_replayed_usage_compaction_and_ending_preserve_core_rules(
             assert harness.events("context_compacted") == 1
             assert harness.events("explicit_reply_missing") == 1
             assert not await harness.system.is_running("c_scripted")
-            evidence = harness.endpoint.store.ask_evidence(harness.ask)
+            evidence = harness.endpoint.runs.store.ask_evidence(harness.ask)
             assert evidence is not None and evidence.reachability != AskReachability.reachable
             with pytest.raises(PlannerError):
-                harness.endpoint.store.choose_answer(
+                harness.endpoint.runs.store.choose_answer(
                     harness.ask, "allow", harness.mac.identity.connection_generation, 1000
                 )
         finally:
@@ -1548,7 +1538,7 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
@@ -1562,7 +1552,7 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
             generation = harness.mac.identity.connection_generation
             monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 0.15)
             emitted: list[ChildCommand] = []
-            emit = harness.endpoint._emit_command
+            emit = harness.endpoint.runs._emit_command
 
             async def record_command(command: ChildCommand, *args: Any) -> bool:
                 result = await emit(command, *args)
@@ -1570,7 +1560,7 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
                     emitted.append(command)
                 return result
 
-            monkeypatch.setattr(harness.endpoint, "_emit_command", record_command)
+            monkeypatch.setattr(harness.endpoint.runs, "_emit_command", record_command)
             first_chunk = asyncio.Event()
             claim_download = GenerationTransfers.claim_download
 
@@ -1585,7 +1575,7 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
 
             monkeypatch.setattr(GenerationTransfers, "claim_download", paced_download)
             contents = bytes(range(256)) * 800
-            kept = await harness.endpoint.runtime.message_files.keep(
+            kept = await harness.endpoint.message_files.keep(
                 "c_scripted", contents, media_type="application/octet-stream"
             )
             native_path = (
@@ -1612,8 +1602,8 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
                 )
             )
             await asyncio.wait_for(first_chunk.wait(), 2)
-            assert harness.endpoint.link is not None
-            control = await harness.endpoint.link.request(
+            assert harness.endpoint.runs.link is not None
+            control = await harness.endpoint.runs.link.request(
                 WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
             )
             assert control.kind is WireMessageKind.health
@@ -1635,12 +1625,12 @@ def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
-            assert await harness.endpoint.answer_permission(
+            assert await harness.endpoint.runs.answer_permission(
                 "c_scripted", public_ask_id(harness.ask), "allow", executor_ask=harness.ask
             )
             await eventually(
@@ -1662,12 +1652,12 @@ def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
             await harness.wait_ask_reachable()
             assert harness.ask != first_ask and harness.ask.ask_id == first_ask.ask_id
             assert (
-                harness.endpoint.ask_status("c_scripted", public_ask_id(harness.ask))[
+                harness.endpoint.runs.ask_status("c_scripted", public_ask_id(harness.ask))[
                     "answer_available"
                 ]
                 is True
             )
-            assert await harness.endpoint.answer_permission(
+            assert await harness.endpoint.runs.answer_permission(
                 "c_scripted", public_ask_id(harness.ask), "deny", executor_ask=harness.ask
             )
             await eventually(
@@ -1699,7 +1689,7 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
@@ -1711,7 +1701,7 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
             contents = bytes(range(256)) * 3000
-            kept = await harness.endpoint.runtime.message_files.keep(
+            kept = await harness.endpoint.message_files.keep(
                 "c_scripted", contents, media_type="application/octet-stream"
             )
             native_path = (
@@ -1728,13 +1718,13 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
                 ),
             )
             commands: list[ChildCommand] = []
-            send_command = harness.endpoint.send_command
+            send_command = harness.endpoint.runs.send_command
 
             async def observe_command(command: ChildCommand) -> CommandOutcome:
                 commands.append(command)
                 return await send_command(command)
 
-            monkeypatch.setattr(harness.endpoint, "send_command", observe_command)
+            monkeypatch.setattr(harness.endpoint.runs, "send_command", observe_command)
             generation = harness.mac.identity.connection_generation
             harness.endpoint.cut_input = True
             fate = await asyncio.wait_for(
@@ -1785,7 +1775,7 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         entered, cleanup = asyncio.Event(), asyncio.Event()
         sending = None
@@ -1799,7 +1789,7 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "first turn did not end")
             original = next(iter(harness.mac.runner._children.values())).reference
-            kept = await harness.endpoint.runtime.message_files.keep(
+            kept = await harness.endpoint.message_files.keep(
                 "c_scripted", b"input bytes", media_type="application/octet-stream"
             )
             prepare = harness.mac.runner._prepare_inputs
@@ -1832,11 +1822,11 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
             assert harness.mac.runner.ask((command_id,))[0].phase == "preparing"
             # Reconnect observes the same preparation; it does not replay the provider.
             generation = harness.mac.identity.connection_generation
-            assert harness.endpoint.link is not None
-            harness.endpoint.link.close()
+            assert harness.endpoint.runs.link is not None
+            harness.endpoint.runs.link.close()
             await eventually(
                 lambda: (
-                    harness.endpoint.ready
+                    harness.endpoint.runs.ready
                     and harness.mac.identity.connection_generation > generation
                 ),
                 "link did not return",
@@ -1876,20 +1866,20 @@ def test_concurrent_identical_inputs_keep_independent_downloads(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             contents = bytes(range(256)) * 3000
             commands, paths = [], []
             for index in range(2):
                 conversation = f"c_input_{index}"
-                kept = await harness.endpoint.runtime.message_files.keep(
+                kept = await harness.endpoint.message_files.keep(
                     conversation, contents, media_type="application/octet-stream"
                 )
                 child = ChildReference(
                     harness.mac.identity.executor_incarnation, f"input_child_{index}", conversation
                 )
-                harness.endpoint.store.register_child(child, "ticket", "ticket", 1)
+                harness.endpoint.runs.store.register_child(child, "ticket", "ticket", 1)
                 command = ChildCommand(
                     f"input_command_{index}",
                     child,
@@ -1910,7 +1900,7 @@ def test_concurrent_identical_inputs_keep_independent_downloads(
                     ),
                 )
                 commands.append(command)
-                harness.endpoint.pending_commands[command.command_id] = (
+                harness.endpoint.runs.pending_commands[command.command_id] = (
                     command,
                     asyncio.get_running_loop().create_future(),
                 )
@@ -1929,7 +1919,7 @@ def test_concurrent_identical_inputs_keep_independent_downloads(
             assert [path.read_bytes() for path in paths] == [contents, contents]
             assert not harness.endpoint._transports[harness.mac.identity].transfers
             for command in commands:
-                await harness.endpoint._resolve_command(
+                await harness.endpoint.runs._resolve_command(
                     CommandOutcome(
                         command.command_id, command.child, CommandDisposition.refused, {}
                     )
@@ -1945,7 +1935,7 @@ def test_historical_permission_evidence_cannot_overflow_reconnect_frame(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             child = next(iter(harness.mac.runner._children.values())).reference
@@ -1958,10 +1948,10 @@ def test_historical_permission_evidence_cannot_overflow_reconnect_frame(
                     f"historical_{index}_" + "x" * 2048,
                     AskKind.permission,
                 )
-                harness.endpoint.store.publish_ask(ask, ("allow", "deny"), 1000)
+                harness.endpoint.runs.store.publish_ask(ask, ("allow", "deny"), 1000)
             await harness.restart_vps_core()
-            assert harness.endpoint.ready
-            assert len(harness.endpoint.store.evidence_for_conversation("c_scripted")) == 600
+            assert harness.endpoint.runs.ready
+            assert len(harness.endpoint.runs.store.evidence_for_conversation("c_scripted")) == 600
         finally:
             await harness.close()
 
@@ -1977,7 +1967,7 @@ def test_complete_user_input_map_is_durable_before_drop_and_normalized_once(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             await harness.native.raise_user_input()
@@ -1989,24 +1979,24 @@ def test_complete_user_input_map_is_durable_before_drop_and_normalized_once(
                 (INPUT_ANSWERS[0], INPUT_ANSWERS[0]),
             )
             for answers in invalid_maps:
-                assert not await harness.endpoint.answer_user_input(
+                assert not await harness.endpoint.runs.answer_user_input(
                     "c_scripted",
                     public_ask_id(harness.input_ask),
                     answers,
                     executor_ask=harness.input_ask,
                 )
-            assert harness.endpoint.store.recorded_answer(harness.input_ask) is None
+            assert harness.endpoint.runs.store.recorded_answer(harness.input_ask) is None
             generation = harness.mac.identity.connection_generation
-            answer = harness.endpoint.store.choose_user_input_answer(
+            answer = harness.endpoint.runs.store.choose_user_input_answer(
                 harness.input_ask, INPUT_ANSWERS, generation, 1000
             )
             assert answer.option_id is None and answer.user_input_answers == ORDERED_INPUT_ANSWERS
-            assert harness.endpoint.link is not None
-            harness.endpoint.link.close()
+            assert harness.endpoint.runs.link is not None
+            harness.endpoint.runs.link.close()
             await eventually(
                 lambda: (
                     harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.ready
+                    and harness.endpoint.runs.ready
                 ),
                 "input did not reconcile",
             )
@@ -2018,7 +2008,7 @@ def test_complete_user_input_map_is_durable_before_drop_and_normalized_once(
                 lambda: harness.events("user_input_answered") == 1,
                 "application did not become canonical",
             )
-            assert harness.endpoint.store.recorded_answer(harness.input_ask) == answer
+            assert harness.endpoint.runs.store.recorded_answer(harness.input_ask) == answer
             await harness.restart_vps_core()
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "input application receipts did not drain"
@@ -2037,13 +2027,13 @@ def test_selected_user_input_map_survives_missing_callback_without_application(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
             ask = harness.input_ask
-            answer = harness.endpoint.store.choose_user_input_answer(
+            answer = harness.endpoint.runs.store.choose_user_input_answer(
                 ask, INPUT_ANSWERS, harness.mac.identity.connection_generation, 1000
             )
             child = next(iter(harness.mac.runner._children.values()))
@@ -2052,21 +2042,21 @@ def test_selected_user_input_map_survives_missing_callback_without_application(
             else:
                 harness.mac.runner._children.clear()
             generation = harness.mac.identity.connection_generation
-            assert harness.endpoint.link is not None
-            harness.endpoint.link.close()
+            assert harness.endpoint.runs.link is not None
+            harness.endpoint.runs.link.close()
             await eventually(
                 lambda: (
                     harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.ready
+                    and harness.endpoint.runs.ready
                 ),
                 "missing input did not reconcile",
             )
-            evidence = harness.endpoint.store.ask_evidence(ask)
+            evidence = harness.endpoint.runs.store.ask_evidence(ask)
             assert evidence is not None and evidence.reachability is (
                 AskReachability.callback_gone if loss == "callback" else AskReachability.child_gone
             )
             assert evidence.applied_at_mac_ms is None
-            assert harness.endpoint.store.recorded_answer(ask) == answer
+            assert harness.endpoint.runs.store.recorded_answer(ask) == answer
             assert harness.native.user_answers == []
             assert harness.events("user_input_answered") == 0
         finally:
@@ -2080,13 +2070,13 @@ def test_user_input_request_id_reuse_gets_separate_answer_history(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
             first = harness.input_ask
-            assert await harness.endpoint.answer_user_input(
+            assert await harness.endpoint.runs.answer_user_input(
                 "c_scripted",
                 public_ask_id(harness.input_ask),
                 INPUT_ANSWERS,
@@ -2116,7 +2106,7 @@ def test_user_input_request_id_reuse_gets_separate_answer_history(
                 UserInputAnswer("q_two", ("Blue",)),
             )
             assert harness.input_ask != first
-            assert await harness.endpoint.answer_user_input(
+            assert await harness.endpoint.runs.answer_user_input(
                 "c_scripted",
                 public_ask_id(harness.input_ask),
                 second_answers,
@@ -2150,7 +2140,7 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             await harness.native.raise_user_input()
@@ -2164,14 +2154,14 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
                 message_files=ConversationMessageFiles(harness.endpoint.db_path),
                 database_path=harness.endpoint.db_path,
                 sse_heartbeat_ms=1000,
-                executor_endpoint=harness.endpoint,
+                executor_endpoint=harness.endpoint.runs,
             )
             pending = await _pending_user_input(runtime, "c_scripted")
             assert pending is not None and pending["answer_available"] is True
             assert len(pending["questions"]) == 2
             generation = harness.mac.identity.connection_generation
             harness.endpoint.cut_user_input_application = True
-            assert await harness.endpoint.answer_user_input(
+            assert await harness.endpoint.runs.answer_user_input(
                 "c_scripted",
                 public_ask_id(harness.input_ask),
                 INPUT_ANSWERS,
@@ -2184,7 +2174,7 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
             await eventually(
                 lambda: (
                     harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.ready
+                    and harness.endpoint.runs.ready
                 ),
                 "input application did not reconcile",
             )
@@ -2194,7 +2184,7 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
             assert harness.native.user_answers == [("request_input", ORDERED_INPUT_ANSWERS)]
             assert harness.events("user_input_answered") == 1
             replacement = (UserInputAnswer("q_one", ("No",)), UserInputAnswer("q_two", ("Blue",)))
-            assert not await harness.endpoint.answer_user_input(
+            assert not await harness.endpoint.runs.answer_user_input(
                 "c_scripted",
                 public_ask_id(harness.input_ask),
                 replacement,
@@ -2218,10 +2208,10 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
-            identity = harness.endpoint.identity
+            identity = harness.endpoint.runs.identity
             assert identity is not None
             connection = connect(harness.endpoint.db_path)
             before = connection.execute("SELECT count(*) FROM mac_inbox_positions").fetchone()[0]
@@ -2245,7 +2235,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
             assert await asyncio.wait_for(peer.receive_bytes(1024), 1) == b""
             await ws_context.__aexit__(None, None, None)
             await client.close()
-            assert harness.endpoint.identity == identity and harness.endpoint.ready
+            assert harness.endpoint.runs.identity == identity and harness.endpoint.runs.ready
             assert (
                 connection.execute("SELECT count(*) FROM mac_inbox_positions").fetchone()[0]
                 == before
@@ -2265,14 +2255,14 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             reject = True
             rejected = asyncio.Event()
             refusals: list[AcceptanceReceipt] = []
-            generation, writer = harness.mac.identity, harness.endpoint.link
-            send = harness.endpoint.link._writer.send
+            generation, writer = harness.mac.identity, harness.endpoint.runs.link
+            send = harness.endpoint.runs.link._writer.send
 
             async def corrupt_ack(message: WireMessage) -> None:
                 if reject and message.kind is WireMessageKind.file_transfer:
@@ -2298,7 +2288,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                     refusals.append(TypeAdapter(AcceptanceReceipt).validate_python(message.payload))
                     rejected.set()
 
-            monkeypatch.setattr(harness.endpoint.link._writer, "send", corrupt_ack)
+            monkeypatch.setattr(harness.endpoint.runs.link._writer, "send", corrupt_ack)
             ticket_id = next(iter(harness.mac.runner._children.values())).ticket_id
             assert ticket_id is not None
             artifact = harness.mac.paths.artifacts / ticket_id / "typed-ack.bin"
@@ -2318,7 +2308,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             assert harness.events("tool_call_finished") == 0
             assert len(refusals) == 1
             assert (
-                harness.endpoint.store.lookup_receipt(
+                harness.endpoint.inbox.store.lookup_receipt(
                     refusals[0].sender_id, refusals[0].submission_id
                 )
                 == refusals[0]
@@ -2326,9 +2316,9 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             await eventually(lambda: not harness.mac.outbox.pending(), "Refused item did not drain")
             assert not harness.endpoint._upload_transfers
             assert artifact.read_bytes() == contents
-            assert harness.mac.identity == generation and harness.endpoint.link is writer
-            assert harness.endpoint.link is not None
-            control = await harness.endpoint.link.request(
+            assert harness.mac.identity == generation and harness.endpoint.runs.link is writer
+            assert harness.endpoint.runs.link is not None
+            control = await harness.endpoint.runs.link.request(
                 WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
             )
             assert control.kind is WireMessageKind.health
@@ -2362,7 +2352,7 @@ def test_input_descriptor_must_validate_before_provider_invocation(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
@@ -2373,7 +2363,7 @@ def test_input_descriptor_must_validate_before_provider_invocation(
                 standard_error_tail=None,
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
-            send = harness.endpoint.link._writer.send
+            send = harness.endpoint.runs.link._writer.send
 
             async def corrupt(message: WireMessage) -> None:
                 if (
@@ -2390,19 +2380,19 @@ def test_input_descriptor_must_validate_before_provider_invocation(
                     )
                 await send(message)
 
-            monkeypatch.setattr(harness.endpoint.link._writer, "send", corrupt)
-            kept = await harness.endpoint.runtime.message_files.keep(
+            monkeypatch.setattr(harness.endpoint.runs.link._writer, "send", corrupt)
+            kept = await harness.endpoint.message_files.keep(
                 "c_scripted", b"input bytes", media_type="application/octet-stream"
             )
             outcomes: list[CommandOutcome] = []
-            send_command = harness.endpoint.send_command
+            send_command = harness.endpoint.runs.send_command
 
             async def observe(command: ChildCommand) -> CommandOutcome:
                 outcome = await send_command(command)
                 outcomes.append(outcome)
                 return outcome
 
-            monkeypatch.setattr(harness.endpoint, "send_command", observe)
+            monkeypatch.setattr(harness.endpoint.runs, "send_command", observe)
             result = await asyncio.wait_for(
                 harness.system.send(
                     "c_scripted",
@@ -2425,8 +2415,8 @@ def test_input_descriptor_must_validate_before_provider_invocation(
                 / kept.stored_file_id
             )
             assert not target.exists()
-            assert harness.endpoint.link is not None
-            control = await harness.endpoint.link.request(
+            assert harness.endpoint.runs.link is not None
+            control = await harness.endpoint.runs.link.request(
                 WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
             )
             assert control.kind is WireMessageKind.health
@@ -2447,9 +2437,9 @@ async def hold_reconnection(
         await connected(command_tasks)
 
     monkeypatch.setattr(harness.mac, "_connected", paused)
-    assert harness.endpoint.link is not None
-    harness.endpoint.link.close()
-    await eventually(lambda: not harness.endpoint.ready, "link did not disconnect")
+    assert harness.endpoint.runs.link is not None
+    harness.endpoint.runs.link.close()
+    await eventually(lambda: not harness.endpoint.runs.ready, "link did not disconnect")
     return resume
 
 
@@ -2465,7 +2455,7 @@ async def post_owner_answer(harness: ExecutorHarness, ask: AskReference) -> dict
     runtime = SimpleNamespace(
         system=harness.system,
         database_path=harness.endpoint.db_path,
-        executor_endpoint=harness.endpoint,
+        executor_endpoint=harness.endpoint.runs,
     )
     app.dependency_overrides[_runtime] = lambda: runtime
     body = {"executor_ask": encode_value(ask)}
@@ -2494,7 +2484,7 @@ def test_saved_answer_after_vps_restart_remains_unapplied(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         resume = None
         try:
@@ -2508,26 +2498,26 @@ def test_saved_answer_after_vps_restart_remains_unapplied(
                 ask = harness.input_ask
             resume = await hold_reconnection(harness, monkeypatch)
             assert await post_owner_answer(harness, ask) == {"landed": True}
-            answer = harness.endpoint.store.recorded_answer(ask)
+            answer = harness.endpoint.runs.store.recorded_answer(ask)
             assert answer is not None
-            assert harness.endpoint.pending_commands == {}
+            assert harness.endpoint.runs.pending_commands == {}
             assert harness.native.answers == [] and harness.native.user_answers == []
             # Both accepted receipt and durable remote provenance survive without inventory.
             await harness.restart_vps_core(wait_ready=False)
-            assert harness.endpoint.owns_conversation("c_scripted")
-            assert harness.endpoint.conversation_context("c_scripted") is not None
+            assert harness.endpoint.runs.owns_conversation("c_scripted")
+            assert harness.endpoint.runs.conversation_context("c_scripted") is not None
             assert await post_owner_answer(harness, ask) == {"landed": True}
-            assert harness.endpoint.store.recorded_answer(ask) == answer
-            assert harness.endpoint.pending_commands == {}
+            assert harness.endpoint.runs.store.recorded_answer(ask) == answer
+            assert harness.endpoint.runs.pending_commands == {}
             resume.set()
             await eventually(lambda: harness.native.stop_count == 1, "old child was not stopped")
             state = harness.system._conversations["c_scripted"]
             await eventually(lambda: not state.child_is_quarantined, "stop proof did not settle")
             assert harness.native.answers == [] and harness.native.user_answers == []
-            evidence = harness.endpoint.store.ask_evidence(ask)
+            evidence = harness.endpoint.runs.store.ask_evidence(ask)
             assert evidence is not None and evidence.applied_at_mac_ms is None
-            assert harness.endpoint.store.recorded_answer(ask) == answer
-            assert not harness.endpoint.store.answer_target_is_open(ask)
+            assert harness.endpoint.runs.store.recorded_answer(ask) == answer
+            assert not harness.endpoint.runs.store.answer_target_is_open(ask)
             assert await post_owner_answer(harness, ask) == {"landed": True}
         finally:
             if resume is not None:
@@ -2569,9 +2559,9 @@ def test_ready_transition_sweeps_answer_saved_after_reconciliation(
             monkeypatch.setattr(Link, "request", pause_ready)
             resume.set()
             await asyncio.wait_for(reached.wait(), 5)
-            assert not harness.endpoint.ready
+            assert not harness.endpoint.runs.ready
             assert await post_owner_answer(harness, ask) == {"landed": True}
-            assert harness.endpoint.pending_commands == {}
+            assert harness.endpoint.runs.pending_commands == {}
             ready_release.set()
             event = "permission_answered" if kind is AskKind.permission else "user_input_answered"
             await eventually(
@@ -2592,7 +2582,7 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         resume = None
         native_cancel = asyncio.Event()
@@ -2609,7 +2599,7 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
                 ask = harness.input_ask
             resume = await hold_reconnection(harness, monkeypatch)
             assert await post_owner_answer(harness, ask) == {"landed": True}
-            answer = harness.endpoint.store.recorded_answer(ask)
+            answer = harness.endpoint.runs.store.recorded_answer(ask)
 
             async def stalled_cancel(*args: object) -> None:
                 cancel_entered.set()
@@ -2619,9 +2609,9 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
             old_system = harness.system
             interrupt = asyncio.create_task(old_system.interrupt("c_scripted"))
             await asyncio.wait_for(cancel_entered.wait(), 2)
-            evidence = harness.endpoint.store.ask_evidence(ask)
+            evidence = harness.endpoint.runs.store.ask_evidence(ask)
             assert evidence is not None and evidence.reachability is AskReachability.callback_gone
-            context = harness.endpoint.store.turn_context("c_scripted")
+            context = harness.endpoint.runs.store.turn_context("c_scripted")
             assert context is not None and context.callbacks_revoked and not context.ended
             # A callback announced after revocation cannot create a newly answerable ask.
             await harness.native.raise_user_input("request_late")
@@ -2633,9 +2623,9 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
             await asyncio.gather(interrupt, return_exceptions=True)
             await harness.restart_vps_core(wait_ready=False)
             assert await post_owner_answer(harness, ask) == {"landed": True}
-            assert harness.endpoint.store.recorded_answer(ask) == answer
+            assert harness.endpoint.runs.store.recorded_answer(ask) == answer
             resume.set()
-            await eventually(lambda: harness.endpoint.ready, "revoked turn did not reconcile")
+            await eventually(lambda: harness.endpoint.runs.ready, "revoked turn did not reconcile")
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "late callback did not drain"
             )
@@ -2644,7 +2634,7 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
                 harness.events("permission_answered") == harness.events("user_input_answered") == 0
             )
             assert (
-                harness.endpoint._current_ask_evidence(
+                harness.endpoint.runs._current_ask_evidence(
                     "c_scripted",
                     f"{ask.turn.turn_number}:user_input:request_late",
                     AskKind.user_input,
@@ -2654,8 +2644,8 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
             state = harness.system._conversations["c_scripted"]
             await eventually(lambda: not state.child_is_quarantined, "restart stop did not settle")
             assert harness.native.stop_count == 1
-            assert harness.endpoint.pending_commands == {}
-            evidence = harness.endpoint.store.ask_evidence(ask)
+            assert harness.endpoint.runs.pending_commands == {}
+            evidence = harness.endpoint.runs.store.ask_evidence(ask)
             assert evidence is not None and evidence.reachability is AskReachability.child_gone
             assert evidence.applied_at_mac_ms is None
             assert not await harness.system.is_running("c_scripted")
@@ -2684,7 +2674,7 @@ def test_revocation_before_emission_blocks_immediate_send_and_pending_replay(
         try:
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
-            transfer = harness.endpoint._emit_command
+            transfer = harness.endpoint.runs._emit_command
             preparations = 0
 
             async def prepare(command: ChildCommand, *args: Any) -> bool:
@@ -2699,27 +2689,29 @@ def test_revocation_before_emission_blocks_immediate_send_and_pending_replay(
                 cancel_entered.set()
                 await cancel_finish.wait()
 
-            monkeypatch.setattr(harness.endpoint, "_emit_command", prepare)
+            monkeypatch.setattr(harness.endpoint.runs, "_emit_command", prepare)
             monkeypatch.setattr(harness.system, "_cancel_child_turn", stalled_cancel)
             assert await post_owner_answer(harness, harness.ask) == {"landed": True}
             await asyncio.wait_for(prepared.wait(), 2)
-            answer = harness.endpoint.store.recorded_answer(harness.ask)
+            answer = harness.endpoint.runs.store.recorded_answer(harness.ask)
             assert answer is not None
             interrupt = asyncio.create_task(harness.system.interrupt("c_scripted"))
             await asyncio.wait_for(cancel_entered.wait(), 2)
-            assert len(harness.endpoint.pending_commands) == 1
+            assert len(harness.endpoint.runs.pending_commands) == 1
             resume = await hold_reconnection(harness, monkeypatch)
             resume.set()
             # Reach the real reconciliation_ready pending_commands replay while the
             # original immediate sender remains paused after its preparation.
             await asyncio.wait_for(replay_prepared.wait(), 5)
             emit.set()
-            await eventually(lambda: not harness.endpoint.pending_commands, "closed task survived")
+            await eventually(
+                lambda: not harness.endpoint.runs.pending_commands, "closed task survived"
+            )
             assert preparations == 2
             assert harness.native.answers == []
-            evidence = harness.endpoint.store.ask_evidence(harness.ask)
+            evidence = harness.endpoint.runs.store.ask_evidence(harness.ask)
             assert evidence is not None and evidence.applied_at_mac_ms is None
-            assert harness.endpoint.store.recorded_answer(harness.ask) == answer
+            assert harness.endpoint.runs.store.recorded_answer(harness.ask) == answer
             cancel_finish.set()
             await asyncio.wait_for(interrupt, 2)
         finally:
@@ -2739,7 +2731,7 @@ def test_frame_before_revocation_preserves_native_application_after_assignment_c
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         applied, callback_entered = asyncio.Event(), asyncio.Event()
         cancel_entered, cancel_finish = asyncio.Event(), asyncio.Event()
@@ -2764,7 +2756,7 @@ def test_frame_before_revocation_preserves_native_application_after_assignment_c
             await asyncio.wait_for(callback_entered.wait(), 5)
             interrupt = asyncio.create_task(harness.system.interrupt("c_scripted"))
             await asyncio.wait_for(cancel_entered.wait(), 2)
-            harness.endpoint.store.close_child(harness.ask.child, 1000)
+            harness.endpoint.runs.store.close_child(harness.ask.child, 1000)
             applied.set()
             await eventually(
                 lambda: harness.events("permission_answered") == 1,
@@ -2775,7 +2767,7 @@ def test_frame_before_revocation_preserves_native_application_after_assignment_c
                 "nested outcome or standalone application was rejected",
             )
             assert harness.native.answers == [("ask_permission", "allow")]
-            evidence = harness.endpoint.store.ask_evidence(harness.ask)
+            evidence = harness.endpoint.runs.store.ask_evidence(harness.ask)
             assert evidence is not None and evidence.applied_at_mac_ms is not None
             assert await post_owner_answer(harness, harness.ask) == {"landed": True}
             cancel_finish.set()
@@ -2838,9 +2830,9 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
             first_release.set()
             await asyncio.wait_for(first_returned.wait(), 2)
             # Stale generation is temporary. It must not cancel the shared result future.
-            command, future = next(iter(harness.endpoint.pending_commands.values()))
+            command, future = next(iter(harness.endpoint.runs.pending_commands.values()))
             assert not future.done()
-            answer = harness.endpoint.store.recorded_answer(harness.ask)
+            answer = harness.endpoint.runs.store.recorded_answer(harness.ask)
             assert answer is not None and command.command_id == answer.answer_id
             replay_release.set()
             await eventually(
@@ -2865,7 +2857,7 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         release_application, release_event = asyncio.Event(), asyncio.Event()
         application_waiting, event_waiting, stop_hint = (
@@ -2883,8 +2875,8 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             stop_exact = harness.mac.runner._stop_exact_child
             publish_application = harness.mac.runner._publish_application
             native_stop = harness.native.stop
-            accept = harness.endpoint.accept_envelope
-            resolve = harness.endpoint._resolve_command
+            accept = harness.endpoint.inbox.accept
+            resolve = harness.endpoint.runs._resolve_command
 
             async def observe_native_stop(command: Any) -> CommandOutcome:
                 stopping.set()
@@ -2914,7 +2906,7 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                 return receipt
 
             async def observed_hint(outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
-                pending = harness.endpoint.pending_commands.get(outcome.command_id)
+                pending = harness.endpoint.runs.pending_commands.get(outcome.command_id)
                 if pending is not None and pending[0].operation is ChildOperation.stop:
                     stop_hint.set()
                 await resolve(outcome, stop_proven=stop_proven)
@@ -2926,8 +2918,8 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             monkeypatch.setattr(harness.mac.runner, "_publish_application", late_application)
             monkeypatch.setattr(harness.native, "cancel_running_turn", cancel_native, raising=False)
             monkeypatch.setattr(harness.native, "stop", final_native_event)
-            monkeypatch.setattr(harness.endpoint, "accept_envelope", withheld_event)
-            monkeypatch.setattr(harness.endpoint, "_resolve_command", observed_hint)
+            monkeypatch.setattr(harness.endpoint.inbox, "accept", withheld_event)
+            monkeypatch.setattr(harness.endpoint.runs, "_resolve_command", observed_hint)
             assert await post_owner_answer(harness, harness.ask) == {"landed": True}
             await asyncio.wait_for(application_waiting.wait(), 5)
             killing = asyncio.create_task(harness.system.kill("c_scripted"))
@@ -2939,16 +2931,16 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             await asyncio.wait_for(stop_hint.wait(), 5)
             stops = [
                 (command, future)
-                for command, future in harness.endpoint.pending_commands.values()
+                for command, future in harness.endpoint.runs.pending_commands.values()
                 if command.operation is ChildOperation.stop
             ]
             assert stops and all(not future.done() for _, future in stops)
-            assert harness.endpoint.store.child_assignment(reference) is not None
+            assert harness.endpoint.runs.store.child_assignment(reference) is not None
             assert not killing.done()
             release_event.set()
             await asyncio.wait_for(killing, 5)
             await eventually(lambda: not harness.mac.outbox.pending(), "cleanup FIFO did not drain")
-            assert harness.endpoint.store.child_assignment(reference) is None
+            assert harness.endpoint.runs.store.child_assignment(reference) is None
             assert harness.events("permission_answered") == 1
             assert harness.native.answers == [("ask_permission", "allow")]
             state = harness.system._conversations["c_scripted"]
@@ -2973,11 +2965,11 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                 )
                 assert all(row.sequence < stop_sequence for row in (application, final_event))
                 for row in (application, final_event):
-                    receipt = harness.endpoint.store.lookup_receipt(
+                    receipt = harness.endpoint.inbox.store.lookup_receipt(
                         row.sender_id, row.submission_id
                     )
                     assert receipt is None  # The later stop has advanced the single inbox position.
-                assert not harness.endpoint.store.cleanup_evidence_uncertain(reference)
+                assert not harness.endpoint.runs.store.cleanup_evidence_uncertain(reference)
             finally:
                 connection.close()
         finally:
@@ -3010,17 +3002,17 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
         ValidationReason,
     )
     from planner.executor import catalog_relay as mac_module
-    from planner.executor import vps as vps_module
+    from planner.executor import catalog_relay as vps_module
 
     async def run() -> None:
         started = time.monotonic()
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
-            assert harness.endpoint.identity is not None
-            identity = harness.endpoint.identity
-            writer = harness.endpoint.link
+            assert harness.endpoint.runs.identity is not None
+            identity = harness.endpoint.runs.identity
+            writer = harness.endpoint.runs.link
             observer = ScriptedCatalogObserver(lambda: harness.mac.identity)
             harness.mac.catalog._catalog_observer = observer
             request = CatalogRequest(
@@ -3042,7 +3034,9 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
                 return mint(entry, **arguments)
 
             monkeypatch.setattr(harness.mac.outbox, "add", count_journal)
-            result = await harness.endpoint.observe_catalog(request, attempt_id="connected-first")
+            result = await harness.endpoint.catalog.observe_catalog(
+                request, attempt_id="connected-first"
+            )
             assert isinstance(result, CatalogObservation)
             assert result.rows[0].submitted_token == "gpt-scripted"
             assert result.evidence.context.executor_identity == identity
@@ -3054,7 +3048,7 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             observer.block = True
             monkeypatch.setattr(vps_module, "CATALOG_TIMEOUT_SECONDS", 0.05)
             monkeypatch.setattr(mac_module, "CATALOG_TIMEOUT_SECONDS", 0.2)
-            timed_out = await harness.endpoint.observe_catalog(
+            timed_out = await harness.endpoint.catalog.observe_catalog(
                 request, attempt_id="connected-second"
             )
             assert isinstance(timed_out, CatalogUnavailable)
@@ -3068,8 +3062,8 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             assert harness.native.start_count == starts_before
             assert harness.native.prompt_count == prompts_before
             assert journal_additions == []
-            assert harness.endpoint.identity == identity
-            assert harness.endpoint.link is writer and harness.endpoint.ready
+            assert harness.endpoint.runs.identity == identity
+            assert harness.endpoint.runs.link is writer and harness.endpoint.runs.ready
             assert harness.mac.identity == identity
             assert harness.native.stop_count == 0
 
@@ -3088,7 +3082,7 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
                 "Child event did not reach VPS after catalog timeout",
             )
             assert journal_additions == [EnvelopeKind.backend_event]
-            assert harness.endpoint.identity == identity and harness.endpoint.ready
+            assert harness.endpoint.runs.identity == identity and harness.endpoint.runs.ready
             print(f"catalog TLS scenario elapsed: {time.monotonic() - started:.3f}s")
         finally:
             await harness.close()
@@ -3123,7 +3117,7 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
             assert harness.mac.gateway._link is not None
             mac_send = harness.mac.gateway._link._writer.send
             # Commands use the shared send lock directly; observe at the writer boundary.
-            writer = harness.endpoint.link
+            writer = harness.endpoint.runs.link
             assert writer is not None
             original_command = harness.mac._command
             dropped = False
@@ -3171,7 +3165,7 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
             if phase == "preparing":
                 locked = harness.mac.runner._children[reference.child_id].lock
                 await locked.acquire()
-            caller = asyncio.create_task(harness.endpoint.send_command(command))
+            caller = asyncio.create_task(harness.endpoint.runs.send_command(command))
             if phase == "preparing":
                 await eventually(
                     lambda: harness.mac.runner.ask((command.command_id,))[0].phase == "preparing",
@@ -3185,7 +3179,7 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
             await eventually(
                 lambda: (
                     harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.ready
+                    and harness.endpoint.runs.ready
                 ),
                 "Single reconnect ask did not admit the new link",
             )
@@ -3231,12 +3225,12 @@ def test_reconnect_ready_precedes_retained_output_drain(
                 queued = harness.mac.outbox.pending()
                 assert len(queued) == 1
                 generation = harness.mac.identity.connection_generation
-                assert harness.endpoint.link is not None
-                harness.endpoint.link.close()
+                assert harness.endpoint.runs.link is not None
+                harness.endpoint.runs.link.close()
                 await eventually(
                     lambda: (
                         harness.mac.identity.connection_generation > generation
-                        and harness.endpoint.ready
+                        and harness.endpoint.runs.ready
                     ),
                     "Ready waited for outbox replay",
                 )
@@ -3246,13 +3240,11 @@ def test_reconnect_ready_precedes_retained_output_drain(
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "Retained output did not drain"
             )
-            receipt = harness.endpoint.store.lookup_receipt(
+            receipt = harness.endpoint.inbox.store.lookup_receipt(
                 queued[0].sender_id, queued[0].submission_id
             )
             assert receipt is not None and receipt.result.get("applied") is True
-            assert (
-                await harness.endpoint.accept_envelope(queued[0], harness.mac.identity) == receipt
-            )
+            assert await harness.endpoint.inbox.accept(queued[0], harness.mac.identity) == receipt
             assert harness.events("permission_asked") == 1
         finally:
             await harness.close()

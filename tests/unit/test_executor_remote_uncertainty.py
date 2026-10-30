@@ -26,7 +26,7 @@ from planner.executor.protocol import (
     StartRun,
     encode_value,
 )
-from planner.executor.remote import RemoteBackendChildFactory
+from planner.executor.vps_remote_child import MacRemoteChildFactory
 
 
 def test_unknown_prompt_is_durable_and_quarantined_across_vps_restart(
@@ -44,7 +44,7 @@ def test_unknown_prompt_is_durable_and_quarantined_across_vps_restart(
         )
         return CommandOutcome(command.command_id, command.child, disposition, {})
 
-    factory = RemoteBackendChildFactory(
+    factory = MacRemoteChildFactory(
         lambda start, sink: ChildReference("incarnation", "child", start.conversation_id),
         native,
         lambda start: CanonicalSkillSnapshot(
@@ -122,8 +122,8 @@ def test_each_native_start_reads_database_snapshot_and_replay_keeps_command(
     from planner.core.contracts import OWNER_PRINCIPAL
     from planner.executor.configuration import MAX_ENVELOPE_BYTES
     from planner.executor.protocol import JsonObject, WireMessage, WireMessageKind, encode_message
-    from planner.executor.remote import RemoteBackendChild
-    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.vps_remote_child import MacRemoteChild
+    from planner.executor.vps_transport import VpsExecutor
     from planner.managed_skills import read_all_skill_sources, write_skill_source
     from planner.tickets import data
 
@@ -138,7 +138,7 @@ def test_each_native_start_reads_database_snapshot_and_replay_keeps_command(
         employee_launch_model="scripted",
     )
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    endpoint = ExecutorEndpoint(path, RealClock())
+    endpoint = VpsExecutor(path, RealClock())
     start = ResolvedConversationStart(
         "c_snapshot",
         ConversationBackendKey.codex,
@@ -159,8 +159,10 @@ def test_each_native_start_reads_database_snapshot_and_replay_keeps_command(
     async def run() -> None:
         first_text = read_all_skill_sources(tmp_db)["panels"] + "\nDatabase owner text α.\r\n"
         write_skill_source(tmp_db, "panels", first_text, now=2)
-        child = RemoteBackendChild(
-            ChildReference("incarnation", "one", "c_snapshot"), send, endpoint._read_skill_snapshot
+        child = MacRemoteChild(
+            ChildReference("incarnation", "one", "c_snapshot"),
+            send,
+            endpoint.runs._read_skill_snapshot,
         )
         await child.start(start, vendor_session_cursor=None)
         first = commands[0]
@@ -215,7 +217,7 @@ def test_oversized_full_start_frame_refuses_before_dispatch(tmp_path: Path) -> N
     from planner.conversation.backends.contracts import BackendSpawnFailed
     from planner.conversation.contracts import ConversationAccess, ResolvedConversationStart
     from planner.executor.configuration import MAX_ENVELOPE_BYTES
-    from planner.executor.remote import RemoteBackendChild
+    from planner.executor.vps_remote_child import MacRemoteChild
 
     names = ("panels", "panels-worker", "panels-worker-coding")
     # JSON escaping makes the encoded command larger than the raw skill sources.
@@ -236,7 +238,7 @@ def test_oversized_full_start_frame_refuses_before_dispatch(tmp_path: Path) -> N
         return CommandOutcome(command.command_id, command.child, CommandDisposition.succeeded, {})
 
     async def run() -> None:
-        child = RemoteBackendChild(
+        child = MacRemoteChild(
             ChildReference("inc", "child", "c_large"), send, lambda start: snapshot
         )
         resolved = ResolvedConversationStart(
@@ -273,12 +275,12 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         envelope_payload_digest,
     )
     from planner.executor.routing import LocaleBackendChildFactory
-    from planner.executor.store import ExecutorStore
+    from planner.executor.vps_inbox import InboxStore
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    store = ExecutorStore(db_path)
+    store = InboxStore(db_path)
     identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native", 1)
-    store.begin_connection(identity, 1)
+    store.runs.begin_connection(identity, 1)
     commands: list[ChildCommand] = []
     references: list[ChildReference] = []
     sequence = 0
@@ -289,7 +291,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         del sink
         reference = ChildReference("native", f"child-{len(references)}", start.conversation_id)
         references.append(reference)
-        store.register_child(reference, "ticket", "test", 1)
+        store.runs.register_child(reference, "ticket", "test", 1)
         return reference
 
     async def native(command: ChildCommand) -> CommandOutcome:
@@ -343,13 +345,13 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
                 payload,
                 digest,
             ),
-            lambda conn, row: store.record_command_outcome_in_transaction(conn, outcome) or {},
+            lambda conn, row: store.runs.record_command_outcome_in_transaction(conn, outcome) or {},
             sequence,
             identity=identity,
         )
         return outcome
 
-    factory = RemoteBackendChildFactory(
+    factory = MacRemoteChildFactory(
         assign,
         native,
         lambda start: CanonicalSkillSnapshot(
@@ -396,7 +398,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         await restored.kill("c_retry")
         await restored.wait_until_quiescent()
         assert not restored._conversations["c_retry"].child_is_quarantined
-        assert store.child_assignment(references[0]) is None
+        assert store.runs.child_assignment(references[0]) is None
         assert stops == 2
         recorded = tmp_db.execute("SELECT outcome_json FROM executor_command_outcomes").fetchall()
         assert len(recorded) == 1
@@ -446,7 +448,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         await asyncio.wait_for(stop_after_resolution.wait(), 2)
         await healthy.wait_until_quiescent()
         assert state.child is None and not state.child_is_quarantined
-        assert store.child_assignment(references[-1]) is None
+        assert store.runs.child_assignment(references[-1]) is None
         factory.send_command = original_native
         healthy._admit_dispatch_messages = original_admission
 
@@ -474,7 +476,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
             healthy.send("c_retry", text_message_content("after rebind"), sender_label="Test"), 2
         )
         assert len(references) == previous_count + 1
-        assert store.child_assignment(old_reference) is None
+        assert store.runs.child_assignment(old_reference) is None
         assert state.running_turn is not None and not state.child_is_quarantined
 
         from planner.core.contracts import ErrorCode, PlannerError
@@ -520,16 +522,16 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         advance_sequence()
         poisoned = references[-1]
         await healthy.kill("c_retry")
-        assert state.child_is_quarantined and store.child_assignment(poisoned) is not None
+        assert state.child_is_quarantined and store.runs.child_assignment(poisoned) is not None
         await healthy.kill("c_retry")
         await healthy.wait_until_quiescent()
-        assert state.child_is_quarantined and store.cleanup_evidence_uncertain(poisoned)
+        assert state.child_is_quarantined and store.runs.cleanup_evidence_uncertain(poisoned)
         await healthy.shutdown()
         quarantined = core(restored=True)
         await quarantined.kill("c_retry")
         await quarantined.wait_until_quiescent()
         assert quarantined._conversations["c_retry"].child_is_quarantined
-        assert store.child_assignment(poisoned) is not None
+        assert store.runs.child_assignment(poisoned) is not None
         await quarantined.shutdown()
 
     asyncio.run(run())

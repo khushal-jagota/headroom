@@ -6,12 +6,15 @@ import hashlib
 import json
 import sqlite3
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Protocol, TypedDict, cast
+
+if TYPE_CHECKING:
+    from planner.executor.vps_remote_child import MacRemoteChild
 
 from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
@@ -931,3 +934,32 @@ def encode_frame(value: object) -> bytes:
 
 def as_object(value: object) -> JsonObject:
     return cast(JsonObject, encode_value(value))
+
+
+class MacRunConversations(Protocol):
+    async def emit_executor_answer(
+        self, conversation_id: str, emit: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None: ...
+
+    async def interrupt_replaced_executor_runs(self, current_incarnation: str) -> None: ...
+
+    async def stop_interrupted_remote_child(
+        self, reference: ChildReference, child: MacRemoteChild
+    ) -> None: ...
+
+
+class MacInboxConversations(Protocol):
+    async def receive_remote_backend_event(
+        self,
+        event: BackendEvent,
+        envelope: QueuedEnvelope,
+        acceptor: ExecutorEffectAcceptor,
+    ) -> AcceptanceReceipt: ...
+
+    async def receive_remote_answer_application(
+        self,
+        application: AnswerApplication,
+        envelope: QueuedEnvelope,
+        acceptor: ExecutorEffectAcceptor,
+        record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
+    ) -> AcceptanceReceipt: ...

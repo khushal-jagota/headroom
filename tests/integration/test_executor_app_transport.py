@@ -28,10 +28,10 @@ def test_native_admission_and_generation_file_slots(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
-            identity = harness.endpoint.identity
+            identity = harness.endpoint.runs.identity
             assert identity is not None
             client = ExecutorAppClient(
                 harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
@@ -151,10 +151,10 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
-            identity = harness.endpoint.identity
+            identity = harness.endpoint.runs.identity
             assert identity is not None
             client = ExecutorAppClient(
                 harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
@@ -194,7 +194,7 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
                 from planner.executor.protocol import WireMessageKind
 
                 response = await asyncio.wait_for(
-                    harness.endpoint.link.request(
+                    harness.endpoint.runs.link.request(
                         WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1}}
                     ),
                     2,
@@ -208,7 +208,7 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
                     "canceled HTTP upload retained its reservation",
                 )
                 assert not (service.root / slot.transfer_id).exists()
-                assert harness.endpoint.ready
+                assert harness.endpoint.runs.ready
             finally:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
@@ -225,10 +225,10 @@ def test_malformed_control_cannot_fence_current_peer(
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
-            identity = harness.endpoint.identity
+            identity = harness.endpoint.runs.identity
             assert identity is not None
             async with harness.proxy.session_factory() as session:
                 async with session.ws_connect(
@@ -246,7 +246,7 @@ def test_malformed_control_cannot_fence_current_peer(
                         await socket.send_bytes(b"x" * (MAX_ENVELOPE_BYTES + 1))
                     reply = await asyncio.wait_for(socket.receive(), 2)
                     assert reply.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
-            assert harness.endpoint.identity == identity and harness.endpoint.ready
+            assert harness.endpoint.runs.identity == identity and harness.endpoint.runs.ready
         finally:
             await harness.close()
 
@@ -269,12 +269,12 @@ def test_duplicate_hello_preserves_active_file_reservations(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
-            identity = harness.endpoint.identity
+            identity = harness.endpoint.runs.identity
             assert identity is not None
-            writer = harness.endpoint.link
+            writer = harness.endpoint.runs.link
             assert harness.mac.gateway._link is not None
             service = harness.endpoint._transports[identity]
             child = next(iter(harness.mac.runner._children.values()))
@@ -314,8 +314,8 @@ def test_duplicate_hello_preserves_active_file_reservations(
                     )
                     reply = await asyncio.wait_for(socket.receive(), 2)
                     assert reply.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
-            assert harness.endpoint.ready and harness.endpoint.identity == identity
-            assert harness.endpoint.link is writer
+            assert harness.endpoint.runs.ready and harness.endpoint.runs.identity == identity
+            assert harness.endpoint.runs.link is writer
             assert harness.endpoint._transports[identity] is service and service.valid()
             assert slot.transfer_id in service.transfers
             native_client = ExecutorAppClient(
@@ -326,9 +326,9 @@ def test_duplicate_hello_preserves_active_file_reservations(
                 source.write_bytes(b"")
                 await put_file(harness.mac.gateway._link, slot, source)
                 assert slot.transfer_id not in service.transfers
-                assert not harness.endpoint.store.file_target(manifest).exists()
-                harness.endpoint.store.install_files((manifest,))
-                assert harness.endpoint.store.file_target(manifest).read_bytes() == b""
+                assert not harness.endpoint.inbox.store.file_target(manifest).exists()
+                harness.endpoint.inbox.store.install_files((manifest,))
+                assert harness.endpoint.inbox.store.file_target(manifest).read_bytes() == b""
             finally:
                 await native_client.close()
         finally:
@@ -429,7 +429,7 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.link is not None
+        assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
