@@ -50,8 +50,6 @@ from planner.managers import data as managers
 from planner.projects import data as projects
 from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
 from planner.tickets import data as tickets
-from planner.tickets import launch_authority as authority
-from planner.tickets.contracts import TicketLocale
 from planner.tickets.validation import data as validation
 
 
@@ -175,35 +173,6 @@ def test_offline_creation_preserves_exact_token_effort_and_historical_origin(
     assert saved.validation.reason is ValidationReason.catalog_unavailable
 
 
-def test_canonical_offline_move_persists_current_destination_validation(tmp_db: Connection) -> None:
-    """A durable move must not expose the previous locale's result as current."""
-    ticket = tickets.create_ticket(
-        tmp_db,
-        title="Offline destination",
-        principal=OWNER_PRINCIPAL,
-        now=1,
-        title_max_chars=200,
-        worker_type="coding",
-        employee_backend="codex",
-        employee_launch_model="gpt-6.1-sol",
-        employee_launch_reasoning_effort="exact-unknown-effort",
-        selection_kind=SelectionKind.concrete,
-    )
-    before = validation.read_launch_selection(tmp_db, ticket.id)
-    tickets.move_ticket_locale(
-        tmp_db, ticket.id, locale=TicketLocale.macos, principal=OWNER_PRINCIPAL, now=2
-    )
-    after = validation.read_launch_selection(tmp_db, ticket.id)
-    stored = validation.read_launch_validation(tmp_db, ticket.id)
-    assert stored is not None and stored.current and stored.validation.selection == after
-    assert after.destination is TicketLocale.macos
-    assert after.submitted_token == before.submitted_token
-    assert after.reasoning_effort == before.reasoning_effort
-    assert stored.validation.state is ValidationState.unresolved
-    assert stored.validation.reason is ValidationReason.catalog_unavailable
-    assert stored.validation.evidence is None
-
-
 def test_explicit_departed_intent_has_its_own_cas_writer_and_never_uses_effective_identity(
     tmp_db: Connection,
 ) -> None:
@@ -224,23 +193,6 @@ def test_explicit_departed_intent_has_its_own_cas_writer_and_never_uses_effectiv
     )
     original = tickets.employee_launch_configuration(tickets.read_ticket(tmp_db, ticket.id))
     revision = validation.read_launch_selection(tmp_db, ticket.id).selection_revision
-    read = authority.acquire_read(tmp_db, ticket.id)
-    with pytest.raises(PlannerError, match="unsettled operation"):
-        tickets.write_explicit_ticket_launch_intent(
-            tmp_db,
-            ticket.id,
-            expected_conversation_id="author-conversation",
-            expected_configuration=original,
-            expected_selection_revision=revision,
-            model="sol",
-            reasoning_effort="high",
-            selection_kind=SelectionKind.panels_alias,
-            source_type="sender_override",
-            now=2,
-        )
-    read.release(tmp_db)
-    # No accidental outer permit setup: the canonical writer owns and propagates
-    # its own mutation permit to the nested selection-kind/validation helpers.
     assert tickets.write_explicit_ticket_launch_intent(
         tmp_db,
         ticket.id,
@@ -343,62 +295,42 @@ def test_validation_refresh_keeps_attribution_but_deduplicates_semantic_failure(
     assert wakes.claim_next_batch(tmp_db, process_token="test", now=32) is None
 
 
-def test_bound_uncertain_permit_fences_only_its_sources_across_reopen(
+def test_historical_uncertain_lease_does_not_block_edits_across_reopen(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
+    # Owner-directed removal: the former test required these edits to fail.
     manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     database = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    permit = authority.acquire_read(tmp_db, ticket_id)
-    # Exercise legacy uncertain ownership without fabricating new metadata proof.
-    tmp_db.execute(
-        "UPDATE ticket_launch_authority SET policy_context_json=NULL WHERE lease_id=?",
-        (permit.lease_id,),
+    tmp_db.executemany(
+        "INSERT INTO ticket_launch_authority "
+        "(lease_id,authority_key,mode,owner_process,command_id,executor_incarnation) "
+        "VALUES('historical',?,'read','old-owner','uncertain-command','executor-1')",
+        [(f"ticket:{ticket_id}",), ("project:project_vylo",)],
     )
-    permit.bind_command(tmp_db, "uncertain-command", "executor-1")
-    permit.release(tmp_db)
+    tmp_db.commit()
+    before = [tuple(row) for row in tmp_db.execute("SELECT * FROM ticket_launch_authority")]
     other = connect(database)
     try:
-        with pytest.raises(PlannerError, match="unsettled operation") as refusal:
-            projects.update_project(other, "project_vylo", folder_path="/changed", now=3)
-        assert refusal.value.detail["command_ids"] == ["uncertain-command"]
-        projects.update_project(other, "project_other", folder_path="/unrelated", now=4)
-        projects.update_project(other, "project_vylo", summary="Unrelated prose", now=4)
-        independent = tickets.create_ticket(
-            other,
-            title="Same-project independent",
-            principal=OWNER_PRINCIPAL,
-            now=4,
-            title_max_chars=200,
-            worker_type="coding",
-            project_id="project_vylo",
+        projects.update_project(other, "project_vylo", folder_path="/changed", now=3)
+        managers.update_manager(
+            other, manager_id, edits={"project_id": "project_other"}, clock=fake_clock
         )
-        independent_permit = authority.acquire_ticket_mutation(other, independent.id)
-        try:
-            with authority.launch_authority_scope(independent_permit):
-                tickets.write_employee_configuration(
-                    other,
-                    independent.id,
-                    expected_employee_configuration=tickets.employee_launch_configuration(
-                        independent
-                    ),
-                    employee_backend=independent.employee_backend,
-                    employee_launch_model=independent.employee_launch_model or "gpt-6.1-sol",
-                    employee_launch_reasoning_effort="new-unknown-effort",
-                    advertised_models=None,
-                    reasoning_supported=None,
-                    advertised_reasoning_efforts=None,
-                    now=5,
-                )
-        finally:
-            independent_permit.release(other)
-        with pytest.raises(PlannerError, match="unsettled operation"):
-            managers.update_manager(
-                other, manager_id, edits={"project_id": "project_other"}, clock=fake_clock
-            )
-        # No expiry and no PID-age heuristic: only definitive settlement releases it.
-        authority.settle_command(other, "uncertain-command", "executor-1")
-        projects.update_project(other, "project_vylo", folder_path="/changed", now=5)
-        assert other.execute("SELECT count(*) FROM ticket_launch_authority").fetchone()[0] == 0
+        ticket = tickets.read_ticket(other, ticket_id)
+        tickets.write_employee_configuration(
+            other,
+            ticket_id,
+            expected_employee_configuration=tickets.employee_launch_configuration(ticket),
+            employee_backend=ticket.employee_backend,
+            employee_launch_model="gpt-6.1-terra",
+            employee_launch_reasoning_effort="custom-native-effort",
+            advertised_models=frozenset(),
+            reasoning_supported=False,
+            advertised_reasoning_efforts=frozenset(),
+            now=5,
+        )
+        assert tickets.read_ticket(other, ticket_id).employee_launch_model == "gpt-6.1-terra"
+        retained = [tuple(row) for row in other.execute("SELECT * FROM ticket_launch_authority")]
+        assert retained == before
     finally:
         other.close()
 
@@ -453,7 +385,7 @@ def test_final_notice_admission_discards_a_failure_corrected_after_batching(
     )
 
 
-def test_startup_reconstructs_legacy_unknown_command_and_retirement_settles_only_its_child(
+def test_reopen_edit_and_retirement_preserve_captured_command_and_uncertain_outcome(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     """Old journal reopen proves ownership without fabricating a terminal outcome."""
@@ -484,110 +416,42 @@ def test_startup_reconstructs_legacy_unknown_command_and_retirement_settles_only
         "principal_kind,principal_id,created_at_ms) VALUES(?,?,?,'ticket',?,1)",
         (child.executor_incarnation, child.child_id, child.conversation_id, ticket_id),
     )
+    tmp_db.commit()
     disk = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    original_runtime = tmp_db.execute("SELECT runtime_json FROM executor_core_turns").fetchone()[0]
+    original_outcome = tmp_db.execute(
+        "SELECT outcome_json FROM executor_command_outcomes"
+    ).fetchone()[0]
     reopened = connect(disk)
     try:
-        result = authority.reconcile_persisted_launch_authority(reopened)
-        assert result.reconstructed == 1
-        assert set(result.blocked_authority_keys) == {
-            f"ticket:{ticket_id}",
-            "project:project_vylo",
-            "model-policy-recovery:codex",
-        }
-        retained_bytes = reopened.execute(
-            "SELECT outcome_json FROM executor_command_outcomes WHERE command_id=?",
-            (command.command_id,),
-        ).fetchone()[0]
-        # A different child remains unresolved through retirement of this source.
-        sibling = ChildReference("executor-legacy", "other-child", "other-conversation")
-        sibling_lease = authority.acquire_read(reopened, ticket_id)
-        reopened.execute(
-            "UPDATE ticket_launch_authority SET policy_context_json=NULL WHERE lease_id=?",
-            (sibling_lease.lease_id,),
-        )
-        sibling_lease.bind_command(reopened, "sibling-unknown", sibling.executor_incarnation)
-        sibling_lease.release(reopened)
+        projects.update_project(reopened, "project_vylo", folder_path="/changed", now=100)
         ExecutorStore.close_child_in_transaction(reopened, child, 100, retained_commands=(command,))
         assert (
-            reopened.execute(
-                "SELECT outcome_json FROM executor_command_outcomes WHERE command_id=?",
-                (command.command_id,),
-            ).fetchone()[0]
-            == retained_bytes
+            reopened.execute("SELECT runtime_json FROM executor_core_turns").fetchone()[0]
+            == original_runtime
         )
-        assert [
-            r[0]
-            for r in reopened.execute("SELECT DISTINCT command_id FROM ticket_launch_authority")
-        ] == ["sibling-unknown"]
-        with pytest.raises(PlannerError, match="unsettled operation"):
-            projects.update_project(reopened, "project_vylo", folder_path="/still-blocked", now=100)
-        # Reopening cannot recreate the retired child's lease merely because its
-        # original command outcome truthfully remains uncertain.
-        assert authority.reconcile_persisted_launch_authority(reopened).reconstructed == 0
-        # A later definitive journal result can settle recovered ownership on a
-        # second reopen without a live replay callback. Simulate its prior owner
-        # being gone; record the old journal shape directly to exercise recovery.
-        reopened.execute(
-            "UPDATE ticket_launch_authority SET owner_process='recovered:prior-process' "
-            "WHERE command_id='sibling-unknown'"
+        assert (
+            reopened.execute("SELECT outcome_json FROM executor_command_outcomes").fetchone()[0]
+            == original_outcome
         )
-        known = CommandOutcome("sibling-unknown", sibling, CommandDisposition.succeeded, {})
-        reopened.execute(
-            "INSERT INTO executor_command_outcomes VALUES(?,?,?)",
-            (
-                sibling.executor_incarnation,
-                known.command_id,
-                TypeAdapter(CommandOutcome).dump_json(known).decode(),
-            ),
+        assert (
+            reopened.execute("SELECT closed_at_ms FROM executor_child_assignments").fetchone()[0]
+            == 100
         )
+        assert reopened.execute("SELECT count(*) FROM ticket_launch_authority").fetchone()[0] == 0
+        with pytest.raises(PlannerError, match="conflicts with first result"):
+            ExecutorStore.record_command_outcome_in_transaction(
+                reopened,
+                CommandOutcome(command.command_id, child, CommandDisposition.succeeded, {}),
+            )
     finally:
         reopened.close()
-    second_reopen = connect(disk)
-    try:
-        report = authority.reconcile_persisted_launch_authority(second_reopen)
-        assert report.settled == 1 and report.blocked_authority_keys == ()
-        # No remote journal authorizes a timeout cleanup of local VPS ambiguity.
-        orphaned_local = authority.acquire_read(second_reopen, ticket_id)
-        second_reopen.execute(
-            "UPDATE ticket_launch_authority SET owner_process='recovered:local-process', "
-            "policy_context_json=NULL "
-            "WHERE lease_id=?",
-            (orphaned_local.lease_id,),
-        )
-        report = authority.reconcile_persisted_launch_authority(second_reopen)
-        assert report.settled == 0
-        assert f"ticket:{ticket_id}" in report.blocked_authority_keys
-    finally:
-        second_reopen.close()
 
 
-def test_shared_admissions_exclude_assignment_and_preserve_snapshot_revision(
+def test_assignment_edit_preserves_selection_revision_concurrency(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     _, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    first = authority.acquire_read(tmp_db, ticket_id)
-    second = authority.acquire_read(tmp_db, ticket_id)
-    with pytest.raises(PlannerError, match="unsettled operation"):
-        tickets.edit_ticket(
-            tmp_db,
-            ticket_id,
-            edit={"project_id": "project_other", "manager_id": None},
-            title_max_chars=200,
-            principal=OWNER_PRINCIPAL,
-            now=4,
-        )
-    tickets.edit_ticket(
-        tmp_db,
-        ticket_id,
-        edit={"title": "Prose is independent"},
-        title_max_chars=200,
-        principal=OWNER_PRINCIPAL,
-        now=5,
-    )
-    first.release(tmp_db)
-    with pytest.raises(PlannerError, match="unsettled operation"):
-        projects.update_project(tmp_db, "project_vylo", folder_path="/changed", now=6)
-    second.release(tmp_db)
     before = validation.read_launch_selection(tmp_db, ticket_id)
     tickets.edit_ticket(
         tmp_db,

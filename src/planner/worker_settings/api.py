@@ -30,7 +30,6 @@ from planner.tickets.api import (
     ConversationRecord,
     Conversations,
     DbConn,
-    ModelResolver,
     get_config,
 )
 from planner.worker_settings import service
@@ -113,19 +112,17 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
 
 
 async def _resolve_launch_defaults(
-    conn: sqlite3.Connection, raw: dict[str, Any], resolver: ModelResolver
+    conn: sqlite3.Connection, raw: dict[str, Any]
 ) -> dict[str, Any]:
     defaults = service.validate_launch_defaults(raw)
     backend_key = require_conversation_backend_key(defaults.employee_backend)
     require_enabled_model(conn, backend_key, defaults.employee_launch_model)
-    resolution = await resolver.resolve(
-        backend_key, defaults.employee_launch_model, defaults.employee_launch_reasoning_effort
-    )
     return {
         "employee_backend": backend_key.value,
-        "employee_launch_model": resolution.model,
-        "employee_launch_reasoning_effort": resolution.reasoning_effort,
+        "employee_launch_model": defaults.employee_launch_model,
+        "employee_launch_reasoning_effort": defaults.employee_launch_reasoning_effort,
     }
+
 
 
 async def add_agent_conversation_signals(
@@ -270,11 +267,11 @@ async def put_chief_recap(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDi
 
 @router.put("/workers/chief-of-staff/launch-defaults")
 async def put_chief_launch_defaults(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, model_resolver: ModelResolver
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
     del config
-    raw = await _resolve_launch_defaults(conn, raw, model_resolver)
+    raw = await _resolve_launch_defaults(conn, raw)
     return _chief_json(service.update_chief_launch_defaults(conn, raw))
 
 
@@ -307,10 +304,9 @@ async def put_worker_launch_defaults(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    model_resolver: ModelResolver,
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
-    raw = await _resolve_launch_defaults(conn, raw, model_resolver)
+    raw = await _resolve_launch_defaults(conn, raw)
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_worker_launch_defaults(
         conn, registry, worker_type, raw, now=clk.now_unix()

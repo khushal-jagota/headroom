@@ -169,96 +169,6 @@ def test_locale_migration_preserves_entire_existing_rows(
     conn.close()
 
 
-def test_move_http_checks_record_precondition_and_authority_before_locale_only_write(
-    tmp_db: Connection,
-    tmp_path: Path,
-    fake_clock: ClockForTest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from fastapi.testclient import TestClient
-
-    from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-    from planner.core.config import load_config
-    from planner.core.db import connect
-    from planner.core.server import create_app
-
-    monkeypatch.setitem(
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS,
-        TicketLocale.macos,
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS[TicketLocale.vps],
-    )
-    ticket = data.create_ticket(
-        tmp_db,
-        title="Move with a record precondition",
-        worker_type="coding",
-        principal=OWNER_PRINCIPAL,
-        now=1,
-        title_max_chars=TITLE_MAX_CHARS,
-    )
-    data.set_ticket_backlog(tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=2)
-    stale_hash = data.ticket_record_sha256(tmp_db, ticket.id)
-    data.edit_ticket(
-        tmp_db,
-        ticket.id,
-        edit={"title": "Record changed after the read"},
-        title_max_chars=TITLE_MAX_CHARS,
-        principal=OWNER_PRINCIPAL,
-        now=3,
-    )
-    before = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
-    db_path = tmp_db.execute("PRAGMA database_list").fetchone()[2]
-    config = load_config(
-        path=None,
-        env={
-            "PLAN_TEST_MODE": "1",
-            "PLAN_DB_PATH": db_path,
-            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
-            "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "dispatcher.lock"),
-            "PLAN_SERVER_CONTROL_SOCKET": str(tmp_path / "control.sock"),
-        },
-    )
-    app = create_app(
-        config,
-        fake_clock,
-        lambda: connect(db_path),
-        conversation_system_for_test=InMemoryConversationSystem(),
-    )
-    with TestClient(app) as client:
-        stale = client.post(
-            f"/api/tickets/{ticket.id}/move",
-            json={"locale": "macos", "expected_record_sha256": stale_hash},
-        )
-        assert stale.status_code == 400, stale.text
-        assert "changed" in stale.json()["error"]["message"]
-        assert (
-            dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
-            == before
-        )
-        moved = client.post(
-            f"/api/tickets/{ticket.id}/move",
-            json={
-                "locale": "macos",
-                "expected_record_sha256": data.ticket_record_sha256(tmp_db, ticket.id),
-            },
-        )
-        assert moved.status_code == 200, moved.text
-        assert moved.json()["locale"] == "macos"
-        after = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
-        assert after == {**before, "locale": "macos"}
-        refused = client.post(
-            f"/api/tickets/{ticket.id}/move",
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id},
-            json={
-                "locale": "vps",
-                "expected_record_sha256": data.ticket_record_sha256(tmp_db, ticket.id),
-            },
-        )
-        assert refused.status_code == 400, refused.text
-        assert refused.json()["error"]["code"] == "agent_forbidden"
-        assert (
-            dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
-            == after
-        )
 
 
 def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
@@ -315,8 +225,7 @@ def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
             tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone()
         )
         moved = client.post(f"/api/tickets/{ticket_id}/move", json={"locale": "vps"})
-        assert moved.status_code == 200, moved.text
-        assert moved.json()["locale"] == "vps"
+        assert moved.status_code == 404, moved.text
         assert (
             dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
             == before_move
@@ -344,3 +253,29 @@ def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
         edited = client.patch(f"/api/schedules/{schedule_id}", json={"title": "Edited title"})
         assert edited.status_code == 200, edited.text
         assert edited.json()["locale"] == "vps"
+
+
+def test_creation_effort_presence_and_exact_configuration_intent() -> None:
+    from planner.tickets.contracts import EmployeeLaunchConfiguration
+    from planner.tickets.logic.employee_configuration import (
+        launch_configuration_for_a_new_ticket,
+        normalize_employee_launch_configuration,
+    )
+
+    defaults = dict(
+        default_backend="codex", default_model="gpt-6.1-terra",
+        default_reasoning_effort="medium", employee_backend="codex",
+        employee_launch_model="gpt-6.1-terra",
+    )
+    inherited = launch_configuration_for_a_new_ticket(**defaults)
+    assert inherited.employee_launch_reasoning_effort == "medium"
+    reset = launch_configuration_for_a_new_ticket(**defaults, reasoning_effort_is_set=True)
+    assert reset.employee_launch_reasoning_effort is None
+    exact = EmployeeLaunchConfiguration(
+        employee_backend="codex", employee_launch_model="gpt-6.1-terra",
+        employee_launch_reasoning_effort="custom-native-effort",
+    )
+    assert normalize_employee_launch_configuration(
+        inherited, exact, advertised_models=frozenset({"older-model"}),
+        reasoning_supported=False, advertised_reasoning_efforts=frozenset({"low"}),
+    ) == exact

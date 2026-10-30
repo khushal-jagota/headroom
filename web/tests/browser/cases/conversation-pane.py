@@ -1610,6 +1610,7 @@ def _run(browser, urls):
     # fallback is a queued message that explains it is waiting to apply that change.
     page.locator("[data-conversation-picker-model] [data-conversation-picker-trigger]").click()
     page.locator('[data-conversation-picker-choice="sonnet"]').click()
+    page.get_by_role("option", name="Provider default", exact=True).click()
     page.locator(INPUT).fill("steer with a run change")
     page.locator(INPUT).press("Enter")
     page.wait_for_function("window.__sentModes?.length === 3")
@@ -2793,7 +2794,7 @@ def _overlay_menu_bounds(browser, url):
         settle()
 
     try:
-        page.route('**/api/conversation/backends/refresh', lambda route: route.fulfill(status=503,json={'detail':'Fixture refresh boundary'}))
+        page.route('**/api/conversation/backends?refresh=true', lambda route: route.fulfill(status=503,json={'detail':'Fixture refresh boundary'}))
         page.goto(url, wait_until="domcontentloaded")
         page.evaluate("window.__setConversationState('opened')")
         input_box = page.locator('[data-conversation-input]')
@@ -2907,7 +2908,7 @@ def _overlay_menu_bounds(browser, url):
                         page.mouse.click(x,y)
                     else:
                         keyboard_rail(item,'Space')
-                    if control.startswith('backend:'):
+                    if control in ('backend:codex','backend:hermes'):
                         expect(picker.locator('[data-conversation-picker-feedback]')).to_be_visible()
                     elif control=='reasoning':
                         expect(picker.locator('[data-conversation-picker-choice="high"]')).to_be_visible()
@@ -2916,8 +2917,8 @@ def _overlay_menu_bounds(browser, url):
                     else:
                         expect(picker.locator('.model-picker-summary')).to_have_text('Fixture refresh boundary')
                         feedback = picker.locator('[data-conversation-picker-feedback]')
-                        expect(feedback.get_by_role('button', name='Why', exact=True)).to_be_visible()
-                        expect(feedback.get_by_role('button', name='Check again', exact=True)).to_be_visible()
+                        expect(feedback.get_by_role('button', name='Why', exact=True)).to_have_count(0)
+                        expect(feedback.get_by_role('button', name='Check again', exact=True)).to_have_count(0)
                     settle()
                     proof['actions'].append([mode,'runRail',method,control])
                 page.screenshot(path=str(output / (mode+'-run-picker.png')))

@@ -54,6 +54,7 @@ class CodexModel:
     reasoning_effort_options: tuple[str, ...]
     default_reasoning_effort: str
     is_default: bool
+    hidden: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,7 @@ class CodexModelCatalog:
     default_reasoning_effort: str | None = None
     complete: bool = True
     visibility_limited: bool = True
+    authenticated: bool | None = None
 
 
 class _SaysNothing:
@@ -153,6 +155,10 @@ async def _ask_codex(
             timeout_seconds=max(0, reply_deadline - loop.time()),
         )
         await client.notify("initialized")
+        account = bindings.GetAccountResponse.model_validate(await client.request(
+            "account/read", {"refreshToken": False},
+            timeout_seconds=max(0, reply_deadline - loop.time()),
+        ))
         cursor: str | None = None
         seen: set[str] = set()
         while True:
@@ -179,13 +185,16 @@ async def _ask_codex(
     finally:
         with anyio.CancelScope(shield=True):
             await client.stop()
-    return _catalog(bindings.ModelListResponse(data=pages), complete=complete)
+    return _catalog(
+        bindings.ModelListResponse(data=pages), complete=complete,
+        authenticated=account.account is not None or not account.requiresOpenaiAuth,
+    )
 
 
 def _catalog(
-    listed: bindings.ModelListResponse, *, complete: bool = True
+    listed: bindings.ModelListResponse, *, complete: bool = True, authenticated: bool | None = None
 ) -> CodexModelCatalog:
-    """The answer as a catalog. Hidden models are left out: codex hides its own.
+    """Keep provider metadata, including hidden rows, for the snapshot projection.
 
     The efforts are collected in the order they were listed and de-duplicated, so the list
     a picker shows is codex's own order rather than an alphabet nobody chose.
@@ -193,8 +202,6 @@ def _catalog(
     models: list[CodexModel] = []
     efforts: list[str] = []
     for model in listed.data:
-        if model.hidden:
-            continue
         offered = tuple(option.reasoningEffort for option in model.supportedReasoningEfforts)
         models.append(
             CodexModel(
@@ -203,15 +210,17 @@ def _catalog(
                 reasoning_effort_options=offered,
                 default_reasoning_effort=model.defaultReasoningEffort,
                 is_default=model.isDefault,
+                hidden=model.hidden,
             )
         )
         for effort in offered:
             if effort not in efforts:
                 efforts.append(effort)
-    default = next((model for model in models if model.is_default), None)
+    default = next((model for model in models if model.is_default and not model.hidden), None)
     return CodexModelCatalog(
         models=tuple(models),
         complete=complete,
+        authenticated=authenticated,
         reasoning_effort_options=tuple(efforts),
         default_model_id=None if default is None else default.model_id,
         default_reasoning_effort=None if default is None else default.default_reasoning_effort,

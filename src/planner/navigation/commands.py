@@ -28,7 +28,6 @@ COMMAND_ROUTES = (
         "/tickets/{ticket_id}/request-help",
         "/tickets/{ticket_id}/backlog",
         "/tickets/{ticket_id}/resume",
-        "/tickets/{ticket_id}/move",
     ),
     *_routes("PATCH", "Ticket navigation metadata", "/tickets/{ticket_id}"),
     *_routes("DELETE", "Ticket removal", "/tickets/{ticket_id}"),

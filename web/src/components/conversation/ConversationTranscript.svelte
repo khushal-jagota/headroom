@@ -68,7 +68,7 @@
     ownSenderLabel?: string | null;
   } = $props();
 
-  let items = $derived<readonly ThreadItem[]>(projectedItems ?? conversationThreadItemsForLens(rows, visibleRows, lens));
+  let items = $derived<readonly ThreadItem[]>((projectedItems ?? conversationThreadItemsForLens(rows, visibleRows, lens)).filter(item => item.kind !== "row" || item.row.kind !== "provider_selection_reported"));
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
   let expandedTurns = $state<Record<string, boolean>>({});
@@ -231,10 +231,6 @@
             {/each}
           </div>
         {/if}
-      </div>
-    {:else if item.row.kind === "provider_selection_reported"}
-      <div class="acp-compaction" role="status" data-conversation-row="provider_selection_reported">
-        <span title={`Provider response from child ${item.row.childLifetime}`}>Turn {item.row.turnNumber} · {item.row.provider} reported model: {item.row.model} · effort {item.row.reasoningEffort ?? "unreported"}</span>
       </div>
     {:else if item.row.kind === "model_changed"}
       <div class="acp-compaction" role="separator" data-conversation-row="model_changed">

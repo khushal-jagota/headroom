@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
@@ -97,11 +96,6 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
-from planner.conversation.model_corrections.contracts import (
-    CorrectionBatch,
-    CorrectionPreviewRequest,
-)
-from planner.conversation.model_corrections.service import apply_corrections, preview_corrections
 from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.conversation.runtime_composition import (
     ConversationRuntime as ConversationRuntime,
@@ -857,12 +851,10 @@ async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, An
     about this route passes whether it opens five connections or eighty.
     """
     snapshots = await runtime.backend_snapshots.snapshots(refresh=refresh)
-    if runtime.model_resolution is not None:
-        snapshots = tuple(runtime.model_resolution.decorate_snapshot(item) for item in snapshots)
     return {"backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots]}
 
 
-def _model_choices_ticket_arguments(
+def _backend_ticket_arguments(
     raw: dict[str, Any],
     conn: Any,
     ctx: RequestContext,
@@ -886,7 +878,7 @@ def _model_choices_ticket_arguments(
         "selection_kind",
     }
     if set(raw) - allowed:
-        raise PlannerError(ErrorCode.validation, "unknown model choices field", {})
+        raise PlannerError(ErrorCode.validation, "unknown backend scope field", {})
     if not isinstance(ticket_id, str) or not ticket_id.strip():
         raise PlannerError(ErrorCode.validation, "invalid ticket_id", {})
     for key, value in raw.items():
@@ -906,7 +898,7 @@ def _model_choices_ticket_arguments(
         require_conversation_backend_key(backend)
         requested_kind = SelectionKind(raw["selection_kind"]) if "selection_kind" in raw else None
     except ValueError as error:
-        raise PlannerError(ErrorCode.validation, "invalid model choices selection", {}) from error
+        raise PlannerError(ErrorCode.validation, "invalid backend scope selection", {}) from error
     kind = (
         requested_kind
         if requested_kind is not None
@@ -925,57 +917,51 @@ def _model_choices_ticket_arguments(
     }
 
 
-@router.post("/backends/model-choices")
-async def read_destination_model_choices(
-    request: Request,
-    raw: dict[str, Any],
-    runtime: Runtime,
-    ctx: Ctx,
+@router.post("/backends")
+async def read_scoped_backends(
+    raw: dict[str, Any], runtime: Runtime, ctx: Ctx, refresh: bool = False,
 ) -> dict[str, Any]:
-    return await _read_destination_model_choices(raw, runtime, ctx)
-
-
-async def _read_destination_model_choices(
-    raw: dict[str, Any],
-    runtime: Runtime,
-    ctx: RequestContext,
-) -> dict[str, Any]:
-    """Read scoped typed facts from canonical Ticket or draft workspace authority."""
-    from pydantic import TypeAdapter
-
-    from planner.conversation.model_resolution.contracts import CanonicalModelValidation
-    from planner.conversation.model_resolution.picker import serialize_picker_row
-    from planner.runtime.conversation_start import verify_ticket_launch
-    from planner.tickets.api import validate_ticket_creation
+    """Read the existing snapshot contract in a canonically authorized destination."""
+    from planner.runtime.conversation_start import (
+        resolve_ticket_launch_selection,
+        workspace_for_project,
+    )
+    from planner.tickets.api import resolve_ticket_creation_selection
+    from planner.tickets.locale_configuration import LOCALE_SUPPORTED_BACKENDS
 
     with closing(connect(runtime.database_path)) as conn:
         if "ticket_id" in raw:
-            ticket, arguments = _model_choices_ticket_arguments(raw, conn, ctx)
-            validation = await verify_ticket_launch(
-                runtime.system,
-                conn,
-                ticket,
-                **arguments,
-                persist=False,
-                now=int(time.time()),
-            )
+            ticket, arguments = _backend_ticket_arguments(raw, conn, ctx)
+            arguments.pop("classify_new", None)
+            selection, workspace = resolve_ticket_launch_selection(conn, ticket, **arguments)
         else:
-            validation = await validate_ticket_creation(
-                raw, conn, runtime.system, principal=ctx.principal
+            selection, project_id = resolve_ticket_creation_selection(
+                raw, conn, principal=ctx.principal,
             )
-        attempt_id = validation.evidence.attempt_id if validation.evidence else "unavailable"
-        return {
-            "validation": TypeAdapter(CanonicalModelValidation).dump_python(
-                validation, mode="json"
-            ),
-            "rows": [
-                serialize_picker_row(row)
-                for row in runtime.system.picker_rows_for_validation(
-                    validation,
-                    attempt_id=attempt_id,
-                )
-            ],
-        }
+            folder, policy = workspace_for_project(conn, selection.destination, project_id)
+            from planner.conversation.contracts import ConversationStartRequest
+            from planner.conversation.logic.conversation_start_resolution import (
+                resolve_conversation_start_request,
+            )
+            from planner.runtime.conversation_start import workspace_binding_from_start
+
+            values = resolve_conversation_start_request(ConversationStartRequest(
+                conversation_id="configuration", backend_key=selection.backend_key,
+                model=selection.submitted_token, workspace_folder=folder,
+                workspace_path_policy=policy,
+            ))
+            workspace = workspace_binding_from_start(values, selection.destination)
+        async def snapshot(backend: ConversationBackendKey) -> BackendSnapshot:
+            if backend is ConversationBackendKey.hermes:
+                return await runtime.backend_snapshots.snapshot(backend, refresh=refresh)
+            return await runtime.system.destination_backend_snapshot(
+                backend, workspace, selection.destination.value, refresh=refresh,
+            )
+        snapshots = await asyncio.gather(*(
+            snapshot(ConversationBackendKey(backend))
+            for backend in LOCALE_SUPPORTED_BACKENDS[selection.destination]
+        ))
+    return {"backends": [_snapshot_json(item, runtime.backend_state) for item in snapshots]}
 
 
 @router.post("/backends/refresh")
@@ -989,10 +975,6 @@ async def refresh_backends(runtime: Runtime) -> dict[str, Any]:
         # wait for version, identity, model-catalogue, or update-advisory probes.
         await asyncio.sleep(0)
         snapshots = await runtime.backend_snapshots.snapshots()
-        if runtime.model_resolution is not None:
-            snapshots = tuple(
-                runtime.model_resolution.decorate_snapshot(item) for item in snapshots
-            )
         refreshed = await usage_refresh
     finally:
         if not usage_refresh.done():
@@ -1048,6 +1030,7 @@ async def start_backend_sign_in(
     sign-in comes back instead, because a code nobody will honour is worse than no code.
     """
     service = _sign_in_service(runtime, backend_key)
+    runtime.backend_snapshots.clear_destination_snapshots(backend_key)
     try:
         return _sign_in_json(await service.start())
     except CodexSignInUnavailable as would_not_start:
@@ -1074,6 +1057,7 @@ async def cancel_backend_sign_in(
 ) -> dict[str, Any]:
     """End this sign-in. A session id that is not the one in force is refused as stale."""
     service = _sign_in_service(runtime, backend_key)
+    runtime.backend_snapshots.clear_destination_snapshots(backend_key)
     try:
         return _sign_in_json(await service.cancel(session_id))
     except UnknownSignInSession as stale:
@@ -1857,44 +1841,3 @@ __all__ = [
     "build_conversation_runtime",
     "router",
 ]
-
-
-@router.post("/model-corrections/preview")
-async def preview_model_corrections(
-    body: CorrectionPreviewRequest,
-    request: Request,
-    ctx: Ctx,
-) -> dict[str, Any]:
-    runtime = _runtime(request)
-    if runtime.model_resolution is None:
-        raise HTTPException(status_code=503, detail="model resolution is unavailable")
-    with closing(connect(runtime.database_path)) as conn:
-        results = await preview_corrections(
-            conn, ctx.principal, body.targets, runtime.model_resolution, system=runtime.system
-        )
-    return CorrectionBatch(corrections=results).model_dump(mode="json")
-
-
-@router.post("/model-corrections/apply")
-async def apply_model_corrections(
-    body: CorrectionBatch,
-    request: Request,
-    ctx: Ctx,
-) -> dict[str, Any]:
-    runtime = _runtime(request)
-    if runtime.model_resolution is None:
-        raise HTTPException(status_code=503, detail="model resolution is unavailable")
-    with closing(connect(runtime.database_path)) as conn:
-        results = await apply_corrections(
-            conn,
-            ctx.principal,
-            body.corrections,
-            runtime.model_resolution,
-            now=int(time.time()),
-            system=runtime.system,
-        )
-        if any(item.applied and item.target.kind == "worker-default" for item in results):
-            from planner.worker_types.configuration import load_worker_runtime_definitions
-
-            load_worker_runtime_definitions(conn)
-    return CorrectionBatch(corrections=results).model_dump(mode="json")

@@ -5,8 +5,7 @@ from __future__ import annotations
 import re
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.model_resolution.contracts import CachedModelResolution, ModelVariant
-from planner.core.contracts import ErrorCode, PlannerError
+from planner.conversation.model_resolution.contracts import ModelVariant
 
 _CODEX_VARIANTS = frozenset({"sol", "astra", "luna", "codex", "mini", "nano", "pro"})
 _CODEX_VERSION = re.compile(r"^gpt-(\d+(?:\.\d+)*)(?:-(sol|astra|luna|codex|mini|nano|pro))?$")
@@ -33,18 +32,6 @@ def recognize_variant(backend_key: ConversationBackendKey, model: str) -> ModelV
     return None
 
 
-def identify_variant(backend_key: ConversationBackendKey, model: str) -> ModelVariant:
-    """Reject unfamiliar families instead of guessing from provider defaults or hints."""
-    variant = recognize_variant(backend_key, model)
-    if variant is not None:
-        return variant
-    raise PlannerError(
-        ErrorCode.validation,
-        "unknown model variant",
-        {"backend_key": str(backend_key), "model": model},
-    )
-
-
 def numerical_version(model: str) -> tuple[int, ...]:
     match = _CODEX_VERSION.fullmatch(model)
     if match:
@@ -53,16 +40,3 @@ def numerical_version(model: str) -> tuple[int, ...]:
     if match:
         return tuple(int(part) for part in re.split(r"[-.]", match.group(2)))
     return ()
-
-
-def select_catalogue_model(
-    variant: ModelVariant,
-    models: tuple[CachedModelResolution, ...],
-) -> CachedModelResolution | None:
-    if not models:
-        return None
-    if variant.backend_key is ConversationBackendKey.claude:
-        alias = next((model for model in models if model.model == variant.name), None)
-        if alias is not None:
-            return alias
-    return max(models, key=lambda value: numerical_version(value.model))

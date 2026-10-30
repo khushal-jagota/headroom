@@ -15,7 +15,7 @@
   } = $props();
   let busy = $state(false);
   const label = $derived(promptLabelFor(row?.senderLabel ?? local?.senderLabel ?? '', ownSenderLabel));
-  const note = $derived(row?.kind === 'prompt_refused' ? `not delivered · ${row.sentence}` : row?.kind === 'prompt_uncertain' ? 'delivery uncertain · do not resend' : row?.kind === 'prompt_discarded' ? PROMPT_DISCARDED_SENTENCE : row?.kind === 'prompt' && row.providerSubmission?.status === 'accepted' ? 'provider accepted · model application unreported in this receipt' : row ? null : local ? outgoingMessageNote(local) : null);
+  const note = $derived(row?.kind === 'prompt_refused' ? `not delivered · ${row.sentence}` : row?.kind === 'prompt_uncertain' ? 'delivery uncertain · do not resend' : row?.kind === 'prompt_discarded' ? PROMPT_DISCARDED_SENTENCE : row ? null : local ? outgoingMessageNote(local) : null);
   const actions = $derived(local && !row ? heldPromptRowActions(heldPromptRows([], [local])[0]!) : []);
   async function stop(): Promise<void> {
     if (!local || busy) return;

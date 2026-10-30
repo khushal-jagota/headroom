@@ -38,8 +38,13 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
-from typing import IO, Any
+from typing import IO, TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
+    from planner.executor.vps import ExecutorEndpoint
+
 
 from planner.conversation.backend_event_contracts import TurnEndingContext
 from planner.conversation.backends.contracts import (
@@ -87,9 +92,6 @@ from planner.conversation.contracts import (
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
-    MoveRetirementDisposition,
-    MoveRetirementResult,
-    MoveSourceRetirement,
     PromptDeliveryFate,
     PromptDeliveryInjected,
     PromptDeliveryMode,
@@ -133,6 +135,7 @@ from planner.conversation.events import (
     UserInputQuestion,
 )
 from planner.conversation.launch_intent import (
+    carried_effort_presence,
     effort_presence,
 )
 from planner.conversation.launch_intent import (
@@ -174,16 +177,11 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
     AliasResolutionFact,
     CanonicalModelValidation,
-    CatalogExpectedContext,
-    CatalogRequest,
-    CatalogUnavailable,
+    CatalogResult,
     CatalogWorkspaceBinding,
     CorrectiveAction,
-    CurrentModelResolver,
     LaunchContext,
-    ModelResolution,
     ModelSelection,
-    PickerRow,
     ProviderCatalogObserver,
     SelectionKind,
     ValidationReason,
@@ -414,7 +412,6 @@ class _PromptDeliveryAttempt:
     refusal_reason: PromptDeliveryRefusalReason | None = None
     record_refusal: bool = False
     composed_content_delivered: bool = True
-    model_resolution: ModelResolution | None = None
     canonical_validation: CanonicalModelValidation | None = None
     original_selection: ModelSelection | None = None
     refusal_detail: str | None = None
@@ -447,7 +444,6 @@ class _ConversationState:
     backend_event_in_progress: bool = False
     child_event_sink: object | None = None
     child_reported_model: str | None = None
-    blocked_submission: tuple[ConversationBackendKey, str, str | None] | None = None
     settlement_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     steer_settlements: set[asyncio.Event] = field(default_factory=set)
     reserved_turn: _ReservedTurn | None = None
@@ -495,16 +491,18 @@ class SqliteProcessConversationSystem:
         idle_child_stop_after_seconds: float = IDLE_CHILD_STOP_AFTER_SECONDS,
         idle_child_sweep_interval_seconds: float = IDLE_CHILD_SWEEP_INTERVAL_SECONDS,
         unix_time_now: Callable[[], float] = time.time,
-        model_resolver: CurrentModelResolver | None = None,
+        backend_snapshots: BackendSnapshotService | None = None,
         runtime_ownership: IO[bytes] | None = None,
     ) -> None:
         missing = sorted(set(ConversationBackendKey) - set(backend_child_factories))
         if missing:
             raise ValueError(f"no backend child factory for {missing}")
         self._store = store
-        self._model_resolver = model_resolver
+        from planner.conversation.snapshot import BackendSnapshotService
+
+        self._backend_snapshots = backend_snapshots or BackendSnapshotService()
         self._catalog_observer: ProviderCatalogObserver | None = None
-        self._catalog_endpoint: Any = None
+        self._catalog_endpoint: ExecutorEndpoint | None = None
         self._message_files = message_files
         # Nobody watching is the ordinary case for a system built without one: the record
         # is written exactly the same way, and there is simply nowhere to show it.
@@ -519,8 +517,6 @@ class SqliteProcessConversationSystem:
         self._idle_child_janitor: asyncio.Task[None] | None = None
         self._signal = store.signal_coordinator
         self._runtime_ownership = store.claim_runtime(existing_ownership=runtime_ownership)
-        self._local_runtime_id = uuid4().hex
-        self._local_child_ids: dict[int, str] = {}
         try:
             from pydantic import TypeAdapter
 
@@ -569,86 +565,6 @@ class SqliteProcessConversationSystem:
             operation()
             return True
 
-    async def retire_idle_for_move(
-        self,
-        conversation_id: str | None,
-        operation: Callable[[], None],
-        *,
-        source: MoveSourceRetirement | None = None,
-    ) -> MoveRetirementResult:
-        from planner.core.errors import ErrorCode, PlannerError
-
-        state = None if conversation_id is None else await self._conversation_state(conversation_id)
-        refused = MoveRetirementResult(
-            MoveRetirementDisposition.refused,
-            "activity or waiting messages, or unknown conversation",
-        )
-        if conversation_id is not None and state is None:
-            return refused
-        if state is not None and state.lock.locked():
-            return refused
-
-        async def retire_and_commit() -> MoveRetirementResult:
-            if state is not None and (
-                state.phase is not _ConversationPhase.idle
-                or state.reserved_turn is not None
-                or state.running_turn is not None
-                or state.held_prompts
-                or state.admitted_sender_messages
-                or state.sender_messages_being_delivered
-                or state.steer_settlements
-                or state.child_is_quarantined
-                or not state.backend_event_queue.empty()
-                or state.backend_event_in_progress
-                or any(not task.done() for task in state.settlement_tasks)
-            ):
-                return refused
-            if source is not None:
-                result = await source.retire()
-                if result.disposition is not MoveRetirementDisposition.retired:
-                    if (
-                        state is not None
-                        and result.disposition is MoveRetirementDisposition.uncertain
-                    ):
-                        state.child_is_quarantined = True
-                        await self._store.save_move_retirement(
-                            state.record.conversation_id, uncertain=True
-                        )
-                    return result
-            elif state is not None and state.child is not None:
-                try:
-                    await state.child.stop()
-                except Exception:
-                    state.child_is_quarantined = True
-                    return MoveRetirementResult(
-                        MoveRetirementDisposition.uncertain, "source stop could not be confirmed"
-                    )
-            if state is not None:
-                state.child = None
-                state.executor_child_reference = None
-                state.child_is_quarantined = False
-            try:
-                if state is not None:
-                    await self._store.save_move_retirement(
-                        state.record.conversation_id, uncertain=False
-                    )
-                if source is not None:
-                    source.validate_current()
-                operation()
-            except Exception as error:
-                detail = dict(error.detail) if isinstance(error, PlannerError) else {}
-                detail.update(retirement_started=True, source_retired=True)
-                raise PlannerError(
-                    ErrorCode.validation,
-                    f"source retired but locale was not changed: {error}",
-                    detail,
-                ) from error
-            return MoveRetirementResult(MoveRetirementDisposition.retired)
-
-        if state is None:
-            return await retire_and_commit()
-        async with state.lock:
-            return await retire_and_commit()
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         self._require_runtime_ownership()
@@ -1194,11 +1110,6 @@ class SqliteProcessConversationSystem:
 
         conn = connect(self._store._db_path)
         try:
-            unresolved = conn.execute(
-                "SELECT 1 FROM ticket_launch_authority a JOIN tickets t "
-                "ON a.authority_key='ticket:'||t.id WHERE t.conversation_id=? LIMIT 1",
-                (conversation_id,),
-            ).fetchone()
             retained = conn.execute(
                 "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
                 (conversation_id,),
@@ -1206,8 +1117,6 @@ class SqliteProcessConversationSystem:
             remote_receipt = (
                 retained is not None and json.loads(retained[0]).get("source_retired") is True
             )
-            if unresolved is not None:
-                return False
         finally:
             conn.close()
         state = await self._conversation_state(conversation_id)
@@ -2034,7 +1943,6 @@ class SqliteProcessConversationSystem:
                     recipient=held.recipient,
                     reply_requested=held.reply_requested,
                     recovery_references=held.recovery_references,
-                    model_resolution=delivery.model_resolution,
                     canonical_validation=delivery.canonical_validation,
                     original_selection=delivery.original_selection,
                     refusal_detail=delivery.refusal_detail,
@@ -3505,7 +3413,6 @@ class SqliteProcessConversationSystem:
             recipient=recipient,
             reply_requested=reply_requested,
             recovery_references=recovery_references,
-            model_resolution=delivery.model_resolution,
             canonical_validation=delivery.canonical_validation,
             original_selection=delivery.original_selection,
             refusal_detail=delivery.refusal_detail,
@@ -3687,9 +3594,11 @@ class SqliteProcessConversationSystem:
         return value
 
     def configure_destination_validation(
-        self, observer: ProviderCatalogObserver, *, endpoint: Any = None
+        self, observer: ProviderCatalogObserver, *, endpoint: ExecutorEndpoint | None = None
     ) -> None:
         """Wire actual local launch inputs and the authenticated native endpoint."""
+        if self._catalog_observer is not observer or self._catalog_endpoint is not endpoint:
+            self._backend_snapshots.clear_destination_snapshots()
         self._catalog_observer = observer
         self._catalog_endpoint = endpoint
 
@@ -3698,6 +3607,65 @@ class SqliteProcessConversationSystem:
 
         return repr(
             sorted(BackendStateStore(self._store._db_path).read_disabled_models(backend_key))
+        )
+
+    async def destination_backend_snapshot(
+        self,
+        backend_key: ConversationBackendKey,
+        workspace: CatalogWorkspaceBinding,
+        destination: str,
+        *,
+        refresh: bool = False,
+    ) -> BackendSnapshot:
+        """Read advisory configuration through the same retained snapshot service."""
+        from planner.conversation.model_resolution.contracts import (
+            CatalogExpectedContext,
+            CatalogRequest,
+        )
+        from planner.conversation.snapshot import BackendSnapshotScope
+        from planner.core.errors import ErrorCode
+
+        endpoint = self._catalog_endpoint
+        observer = self._catalog_observer
+        account = None
+        identity = None
+        if destination == "macos":
+            if endpoint is None or endpoint.identity is None or not endpoint.ready:
+                raise PlannerError(ErrorCode.validation, "The selected machine is offline")
+            identity = endpoint.identity
+        elif observer is not None:
+            context = await observer.capture_context(backend_key, workspace=workspace)
+            account = context.account_generation
+        else:
+            raise PlannerError(ErrorCode.validation, "Provider configuration is unavailable")
+        scope = BackendSnapshotScope(backend_key, destination, workspace, identity, account)
+
+        async def is_current() -> bool:
+            if destination == "macos":
+                current = self._catalog_endpoint
+                return (current is not None and current is endpoint
+                        and current.ready and current.identity == identity)
+            if self._catalog_observer is not observer or observer is None:
+                return False
+            current_context = await observer.capture_context(backend_key, workspace=workspace)
+            return current_context.account_generation == account
+
+        async def observe() -> CatalogResult:
+            attempt_id = uuid4().hex
+            if destination == "macos":
+                assert identity is not None and endpoint is not None
+                return await endpoint.observe_catalog(
+                    CatalogRequest(backend_key, CatalogExpectedContext(identity, workspace)),
+                    attempt_id=attempt_id,
+                )
+            assert observer is not None
+            return await observer.observe(
+                backend_key, workspace=workspace, attempt_id=attempt_id,
+                deadline=asyncio.get_running_loop().time() + 30,
+            )
+
+        return await self._backend_snapshots.destination_snapshot(
+            scope, observe=observe, is_current=is_current, refresh=refresh,
         )
 
     async def validate_launch_selection(
@@ -3709,95 +3677,40 @@ class SqliteProcessConversationSystem:
         classify_new: bool = False,
         previous_alias_resolution: AliasResolutionFact | None = None,
     ) -> CanonicalModelValidation:
-        from planner.conversation.model_resolution.logic.validation import (
-            submission_validation,
-            unresolved_validation,
-            validate_model_selection,
-        )
-        from planner.conversation.model_resolution.service import ModelResolutionService
-        from planner.tickets.contracts import TicketLocale
+        from planner.conversation.backend_state import BackendStateStore
+        from planner.conversation.launch_intent import bind_model_intent
+        from planner.conversation.snapshot import BackendModel, BackendSnapshotScope
 
-        if selection.backend_key is ConversationBackendKey.hermes:
-            return unresolved_validation(selection, ValidationReason.catalog_unavailable)
-        if not isinstance(self._model_resolver, ModelResolutionService):
-            return submission_validation(selection)
-        from planner.runtime.logic.launch_selection import classify_new_selection
-
-        if classify_new:
-            selection = classify_new_selection(selection)
-        if selection.destination is TicketLocale.vps:
-            validation = await self._model_resolver.validate_selection(
-                selection,
-                workspace=workspace,
-                attempt_id=attempt_id,
-                observer=self._catalog_observer,
-                previous_alias_resolution=previous_alias_resolution,
-            )
-            if classify_new and validation.evidence is not None:
-                observation = self._model_resolver._store.read_observation(
-                    validation.evidence.context
-                )
-                classified = classify_new_selection(selection, observation)
-                if classified != selection:
-                    return validate_model_selection(
-                        classified,
-                        validation.evidence.context,
-                        observation,
-                        now=self._unix_time_now(),
-                        attempt_id=attempt_id,
-                        disabled_models=self._model_resolver._backend_state.read_disabled_models(
-                            selection.backend_key,
-                        ),
-                        previous_alias_resolution=previous_alias_resolution,
+        # Exact tokens never depend on advisory context or provider discovery.
+        models: tuple[BackendModel, ...] = ()
+        if selection.selection_kind is SelectionKind.panels_alias and self._backend_snapshots:
+            account = None
+            identity = None
+            if selection.destination.value == "macos":
+                endpoint = self._catalog_endpoint
+                identity = endpoint.identity if endpoint is not None and endpoint.ready else None
+                if identity is None:
+                    return bind_model_intent(
+                        selection, disabled_models=BackendStateStore(
+                            self._store._db_path
+                        ).read_disabled_models(selection.backend_key),
                     )
-            if validation.reason is ValidationReason.legacy_unscoped:
-                validation = replace(
-                    validation, corrective_action=CorrectiveAction.classify_selection
+            elif self._catalog_observer is not None:
+                context = await self._catalog_observer.capture_context(
+                    selection.backend_key, workspace=workspace
                 )
-            return validation
-        endpoint = self._catalog_endpoint
-        if endpoint is None or endpoint.identity is None or not endpoint.ready:
-            return unresolved_validation(selection, ValidationReason.offline)
-        identity = endpoint.identity
-        try:
-            result = await endpoint.observe_catalog(
-                CatalogRequest(selection.backend_key, CatalogExpectedContext(identity, workspace)),
-                attempt_id=attempt_id,
+                account = context.account_generation
+            scope = BackendSnapshotScope(
+                selection.backend_key, selection.destination.value, workspace, identity, account
             )
-        except Exception:
-            result = CatalogUnavailable(
-                selection.backend_key,
-                selection.destination,
-                None,
-                ValidationReason.catalog_unavailable,
-                CorrectiveAction.refresh_catalog,
-                "Destination suggestions are unavailable.",
-                int(self._unix_time_now()),
-                None,
-            )
-        if endpoint.identity != identity or not endpoint.ready:
-            return unresolved_validation(selection, ValidationReason.context_changed)
-        if isinstance(result, CatalogUnavailable):
-            return submission_validation(
-                selection,
-                unavailable=result,
-                disabled_models=self._model_resolver._backend_state.read_disabled_models(
-                    selection.backend_key
-                ),
-            )
-        self._model_resolver._store.keep_observation(result)
-        if classify_new:
-            selection = classify_new_selection(selection, result)
-        return validate_model_selection(
-            selection,
-            result.evidence.context,
-            result,
-            now=self._unix_time_now(),
-            attempt_id=attempt_id,
-            disabled_models=self._model_resolver._backend_state.read_disabled_models(
+            retained = self._backend_snapshots.retained_destination(scope)
+            if retained is not None:
+                models = retained.available_models
+        return bind_model_intent(
+            selection, models=models,
+            disabled_models=BackendStateStore(self._store._db_path).read_disabled_models(
                 selection.backend_key
             ),
-            previous_alias_resolution=previous_alias_resolution,
         )
 
     async def _steer_with_admission(
@@ -3816,7 +3729,7 @@ class SqliteProcessConversationSystem:
 
         from planner.conversation.admission.policy import (
             check_policy_dependencies,
-            protect_validation_policy,
+            checked_validation_policy,
         )
         from planner.conversation.admission.service import (
             AdmissionContextObserver,
@@ -3825,10 +3738,8 @@ class SqliteProcessConversationSystem:
         )
         from planner.conversation.backends.contracts import BackendEmissionInputs
         from planner.core.db import connect
-        from planner.tickets.launch_authority import acquire_read, launch_authority_scope
 
         conn = connect(self._store._db_path)
-        permit = None
         try:
             ticket_row = conn.execute(
                 "SELECT id FROM tickets WHERE conversation_id=?",
@@ -3849,31 +3760,9 @@ class SqliteProcessConversationSystem:
             ):
                 raise AdmissionRefused("running turn submission binding is unavailable")
             validation = basis
-            self._restore_reported_selection_guard(conn, state, ticket_row["id"])
-            if state.blocked_submission == (
-                basis.selection.backend_key,
-                basis.launch_token,
-                basis.selection.reasoning_effort,
-            ):
-                raise AdmissionRefused("reported provider selection requires a permitted change")
-            if state.child_reported_model is not None:
-                from planner.conversation.backend_state import model_is_enabled
-
-                if not model_is_enabled(
-                    conn, basis.selection.backend_key, state.child_reported_model
-                ):
-                    raise AdmissionRefused("the same child reported a disabled model")
             if running.ended or running.ending_is_the_cores:
                 raise AdmissionRefused("running turn ownership changed")
-            permit = acquire_read(
-                conn,
-                ticket_row["id"],
-                backend_key=basis.selection.backend_key,
-                submitted_token=basis.selection.submitted_token,
-            )
-            dependencies = protect_validation_policy(
-                conn, permit, validation, conversation_id=state.record.conversation_id
-            )
+            dependencies = checked_validation_policy(conn, validation)
             expectation = expectation_from_validation(
                 validation,
                 attempt_id=attempt_id,
@@ -3920,71 +3809,12 @@ class SqliteProcessConversationSystem:
                         expected, prepared
                     )
 
-            with launch_authority_scope(permit), admission_scope(expectation, RunningContext()):
-                self._record_local_submission(state, child, token, validation)
+            with admission_scope(expectation, RunningContext()):
                 return await child.steer(
                     token, content, sender_content=sender_content, sender_label=sender_label
                 )
         finally:
-            if permit is not None:
-                permit.release(conn)
             conn.close()
-
-    def picker_rows_for_validation(
-        self,
-        validation: CanonicalModelValidation,
-        *,
-        attempt_id: str,
-    ) -> tuple[PickerRow, ...]:
-        """Project only the exact observation used by this contextual validation."""
-        from planner.conversation.model_resolution.contracts import CatalogPresence, EvidenceStatus
-        from planner.conversation.model_resolution.data import ModelResolutionStore
-        from planner.conversation.model_resolution.picker import project_picker_rows
-
-        context = (
-            validation.evidence.context
-            if validation.evidence is not None
-            else validation.unavailable.attempted_context
-            if validation.unavailable
-            else None
-        )
-        if context is None:
-            selection = validation.selection
-            return (
-                PickerRow(
-                    selection.submitted_token,
-                    selection.selection_kind,
-                    validation.resolved_model_id,
-                    None,
-                    None,
-                    None,
-                    None,
-                    EvidenceStatus.unavailable
-                    if validation.unavailable
-                    else EvidenceStatus.unverified,
-                    CatalogPresence.unknown,
-                    True,
-                    validation.current_alias_resolution,
-                    validation.previous_alias_resolution,
-                    (),
-                    validation,
-                ),
-            )
-        observation = ModelResolutionStore(self._store._db_path).read_observation(context)
-        from planner.conversation.backend_state import BackendStateStore
-
-        return project_picker_rows(
-            validation.selection,
-            context,
-            observation,
-            now=self._unix_time_now(),
-            attempt_id=attempt_id,
-            previous_alias_resolution=validation.previous_alias_resolution,
-            disabled_models=BackendStateStore(self._store._db_path).read_disabled_models(
-                validation.selection.backend_key,
-            ),
-            unavailable=validation.unavailable,
-        )
 
     async def _deliver_prompt_unsettled(
         self, state: _ConversationState, turn_token: TurnToken, **kwargs: Any
@@ -4003,21 +3833,12 @@ class SqliteProcessConversationSystem:
         )
         from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
         from planner.tickets import data as ticket_data
-        from planner.tickets.launch_authority import (
-            acquire_read,
-            authority_keys,
-            current_launch_authority_permit,
-            launch_authority_scope,
-        )
         from planner.tickets.validation.data import (
             read_launch_selection,
-            read_launch_validation,
             record_launch_validation,
         )
 
         conn = connect(self._store._db_path)
-        permit = None
-        owns_permit = False
         validation: CanonicalModelValidation | None = None
         workspace: CatalogWorkspaceBinding | None = None
         ticket_id: str | None = None
@@ -4035,60 +3856,74 @@ class SqliteProcessConversationSystem:
                 (state.record.conversation_id,),
             ).fetchone()
             if row is None:
-                if captured_held_selection is None:
+                from planner.conversation.admission.policy import checked_validation_policy
+                from planner.conversation.backend_state import BackendStateStore
+                from planner.conversation.launch_intent import bind_model_intent
+                from planner.tickets.contracts import TicketLocale
+
+                endpoint = self._catalog_endpoint
+                native = endpoint is not None and endpoint.owns_conversation(
+                    state.record.conversation_id
+                )
+                requested_model = state.record.model if model is None else model
+                if requested_model is None and captured_held_selection is None:
                     return await self._deliver_prompt_unsettled_verified(
                         state, turn_token, **kwargs
                     )
-                # Generic held messages also retain the exact authored/current request;
-                # their queue must not inherit a later conversation setting.
-                kwargs["model_change"] = captured_held_selection.submitted_token
-                kwargs["reasoning_effort_change"] = captured_held_selection.reasoning_effort
-                if (
-                    captured_held_selection.submitted_token == state.record.model
-                    and captured_held_selection.reasoning_effort == state.record.reasoning_effort
-                ):
-                    return await self._deliver_prompt_unsettled_verified(
-                        state, turn_token, **kwargs
+                selection = captured_held_selection or ModelSelection(
+                    TicketLocale.macos if native else TicketLocale.vps,
+                    state.record.backend_key,
+                    requested_model or "",
+                    explicit_kind or SelectionKind.legacy_unclassified,
+                    (state.record.reasoning_effort
+                     if effort is None and not effort_is_set else effort),
+                    "conversation",
+                )
+                validation = bind_model_intent(
+                    selection,
+                    disabled_models=BackendStateStore(self._store._db_path).read_disabled_models(
+                        selection.backend_key
+                    ),
+                )
+                checked_validation_policy(conn, validation)
+                workspace = CatalogWorkspaceBinding(
+                    state.record.workspace_folder, state.record.workspace_path_policy, None
+                )
+                identity = endpoint.identity if native and endpoint is not None else None
+                expectation = expectation_from_validation(
+                    validation, attempt_id=uuid4().hex,
+                    conversation_id=state.record.conversation_id,
+                    disabled_models_revision=self.launch_policy_revision(selection.backend_key),
+                    workspace=workspace, executor_identity=identity, turn=turn_token,
+                )
+                system = self
+
+                carried_validation = validation
+
+                class ConversationContext:
+                    def verify_context(self, expected: LaunchContext | None) -> bool:
+                        checked_validation_policy(conn, carried_validation)
+                        current = system._catalog_endpoint
+                        return not native or (
+                            current is not None and current.ready and current.identity == identity
+                        )
+
+                    def verify_prepared_launch(
+                        self, expected: LaunchContext, prepared: Any
+                    ) -> bool:
+                        return self.verify_context(expected)
+
+                kwargs["model_change"] = validation.launch_token
+                kwargs["reasoning_effort_change"] = selection.reasoning_effort
+                with admission_scope(expectation, ConversationContext()):
+                    delivered = await self._deliver_prompt_unsettled_verified(
+                        state, turn_token, canonical_validation=validation, **kwargs
                     )
-                carried = CanonicalModelValidation(
-                    captured_held_selection,
-                    ValidationState.unresolved,
-                    ValidationReason.legacy_unscoped,
-                    CorrectiveAction.none,
-                    None,
-                    captured_held_selection.submitted_token,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                delivered = await self._deliver_prompt_unsettled_verified(
-                    state,
-                    turn_token,
-                    canonical_validation=carried,
-                    **kwargs,
-                )
-                return replace(delivered, canonical_validation=carried)
+                return replace(delivered, canonical_validation=validation)
             ticket_id = row["id"]
             ticket = ticket_data.read_ticket(conn, ticket_id)
             if state.record.backend_key is ConversationBackendKey.hermes:
                 return await self._deliver_prompt_unsettled_verified(state, turn_token, **kwargs)
-            from planner.conversation.admission.policy import policy_key
-
-            effective_backend = (
-                state.record.backend_key
-                if model is not None and not state.has_delivered_prompt
-                else ConversationBackendKey(ticket.employee_backend)
-            )
-            if captured_held_selection is not None:
-                effective_backend = captured_held_selection.backend_key
-            requested_token = (
-                captured_held_selection.submitted_token
-                if captured_held_selection is not None
-                else model
-                if model is not None
-                else ticket.employee_launch_model
-            )
             if (
                 messages
                 and messages[0].held_prompt_id
@@ -4098,39 +3933,6 @@ class SqliteProcessConversationSystem:
                 raise AdmissionRefused(
                     "held prompt has no original provider token; explicit correction required"
                 )
-            inherited = current_launch_authority_permit()
-            required_keys = set(authority_keys(conn, ticket_id))
-            if requested_token is not None:
-                required_keys.add(policy_key(effective_backend, requested_token))
-            if inherited is not None and inherited.mode == "read":
-                persisted = {
-                    row[0]
-                    for row in conn.execute(
-                        "SELECT authority_key FROM ticket_launch_authority "
-                        "WHERE lease_id=? AND mode='read'",
-                        (inherited.lease_id,),
-                    )
-                }
-                if f"ticket:{ticket_id}" in persisted:
-                    if model is not None or effort is not None or effort_is_set:
-                        raise PlannerError(
-                            ErrorCode.already_running,
-                            "finish the captured launch before changing its model or effort",
-                            {"ticket_id": ticket_id},
-                        )
-                    if not required_keys.issubset(persisted):
-                        raise AdmissionRefused("captured launch authority is no longer current")
-                    permit = inherited
-            # Scheduled settlement may inherit a scope whose rows were already
-            # released. Such a ContextVar is no authority to borrow or to reject.
-            if permit is None:
-                permit = acquire_read(
-                    conn,
-                    ticket_id,
-                    backend_key=effective_backend,
-                    submitted_token=requested_token,
-                )
-                owns_permit = True
             try:
                 selection = read_launch_selection(conn, ticket_id)
                 original_selection = selection
@@ -4190,26 +3992,8 @@ class SqliteProcessConversationSystem:
             )
             workspace = workspace_binding_from_start(values, selection.destination)
             attempt_id = uuid4().hex
-            stored = read_launch_validation(conn, ticket_id)
-            previous_alias = (
-                None
-                if stored is None
-                else (
-                    stored.validation.current_alias_resolution
-                    or stored.validation.previous_alias_resolution
-                )
-            )
             validation = await self.validate_launch_selection(
-                selection,
-                workspace,
-                attempt_id=attempt_id,
-                classify_new=model is not None,
-                previous_alias_resolution=previous_alias,
-            )
-            from planner.runtime.logic.launch_selection import preserve_alias_history
-
-            validation = preserve_alias_history(
-                validation, None if stored is None else stored.validation
+                selection, workspace, attempt_id=attempt_id, classify_new=model is not None,
             )
             if model is None and effort is None and not effort_is_set:
                 if not record_launch_validation(
@@ -4234,39 +4018,12 @@ class SqliteProcessConversationSystem:
                         f"{validation.reason.value}: {validation.corrective_action.value}"
                     ),
                 )
-            self._restore_reported_selection_guard(conn, state, ticket_id)
-            from planner.conversation.backend_state import BackendStateStore
-
-            same_reported_disabled = (
-                state.child_reported_model is not None
-                and selection.backend_key is state.record.backend_key
-                and validation.launch_token == state.record.model
-                and state.child_reported_model
-                in BackendStateStore(self._store._db_path).read_disabled_models(
-                    selection.backend_key
-                )
-            )
-            if same_reported_disabled or state.blocked_submission == (
-                selection.backend_key,
-                validation.launch_token,
-                validation.selection.reasoning_effort,
-            ):
-                return _PromptDeliveryAttempt(
-                    refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
-                    record_refusal=True,
-                    canonical_validation=validation,
-                    refusal_detail=(
-                        "Reported provider selection requires an explicit permitted change."
-                    ),
-                )
             from planner.conversation.admission.policy import (
                 check_policy_dependencies,
-                protect_validation_policy,
+                checked_validation_policy,
             )
 
-            policy_dependencies = protect_validation_policy(
-                conn, permit, validation, conversation_id=state.record.conversation_id
-            )
+            policy_dependencies = checked_validation_policy(conn, validation)
             selection = validation.selection
             assert validation.launch_token is not None
             expectation = expectation_from_validation(
@@ -4323,7 +4080,6 @@ class SqliteProcessConversationSystem:
                     )
 
             with (
-                launch_authority_scope(permit),
                 admission_scope(expectation, CurrentContext()),
             ):
                 delivered = await self._deliver_prompt_unsettled_verified(
@@ -4378,8 +4134,6 @@ class SqliteProcessConversationSystem:
                 refusal_detail=str(error),
             )
         finally:
-            if permit is not None and owns_permit:
-                permit.release(conn)
             conn.close()
 
     async def _deliver_prompt_unsettled_verified(
@@ -4403,6 +4157,9 @@ class SqliteProcessConversationSystem:
         No lock is held here: spawning a process and loading a session take as long as they
         take, and the conversation stays readable while they do.
         """
+        effort_is_set = canonical_validation is not None or (
+            messages[0].reasoning_effort_is_set if messages else effort_presence_is_set()
+        )
         interruption_notice = await self._persist(
             state,
             partial(
@@ -4419,11 +4176,10 @@ class SqliteProcessConversationSystem:
                 or None,
             ),
         )
-        resolution: ModelResolution | None = None
         requires_exact_rebind = (
-            canonical_validation is not None
+            effort_is_set
             and state.child is not None
-            and canonical_validation.selection.reasoning_effort is None
+            and reasoning_effort_change is None
             and state.record.reasoning_effort is not None
         )
         try:
@@ -4438,7 +4194,7 @@ class SqliteProcessConversationSystem:
                 state,
                 model=model_change,
                 reasoning_effort=reasoning_effort_change,
-                reasoning_effort_is_set=canonical_validation is not None,
+                reasoning_effort_is_set=effort_is_set,
             )
         except BackendSpawnFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
@@ -4487,18 +4243,18 @@ class SqliteProcessConversationSystem:
         try:
             if requires_exact_rebind:
                 raise NeedsRebind("exact desired default or alias target requires a fresh child")
-            self._record_local_submission(state, attempted_child, turn_token, canonical_validation)
-            accepted = await attempted_child.write_prompt(
-                turn_token,
-                composed,
-                sender_content=content,
-                sender_label=sender_label,
-                sender_message_count=sender_message_count,
-                mode=mode,
-                model_change=model_change,
-                reasoning_effort_change=reasoning_effort_change,
-                automatic_compaction=automatic_compaction,
-            )
+            with carried_effort_presence(effort_is_set):
+                accepted = await attempted_child.write_prompt(
+                    turn_token,
+                    composed,
+                    sender_content=content,
+                    sender_label=sender_label,
+                    sender_message_count=sender_message_count,
+                    mode=mode,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                    automatic_compaction=automatic_compaction,
+                )
         except BackendPromptRejected as rejected:
             return _PromptDeliveryAttempt(
                 PromptDeliveryRefusalReason.backend_rejected_prompt,
@@ -4522,17 +4278,15 @@ class SqliteProcessConversationSystem:
                 automatic_compaction=automatic_compaction,
                 messages=messages,
                 interruption_notice=interruption_notice,
-                reasoning_effort_is_set=canonical_validation is not None,
+                reasoning_effort_is_set=effort_is_set,
             )
             return replace(
                 rebound,
-                model_resolution=resolution,
                 record_refusal=(
                     rebound.refusal_reason is not None and rebind.failed_child_recovery
                 ),
             )
         return _PromptDeliveryAttempt(
-            model_resolution=resolution,
             messages=messages,
             automatic_notice=automatic_notice,
             composed_content_delivered=accepted.composed_content_delivered,
@@ -4661,18 +4415,18 @@ class SqliteProcessConversationSystem:
             if state.child is not child:
                 raise RemoteInitialDeliveryCancelled()
         try:
-            self._record_local_submission(state, child, turn_token, None)
-            accepted = await child.write_prompt(
-                turn_token,
-                content,
-                sender_content=sender_content,
-                sender_label=sender_label,
-                sender_message_count=sender_message_count,
-                mode=mode,
-                model_change=model_change,
-                reasoning_effort_change=reasoning_effort_change,
-                automatic_compaction=automatic_compaction,
-            )
+            with carried_effort_presence(reasoning_effort_is_set):
+                accepted = await child.write_prompt(
+                    turn_token,
+                    content,
+                    sender_content=sender_content,
+                    sender_label=sender_label,
+                    sender_message_count=sender_message_count,
+                    mode=mode,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                    automatic_compaction=automatic_compaction,
+                )
         except BackendPromptRejected as rejected:
             return _PromptDeliveryAttempt(
                 PromptDeliveryRefusalReason.backend_rejected_prompt,
@@ -4714,7 +4468,6 @@ class SqliteProcessConversationSystem:
         recovery_references: tuple[DeploymentRecoveryReference, ...],
         composed_content_delivered: bool,
         provider_submission: ProviderSubmissionFact | None = None,
-        model_resolution: ModelResolution | None = None,
         canonical_validation: CanonicalModelValidation | None = None,
         original_selection: ModelSelection | None = None,
         refusal_detail: str | None = None,
@@ -4737,9 +4490,6 @@ class SqliteProcessConversationSystem:
             or any(message.selection_kind is not None for message in reservation.messages)
             or any(message.reasoning_effort_is_set for message in reservation.messages)
         )
-        if model_resolution is not None:
-            model_change = model_resolution.model
-            reasoning_effort_change = model_resolution.reasoning_effort
         if canonical_validation is not None:
             model_change = canonical_validation.launch_token
             reasoning_effort_change = canonical_validation.selection.reasoning_effort
@@ -4811,7 +4561,6 @@ class SqliteProcessConversationSystem:
                                     recipient=message.recipient,
                                 ),
                             )
-                    self._settle_local_submission(state, reservation.token)
                     self._set_phase(state, phase_when_not_started)
                     return False
 
@@ -4888,7 +4637,6 @@ class SqliteProcessConversationSystem:
                             _prompt_fact(reservation.token, LifecycleStatus.started),
                         ),
                         executor_turn=accepted_metadata,
-                        local_runtime_id=self._local_runtime_id,
                         original_ticket_selection=(
                             original_selection if sender_requested_change else None
                         ),
@@ -4918,7 +4666,6 @@ class SqliteProcessConversationSystem:
                     ),
                 )
                 self._take_in_written_rows(state, written)
-                self._settle_local_submission(state, reservation.token)
                 owner_prompt_sequences = [
                     event.sequence
                     for event in written
@@ -5179,7 +4926,6 @@ class SqliteProcessConversationSystem:
                     recipient=held.recipient,
                     reply_requested=held.reply_requested,
                     recovery_references=held.recovery_references,
-                    model_resolution=delivery.model_resolution,
                     canonical_validation=delivery.canonical_validation,
                     original_selection=delivery.original_selection,
                     refusal_detail=delivery.refusal_detail,
@@ -5329,8 +5075,6 @@ class SqliteProcessConversationSystem:
                     )
                     if reply_requested and sender is not None:
                         state.running_turn.prompt_senders.setdefault(sender, None)
-                if turn_token is not None and attempt is not None:
-                    self._settle_local_submission(state, turn_token, attempt_id=attempt.identity)
                 return PromptDeliveryInjected()
             if isinstance(outcome, BackendSteerRefused):
                 await self._append_event(
@@ -5360,8 +5104,6 @@ class SqliteProcessConversationSystem:
                         else None
                     ),
                 )
-                if turn_token is not None and attempt is not None:
-                    self._settle_local_submission(state, turn_token, attempt_id=attempt.identity)
                 return PromptDeliveryRefused(refusal_reason=outcome.refusal_reason)
             assert isinstance(outcome, BackendSteerUncertain)
             await self._append_event(
@@ -5727,88 +5469,6 @@ class SqliteProcessConversationSystem:
         state.child = child
         return child
 
-    def _record_local_submission(
-        self,
-        state: _ConversationState,
-        child: BackendChild,
-        token: TurnToken,
-        validation: CanonicalModelValidation | None,
-    ) -> None:
-        from planner.conversation.admission.policy import record_local_submission
-        from planner.conversation.admission.service import current_admission_expectation
-        from planner.core.db import connect
-        from planner.executor.remote import RemoteBackendChild
-        from planner.tickets.launch_authority import current_launch_authority_permit
-
-        if isinstance(child, RemoteBackendChild):
-            return
-        permit = current_launch_authority_permit()
-        expectation = current_admission_expectation()
-        if permit is None or expectation is None:
-            return
-        if validation is None:
-            validation = CanonicalModelValidation(
-                expectation.selection,
-                ValidationState.unresolved,
-                ValidationReason.catalog_unavailable,
-                CorrectiveAction.none,
-                expectation.resolved_model_id,
-                expectation.launch_token,
-                expectation.evidence,
-                None,
-                None,
-                None,
-            )
-        conn = connect(self._store._db_path)
-        try:
-            record_local_submission(
-                conn,
-                permit,
-                validation,
-                conversation_id=state.record.conversation_id,
-                runtime_id=self._local_runtime_id,
-                child_id=self._local_child_ids.setdefault(id(child), uuid4().hex),
-                turn_number=token.turn_number,
-                attempt_id=expectation.attempt_id,
-            )
-        finally:
-            conn.close()
-
-    def _settle_local_submission(
-        self,
-        state: _ConversationState,
-        token: TurnToken | None = None,
-        *,
-        child: BackendChild | None = None,
-        attempt_id: str | None = None,
-        preserve_current_permit: bool = False,
-    ) -> None:
-        from planner.conversation.admission.policy import settle_local_submission
-        from planner.core.db import connect
-        from planner.tickets.launch_authority import current_launch_authority_permit
-
-        child_id = None if child is None else self._local_child_ids.get(id(child))
-        if child is not None and child_id is None:
-            return
-        conn = connect(self._store._db_path)
-        current_permit = current_launch_authority_permit()
-        try:
-            settle_local_submission(
-                conn,
-                runtime_id=self._local_runtime_id,
-                conversation_id=state.record.conversation_id,
-                turn_number=None if token is None else token.turn_number,
-                child_id=child_id,
-                attempt_id=attempt_id,
-                exclude_lease_id=(
-                    current_permit.lease_id
-                    if preserve_current_permit and current_permit is not None
-                    else None
-                ),
-            )
-        finally:
-            conn.close()
-
     async def _discard_child(self, state: _ConversationState, child: BackendChild) -> None:
         """Stop a child and forget it, so the next message starts a fresh one.
 
@@ -5839,7 +5499,6 @@ class SqliteProcessConversationSystem:
             )
             return False
         state.local_child_retirement_proven = True
-        self._settle_local_submission(state, child=child, preserve_current_permit=True)
         return True
 
     async def _cancel_child_turn(
@@ -5976,45 +5635,6 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
         return running
 
-    def _restore_reported_selection_guard(
-        self,
-        conn: sqlite3.Connection,
-        state: _ConversationState,
-        ticket_id: str,
-    ) -> None:
-        """A process restart is not an explicit correction of a known mismatch."""
-        row = conn.execute(
-            "SELECT e.rowid,e.payload FROM conversation_events e WHERE "
-            "e.kind='provider_selection_reported' AND e.conversation_id IN "
-            "(SELECT conversation_id FROM ticket_conversations WHERE ticket_id=? "
-            "UNION SELECT conversation_id FROM tickets WHERE id=?) "
-            "ORDER BY e.rowid DESC LIMIT 1",
-            (ticket_id, ticket_id),
-        ).fetchone()
-        if row is None:
-            return
-        raw = json.loads(row[1])
-        submitted = raw.get("submitted_token")
-        if raw.get("provider") != state.record.backend_key.value:
-            return
-        if not isinstance(submitted, str):
-            return
-        # A successfully recorded different selection is the explicit correction.
-        corrected = conn.execute(
-            "SELECT 1 FROM conversation_events e WHERE e.rowid>? AND e.kind='model_changed' "
-            "AND e.conversation_id IN (SELECT conversation_id FROM ticket_conversations "
-            "WHERE ticket_id=? UNION SELECT conversation_id FROM tickets WHERE id=?) "
-            "AND (json_extract(e.payload,'$.model')<>? OR "
-            "json_extract(e.payload,'$.reasoning_effort') IS NOT ?) LIMIT 1",
-            (row[0], ticket_id, ticket_id, submitted, raw.get("requested_reasoning_effort")),
-        ).fetchone()
-        if corrected is None and raw.get("blocks_submission") is True:
-            state.blocked_submission = (
-                ConversationBackendKey(raw["provider"]),
-                submitted,
-                raw.get("requested_reasoning_effort"),
-            )
-
     def _bind_provider_selection_report(
         self,
         state: _ConversationState,
@@ -6024,20 +5644,11 @@ class SqliteProcessConversationSystem:
         basis = running.launch_validation
         if basis is None or basis.launch_token is None:
             return payload
-        from planner.conversation.backend_state import BackendStateStore
-        from planner.conversation.model_resolution.logic.validation import reported_selection_blocks
-
-        disabled = BackendStateStore(self._store._db_path).read_disabled_models(payload.provider)
         return replace(
             payload,
             submitted_token=basis.launch_token,
             requested_reasoning_effort=basis.selection.reasoning_effort,
-            blocks_submission=reported_selection_blocks(
-                basis,
-                reported_model=payload.model,
-                reported_effort=payload.reasoning_effort,
-                disabled_models=disabled,
-            ),
+            blocks_submission=False,
         )
 
     async def _on_provider_selection_reported(
@@ -6058,12 +5669,6 @@ class SqliteProcessConversationSystem:
             payload = self._bind_provider_selection_report(state, running, payload)
             await self._append_backend_event(state, turn_token, payload)
             state.child_reported_model = payload.model
-            if payload.blocks_submission and payload.submitted_token is not None:
-                state.blocked_submission = (
-                    payload.provider,
-                    payload.submitted_token,
-                    payload.requested_reasoning_effort,
-                )
         finally:
             state.lock.release()
 
@@ -7016,21 +6621,6 @@ class SqliteProcessConversationSystem:
                 operations.append(
                     PlainFieldMutation(state, "child_reported_model", reported_payload.model)
                 )
-                if (
-                    reported_payload.blocks_submission
-                    and reported_payload.submitted_token is not None
-                ):
-                    operations.append(
-                        PlainFieldMutation(
-                            state,
-                            "blocked_submission",
-                            (
-                                reported_payload.provider,
-                                reported_payload.submitted_token,
-                                reported_payload.requested_reasoning_effort,
-                            ),
-                        )
-                    )
             if predicted is not None:
                 operations.append(
                     PlainFieldMutation(

@@ -243,64 +243,48 @@ async def _prepare_worker_restart(
                         "corrective_action": "verify_launch_context",
                     },
                 )
-        from planner.tickets.launch_authority import acquire_ticket_mutation, launch_authority_scope
-
         try:
-            permit = acquire_ticket_mutation(conn, ticket_id)
-        except PlannerError as error:
-            raise PlannerError(
-                error.code,
-                "restart cannot settle the retained source authority; "
-                "executor or operator settlement is required",
-                {
-                    **error.detail,
-                    "retirement_started": killed_conversation_id is not None,
-                    "source_retired": True if source_retirement_proven else None,
-                },
-            ) from error
-        try:
-            with launch_authority_scope(permit):
-                write_now = now()
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    _require_same_restart_target(conn, principal, ticket)
-                    if ticket.worker_step_claim in {
-                        WorkerStepClaim.out,
-                        WorkerStepClaim.errored,
-                    }:
-                        given_back = tickets_data.release_worker_step_claim(
+            write_now = now()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                _require_same_restart_target(conn, principal, ticket)
+                if ticket.worker_step_claim in {
+                    WorkerStepClaim.out,
+                    WorkerStepClaim.errored,
+                }:
+                    given_back = tickets_data.release_worker_step_claim(
+                        conn,
+                        ticket_id,
+                        expected_claim=ticket.worker_step_claim,
+                        expected_claim_revision=ticket.worker_step_claim_revision,
+                        now=write_now,
+                    )
+                    if not given_back:
+                        raise PlannerError(
+                            ErrorCode.already_running,
+                            "the Ticket moved while it was being restarted",
+                            {"ticket_id": ticket_id},
+                        )
+                    if killed_conversation_id is not None:
+                        unlinked = tickets_data.clear_ticket_conversation_link(
                             conn,
                             ticket_id,
-                            expected_claim=ticket.worker_step_claim,
-                            expected_claim_revision=ticket.worker_step_claim_revision,
+                            expected_conversation_id=killed_conversation_id,
                             now=write_now,
                         )
-                        if not given_back:
+                        if not unlinked:
                             raise PlannerError(
                                 ErrorCode.already_running,
                                 "the Ticket moved while it was being restarted",
                                 {"ticket_id": ticket_id},
                             )
-                        if killed_conversation_id is not None:
-                            unlinked = tickets_data.clear_ticket_conversation_link(
-                                conn,
-                                ticket_id,
-                                expected_conversation_id=killed_conversation_id,
-                                now=write_now,
-                            )
-                            if not unlinked:
-                                raise PlannerError(
-                                    ErrorCode.already_running,
-                                    "the Ticket moved while it was being restarted",
-                                    {"ticket_id": ticket_id},
-                                )
-                    if write_employee_configuration is not None:
-                        write_employee_configuration(conn, write_now)
-                    conn.execute("COMMIT")
-                except BaseException:
-                    if conn.in_transaction:
-                        conn.execute("ROLLBACK")
-                    raise
+                if write_employee_configuration is not None:
+                    write_employee_configuration(conn, write_now)
+                conn.execute("COMMIT")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
         except PlannerError as error:
             raise PlannerError(
                 error.code,
@@ -311,8 +295,6 @@ async def _prepare_worker_restart(
                     "source_retired": True if source_retirement_proven else None,
                 },
             ) from error
-        finally:
-            permit.release(conn)
     return killed_conversation_id, killed_conversation_looked_running
 
 

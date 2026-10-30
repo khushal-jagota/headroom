@@ -28,7 +28,7 @@ def _stored_tickets(server: ServerHandle) -> list[tuple[object, ...]]:
         return connection.execute("SELECT * FROM tickets ORDER BY id").fetchall()
 
 
-def test_cli_default_locale_read_and_idle_same_locale_move(
+def test_cli_default_locale_read_and_removed_move_route(
     server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
 ) -> None:
     created = cli(
@@ -46,8 +46,11 @@ def test_cli_default_locale_read_and_idle_same_locale_move(
     shown = cli(server, "ticket", "show", created["id"])
     assert shown["header"]["locale"] == "vps"
     before = _stored_tickets(server)
-    moved = cli(server, "ticket", "move", created["id"], "--locale", "vps")
-    assert moved["locale"] == "vps"
+    refused = httpx.post(
+        server.base + f"/api/tickets/{created['id']}/move",
+        json={"locale": "macos"}, timeout=10,
+    )
+    assert refused.status_code == 404
     assert _stored_tickets(server) == before
     detail = api.get(server, f"/api/tickets?detail=full&id={created['id']}")
     assert detail["locale"] == "vps"
@@ -234,13 +237,11 @@ def test_creation_context_is_readonly_offline_and_write_revalidates(
     assert validation.selection.submitted_token == "draft-model"
     assert validation.selection.selection_kind is SelectionKind.legacy_unclassified
     assert validation.selection.selection_revision == "draft"
-    assert validation.state is ValidationState.unresolved
-    assert validation.reason is (
-        ValidationReason.catalog_unavailable if backend == "hermes" else ValidationReason.offline
-    )
-    assert validation.corrective_action is CorrectiveAction.refresh_catalog
+    assert validation.state is ValidationState.compatible
+    assert validation.reason is ValidationReason.supported
+    assert validation.corrective_action is CorrectiveAction.none
     assert validation.evidence is None and validation.unavailable is None
-    assert validation.launch_token is None and validation.resolved_model_id is None
+    assert validation.launch_token == "draft-model" and validation.resolved_model_id is None
     assert context == {
         "resolved_locale": "macos",
         "employee_backend": backend,

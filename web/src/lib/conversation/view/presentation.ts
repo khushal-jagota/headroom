@@ -7,6 +7,35 @@ import { refusalSentence, workingSentence } from '../transcript';
 import type { ThreadItem } from '../threadLayout';
 import type { ConversationTaskProgress } from '../taskProgress';
 import { whatThisRowSays, toolCallSentence, type RestLine } from '../restLine';
+import type { ConversationViewItem, ConversationViewPage, ViewHistoryScope, ViewPageCursor } from './contracts';
+
+/** Admission to normal presentation never changes source pages or their coverage. */
+export function admitsTranscriptItem(item: ConversationViewItem): boolean {
+    return item.kind !== 'row' || item.row_kind !== 'provider_selection_reported';
+}
+
+export function transcriptHistoryEdges(pages: readonly Pick<ConversationViewPage, 'scope' | 'items' | 'older' | 'newer'>[], items: readonly ConversationViewItem[]): {
+    scope: ViewHistoryScope; cursor: ViewPageCursor; direction: 'older' | 'newer'; anchorKey: string | null;
+}[] {
+    const admitted = new Set(items.map(item => item.key));
+    return pages.flatMap(page => {
+        if (page.scope.kind === 'timeline') return [];
+        const visible = page.items.filter(item => admitted.has(item.key));
+        return (['older', 'newer'] as const).flatMap(direction => {
+            const cursor = page[direction];
+            if (!cursor) return [];
+            const boundary = direction === 'older' ? page.items[0] : page.items.at(-1);
+            const compare = (item: ConversationViewItem) => boundary
+                ? item.order.sequence - boundary.order.sequence || item.order.slot - boundary.order.slot : 0;
+            // An entirely hidden page still owns its cursors. Attach to its nearest
+            // admitted neighbor, or retain a boundary without a visual row if none exists.
+            const anchor = direction === 'older'
+                ? visible[0] ?? items.find(item => compare(item) >= 0) ?? items.at(-1)
+                : visible.at(-1) ?? [...items].reverse().find(item => compare(item) <= 0) ?? items[0];
+            return [{ scope: page.scope, cursor, direction, anchorKey: anchor?.key ?? null }];
+        });
+    });
+}
 function pieces(content: ViewMessagePiece[]): MessagePiece[] { return content.map(piece => piece.piece === 'image' ? { ...piece, file_name: piece.file_name ?? undefined } : piece); }
 function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequence' | 'created_at'> & Partial<Pick<ConversationViewRow, 'sender_message_id'>>, body: ViewRowBody): TranscriptRow {
     const base = { key: item.key, sequence: item.source_sequence, createdAt: item.created_at };

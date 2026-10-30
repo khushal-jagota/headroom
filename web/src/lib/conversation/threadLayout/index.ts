@@ -170,6 +170,8 @@ export function threadItems(
   }
 
   for (const row of rows) {
+    // Provider observations remain in the record, but never interrupt visible work.
+    if (row.kind === "provider_selection_reported") continue;
     const visible = rowIsVisible(row);
     if (row.kind === "tool_call") {
       if (!visible) continue;

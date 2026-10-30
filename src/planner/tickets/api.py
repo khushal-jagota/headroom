@@ -41,7 +41,7 @@ from planner.conversation.contracts import (
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
-    CurrentModelResolver,
+    ModelSelection,
     SelectionKind,
 )
 from planner.conversation.storage import ConversationStore
@@ -136,14 +136,6 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
-def get_model_resolver(request: Request) -> CurrentModelResolver:
-    runtime = getattr(request.app.state, "conversation", None)
-    resolver = getattr(runtime, "model_resolution", None)
-    if resolver is None:
-        raise PlannerError(ErrorCode.gateway_offline, "the model resolver is unavailable", {})
-    return cast(CurrentModelResolver, resolver)
-
-
 def get_conversation_system(request: Request) -> ConversationSystem:
     return cast(ConversationSystem, request.app.state.conversation_system)
 
@@ -177,7 +169,6 @@ DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
-ModelResolver = Annotated[CurrentModelResolver, Depends(get_model_resolver)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
 MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
@@ -493,52 +484,13 @@ def _parse_next_ceiling(
 # --- ticket routes -------------------------------------------------------------
 
 
-async def warm_ticket_creation_model(
-    conn: sqlite3.Connection,
-    resolver: CurrentModelResolver,
-    *,
-    worker_type: str,
-    employee_backend: str | None = None,
-    employee_launch_model: str | None = None,
-    employee_launch_reasoning_effort: str | None = None,
-    model_source_is_historical: bool = False,
-) -> None:
-    """Validate syntax and retain exact offline intent without an unscoped probe.
-
-    Destination metadata belongs to contextual preview and admission. This compatibility
-    entry point remains for scheduled and executor creation through the canonical writer.
-    """
-    launch = tickets_data.requested_ticket_launch_configuration(
-        worker_type,
-        employee_backend=employee_backend,
-        employee_launch_model=employee_launch_model,
-        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
-    )
-    if employee_launch_model and not model_source_is_historical:
-        require_enabled_model(
-            conn,
-            require_conversation_backend_key(launch.employee_backend),
-            employee_launch_model,
-        )
-
-
-async def validate_ticket_creation(
+def resolve_ticket_creation_selection(
     raw: JsonDict,
     conn: sqlite3.Connection,
-    system: ConversationSystem,
     *,
     principal: Principal | None = None,
-) -> CanonicalModelValidation:
-    """Preview actual destination metadata before a canonical creation write."""
-    from uuid import uuid4
-
-    from planner.conversation.contracts import ConversationStartRequest
-    from planner.conversation.logic.conversation_start_resolution import (
-        resolve_conversation_start_request,
-    )
-    from planner.conversation.model_resolution.contracts import ModelSelection, ValidationReason
-    from planner.conversation.model_resolution.logic.validation import unresolved_validation
-
+) -> tuple[ModelSelection, str | None]:
+    """Resolve authored draft intent and workspace authority without observation."""
     body = _marshal_create_ticket(raw, draft=True)
     manager = (
         _parse_manager(body["manager"])
@@ -568,6 +520,7 @@ async def validate_ticket_creation(
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
+        reasoning_effort_is_set="employee_launch_reasoning_effort" in body,
         project_id=project.id if project is not None else None,
         manager_id=manager.id if manager.kind is PrincipalKind.manager else None,
         deadline=body["deadline"],
@@ -583,34 +536,23 @@ async def validate_ticket_creation(
         launch.employee_launch_reasoning_effort,
         "draft",
     )
-    folder, policy = conversation_start.workspace_for_project(
-        conn,
-        context.locale,
-        context.project_id,
-    )
-    resolved = resolve_conversation_start_request(
-        ConversationStartRequest(
-            conversation_id="draft",
-            model=selection.submitted_token,
-            backend_key=selection.backend_key,
-            reasoning_effort=selection.reasoning_effort,
-            workspace_folder=folder,
-            workspace_path_policy=policy,
-        )
-    )
-    workspace = conversation_start.workspace_binding_from_start(resolved, context.locale)
-    validator = getattr(system, "validate_launch_selection", None)
-    if not callable(validator):
-        return unresolved_validation(selection, ValidationReason.catalog_unavailable)
-    validation = await validator(
-        selection,
-        workspace,
-        attempt_id=uuid4().hex,
-        classify_new=True,
-    )
+    return selection, context.project_id
 
-    if not isinstance(validation, CanonicalModelValidation):
-        raise TypeError("destination validator returned no canonical validation")
+
+async def validate_ticket_creation(
+    raw: JsonDict,
+    conn: sqlite3.Connection,
+    system: ConversationSystem,
+    *,
+    principal: Principal | None = None,
+) -> CanonicalModelValidation:
+    from planner.conversation.launch_intent import bind_model_intent
+
+    selection, _ = resolve_ticket_creation_selection(raw, conn, principal=principal)
+    require_enabled_model(conn, selection.backend_key, selection.submitted_token)
+    validation = bind_model_intent(selection)
+    if validation.launch_token is not None:
+        require_enabled_model(conn, selection.backend_key, validation.launch_token)
     return validation
 
 
@@ -651,6 +593,7 @@ def write_create_ticket(
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
+        reasoning_effort_is_set="employee_launch_reasoning_effort" in body,
         selection_kind=(
             body.get("selection_kind")
             if validation is None
@@ -690,6 +633,7 @@ async def read_ticket_creation_context(
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
+        reasoning_effort_is_set="employee_launch_reasoning_effort" in body,
         project_id=project.id if project is not None else None,
         manager_id=manager.id if manager.kind is PrincipalKind.manager else None,
         deadline=body["deadline"],
@@ -726,18 +670,8 @@ async def create_ticket(
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
-    model_resolver: ModelResolver,
     request: Request,
 ) -> JsonDict:
-    body = _marshal_create_ticket(raw)
-    await warm_ticket_creation_model(
-        conn,
-        model_resolver,
-        worker_type=body["worker_type"],
-        employee_backend=body.get("employee_backend"),
-        employee_launch_model=body.get("employee_launch_model"),
-        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
-    )
     validation = await validate_ticket_creation(
         raw, conn, get_conversation_system(request), principal=ctx.principal
     )
@@ -937,7 +871,6 @@ async def resolve_employee_configuration(
     expected = tickets_data.employee_launch_configuration(ticket)
     registered_backend = require_conversation_backend_key(employee_backend)
     require_enabled_model(conn, registered_backend, employee_launch_model)
-    from planner.conversation.model_resolution.logic.variants import recognize_variant
     from planner.tickets.validation.data import read_launch_selection
 
     prior = None if ticket.employee_launch_model is None else read_launch_selection(conn, ticket_id)
@@ -949,12 +882,7 @@ async def resolve_employee_configuration(
         ):
             selection_kind = prior.selection_kind
         else:
-            variant = recognize_variant(registered_backend, employee_launch_model)
-            selection_kind = (
-                SelectionKind.panels_alias
-                if variant is not None and variant.name == employee_launch_model
-                else SelectionKind.legacy_unclassified
-            )
+            selection_kind = SelectionKind.legacy_unclassified
     validation = None
     if registered_backend.value != "hermes":
         validation = await conversation_start.verify_ticket_launch(
@@ -1057,11 +985,6 @@ async def put_ticket_employee_configuration(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    from planner.tickets.launch_authority import (
-        acquire_ticket_mutation,
-        launch_authority_scope,
-    )
-
     require_above(conn, ctx.principal, authority.ticket(ticket_id))
     link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
     if link_lock.locked():
@@ -1070,21 +993,8 @@ async def put_ticket_employee_configuration(
             "the Ticket configuration cannot change during a conversation operation",
             {"ticket_id": ticket_id},
         )
-    # No await separates the free-link check, permit acquisition and link ownership.
-    permit = acquire_ticket_mutation(conn, ticket_id)
-    try:
-        with launch_authority_scope(permit):
-            async with link_lock:
-                return await _put_ticket_employee_configuration(
-                    ticket_id,
-                    raw,
-                    request,
-                    conn,
-                    ctx,
-                    clk,
-                )
-    finally:
-        permit.release(conn)
+    async with link_lock:
+        return await _put_ticket_employee_configuration(ticket_id, raw, request, conn, ctx, clk)
 
 
 async def _put_ticket_employee_configuration(
@@ -1797,38 +1707,3 @@ async def resume_ticket(
         expected_record_sha256=_record_precondition(body),
     )
     return _ticket_detail(conn, ticket_id, clk.now_unix())
-
-
-@router.post("/tickets/{ticket_id}/move")
-async def move_ticket_locale(
-    ticket_id: str,
-    request: Request,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    from planner.tickets.locale_move import move_ticket_locale as move
-    from planner.tickets.logic.locale import require_ticket_locale
-
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    if "locale" not in raw or set(raw) - {"locale", "expected_record_sha256"}:
-        raise PlannerError(ErrorCode.validation, "move requires a locale", {})
-    now = clk.now_unix()
-    endpoint = getattr(request.app.state, "executor_endpoint", None)
-    ticket = await move(
-        conversations,
-        conn,
-        ticket_id,
-        locale=require_ticket_locale(raw["locale"]),
-        principal=ctx.principal,
-        now=now,
-        expected_record_sha256=_record_precondition(raw),
-        source_factory=(
-            (lambda ticket: endpoint.source_for_move(ticket.id, ticket.conversation_id))
-            if endpoint is not None
-            else None
-        ),
-    )
-    return tickets_views.ticket_json(ticket, now)

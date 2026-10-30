@@ -176,12 +176,6 @@ CLAUDE_CODE_SYSTEM_PROMPT: Final[SystemPromptPreset] = {
 # called, which is why reading the call is reading the plan.
 TODO_WRITE_TOOL_NAME: Final = "TodoWrite"
 
-# The reasoning efforts claude has. A conversation asking for anything else is asking for a
-# session claude cannot give it.
-CLAUDE_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
-    {"low", "medium", "high", "xhigh", "max"}
-)
-
 # The system messages whose session id is a passing thing rather than the conversation's.
 # Hook messages carry the id of the hook's own run, and taking one for the cursor would
 # leave this conversation resuming from a session that was never its own.
@@ -1385,18 +1379,9 @@ class ClaudeAgentSdkBackendChild:
         )
 
     def _effort(self, reasoning_effort: str | None) -> EffortLevel | None:
-        """The reasoning effort as claude names it, or nothing this session can be put on.
-
-        A session that cannot be put on the value this conversation runs on is not one to
-        write under: the text would go to an agent thinking as hard as somebody else asked.
-        """
+        """Forward the exact native effort; the provider owns rejection of new values."""
         if reasoning_effort is None:
             return None
-        if reasoning_effort not in CLAUDE_REASONING_EFFORTS:
-            raise SessionLoadFailed(
-                f"claude has no reasoning effort {reasoning_effort!r}, so a session cannot "
-                "be put on it"
-            )
         return cast(EffortLevel, reasoning_effort)
 
     async def _connect(
@@ -1435,13 +1420,15 @@ class ClaudeAgentSdkBackendChild:
         that is up. Saying so before anything is written is what keeps a change and its
         prompt one act: the child that takes the prompt was started on the new values.
         """
+        from planner.conversation.launch_intent import reasoning_effort_is_set
+
         if model_change is not None and model_change != self._session_model:
             raise NeedsRebind(
                 f"claude takes its model when the child starts, so {model_change!r} needs "
                 "a child started on it"
             )
         if (
-            reasoning_effort_change is not None
+            (reasoning_effort_change is not None or reasoning_effort_is_set())
             and reasoning_effort_change != self._session_reasoning_effort
         ):
             raise NeedsRebind(

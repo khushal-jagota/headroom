@@ -54,9 +54,6 @@
     userInputAvailable = true,
     activityUncertain = false,
     current = { model: null, reasoningEffort: null },
-    canonicalRows,
-    validation = null,
-    refusalValidation = null,
     readError = null,
     onRetryModelChoices,
     onPreviewRunSelection,
@@ -144,9 +141,6 @@
     userInputAvailable?: boolean;
     activityUncertain?: boolean;
     current?: RunValues;
-    canonicalRows?: readonly import("../../lib/conversation/modelResolutionWire").PickerRow[];
-    validation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
-    refusalValidation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
     readError?: string | null;
     onRetryModelChoices?: () => Promise<void>;
     onPreviewRunSelection?: (selection: import("../../lib/conversation/runControls/contracts").ComposerRunSelection, backend?: ConversationBackendKey) => void;
@@ -562,9 +556,6 @@
     {permissionAvailable}
     {userInputAvailable}
       {current}
-      {canonicalRows}
-      {validation}
-      {refusalValidation}
       {readError}
       {onRetryModelChoices}
       {onPreviewRunSelection}

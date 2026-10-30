@@ -37,6 +37,7 @@ from planner.conversation.events import (
     ProviderSubmissionFact,
     UserInputAnswer,
 )
+from planner.conversation.launch_intent import carried_effort_presence
 from planner.conversation.message_content import MessageContent
 from planner.executor.contracts import (
     BackendEvent,
@@ -73,17 +74,18 @@ async def invoke_child(child: BackendChild, command: ChildCommand) -> JsonObject
         case ChildOperation.write_prompt:
             if command.turn is None:
                 raise ValueError("write_prompt needs its exact turn")
-            result = await child.write_prompt(
-                command.turn,
-                TypeAdapter(MessageContent).validate_python(args["content"]),
-                sender_label=args["sender_label"],
-                sender_content=TypeAdapter(MessageContent).validate_python(args["sender_content"]),
-                sender_message_count=args.get("sender_message_count", 1),
-                mode=PromptDeliveryMode(args["mode"]),
-                model_change=args.get("model_change"),
-                reasoning_effort_change=args.get("reasoning_effort_change"),
-                automatic_compaction=args.get("automatic_compaction", False),
-            )
+            with carried_effort_presence(bool(args.get("reasoning_effort_is_set", False))):
+                result = await child.write_prompt(
+                    command.turn,
+                    TypeAdapter(MessageContent).validate_python(args["content"]),
+                    sender_label=args["sender_label"],
+                    sender_content=TypeAdapter(MessageContent).validate_python(args["sender_content"]),
+                    sender_message_count=args.get("sender_message_count", 1),
+                    mode=PromptDeliveryMode(args["mode"]),
+                    model_change=args.get("model_change"),
+                    reasoning_effort_change=args.get("reasoning_effort_change"),
+                    automatic_compaction=args.get("automatic_compaction", False),
+                )
             return {
                 "kind": "prompt_accepted",
                 "provider_submission": encode_value(result.provider_submission),

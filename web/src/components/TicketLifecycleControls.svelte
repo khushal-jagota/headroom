@@ -6,7 +6,7 @@
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
-  let { ticket, terminal, assertCurrent, runCommand, leading, moveAction }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown>; leading?: Snippet; moveAction?: Snippet } = $props();
+  let { ticket, terminal, assertCurrent, runCommand, leading }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown>; leading?: Snippet } = $props();
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -31,8 +31,8 @@
   }
 </script>
 
-<div class="ticket-lifecycle" data-ticket-lifecycle>
-  {#if !terminal || moveAction}
+<div class="ticket-lifecycle" data-ticket-lifecycle hidden={terminal}>
+  {#if !terminal}
     <div class="actions">
       {#if !terminal}
       {@render leading?.()}
@@ -43,10 +43,6 @@
       {:else}
         <button type="button" class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</button>
       {/if}
-      {/if}
-      {#if moveAction}
-        {#if !terminal}<span class="separator" aria-hidden="true">·</span>{/if}
-        {@render moveAction()}
       {/if}
     </div>
     {#if !terminal && ticket.is_backlogged}<p class="hint">Automatic work is paused. Messages and approvals remain available.</p>{/if}

@@ -560,15 +560,6 @@ class ConversationStore:
                 expectation = current_admission_expectation()
                 if expectation is not None:
                     check_expectation_policy(conn, expectation)
-                from planner.tickets.launch_authority import current_launch_authority_permit
-
-                permit = current_launch_authority_permit()
-                if permit is not None:
-                    permit.bind_command(
-                        conn,
-                        launch_command.command_id,
-                        launch_command.child.executor_incarnation,
-                    )
             claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
             retained_commands: tuple[ChildCommand, ...] = ()
             if retired_child is not None:
@@ -1039,7 +1030,6 @@ class ConversationStore:
         executor_turn: tuple[str, str, str] | None = None,
         original_ticket_selection: ModelSelection | None = None,
         requested_ticket_validation: CanonicalModelValidation | None = None,
-        local_runtime_id: str | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -1078,7 +1068,6 @@ class ConversationStore:
                 executor_turn,
                 original_ticket_selection,
                 requested_ticket_validation,
-                local_runtime_id,
             )
 
     async def read_events_after(
@@ -1424,7 +1413,6 @@ class ConversationStore:
         executor_turn: tuple[str, str, str] | None = None,
         original_ticket_selection: ModelSelection | None = None,
         requested_ticket_validation: CanonicalModelValidation | None = None,
-        local_runtime_id: str | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -1481,17 +1469,6 @@ class ConversationStore:
                 )
                 if executor_turn is not None:
                     self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
-                if local_runtime_id is not None:
-                    from planner.conversation.admission.policy import settle_local_submission
-
-                    turn_facts = [fact for fact in lifecycle if fact.kind.value == "turn"]
-                    if turn_facts:
-                        settle_local_submission(
-                            conn,
-                            runtime_id=local_runtime_id,
-                            conversation_id=conversation_id,
-                            turn_number=turn_facts[0].turn_number,
-                        )
                 if (
                     original_ticket_selection is not None
                     and requested_ticket_validation is not None
@@ -1504,31 +1481,24 @@ class ConversationStore:
                         (conversation_id,),
                     ).fetchone()
                     if row is not None:
-                        from planner.tickets.launch_authority import acquire_ticket_mutation
-
-                        intent_permit = acquire_ticket_mutation(conn, row[0])
-                        try:
-                            ticket_data.write_explicit_ticket_launch_intent_in_transaction(
-                                conn,
-                                row[0],
-                                expected_conversation_id=conversation_id,
-                                expected_selection_revision=original_ticket_selection.selection_revision,
-                                expected_configuration=EmployeeLaunchConfiguration(
-                                    employee_backend=original_ticket_selection.backend_key.value,
-                                    employee_launch_model=original_ticket_selection.submitted_token,
-                                    employee_launch_reasoning_effort=original_ticket_selection.reasoning_effort,
-                                ),
-                                model=requested_ticket_validation.selection.submitted_token,
-                                reasoning_effort=requested_ticket_validation.selection.reasoning_effort,
-                                selection_kind=requested_ticket_validation.selection.selection_kind,
-                                employee_backend=requested_ticket_validation.selection.backend_key.value,
-                                source_type="sender_override",
-                                now=self._integer_now(),
-                                validation=requested_ticket_validation,
-                                authority_permit=intent_permit,
-                            )
-                        finally:
-                            intent_permit.release(conn)
+                        ticket_data.write_explicit_ticket_launch_intent_in_transaction(
+                            conn,
+                            row[0],
+                            expected_conversation_id=conversation_id,
+                            expected_selection_revision=original_ticket_selection.selection_revision,
+                            expected_configuration=EmployeeLaunchConfiguration(
+                                employee_backend=original_ticket_selection.backend_key.value,
+                                employee_launch_model=original_ticket_selection.submitted_token,
+                                employee_launch_reasoning_effort=original_ticket_selection.reasoning_effort,
+                            ),
+                            model=requested_ticket_validation.selection.submitted_token,
+                            reasoning_effort=requested_ticket_validation.selection.reasoning_effort,
+                            selection_kind=requested_ticket_validation.selection.selection_kind,
+                            employee_backend=requested_ticket_validation.selection.backend_key.value,
+                            source_type="sender_override",
+                            now=self._integer_now(),
+                            validation=requested_ticket_validation,
+                        )
                 self._participate_in_append(conn, conversation_id, written)
                 self._record_signal_result(conn, written)
                 self._commit_rows(conn, payloads)

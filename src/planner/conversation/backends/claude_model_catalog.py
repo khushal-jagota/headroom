@@ -1,47 +1,27 @@
-"""What claude says it can be run as, asked of the CLI itself and nothing else.
+"""Claude suggestions from the retained T3 recipe, scoped to the local CLI version.
 
-Claude's aliases move: "opus" names whichever model the installed CLI resolves it to
-today, so a written-down catalog goes quietly stale. The CLI's own init handshake
-reports the real list — each pickable value, the concrete model id it resolves to
-right now, and the effort levels that model takes — so the only honest catalog is the
-one read from there.
-
-Asking costs one short-lived child reading its startup handshake. No prompt is ever
-sent, so nothing here starts a turn.
+These suggestions are advisory. Exact authored tokens do not require membership.
+Recipe source: T3 dd148481531a0a090780a2ade20588566db099a2.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
-from uuid import uuid4
+from typing import Final
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+import anyio
 
-from planner.conversation.backends.claude_settings import (
-    ClaudeControlTransport,
-)
 from planner.conversation.backends.probe_lifetime import owned_probe
 
-# The whole probe — spawn, init handshake, stop — against a local child. Long enough
-# for a cold start on a slow machine, short enough that a card is never left waiting.
 MODEL_CATALOG_TIMEOUT_SECONDS: Final = 30.0
-
-# The CLI lists a "default" pseudo-entry pointing at whichever real model it currently
-# recommends. The picker already has its own way of saying "the backend's own model",
-# and the real model appears in the list as itself, so the pseudo-entry is dropped
-# rather than shown twice.
-_DEFAULT_PSEUDO_MODEL_VALUE: Final = "default"
-
 _DATE_SUFFIX: Final = re.compile(r"^\d{8}$")
 
 
 class ClaudeModelCatalogUnavailable(Exception):
-    """Claude could not be asked what it runs, and why."""
+    """Local Claude metadata could not be read."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,9 +46,7 @@ class ClaudeModelCatalog:
 
     models: tuple[ClaudeModel, ...]
     reasoning_effort_options: tuple[str, ...]
-    # Which of the models above claude runs when nobody picks one. Claude says this as a
-    # pseudo-entry called "default" that is not itself selectable, so what is kept is the
-    # real entry it resolves to. Absent when nothing in the list matches it.
+    # Suggestions never select a default on the user's behalf.
     default_model_id: str | None = None
     complete: bool = True
     visibility_limited: bool = True
@@ -97,121 +75,104 @@ def versioned_display_name(resolved_model_id: str) -> str:
     return f"{shown} (1M)" if large_context else shown
 
 
+@dataclass(frozen=True, slots=True)
+class _Recipe:
+    model: str
+    minimum: tuple[int, ...] | None
+    maximum_exclusive: tuple[int, ...] | None
+    efforts: tuple[str, ...]
+    aliases: tuple[str, ...]
+
+
+# Only native effort values. T3 prompt-injected and workflow modes are excluded.
+_RECIPES: tuple[_Recipe, ...] = (
+    _Recipe('claude-opus-5-5', (2, 1, 280), None,
+            ('low', 'medium', 'high', 'xhigh', 'max'),
+            ('opus', 'opus-5.5', 'claude-opus-5.5')),
+    _Recipe('claude-sonnet-5-5', (2, 1, 284), None,
+            ('low', 'medium', 'high', 'xhigh', 'max'),
+            ('sonnet', 'sonnet-5.5', 'claude-sonnet-5.5')),
+    _Recipe('claude-fable-5-1', (2, 1, 257), None,
+            ('low', 'medium', 'high', 'xhigh', 'max'),
+            ('fable', 'fable-5.1', 'claude-fable-5.1')),
+    _Recipe('claude-fable-5', (2, 1, 169), None,
+            ('low', 'medium', 'high', 'xhigh', 'max'), ()),
+    _Recipe('claude-opus-5', (2, 1, 219), None,
+            ('low', 'medium', 'high', 'xhigh', 'max'),
+            ('opus-5', 'claude-opus-5.0', 'claude-opus-5-0')),
+    _Recipe('claude-opus-4-8', (2, 1, 154), None,
+            ('low', 'medium', 'high', 'xhigh', 'max'),
+            ('opus-4.8', 'claude-opus-4.8')),
+    _Recipe('claude-opus-4-7', (2, 1, 111), None,
+            ('low', 'medium', 'high', 'max'),
+            ('opus-4.7', 'claude-opus-4.7')),
+    _Recipe('claude-opus-4-6', None, None,
+            ('low', 'medium', 'high', 'max'),
+            ('opus-4.6', 'claude-opus-4.6', 'claude-opus-4-6-20251117')),
+    _Recipe('claude-opus-4-5', None, None,
+            ('low', 'medium', 'high', 'max'), ()),
+    _Recipe('claude-sonnet-5', None, None,
+            ('low', 'medium', 'high', 'xhigh', 'max'),
+            ('sonnet-5', 'claude-sonnet-5.0', 'claude-sonnet-5-0')),
+    _Recipe('claude-sonnet-4-6', None, None,
+            ('low', 'medium', 'high'),
+            ('sonnet-4.6', 'claude-sonnet-4.6', 'claude-sonnet-4-6-20251117')),
+    _Recipe('claude-haiku-5-5', (2, 1, 293), None,
+            ('low', 'medium', 'high', 'xhigh', 'max'),
+            ('haiku', 'haiku-5.5', 'claude-haiku-5.5')),
+    _Recipe('claude-haiku-4-5', None, None,
+            (), ('haiku-4.5', 'claude-haiku-4.5', 'claude-haiku-4-5-20251001')),
+)
+
+
+def claude_models_for_version(version: str | None) -> ClaudeModelCatalog:
+    """Omit bounded suggestions when the optional local version is unavailable."""
+    match = re.search(r"(?<![\d.])(\d+)\.(\d+)\.(\d+)(?![\d.])", version or "")
+    parsed = tuple(map(int, match.groups())) if match else None
+    models = tuple(
+        ClaudeModel(row.model, versioned_display_name(row.model), row.model, row.efforts)
+        for row in _RECIPES
+        if (row.minimum is None or (parsed is not None and parsed >= row.minimum))
+        and (row.maximum_exclusive is None or
+             (parsed is not None and parsed < row.maximum_exclusive))
+    )
+    return ClaudeModelCatalog(
+        models=models,
+        reasoning_effort_options=tuple(dict.fromkeys(
+            effort for row in models for effort in row.reasoning_effort_options or ()
+        )),
+    )
+
+
+def claude_launch_model(model: str | None) -> str | None:
+    """Map documented versioned aliases only; retain floating and custom intent."""
+    if model is None:
+        return None
+    suffix = "[1m]" if model.endswith("[1m]") else ""
+    token = model[:-4] if suffix else model
+    for row in _RECIPES:
+        if token in row.aliases and any(character.isdigit() for character in token):
+            return row.model + suffix
+    return model
+
+
 async def probe_claude_model_catalog(
     claude_executable: str,
     *,
     environment: Mapping[str, str] | None = None,
     working_directory: Path | None = None,
 ) -> ClaudeModelCatalog:
-    """Ask the installed claude what it can be run as. Raises when it will not say."""
-    async def operation() -> tuple[list[object], str | None]:
-        return await _read_models_from_init(
-            claude_executable, environment=environment, working_directory=working_directory,
+    """Read local version metadata without an SDK session or provider request."""
+    async def operation() -> str:
+        result = await anyio.run_process(
+            [claude_executable, "--version"],
+            env=environment,
+            cwd=working_directory,
         )
+        return result.stdout.decode("utf-8", errors="replace")
 
     try:
-        reported, provider_scope = await owned_probe(
-            operation,
-            timeout_seconds=MODEL_CATALOG_TIMEOUT_SECONDS,
-        )
-    except TimeoutError as never_answered:
-        raise ClaudeModelCatalogUnavailable(
-            "claude did not finish its startup handshake in time"
-        ) from never_answered
-    except Exception:  # noqa: BLE001 - every SDK failure is one answer
-        raise ClaudeModelCatalogUnavailable("Claude metadata response unavailable") from None
-
-    models: list[ClaudeModel] = []
-    efforts_in_listed_order: list[str] = []
-    default_resolves_to: str | None = None
-    for entry in reported:
-        if not isinstance(entry, dict):
-            continue
-        if entry.get("disabled") is not None and not isinstance(entry["disabled"], bool):
-            raise ClaudeModelCatalogUnavailable("Claude model enablement is incompatible")
-        value = entry.get("value")
-        resolved = entry.get("resolvedModel")
-        if not isinstance(value, str) or not value:
-            continue
-        if not isinstance(resolved, str) or not resolved:
-            resolved = None
-        if value == _DEFAULT_PSEUDO_MODEL_VALUE:
-            # Not an option — "default" is not a model anybody can be shown as running.
-            # What it resolves to is a model, and that is the part worth keeping.
-            default_resolves_to = resolved
-            continue
-        raw_efforts = entry.get("supportedEffortLevels")
-        efforts = (
-            tuple(raw_efforts)
-            if isinstance(raw_efforts, list)
-            and all(isinstance(effort, str) and effort for effort in raw_efforts)
-            else None
-        )
-        for effort in efforts or ():
-            if effort not in efforts_in_listed_order:
-                efforts_in_listed_order.append(effort)
-        models.append(
-            ClaudeModel(
-                model_id=value,
-                display_name=versioned_display_name(resolved or value),
-                resolved_model_id=resolved,
-                reasoning_effort_options=efforts,
-                hidden=entry.get("hidden") is True,
-                enabled=(False if entry.get("disabled") is True else
-                         True if entry.get("disabled") is False else None),
-            )
-        )
-    if not models:
-        raise ClaudeModelCatalogUnavailable("claude's startup handshake named no models")
-    return ClaudeModelCatalog(
-        models=tuple(models),
-        reasoning_effort_options=tuple(efforts_in_listed_order),
-        default_model_id=_default_model_id(models, default_resolves_to),
-        provider_scope=provider_scope,
-    )
-
-
-def _default_model_id(models: list[ClaudeModel], resolves_to: str | None) -> str | None:
-    """The listed model claude's default reaches, named as the picker names it.
-
-    Claude's default is stated as a resolved model id, and a picker holds the values
-    ``--model`` accepts. So the two are joined here on the resolved id, and a default that
-    matches nothing listed is reported as no default rather than as a value nobody could
-    have selected.
-    """
-    if resolves_to is None:
-        return None
-    for model in models:
-        if model.resolved_model_id == resolves_to:
-            return model.model_id
-    return None
-
-
-async def _read_models_from_init(
-    claude_executable: str,
-    *,
-    environment: Mapping[str, str] | None = None,
-    working_directory: Path | None = None,
-) -> tuple[list[object], str | None]:
-    options = ClaudeAgentOptions(
-        cli_path=claude_executable,
-        max_turns=1,
-        cwd=working_directory,
-        env={} if environment is None else dict(environment),
-    )
-    async def empty_prompt() -> AsyncIterator[dict[str, Any]]:
-        return
-        yield {}
-
-    transport = ClaudeControlTransport(
-        SubprocessCLITransport(prompt=empty_prompt(), options=options)
-    )
-    async with ClaudeSDKClient(options=options, transport=transport):
-        # Listing offers is advisory. A settings snapshot does not prove admission
-        # of a later user message and is not a condition for listing these offers.
-        reported = await transport.control_request("list_models")
-        models = reported.get("models")
-        if not isinstance(models, list):
-            raise ClaudeModelCatalogUnavailable("Claude model list is unavailable")
-        return models, f"claude-probe-{uuid4().hex}"
-    raise ClaudeModelCatalogUnavailable("Claude metadata client closed without a model list")
+        version = await owned_probe(operation, timeout_seconds=MODEL_CATALOG_TIMEOUT_SECONDS)
+    except Exception:  # noqa: BLE001 - optional metadata never gates execution
+        version = None
+    return claude_models_for_version(version)

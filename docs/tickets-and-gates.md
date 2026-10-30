@@ -60,20 +60,9 @@ through the configured remote executor and requires its authenticated reconciled
 connection before execution. Local-only mode refuses Mac execution, including manual
 start commands.
 
-Use `panels ticket move <ticket> --locale vps|macos` to change an idle Ticket's locale.
-The move refuses before retirement if a Worker step, active turn, pending ask, or
-unsent work still needs the source. A Mac source requires fresh evidence from the
-current executor connection, even without a linked conversation. Unknown source
-state refuses. The move retires an idle source child before the canonical locale
-change. The next native start uses the destination. The conversation, history,
-session cursor, and access posture remain intact.
-
-An admission refusal leaves the locale and process unchanged. A failure after
-retirement starts reports whether source retirement succeeded or remains uncertain.
-The canonical locale stays unchanged after a failed final write. An uncertain
-retirement quarantines the source instead of permitting a second native start.
-A move does not copy repository files. Code work on the destination requires a fresh
-checkout at the required revision. Uncommitted work does not travel. Commit it before a move.
+Ticket machine choice is set at creation. Existing Tickets cannot switch between
+Mac and VPS. The UI has no switch control, the API has no move route, and the CLI
+has no `ticket move` command. Existing locale values and history remain readable.
 
 The owner can set a Worker type requirement through
 `PATCH /api/workers/{worker_type}/requirements` with `{"requires_macos": true}` or `false`.

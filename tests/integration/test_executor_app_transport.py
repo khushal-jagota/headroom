@@ -496,7 +496,7 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
                     connection.execute(
                         "SELECT count(*) FROM ticket_launch_authority WHERE command_id IS NOT NULL",
                     ).fetchone()[0]
-                    > 0
+                    == 0
                 )
             finally:
                 connection.close()

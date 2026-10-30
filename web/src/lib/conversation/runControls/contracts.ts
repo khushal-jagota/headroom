@@ -1,4 +1,5 @@
-import type { PickerRow, CanonicalModelValidation, SelectionKind } from "../modelResolutionWire";
+import type { ModelPickerDisplaySelection } from "../modelPickerFacts";
+import type { SelectionKind } from "../modelResolutionWire";
 import type { RunValues } from "../composer";
 import type {
   BackendModel,
@@ -17,9 +18,6 @@ export type ComposerRunSelection = Readonly<{
 
 export type ComposerRunControlsInput = Readonly<{
   selection: ComposerRunSelection;
-  canonicalRows?: readonly PickerRow[];
-  validation?: CanonicalModelValidation | null;
-  refusalValidation?: CanonicalModelValidation | null;
   readError?: string | null;
   backendKey: ConversationBackendKey | null;
   conversationExists: boolean;
@@ -38,17 +36,15 @@ export type ComposerRunControlsInput = Readonly<{
 
 export type ComposerRunSelectionIntent =
   | { intent: "choose_backend"; backendKey: ConversationBackendKey }
-  | { intent: "choose_model"; model: string; reasoningEffort: string | null; row?: PickerRow }
+  | { intent: "choose_model"; model: string; reasoningEffort: string | null }
   | { intent: "choose_reasoning_effort"; reasoningEffort: string };
 
 export type ComposerRunControlsView = Readonly<{
+  displaySelection?: ModelPickerDisplaySelection;
   normalizedSelection: ComposerRunSelection;
   carriedRunValues: RunValues;
   disabled: boolean;
   picker: ModelPickerView;
-  canonicalRows?: readonly PickerRow[];
-  validation?: CanonicalModelValidation | null;
-  refusalValidation?: CanonicalModelValidation | null;
   readError?: string | null;
   pickerSource: Readonly<{
     backends: readonly BackendSnapshot[];
@@ -68,7 +64,7 @@ export type ComposerRunControlsView = Readonly<{
 
 export type ComposerRunControlIntents = Readonly<{
   chooseBackend: (backendKey: ConversationBackendKey) => void;
-  chooseModel: (model: string, reasoningEffort: string | null, row?: PickerRow) => void;
+  chooseModel: (model: string, reasoningEffort: string | null) => void;
   chooseReasoningEffort: (reasoningEffort: string) => void;
   chooseDeliveryMode: (mode: import("../wire").PromptDeliveryMode) => void;
   send: () => void;

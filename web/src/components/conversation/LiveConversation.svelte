@@ -73,7 +73,7 @@
     promoteHeldPrompt,
     readConversation,
     readComposerCatalog,
-    readDestinationModelChoices,
+    readScopedBackends,
     ConversationWireError,
     type BackendSnapshot,
     type ConversationBackendKey,
@@ -160,7 +160,7 @@
   // Only Ticket owners have an accepted canonical picker authority. Manager and Chief
   // direct conversations cannot manufacture a creation draft to borrow that authority.
   let pickerTicketId = $derived(uploadOwner?.kind === "ticket" ? uploadOwner.id : null);
-  let scopedChoices = $state<import("../../lib/conversation/modelResolutionWire").DestinationModelChoicesResponse | null>(null);
+  let scopedChoices = $state<readonly import("../../lib/conversation/wire").BackendSnapshot[] | null>(null);
   let refusalValidation = $state<import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null>(null);
   let proposedSelection = $state<import("../../lib/conversation/runControls/contracts").ComposerRunSelection | null>(null);
   let previewBackend = $state<ConversationBackendKey | null>(null);
@@ -168,16 +168,15 @@
   let pickerReadGeneration = 0;
   let pickerMounted = true;
   onMount(() => () => {pickerMounted = false; pickerReadGeneration += 1;});
-  let capturedPickerRequest: import("../../lib/conversation/modelResolutionWire").TicketModelChoicesRequest | null = null;
+  let capturedPickerRequest: import("../../lib/conversation/modelResolutionWire").TicketBackendScope | null = null;
   let pickerOwnerKey = "";
   let pickerContextKey = "";
 
-  async function readScopedChoices(request: import("../../lib/conversation/modelResolutionWire").TicketModelChoicesRequest): Promise<void> {
+  async function readScopedChoices(request: import("../../lib/conversation/modelResolutionWire").TicketBackendScope, refresh = false): Promise<void> {
     const generation = ++pickerReadGeneration;
     const context = pickerContextKey;
-    scopedChoices = null;
     try {
-      const result = await readDestinationModelChoices(request);
+      const result = await readScopedBackends(request, refresh);
       if (!pickerMounted || generation !== pickerReadGeneration || context !== pickerContextKey) return;
       scopedChoices = result;
       pickerReadError = null;
@@ -188,7 +187,7 @@
   }
 
   async function retryScopedChoices(): Promise<void> {
-    if (capturedPickerRequest) await readScopedChoices({...capturedPickerRequest});
+    if (capturedPickerRequest) await readScopedChoices({...capturedPickerRequest}, true);
   }
 
   function previewRunSelection(selection: import("../../lib/conversation/runControls/contracts").ComposerRunSelection, backend?: ConversationBackendKey): void {
@@ -207,7 +206,7 @@
     }
     const selection = proposedSelection;
     const backend = previewBackend ?? selection?.pickedBackend ?? undefined;
-    const request: import("../../lib/conversation/modelResolutionWire").TicketModelChoicesRequest | null = owner === null || readOnly ? null : {
+    const request: import("../../lib/conversation/modelResolutionWire").TicketBackendScope | null = owner === null || readOnly ? null : {
       ticket_id: owner,
       ...(locale === undefined ? {} : {locale}),
       ...(backend ? {employee_backend: backend} : {}),
@@ -215,7 +214,7 @@
       ...(selection?.selectionKind === undefined || previewBackend !== null ? {} : {selection_kind: selection.selectionKind}),
       ...(selection?.effortIsSet ? {employee_launch_reasoning_effort: selection.pickedReasoningEffort} : {})
     };
-    const context = JSON.stringify([ownerKey, locale, conversationId, request, launchValidation?.selection?.selection_revision, startValues]);
+    const context = JSON.stringify([ownerKey, locale, conversationId, view?.workspace_folder, launchValidation?.selection?.selection_revision]);
     if (context === pickerContextKey) return;
     pickerContextKey = context;
     capturedPickerRequest = request;
@@ -386,8 +385,9 @@
   $effect(() => {
     runningBackendKey = backendKey;
   });
+  let pickerBackends = $derived(pickerTicketId === null ? backends : scopedChoices ?? []);
   let backendSnapshot = $derived(
-    backends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
+    pickerBackends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
   );
   let current = $derived<RunValues>({model:view?.model??null,reasoningEffort:view?.reasoning_effort??null});
   let serverHeldSenderIds = $derived(
@@ -1062,7 +1062,7 @@
   conversationId={openedId ?? ""}
   {backendKey}
   conversationExists={started}
-  bind:backends
+  backends={pickerBackends}
   workspaceFolder={view?.workspace_folder ?? null}
   {reader}
   {acknowledgedMessageIds}
@@ -1088,10 +1088,7 @@
   {userInputAvailable}
   {activityUncertain}
   {current}
-  canonicalRows={pickerTicketId === null ? undefined : scopedChoices?.rows ?? []}
-  validation={scopedChoices?.validation ?? null}
   readError={pickerReadError}
-  refusalValidation={refusalValidation ?? recordedRefusalValidation}
   onRetryModelChoices={pickerTicketId === null ? undefined : retryScopedChoices}
   onPreviewRunSelection={pickerTicketId === null ? undefined : previewRunSelection}
   models={backendSnapshot?.available_models ?? []}

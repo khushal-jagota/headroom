@@ -56,8 +56,6 @@ def _configure_scoped_metadata(
         CatalogWorkspaceBinding,
         LaunchContext,
     )
-    from planner.conversation.model_resolution.data import ModelResolutionStore
-    from planner.conversation.model_resolution.service import ModelResolutionService
     from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
     from planner.tickets.contracts import TicketLocale
 
@@ -93,12 +91,6 @@ def _configure_scoped_metadata(
     observer = Observer(lambda: identity)
     observer.model = "scripted"
     observer.efforts = ()
-    system._model_resolver = ModelResolutionService(
-        snapshots=NoUnscopedProbe(),
-        store=ModelResolutionStore(path),
-        backend_state=BackendStateStore(path),
-        observer=observer,
-    )
     system.configure_destination_validation(observer)
 
 

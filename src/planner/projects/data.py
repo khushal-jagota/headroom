@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
@@ -13,7 +13,6 @@ from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.projects.contracts import Project
-from planner.tickets import launch_authority
 
 DEFAULT_PROJECTS: tuple[tuple[str, str], ...] = (
     ("project_vylo", "Vylo"),
@@ -229,14 +228,7 @@ def update_project(
     if not updates:
         raise PlannerError(ErrorCode.validation, "no project fields to update", {})
 
-    with (
-        _tx(conn),
-        (
-            launch_authority.mutation_scope(conn, (f"project:{project_id}",))
-            if "folder_path" in updates
-            else nullcontext()
-        ),
-    ):
+    with _tx(conn):
         if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}

@@ -15,6 +15,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
     WorkspacePathPolicy,
 )
+from planner.conversation.launch_intent import reasoning_effort_is_set
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.executor.codec import decode_prompt_result, decode_provider_submission, encode_value
@@ -268,6 +269,7 @@ class RemoteBackendChild:
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
+                reasoning_effort_is_set=reasoning_effort_is_set(),
                 automatic_compaction=automatic_compaction,
             )
         )

@@ -56,7 +56,6 @@ from planner.conversation.model_resolution.contracts import (
     CatalogWorkspaceBinding,
     ModelSelection,
     SelectionKind,
-    ValidationReason,
 )
 from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.contracts import Principal
@@ -311,10 +310,9 @@ async def verify_ticket_launch(
     classify_new: bool = False,
     now: int,
 ) -> CanonicalModelValidation:
-    """Observe outside transactions, then compare the exact captured launch selection."""
-    from planner.conversation.model_resolution.logic.validation import unresolved_validation
+    """Bind exact intent locally, then compare the captured selection before persistence."""
+    from planner.conversation.launch_intent import bind_model_intent
     from planner.tickets.validation.data import (
-        read_launch_validation,
         record_launch_validation,
         set_selection_kind,
     )
@@ -331,42 +329,15 @@ async def verify_ticket_launch(
     )
     validator = getattr(system, "validate_launch_selection", None)
     if callable(validator):
-        stored = read_launch_validation(conn, ticket.id)
-        # Another backend or selection kind is not the same alias intent.
-        history = (
-            stored
-            if stored is not None
-            and stored.validation.selection.backend_key == selection.backend_key
-            and stored.validation.selection.selection_kind == selection.selection_kind
-            else None
-        )
         validation = await validator(
-            selection,
-            workspace,
-            attempt_id=uuid4().hex,
-            classify_new=classify_new,
-            previous_alias_resolution=(
-                None
-                if history is None
-                else history.validation.current_alias_resolution
-                or history.validation.previous_alias_resolution
-            ),
+            selection, workspace, attempt_id=uuid4().hex, classify_new=classify_new,
         )
     else:
-        stored = None
-        validation = unresolved_validation(selection, ValidationReason.catalog_unavailable)
-    from planner.runtime.logic.launch_selection import preserve_alias_history
-
-    validation = preserve_alias_history(
-        validation,
-        None
-        if (
-            stored is None
-            or stored.validation.selection.backend_key != selection.backend_key
-            or stored.validation.selection.selection_kind != selection.selection_kind
-        )
-        else stored.validation,
-    )
+        from planner.conversation.backend_state import require_enabled_model
+        require_enabled_model(conn, selection.backend_key, selection.submitted_token)
+        validation = bind_model_intent(selection)
+        if validation.launch_token is not None:
+            require_enabled_model(conn, selection.backend_key, validation.launch_token)
     if persist and not proposed and locale is None:
         if validation.selection.selection_kind != selection.selection_kind:
             updated = set_selection_kind(

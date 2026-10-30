@@ -304,30 +304,12 @@ def test_preparation_kill_settles_sender_and_old_continuation_cannot_run_after_s
     from dataclasses import replace
 
     from planner.conversation.contracts import PromptDeliveryStarted
-    from planner.conversation.model_resolution.contracts import ModelResolution, ModelVariant
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     commands: list[ChildCommand] = []
 
     async def run() -> None:
         entered, release = asyncio.Event(), asyncio.Event()
-
-        class Resolver:
-            blocked = False
-
-            async def resolve(
-                self,
-                backend_key: ConversationBackendKey,
-                model: str,
-                reasoning_effort: str | None = None,
-            ) -> ModelResolution:
-                if self.blocked:
-                    self.blocked = False
-                    entered.set()
-                    await release.wait()
-                return ModelResolution(
-                    ModelVariant(backend_key, "test"), model, reasoning_effort, ()
-                )
 
         async def send(command: ChildCommand) -> CommandOutcome:
             commands.append(command)
@@ -343,18 +325,25 @@ def test_preparation_kill_settles_sender_and_old_continuation_cannot_run_after_s
             send,
             lambda start: canonical_snapshot(),
         )
-        resolver = Resolver()
         system = SqliteProcessConversationSystem(
             store=ConversationStore(db_path),
             backend_child_factories={key: factory for key in ConversationBackendKey},
             message_files=ConversationMessageFiles(db_path),
-            model_resolver=resolver,
         )
         try:
             await system.start_conversation(
                 ConversationStartRequest("c_preparation", "scripted", workspace_folder=tmp_path)
             )
-            resolver.blocked = True
+            original_ensure = system._ensure_child
+            blocked = True
+            async def ensure(*args: Any, **kwargs: Any) -> Any:
+                nonlocal blocked
+                if blocked:
+                    blocked = False
+                    entered.set()
+                    await release.wait()
+                return await original_ensure(*args, **kwargs)
+            monkeypatch.setattr(system, "_ensure_child", ensure)
             first = asyncio.create_task(
                 system.send(
                     "c_preparation",

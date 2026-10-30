@@ -512,3 +512,23 @@ def test_claude_rejection_followed_by_activity_before_waiter_resumes_is_unknown(
         assert await transport.wait_for_user_message_admission("owned") is None
         assert transport._user_messages == {}
     _run(exercise)
+
+
+def test_exact_effort_and_explicit_default_rebind_claude(tmp_path: Path) -> None:
+    from planner.conversation.launch_intent import carried_effort_presence
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path, model="provider-custom", reasoning_effort="future-effort")
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        try:
+            assert clients[0].options.effort == "future-effort"
+            with carried_effort_presence(False):
+                child._require_the_carried_values_are_in_force(None, None)
+            with carried_effort_presence(True), pytest.raises(NeedsRebind):
+                child._require_the_carried_values_are_in_force(None, None)
+            assert clients[0].prompts == []
+        finally:
+            await child.stop()
+
+    _run(exercise)

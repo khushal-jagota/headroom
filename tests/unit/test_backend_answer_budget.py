@@ -36,7 +36,6 @@ from planner.conversation.contracts import ConversationBackendKey as Backend
 from planner.conversation.snapshot import BackendModel
 
 DOORS = (
-    "planner.conversation.model_resolution.data",
     "planner.conversation.backend_state",
 )
 """The modules that open a connection to answer about a backend."""
@@ -98,10 +97,10 @@ def answer(tmp_path: Path, models: int) -> Connections:
     )
     # The unscoped backend card describes source rows and never adopts scoped
     # verification evidence. Count its repeated read, without execution authority.
-    _snapshot_json(service.decorate_snapshot(snapshot), state)
+    _snapshot_json(snapshot, state)
 
     with Connections() as counted:
-        payload = _snapshot_json(service.decorate_snapshot(snapshot), state)
+        payload = _snapshot_json(snapshot, state)
     assert len(payload["available_models"]) == models
     return counted
 

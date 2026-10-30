@@ -23,9 +23,6 @@ from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
 )
 from planner.conversation.contracts import (
-    MoveRetirementDisposition,
-    MoveRetirementResult,
-    MoveSourceRetirement,
     ResolvedConversationStart,
 )
 from planner.conversation.events import UserInputAnswer
@@ -90,8 +87,6 @@ from planner.executor.contracts import (
     ReconciliationInventory,
     ReconciliationResult,
     RemoteInputTransferFailed,
-    SourceRetirementReceipt,
-    SourceRetirementRequest,
     WireMessage,
     WireMessageKind,
 )
@@ -123,74 +118,6 @@ def now_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
-class _MoveSource:
-    def __init__(
-        self, endpoint: ExecutorEndpoint, ticket_id: str, conversation_id: str | None
-    ) -> None:
-        self.endpoint = endpoint
-        self.ticket_id = ticket_id
-        self.conversation_id = conversation_id
-        self.identity: ExecutorIdentity | None = None
-        self.writer: FrameWriter | None = None
-
-    def validate_current(self) -> None:
-        endpoint = self.endpoint
-        if (
-            self.identity is None
-            or not endpoint.ready
-            or endpoint.identity != self.identity
-            or endpoint.writer is not self.writer
-            or self.writer is None
-            or self.writer.is_closing()
-        ):
-            raise ConnectionError("Mac source connection changed during move")
-        endpoint.store.require_ready_connection(self.identity)
-
-    async def retire(self) -> MoveRetirementResult:
-        endpoint = self.endpoint
-        self.identity, self.writer = endpoint.identity, endpoint.writer
-        try:
-            self.validate_current()
-        except (ConnectionError, PlannerError):
-            return MoveRetirementResult(
-                MoveRetirementDisposition.refused, "current Mac source cannot be verified"
-            )
-        assert self.identity is not None
-        refs = endpoint.store.assigned_ticket_children(
-            self.ticket_id, self.identity.executor_incarnation
-        )
-        ids = {ref.child_id for ref in refs}
-        if any(
-            command.child.child_id in ids and not future.done()
-            for command, future in endpoint.pending_commands.values()
-        ):
-            return MoveRetirementResult(
-                MoveRetirementDisposition.refused, "source command or input transfer is pending"
-            )
-        request = SourceRetirementRequest(self.identity, self.ticket_id, self.conversation_id, refs)
-        try:
-            response = await endpoint._request(WireMessageKind.source_retire, _object(request))
-            if response.kind is not WireMessageKind.source_retired:
-                raise ValueError("unexpected source retirement response")
-            receipt = TypeAdapter(SourceRetirementReceipt).validate_python(response.payload)
-            if (
-                receipt.identity != request.expected_identity
-                or receipt.ticket_id != request.ticket_id
-                or receipt.conversation_id != request.conversation_id
-                or receipt.assigned_children != request.assigned_children
-            ):
-                raise ValueError("source retirement response conflicts with request")
-            # Keep a confirmed retirement distinct even when source replacement invalidates commit.
-            if receipt.result.disposition is MoveRetirementDisposition.retired:
-                for ref in refs:
-                    endpoint.store.close_child(ref, now_ms())
-                    endpoint.children.pop(ref.child_id, None)
-                    endpoint.sinks.pop(ref.child_id, None)
-            return receipt.result
-        except (ConnectionError, OSError, ValueError, PlannerError):
-            return MoveRetirementResult(
-                MoveRetirementDisposition.uncertain, "source retirement outcome is unknown"
-            )
 
 
 class ExecutorEndpoint:
@@ -283,8 +210,6 @@ class ExecutorEndpoint:
         if writer is not None:
             await writer.wait_closed()
 
-    def source_for_move(self, ticket_id: str, conversation_id: str | None) -> MoveSourceRetirement:
-        return _MoveSource(self, ticket_id, conversation_id)
 
     def _read_skill_snapshot(self, start: ResolvedConversationStart) -> CanonicalSkillSnapshot:
         environment = dict(
@@ -1338,9 +1263,7 @@ class ExecutorEndpoint:
             if write.operation == "ticket.create":
                 from planner.runtime.conversation_start import refuse_known_incompatibility
                 from planner.tickets.api import (
-                    _marshal_create_ticket,
                     validate_ticket_creation,
-                    warm_ticket_creation_model,
                 )
 
                 connection = connect(self.db_path)
@@ -1348,22 +1271,6 @@ class ExecutorEndpoint:
                     body = write.arguments.get("body")
                     if not isinstance(body, dict):
                         raise PlannerError(ErrorCode.validation, "ticket mutation needs a body", {})
-                    parsed = _marshal_create_ticket(body)
-                    resolver = getattr(self.runtime, "model_resolution", None)
-                    if resolver is None:
-                        raise PlannerError(
-                            ErrorCode.gateway_offline, "the model resolver is unavailable", {}
-                        )
-                    await warm_ticket_creation_model(
-                        connection,
-                        resolver,
-                        worker_type=parsed["worker_type"],
-                        employee_backend=parsed.get("employee_backend"),
-                        employee_launch_model=parsed.get("employee_launch_model"),
-                        employee_launch_reasoning_effort=parsed.get(
-                            "employee_launch_reasoning_effort"
-                        ),
-                    )
                     creation_validation = await validate_ticket_creation(
                         body,
                         connection,

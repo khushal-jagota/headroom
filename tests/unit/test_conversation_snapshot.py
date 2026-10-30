@@ -398,3 +398,92 @@ def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
 
 
 # --- keeping the answers ---------------------------------------------------------------------
+
+
+def test_destination_snapshot_retains_complete_choices_and_rejects_late_owner() -> None:
+    from dataclasses import replace
+
+    from tests.unit.test_current_model_resolution import context, observation, row
+
+    from planner.conversation.snapshot import BackendSnapshotScope, BackendSnapshotService
+
+    async def exercise() -> None:
+        service = BackendSnapshotService()
+        launch = context()
+        scope = BackendSnapshotScope(
+            launch.backend_key, launch.destination.value, launch.workspace,
+            launch.executor_identity, launch.account_generation,
+        )
+        current = True
+        calls = 0
+        entered, release = asyncio.Event(), asyncio.Event()
+        result = observation((row("gpt-6.1-terra"),), launch=launch)
+
+        async def is_current() -> bool:
+            return current
+
+        async def observe():
+            nonlocal calls
+            calls += 1
+            return result
+
+        async def slow():
+            nonlocal calls
+            calls += 1
+            entered.set()
+            await release.wait()
+            return result
+
+        complete = await service.destination_snapshot(scope, observe=observe, is_current=is_current)
+        assert complete.available_models[0].model_id == "gpt-6.1-terra"
+        result = replace(result, rows=(), complete=False)
+        pending = asyncio.create_task(service.destination_snapshot(
+            scope, observe=slow, is_current=is_current, refresh=True,
+        ))
+        await entered.wait()
+        assert await service.destination_snapshot(
+            scope, observe=observe, is_current=is_current,
+        ) is complete
+        coalesced = asyncio.create_task(service.destination_snapshot(
+            scope, observe=slow, is_current=is_current, refresh=True,
+        ))
+        await asyncio.sleep(0)
+        release.set()
+        assert await pending is complete
+        assert await coalesced is complete
+        assert calls == 2
+        other_scope = replace(
+            scope, workspace=replace(scope.workspace, workspace_folder=Path("/other"))
+        )
+        assert service.retained_destination(other_scope) is None
+        # A complete empty list is a successful replacement, distinct from a partial list.
+        result = replace(result, complete=True)
+        empty = await service.destination_snapshot(
+            scope, observe=observe, is_current=is_current, refresh=True,
+        )
+        assert empty.models_complete and empty.available_models == ()
+        entered.clear()
+        release.clear()
+        result = observation((row("late-account-model"),), launch=launch)
+        pending = asyncio.create_task(service.destination_snapshot(
+            scope, observe=slow, is_current=is_current, refresh=True,
+        ))
+        await entered.wait()
+        current = False
+        release.set()
+        assert (await pending).available_models == ()
+        assert service.retained_destination(scope) is empty
+        # Sign-in invalidation must also reject an already pending old response.
+        current = True
+        entered.clear()
+        release.clear()
+        pending = asyncio.create_task(service.destination_snapshot(
+            scope, observe=slow, is_current=is_current, refresh=True,
+        ))
+        await entered.wait()
+        service.clear_destination_snapshots(scope.backend_key)
+        release.set()
+        assert (await pending).available_models == ()
+        assert service.retained_destination(scope) is None
+
+    asyncio.run(exercise())

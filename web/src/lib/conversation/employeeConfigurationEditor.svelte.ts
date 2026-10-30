@@ -15,6 +15,7 @@ export function createEmployeeConfigurationEditor(
     employee_launch_reasoning_effort: null
   });
   let lastIncomingSignature = "";
+  const providerChoices = new Map<string, EmployeeConfigurationSnapshot>();
   let backends = $state<readonly BackendSnapshot[]>([]);
   let loading = $state(false);
   let backendsError = $state<unknown>(null);
@@ -59,16 +60,17 @@ export function createEmployeeConfigurationEditor(
   async function persist(next: EmployeeConfigurationSnapshot): Promise<void> {
     if (disposed || saving) return;
     const previous = selected;
+    providerChoices.set(previous.employee_backend, {...previous});
     selected = { ...next };
     saving = true;
     saveError = null;
     try {
       const saved = await save(next);
-      if (!disposed) selected = {
+      if (!disposed) { selected = {
         employee_backend: saved.employee_backend,
         employee_launch_model: saved.employee_launch_model,
         employee_launch_reasoning_effort: saved.employee_launch_reasoning_effort
-      };
+      }; providerChoices.set(selected.employee_backend, {...selected}); }
     } catch (error) {
       if (!disposed) {
         selected = previous;
@@ -94,11 +96,13 @@ export function createEmployeeConfigurationEditor(
     get saveError() { return saveError; },
     loadBackends,
     chooseBackend(backend: ConversationBackendKey, defaults: { model: string | null; reasoningEffort: string | null }) {
-      void persist({
-        employee_backend: backend,
-        employee_launch_model: defaults.model,
-        employee_launch_reasoning_effort: defaults.reasoningEffort
-      });
+      providerChoices.set(selected.employee_backend, {...selected});
+      const remembered = providerChoices.get(backend);
+      if (remembered) void persist(remembered);
+      else selected = {
+        employee_backend: backend, employee_launch_model: null,
+        employee_launch_reasoning_effort: null
+      };
     },
     chooseModel(model: string, reasoningEffort: string | null) {
       void persist({

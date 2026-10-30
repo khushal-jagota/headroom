@@ -1,7 +1,6 @@
 <script lang="ts">
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
-  import TicketMoveAction from "../components/machines/TicketMoveAction.svelte";
   import { machineName } from "../lib/ticketMachines";
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
@@ -32,7 +31,7 @@
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
     readBackends,
-    readDestinationModelChoices,
+    readScopedBackends,
     type BackendSnapshot,
     type DeliveredMessage,
     type OwnerSendBody
@@ -126,14 +125,8 @@
   let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
   let setupChoices = $state.raw(initialTicketSetupChoicesState());
   const setupModelChoices = createTicketSetupModelChoices({
-    read: readDestinationModelChoices,
+    read: readScopedBackends,
     save: (_ticketId, configuration) => saveEmployeeConfiguration(configuration),
-    move: (_ticketId, locale, expectedRecord) => {
-      assertCurrentSection();
-      return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'move'),responseMetadata=>mutateJson(`/api/tickets/${stableId}/move`, {
-        method: 'POST', body: { locale, expected_record_sha256: expectedRecord }, responseMetadata
-      }));
-    },
     onChange: value => { setupChoices = value; }
   });
   $effect(() => {
@@ -516,7 +509,6 @@
           </div>
           {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)}>
             {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
-            {#snippet moveAction()}<TicketMoveAction locale={masthead.locale} ticketId={stableId} />{/snippet}
           </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
@@ -546,13 +538,17 @@
             {#if detail.employee_configuration_editable}
               <WorkerConfigurationSetup destination={detail.locale} ticketId={stableId} employeeBackend={detail.employee_backend}
                 employeeLaunchModel={detail.employee_launch_model} employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
-                canonicalRows={setupChoices.response?.rows ?? []} validation={setupChoices.response?.validation ?? (setupChoices.request?.employee_backend || !detail.launch_validation?.current ? null : detail.launch_validation.validation)}
-                canonicalLoading={setupChoices.loading} canonicalSaving={setupChoices.saving}
-                canonicalError={setupChoices.error} canonicalSaveError={setupChoices.saveError}
-                onChooseDestination={(locale) => void setupModelChoices.chooseDestination(locale)}
-                onChooseCanonicalBackend={(backend) => void setupModelChoices.previewBackend(backend)}
+                displaySelection={{
+                  backendKey: (setupChoices.request?.employee_backend ?? setupChoices.intent?.employee_backend ?? detail.employee_backend) as import("../lib/conversation/wire").ConversationBackendKey,
+                  model: setupChoices.intent ? setupChoices.intent.employee_launch_model : detail.employee_launch_model,
+                  reasoningEffort: setupChoices.intent ? setupChoices.intent.employee_launch_reasoning_effort : detail.employee_launch_reasoning_effort,
+                  selectionKind: setupChoices.intent?.selection_kind
+                }}
+                scopedBackends={setupChoices.response ?? []}
+                snapshotLoading={setupChoices.loading} configurationSaving={setupChoices.saving}
+                snapshotError={setupChoices.error} configurationSaveError={setupChoices.saveError}
+                onChooseBackend={(backend) => void setupModelChoices.previewBackend(backend)}
                 onChooseCustomModel={(model, effort) => void setupModelChoices.chooseCustomModel(model, effort)}
-                onChooseCanonicalModel={(row, effort) => void setupModelChoices.chooseModel(row, effort)}
                 onRetry={() => setupModelChoices.retry()}
                 onSave={saveEmployeeConfiguration} />
             {/if}

@@ -3,6 +3,8 @@ import { ConversationViewReader } from '../src/lib/conversation/view/reader.svel
 import { viewSnapshot, viewChanges } from './support/conversation/view-fixture';
 import type { FixtureEvent } from './support/conversation/view-fixture';
 import type { ViewBodyReference } from '../src/lib/conversation/view/contracts';
+import { admitsTranscriptItem, transcriptHistoryEdges } from '../src/lib/conversation/view/presentation';
+import { threadItems } from '../src/lib/conversation/threadLayout';
 
 class Source {
   static all: Source[] = [];
@@ -16,6 +18,41 @@ class Source {
 }
 const rows: FixtureEvent[] = [{ conversation_id: 'c', sequence: 1, kind: 'message_to_owner', created_at: 1, payload: { text: 'original' } }];
 const snapshot = () => viewSnapshot('c', 'focus', rows);
+it('preserves hidden report page cursors without admitting deferred report bodies', () => {
+  const page = snapshot().page;
+  const visible = page.items[0]!;
+  if (visible.kind !== 'row') throw new Error('Expected fixture row');
+  const report = {...visible, kind: 'row' as const, key: 'report', row_kind: 'provider_selection_reported' as const,
+    order: {sequence: 0, slot: 0}, source_sequence: 0, turn_key: null, work_group_key: null,
+    fold_rule: 'never' as const, sender_message_id: null,
+    body: {kind: 'deferred' as const, reference: {body_id: 'report-body', version: '1', byte_count: 100, media_type: 'application/json' as const}}};
+  const scope = {kind: 'turn' as const, key: 'turn'};
+  const cursor = {projection_version: page.projection_version, lens: page.lens, scope, order: report.order};
+  const hiddenPage = {...page, scope, items: [report], older: cursor, newer: cursor};
+  const admitted = [report, visible].filter(admitsTranscriptItem);
+  expect(admitted).toEqual([visible]);
+  expect(transcriptHistoryEdges([hiddenPage], admitted).map(edge => [edge.direction, edge.anchorKey, edge.cursor])).toEqual([
+    ['older', visible.key, cursor], ['newer', visible.key, cursor],
+  ]);
+  expect(transcriptHistoryEdges([hiddenPage], []).map(edge => [edge.direction, edge.anchorKey])).toEqual([
+    ['older', null], ['newer', null],
+  ]);
+  const mixed = {...hiddenPage, items: [report, visible, {...report, key: 'last-report', order: {sequence: 3, slot: 0}}]};
+  expect(transcriptHistoryEdges([mixed], admitted).map(edge => edge.anchorKey)).toEqual([visible.key, visible.key]);
+  expect(hiddenPage.items).toEqual([report]);
+});
+it('keeps legacy tool work contiguous across retained provider observations', () => {
+  const tool = {kind: 'tool_call' as const, key: 'tool-1', sequence: 1, createdAt: 1,
+    toolCallId: 'tool-1', title: 'Read', toolKind: 'read', detail: null, startedDetail: null,
+    cappedDetailSequence: null, status: 'completed' as const, progress: null};
+  const report = {kind: 'provider_selection_reported' as const, key: 'report', sequence: 2, createdAt: 2,
+    provider: 'claude' as const, turnNumber: 1, childLifetime: 'child', model: 'claude-haiku-4-5-20251001', reasoningEffort: null};
+  const stored = [tool, report, {...tool, key: 'tool-2', sequence: 3, toolCallId: 'tool-2'}];
+  const items = threadItems(stored);
+  expect(items).toHaveLength(1);
+  expect(items[0]?.kind === 'work_group' && items[0].entries.map(entry => entry.key)).toEqual(['tool-1', 'tool-2']);
+  expect(stored[1]).toBe(report);
+});
 const readers: ConversationViewReader[] = [];
 afterEach(() => { for (const reader of readers) reader.close(); readers.length = 0; Source.all = []; vi.useRealTimers(); });
 async function start(initial = snapshot()) {

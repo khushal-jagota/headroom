@@ -42,8 +42,6 @@ from planner.conversation.model_resolution.contracts import (
     ModelSelection,
     SelectionKind,
 )
-from planner.conversation.model_resolution.data import ModelResolutionStore
-from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.conversation.snapshot import BackendSnapshotService
 from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
@@ -110,13 +108,7 @@ class _ScopedMetadataConversationSystem(InMemoryConversationSystem):
         self.observer = _VpsCatalogObserver(_no_native_identity)
         self.observer.model = "gpt-6.1-sol"
         self.observer.observed_at = clock.now_unix() - 1
-        self.resolver = ModelResolutionService(
-            snapshots=BackendSnapshotService(),
-            store=ModelResolutionStore(db_path),
-            backend_state=BackendStateStore(db_path),
-            observer=self.observer,
-            now=clock.now_unix,
-        )
+        self.db_path = db_path
 
     async def validate_launch_selection(
         self,
@@ -129,12 +121,9 @@ class _ScopedMetadataConversationSystem(InMemoryConversationSystem):
     ) -> CanonicalModelValidation:
         # Explicit fixture ingress supplies concrete intent; no resolver-selected
         # model or effort substitutes for the requested tuple.
-        return await self.resolver.validate_selection(
-            selection,
-            workspace=workspace,
-            attempt_id=attempt_id,
-            previous_alias_resolution=previous_alias_resolution,
-        )
+        from planner.conversation.launch_intent import bind_model_intent
+        return bind_model_intent(selection, disabled_models=BackendStateStore(self.db_path).read_disabled_models(selection.backend_key))
+
 
 
 class _MetadataDelegate:
