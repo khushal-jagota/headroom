@@ -13,17 +13,10 @@ from planner.conversation.events import UserInputAnswer, UserInputOption, UserIn
 from planner.core.contracts import PlannerError
 from planner.core.db import connect
 from planner.core.migrations.versions.mac_vps_execution import STATEMENTS
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.executor.contracts import (
-    AnswerApplication,
-    AskKind,
-    AskReachability,
-    AskReference,
-    ChildInventory,
-    ChildReference,
-    ExecutorIdentity,
-)
+from planner.executor.contracts import AnswerApplication, AskReachability, ChildInventory
 from planner.executor.store import ExecutorStore
 
 IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "process", 1)

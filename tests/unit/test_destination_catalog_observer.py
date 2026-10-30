@@ -35,8 +35,8 @@ from planner.conversation.snapshot import (
     CommandOutcome,
     SubprocessBackendProbeEnvironment,
 )
-from planner.executor.workspace import localize_workspace
 from planner.tickets.contracts import TicketLocale
+from planner.workspace_localization import localize_workspace
 
 
 class ScriptedLaunchEnvironment(SubprocessBackendProbeEnvironment):

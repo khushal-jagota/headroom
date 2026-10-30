@@ -26,21 +26,18 @@ from planner.conversation.backends.contracts import TurnToken
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
 from planner.core.migrations.versions.mac_vps_execution import STATEMENTS
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.codec import envelope_payload_digest
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AnswerApplication,
-    AskKind,
     AskReachability,
-    AskReference,
     ChildCommand,
     ChildInventory,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     CommandOutcome,
     EnvelopeKind,
-    ExecutorIdentity,
     FileManifest,
     FileScope,
     FileUploadRequest,

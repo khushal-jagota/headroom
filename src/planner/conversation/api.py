@@ -130,7 +130,7 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.response_compression import answers_with_an_event_stream
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
-from planner.executor.contracts import AskReference
+from planner.execution_identity import AskReference
 from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.runtime import conversation_start
 
@@ -1229,7 +1229,7 @@ async def _pending_user_input(
     runtime: ConversationRuntime, conversation_id: str
 ) -> dict[str, Any] | None:
     """The pending request, rebuilt from its durable row after a refresh."""
-    from planner.executor.contracts import AskKind
+    from planner.execution_identity import AskKind
 
     waiting = await runtime.system.pending_user_input_request_ids(conversation_id)
     if not waiting:

@@ -12,7 +12,7 @@ from planner.conversation.backends.contracts import (
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect
-from planner.executor.contracts import ChildReference
+from planner.execution_identity import ChildReference
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.store import ExecutorStore
 

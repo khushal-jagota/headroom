@@ -32,12 +32,12 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.execution_identity import ChildReference
 from planner.executor.codec import encode_value
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
     ChildCommand,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     decode_command_arguments,
 )

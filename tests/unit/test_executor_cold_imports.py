@@ -94,8 +94,8 @@ from planner.conversation.model_resolution.contracts import (
     CatalogExpectedContext, CatalogWorkspaceBinding,
 )
 from planner.conversation.contracts import WorkspacePathPolicy
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.executor.contracts import ExecutorIdentity
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ExecutorIdentity
 
 adapter = TypeAdapter(CatalogExpectedContext)
 identity = ExecutorIdentity(PROTOCOL_VERSION, "fixture-revision", SPOOL_FORMAT_VERSION, "native", 1)

@@ -38,6 +38,14 @@ from planner.conversation.model_resolution.contracts import (
     ValidationReason,
 )
 from planner.conversation.production_backends import production_backend_launches
+from planner.core.task_settlement import wait_for_settlement
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import (
+    ChildReference,
+    ExecutorIdentity,
+    ProtocolRefused,
+    parse_identity,
+)
 from planner.executor.app_transport import (
     ControlWebSocket,
     ExecutorAppClient,
@@ -52,17 +60,14 @@ from planner.executor.configuration import (
     MAX_CATALOG_OBSERVATIONS,
     MAX_ENVELOPE_BYTES,
     MAX_TRANSFERS,
-    PROTOCOL_VERSION,
     RECONNECT_INTERVAL_SECONDS,
     REQUEST_TIMEOUT_SECONDS,
-    SPOOL_FORMAT_VERSION,
     ExecutorPaths,
 )
 from planner.executor.contracts import (
     AcceptanceReceipt,
     BackendEvent,
     ChildCommand,
-    ChildReference,
     CliWrite,
     ConnectionFailureOrigin,
     ConnectionPhase,
@@ -72,7 +77,6 @@ from planner.executor.contracts import (
     EnvelopeKind,
     EnvelopeRefusal,
     ExecutorHealth,
-    ExecutorIdentity,
     FileDownloadRequest,
     FileScope,
     FileSnapshot,
@@ -110,13 +114,8 @@ from planner.executor.files import (
 )
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry, now_ms
-from planner.executor.transfers import settled_io, wait_for_settlement
-from planner.executor.wire import (
-    ProtocolRefused,
-    encode_frame,
-    parse_identity,
-    read_typed_frame,
-)
+from planner.executor.transfers import settled_io
+from planner.executor.wire import encode_frame, read_typed_frame
 from planner.tickets.contracts import TicketLocale
 
 

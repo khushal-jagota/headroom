@@ -1585,10 +1585,10 @@ def test_remote_kill_cannot_retire_or_end_a_successor_after_cancel(
     """A cancel result owns its exact child and turn, never later runtime work."""
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
+    from planner.execution_identity import ChildReference
     from planner.executor.contracts import (
         ChildCommand,
         ChildOperation,
-        ChildReference,
         CommandDisposition,
         CommandOutcome,
     )
@@ -1686,12 +1686,8 @@ def test_remote_kill_retires_same_child_without_ending_its_completed_copy_twice(
     """Inventory copies a turn record, so the captured record can outlive its ending."""
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
-    from planner.executor.contracts import (
-        ChildCommand,
-        ChildReference,
-        CommandDisposition,
-        CommandOutcome,
-    )
+    from planner.execution_identity import ChildReference
+    from planner.executor.contracts import ChildCommand, CommandDisposition, CommandOutcome
     from planner.executor.remote import RemoteBackendChild
 
     async def exercise() -> None:

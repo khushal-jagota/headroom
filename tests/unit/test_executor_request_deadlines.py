@@ -9,9 +9,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from tests.support.executor_control import MessageReader
 
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ExecutorIdentity
 from planner.executor import mac
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.executor.contracts import ExecutorIdentity, WireMessage, WireMessageKind
+from planner.executor.contracts import WireMessage, WireMessageKind
 from planner.executor.mac import MacExecutor
 from planner.executor.vps import ExecutorEndpoint
 
@@ -541,7 +542,7 @@ def test_native_catalog_capacity_survives_cancellation_until_physical_cleanup(
         observer.cleanup_release.set()
         if cleanup is not None:
             await cleanup
-        from planner.executor.transfers import wait_for_settlement
+        from planner.core.task_settlement import wait_for_settlement
 
         await wait_for_settlement(task)
         await asyncio.sleep(0)

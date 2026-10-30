@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter
 
-from planner.executor.configuration import SPOOL_FORMAT_VERSION
+from planner.execution_configuration import SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,

@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ProtocolRefused
 from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,
@@ -19,7 +20,7 @@ from planner.executor.contracts import (
 )
 from planner.executor.files import snapshot_file
 from planner.executor.mac_outbox import MacOutbox
-from planner.executor.wire import ProtocolRefused, encode_frame, read_typed_frame
+from planner.executor.wire import encode_frame, read_typed_frame
 
 
 def test_journal_restarts_after_ack_without_reusing_sequence(tmp_path: Path) -> None:
@@ -123,7 +124,7 @@ def test_symlink_snapshot_refused(tmp_path: Path) -> None:
 def test_strict_identity_refuses_coercion_unknown_fields_and_short_sha() -> None:
     from uuid import uuid4
 
-    from planner.executor.wire import parse_identity
+    from planner.execution_identity import parse_identity
 
     valid: dict[str, object] = {
         "protocol_version": PROTOCOL_VERSION,

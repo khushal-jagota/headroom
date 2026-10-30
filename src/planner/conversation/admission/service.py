@@ -17,8 +17,7 @@ from planner.conversation.model_resolution.contracts import (
     CatalogWorkspaceBinding,
     LaunchContext,
 )
-from planner.executor.contracts import ChildReference, ExecutorIdentity
-from planner.executor.wire import parse_identity
+from planner.execution_identity import ChildReference, ExecutorIdentity, parse_identity
 from planner.tickets.contracts import TicketLocale
 
 

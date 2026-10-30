@@ -14,22 +14,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from planner.core.task_settlement import wait_for_settlement
+from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import FILE_CHUNK_BYTES, MAX_TRANSFERS, TRANSFER_CHUNK_BYTES
-from planner.executor.contracts import ExecutorIdentity, FileManifest, FileSnapshot, FileTransfer
+from planner.executor.contracts import FileManifest, FileSnapshot, FileTransfer
 from planner.executor.files import copy_verified, directory_descriptor, regular_descriptor
-
-
-async def wait_for_settlement(task: asyncio.Task[Any]) -> None:
-    """Repeated caller cancellation cannot cancel the owned physical operation."""
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            continue
-        except BaseException:
-            break
-    if task.done() and not task.cancelled():
-        task.exception()
 
 
 async def settled_io[Result](function: Callable[..., Result], *args: Any) -> Result:

@@ -23,18 +23,7 @@ from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import PromptDeliveryMode, ResolvedConversationStart
 from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageContent
-from planner.execution_identity import (
-    AskKind as AskKind,
-)
-from planner.execution_identity import (
-    AskReference as AskReference,
-)
-from planner.execution_identity import (
-    ChildReference as ChildReference,
-)
-from planner.execution_identity import (
-    ExecutorIdentity as ExecutorIdentity,
-)
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 
 # Payloads carry existing domain types as JSON; operation-specific codecs validate
 # exact fields before dispatch. Credentials and arbitrary caller headers never travel.

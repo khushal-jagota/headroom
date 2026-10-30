@@ -1066,9 +1066,9 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
     from dataclasses import replace
 
     from planner.core.clock import RealClock
+    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
     from planner.executor.codec import encode_value
-    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-    from planner.executor.contracts import AskKind, AskReference, ChildReference, ExecutorIdentity
     from planner.executor.vps import ExecutorEndpoint
 
     async def exercise() -> None:
@@ -1191,8 +1191,8 @@ def test_remote_reference_never_falls_through_to_local_callback(
     harness: _Harness,
     kind: str,
 ) -> None:
+    from planner.execution_identity import AskKind, AskReference, ChildReference
     from planner.executor.codec import encode_value
-    from planner.executor.contracts import AskKind, AskReference, ChildReference
 
     async def exercise() -> None:
         async with harness.client() as client:
@@ -1568,15 +1568,9 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     def conn_factory() -> sqlite3.Connection:
         return connect(str(db_path))
 
-    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-    from planner.executor.contracts import (
-        AskKind,
-        AskReachability,
-        AskReference,
-        ChildInventory,
-        ChildReference,
-        ExecutorIdentity,
-    )
+    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
+    from planner.executor.contracts import AskReachability, ChildInventory
     from planner.executor.store import ExecutorStore
 
     executor_store = ExecutorStore(str(db_path))

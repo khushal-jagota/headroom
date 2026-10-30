@@ -44,6 +44,7 @@ from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.environments.hermes_home import resolve_planner_home
+from planner.execution_identity import AskKind, AskReference, ChildReference
 from planner.executor.codec import encode_backend_event, encode_value
 from planner.executor.configuration import NATIVE_SKILLS_DIR_ENV, ExecutorPaths
 from planner.executor.contracts import (
@@ -51,15 +52,12 @@ from planner.executor.contracts import (
     AnswerApplication,
     AnswerPermission,
     AnswerUserInput,
-    AskKind,
-    AskReference,
     BackendEvent,
     BackendEventMethod,
     CancelTurn,
     ChildCommand,
     ChildInventory,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     CommandOutcome,
     CommandState,
@@ -77,8 +75,8 @@ from planner.executor.contracts import (
 )
 from planner.executor.files import safe_component
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
-from planner.executor.workspace import localize_workspace
 from planner.tickets.contracts import TicketLocale
+from planner.workspace_localization import localize_workspace
 
 
 def now_ms() -> int:

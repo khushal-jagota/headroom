@@ -21,24 +21,21 @@ from planner.conversation.events import UserInputAnswer, UserInputQuestion
 from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AnswerAdmission,
     AnswerApplication,
     AskEvidence,
-    AskKind,
     AskReachability,
-    AskReference,
     ChildCommand,
     ChildInventory,
     ChildOperation,
-    ChildReference,
     CommandOutcome,
     ConnectionState,
     DurableAnswer,
     EnvelopeKind,
-    ExecutorIdentity,
     ExecutorTurnContext,
     FileManifest,
     FileScope,

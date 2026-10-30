@@ -15,13 +15,13 @@ from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
+from planner.execution_identity import ChildReference
 from planner.executor.codec import encode_value
 from planner.executor.contracts import (
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
     ChildCommand,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     CommandOutcome,
     StartRun,
@@ -264,14 +264,10 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
     import json
     from typing import Any, cast
 
+    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.execution_identity import ExecutorIdentity
     from planner.executor.codec import encode_value, envelope_payload_digest
-    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-    from planner.executor.contracts import (
-        EnvelopeKind,
-        ExecutorIdentity,
-        JsonObject,
-        QueuedEnvelope,
-    )
+    from planner.executor.contracts import EnvelopeKind, JsonObject, QueuedEnvelope
     from planner.executor.routing import LocaleBackendChildFactory
     from planner.executor.store import ExecutorStore
 

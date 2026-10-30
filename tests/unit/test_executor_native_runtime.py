@@ -47,21 +47,21 @@ from planner.conversation.model_resolution.contracts import (
     ModelSelection,
     SelectionKind,
 )
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, ExecutorPaths
+from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
     ChildCommand,
     ChildOperation,
-    ChildReference,
     CommandDisposition,
     CommandOutcome,
     ConnectionState,
     DurableAnswer,
     EnvelopeKind,
-    ExecutorIdentity,
     IpcOperation,
     IpcRequest,
     JsonObject,
@@ -1293,7 +1293,7 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
     script = (
         "import asyncio; from pathlib import Path; "
         "from planner.executor.mac import MacExecutor; "
-        "from planner.executor.configuration import ExecutorPaths, PROTOCOL_VERSION; "
+        "from planner.executor.configuration import ExecutorPaths; "
         f"service=MacExecutor(paths=ExecutorPaths(Path({str(root)!r})),revision={'a' * 40!r},"
         "executor_id='owner-mac',panels_server_url='https://127.0.0.1:1'); "
         "asyncio.run(service.run()); "
@@ -1576,7 +1576,8 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
 ) -> None:
     from planner.conversation.backends.contracts import BackendUserInputRequest
     from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
-    from planner.executor.contracts import AnswerApplication, AskKind, AskReference
+    from planner.execution_identity import AskKind, AskReference
+    from planner.executor.contracts import AnswerApplication
 
     async def run() -> None:
         entered, release = asyncio.Event(), asyncio.Event()
@@ -1747,8 +1748,8 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
 def test_old_peer_is_refused_before_work_or_replay_and_preserves_spool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from planner.execution_identity import ProtocolRefused
     from planner.executor.contracts import WireMessage, WireMessageKind
-    from planner.executor.wire import ProtocolRefused
 
     async def run() -> None:
         executor = make_executor(tmp_path)
@@ -1893,8 +1894,9 @@ def test_controlled_stop_wakes_pending_handshake_without_peer_response(
 
 @pytest.mark.parametrize("case", ["valid", "no_handshake", "bad_payload", "stale_request"])
 def test_ready_ack_clears_loss_before_fulfilling_current_request(tmp_path: Path, case: str) -> None:
+    from planner.execution_identity import ProtocolRefused
     from planner.executor.contracts import ConnectionState, WireMessage, WireMessageKind
-    from planner.executor.wire import ProtocolRefused, encode_message
+    from planner.executor.wire import encode_message
 
     async def run() -> None:
         executor = MacExecutor(

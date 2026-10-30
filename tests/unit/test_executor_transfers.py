@@ -12,12 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from planner.executor.configuration import (
-    PROTOCOL_VERSION,
-    SPOOL_FORMAT_VERSION,
-    TRANSFER_CHUNK_BYTES,
-)
-from planner.executor.contracts import ExecutorIdentity, FileManifest, FileScope, FileSnapshot
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ExecutorIdentity
+from planner.executor.configuration import TRANSFER_CHUNK_BYTES
+from planner.executor.contracts import FileManifest, FileScope, FileSnapshot
 from planner.executor.files import copy_verified
 from planner.executor.transfers import GenerationTransfers
 

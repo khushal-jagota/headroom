@@ -54,9 +54,9 @@ from planner.conversation.snapshot import (
     SubprocessBackendProbeEnvironment,
     read_backend_identity_status,
 )
-from planner.executor.contracts import ExecutorIdentity
-from planner.executor.workspace import localize_workspace
+from planner.execution_identity import ExecutorIdentity
 from planner.tickets.contracts import TicketLocale
+from planner.workspace_localization import localize_workspace
 
 
 class ProductionCatalogObserver:

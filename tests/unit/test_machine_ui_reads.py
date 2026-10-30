@@ -21,18 +21,15 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor import vps
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AskEvidence,
-    AskKind,
     AskReachability,
-    AskReference,
-    ChildReference,
     ConnectionState,
     ExecutorHealth,
-    ExecutorIdentity,
     JsonObject,
     WireMessage,
     WireMessageKind,
