@@ -27,10 +27,14 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 9. Earlier peers refuse work before replay. The
-journal format is version 2. Earlier journal formats refuse ordinary startup
-and deployment before mutation. Wire compatibility and journal compatibility are
-separate checks. Neither compatibility check converts stored work.
+The wire protocol is version 14, the journal format is version 2, and the SQLite
+outbox schema is version 2. Each accepts only its current version. Unsupported
+versions refuse before work or mutation; no conversion runs.
+
+Migration `mac_vps_execution` installs the final schema directly after staging's
+`video_upload_ledger`. Any database that ran this branch's earlier migrations must
+be rebuilt. Existing staging Tickets, conversations, native usage, catalog evidence,
+and video reservations retain their data.
 
 ## Native skills and artifact paths
 
@@ -62,7 +66,7 @@ Ticket fields retain their served `/files/tickets/<ticket-id>/<relative-path>` l
 
 The complete encoded start command must fit the existing one-megabyte frame limit.
 Oversized or invalid snapshots refuse startup without truncation or another transport.
-Protocol 9 requires this bootstrap on both peers. Journal format 2 stays unchanged.
+Both peers require this bootstrap.
 
 Code paths: `src/planner/executor/skills.py`, `src/planner/executor/remote.py`,
 `src/planner/executor/runtime.py`, `src/planner/executor/vps.py`.
@@ -360,18 +364,11 @@ Read-only spool inspection establishes compatibility without migration or recove
 The [Mac operator runbook](mac-executor-installation.md) supplies the concrete checks.
 No automatic two-host update or general migration mechanism exists.
 
-Protocol 14 removes the unused authorized-action wire variant. Both peers must use
-a compatible protocol-14 build. Format-2 journal bytes and immutable identities stay
-unchanged. An unsupported pending envelope refuses startup without deletion. Recovery
-requires a compatible executable and preserved state, never a reset or silent discard.
-
 ## Fresh installation and retained journals
 
-The production installation path uses a format-2 journal. Read-only preflight
-refuses unsupported or corrupt journals without mutation. The format-1 converter
-and reader are no longer supported. Preserve historical bytes for their compatible
-historical executable and explicit recovery procedure. Never reset an old journal
-to bypass refusal. The handshake rejects incompatible peers before work.
+The installation path uses the current journal and outbox schema. Read-only
+preflight refuses unsupported or corrupt journals without mutation. There is no
+reader or converter for earlier draft formats.
 
 ## Browser previews
 
@@ -400,7 +397,7 @@ The proxy preserves the requested port in `Host` and preview-local redirects.
 It strips Panels credentials and hop-by-hop headers before the preview receives a
 request. Hosted access still passes through the existing trusted ingress. Lease,
 remote connection, and stream failures return the existing unavailable response.
-Earlier peers refuse the protocol 14 handshake before replay.
+The handshake requires the current protocol before replay.
 
 Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
 a real browser. That proves the software boundary and does not prove physical Mac
@@ -433,7 +430,7 @@ Any permitted untagged device under the allowed owner login can assert it. No ne
 Auxiliary routes also check the current incarnation, generation, and reserved transfer or stream ID.
 Domain writes still require the original assigned child's authority. Native authentication grants no Worker owner authority.
 
-Protocol 9 requires matching Mac and VPS packages before replay. Journal format 2 stays unchanged.
+Mac and VPS packages must use the current protocol before replay.
 The Mac retains its native children during app restarts and reconnects through inventory, reconciliation, replay, and readiness.
 There is no fallback transport. Lost replies leave native effects unconfirmed rather than repeating them.
 

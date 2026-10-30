@@ -28,6 +28,7 @@ from planner.conversation.storage import ConversationStore, StoredConversationEv
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.executor.contracts import (
+    AskKind,
     ChildCommand,
     ChildOperation,
     ChildReference,
@@ -542,7 +543,7 @@ def test_retirement_rolls_back_metadata_assignment_and_asks_together(
     turn = TurnToken(reference.conversation_id, 1)
     executors = ExecutorStore(db_path)
     executors.register_child(reference, "ticket", "retirement-ticket", 1)
-    ask = AskReference(reference, turn, "retirement-ask")
+    ask = AskReference(reference, turn, "retirement-ask", AskKind.permission)
     executors.publish_ask(ask, ("allow", "deny"), 1)
     store = ConversationStore(db_path)
     metadata = (

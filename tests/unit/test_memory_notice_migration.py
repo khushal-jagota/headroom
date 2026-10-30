@@ -20,7 +20,7 @@ from planner.conversation.events import (
 from planner.conversation.message_content import text_message_content
 from planner.core import db
 from planner.core.db import connect, create_schema
-from planner.core.migrations.versions import consume_memory_notice_authorization as migration
+from planner.core.migrations.versions import mac_vps_execution as migration
 from planner.runtime import worker_memory
 
 
@@ -58,7 +58,7 @@ def _database_at_revision(tmp_path: Path, revision: str) -> str:
 
 
 def _legacy_database(tmp_path: Path) -> str:
-    return _database_at_revision(tmp_path, "scheduled_ticket_locale")
+    return _database_at_revision(tmp_path, "video_upload_ledger")
 
 
 def test_cutover_holds_known_events_missing_events_and_former_links(tmp_path: Path) -> None:
@@ -144,75 +144,8 @@ def test_failed_cutover_rolls_back_tables_and_holds(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "previous_head", ["executor_authoritative_acceptance", "consume_memory_notice_authorization"]
-)
-def test_combined_migration_upgrades_either_reviewed_head_without_losing_rows(
-    tmp_path: Path, previous_head: str
-) -> None:
-    path = _database_at_revision(tmp_path, previous_head)
-    with closing(connect(path)) as conn:
-        _make_conversation(conn, "preserved", compacted=7)
-        _add_ticket(conn, "t_preserved", claim="out", conversation_id="preserved")
-        ticket_before = dict(
-            conn.execute("SELECT * FROM tickets WHERE id='t_preserved'").fetchone()
-        )
-        if previous_head == "executor_authoritative_acceptance":
-            conn.execute("INSERT INTO executor_connections VALUES ('retained',1,'{}','lost',1,1,0)")
-        else:
-            conn.execute(
-                "INSERT INTO worker_memory_notice_reservations VALUES "
-                "('t_preserved','preserved',8,'retained-message',1)"
-            )
-            conn.execute(
-                "INSERT INTO worker_memory_notice_holds VALUES "
-                "('t_preserved','preserved',NULL,2,'legacy_unresolved_boundary')"
-            )
-    with closing(connect(path)) as conn:
-        create_schema(conn)
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchall()[0][0] == (
-            ScriptDirectory(str(db.MIGRATIONS_DIRECTORY)).get_current_head()
-        )
-        ticket_after = dict(conn.execute("SELECT * FROM tickets WHERE id='t_preserved'").fetchone())
-        # Staging intentionally renames Manager assignment, removes calendar and
-        # priority columns, and adds field approval metadata. All other facts survive.
-        assert ticket_after.pop("manager_id") == ticket_before.pop("sprint_item_id")
-        assert ticket_after.pop("manager_kind") == ticket_before.pop("orchestrator_kind")
-        assert ticket_after.pop("field_approvals") == "{}"
-        ticket_before.pop("sprint_id")
-        ticket_before.pop("priority")
-        assert ticket_after == ticket_before
-        if previous_head == "executor_authoritative_acceptance":
-            assert tuple(conn.execute("SELECT * FROM executor_connections").fetchone()) == (
-                "retained",
-                1,
-                "{}",
-                "lost",
-                1,
-                1,
-                0,
-            )
-            assert tuple(
-                conn.execute(
-                    "SELECT ticket_id,conversation_id,context_compacted_sequence "
-                    "FROM worker_memory_notice_holds"
-                ).fetchone()
-            ) == ("t_preserved", "preserved", 8)
-        else:
-            assert tuple(
-                conn.execute("SELECT * FROM worker_memory_notice_reservations").fetchone()
-            ) == ("t_preserved", "preserved", 8, "retained-message", 1)
-            assert conn.execute("SELECT * FROM executor_connections").fetchall() == []
-        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-        create_schema(conn)
-        if previous_head == "consume_memory_notice_authorization":
-            assert [
-                tuple(row) for row in conn.execute("SELECT * FROM worker_memory_notice_holds")
-            ] == [("t_preserved", "preserved", None, 2, "legacy_unresolved_boundary")]
-
-
-@pytest.mark.parametrize(
     "previous_head",
-    ["merge_executor_memory_notice", "native_usage_prices", "scheduled_ticket_locale"],
+    ["native_usage_prices", "scheduled_ticket_locale", "video_upload_ledger"],
 )
 def test_native_usage_merge_preserves_branch_rows_and_reopens(
     tmp_path: Path, previous_head: str
@@ -222,22 +155,7 @@ def test_native_usage_merge_preserves_branch_rows_and_reopens(
     with closing(connect(path)) as conn:
         _make_conversation(conn, "preserved", compacted=7)
         _add_ticket(conn, "t_preserved", claim="out", conversation_id="preserved")
-        if previous_head == "merge_executor_memory_notice":
-            conn.execute("INSERT INTO executor_connections VALUES ('retained',1,'{}','lost',1,1,0)")
-            conn.execute(
-                "INSERT INTO worker_memory_notice_reservations VALUES "
-                "('t_preserved','preserved',8,'retained-message',1)"
-            )
-            conn.execute(
-                "INSERT INTO worker_memory_notice_holds VALUES "
-                "('t_preserved','preserved',NULL,2,'legacy_unresolved_boundary')"
-            )
-            preserved_tables += [
-                "executor_connections",
-                "worker_memory_notice_reservations",
-                "worker_memory_notice_holds",
-            ]
-        elif previous_head == "native_usage_prices":
+        if previous_head == "native_usage_prices":
             conn.execute("INSERT INTO native_usage_sources VALUES ('claude','source','{ }')")
             conn.execute("INSERT INTO native_usage_files VALUES ('claude','source','file','{  }')")
             conn.execute(
@@ -274,14 +192,13 @@ def test_native_usage_merge_preserves_branch_rows_and_reopens(
                         f"SELECT {retained_columns.get(table, '*')} FROM {table}"
                     )
                 ] == rows
-            if previous_head != "merge_executor_memory_notice":
-                assert [
-                    tuple(row)
-                    for row in conn.execute(
-                        "SELECT ticket_id,conversation_id,context_compacted_sequence "
-                        "FROM worker_memory_notice_holds"
-                    )
-                ] == [("t_preserved", "preserved", 8)]
+            assert [
+                tuple(row)
+                for row in conn.execute(
+                    "SELECT ticket_id,conversation_id,context_compacted_sequence "
+                    "FROM worker_memory_notice_holds"
+                )
+            ] == [("t_preserved", "preserved", 8)]
             if previous_head != "native_usage_prices":
                 for table in ("native_usage_sources", "native_usage_files", "native_usage_prices"):
                     assert conn.execute(f"SELECT * FROM {table}").fetchall() == []

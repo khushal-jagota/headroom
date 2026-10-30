@@ -183,7 +183,7 @@ class AskReference:
     child: ChildReference
     turn: TurnToken
     ask_id: str
-    kind: AskKind = AskKind.permission
+    kind: AskKind
 
 
 class AskReachability(StrEnum):

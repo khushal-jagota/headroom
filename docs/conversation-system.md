@@ -800,14 +800,12 @@ Unknown delivery retains its reservation and quarantined child. It never permits
 redispatch. Cancellation cannot abandon an owned exchange. Process death is not proof
 that a provider received nothing. Historical lease rows remain inert migration data.
 
-The strict executor protocol is 13. Both mixed peer directions refuse before work or
-replay; there is no protocol-12 fallback. Spool and outbox containers remain version 2.
-Migration `provider_owned_model_choices`, after `claude_policy_snapshot_scope`, fences
-older database readers. Saved selections, old command IDs/arguments, and historical
-outcomes remain unchanged. Known outcomes replay as recorded, without invented receipts.
-Unknown outcomes retain their exact ownership and never authorize automatic redispatch.
-Recovery requires a compatible build or reviewed coherent restoration preserving later
-work. Removing the migration head or restoring a stale backup is not a downgrade path.
+The executor accepts only wire protocol 14, journal format 2, and outbox schema 2.
+Migration `mac_vps_execution` installs the final schema from staging; databases that
+ran earlier migrations from this unshipped branch must be rebuilt. Recorded command
+outcomes across current Mac restarts retain their exact ownership and replay as
+recorded, without invented receipts. Unknown outcomes never authorize automatic
+redispatch.
 
 `POST /api/conversation/backends` returns the existing `{backends}` snapshot contract.
 Ticket or creation-context authority resolves destination and workspace. The former

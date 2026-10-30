@@ -25,6 +25,7 @@ from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AskEvidence,
+    AskKind,
     AskReachability,
     AskReference,
     ChildReference,
@@ -173,7 +174,7 @@ def test_durable_context_matches_exact_child_after_restart_and_allows_offline_an
 
     endpoint = _endpoint(tmp_db, fake_clock)
     actual = ChildReference("inc", "actual", "conversation")
-    ask = AskReference(actual, TurnToken("conversation", 1), "ask")
+    ask = AskReference(actual, TurnToken("conversation", 1), "ask", AskKind.permission)
     identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
     endpoint.store.begin_connection(identity, 100)
     # This fixture represents a new combined-release ask with an explicit public/provider map.
@@ -364,7 +365,7 @@ def test_preview_receipt_advances_contact_without_per_ask_liveness(
             system=SimpleNamespace(_conversations={"conversation": state})
         )
         evidence = AskEvidence(
-            AskReference(child_reference, turn, "ask"),
+            AskReference(child_reference, turn, "ask", AskKind.permission),
             identity.connection_generation,
             AskReachability.uncertain,
             100,

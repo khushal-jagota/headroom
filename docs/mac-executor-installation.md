@@ -102,7 +102,7 @@ Both Mac and VPS peers must match the candidate's wire protocol before work, and
 the existing journal must pass the candidate's spool preflight below. Coordinate
 the peer transition through the Manager and installation Worker before any application.
 
-Protocol 9 retains exact canonical database skills before each new native Worker starts.
+Each new native Worker start retains exact canonical database skills.
 It repairs canonical entries in the normal account's Codex skills home and preserves unrelated account skills and credentials.
 Review that account path before authorized application. Do not redirect HOME or CODEX_HOME to bypass a conflict.
 Retain the existing executor root and journal. The bootstrap uses local copies beneath that root.
@@ -286,7 +286,7 @@ PY
 ```
 
 If inspection refuses, preserve the root and stop. Do not repair or convert it through this installation procedure.
-Legacy conversion has its own stopped-process boundary in [the executor reference](executor.md#fresh-installation-and-offline-legacy-conversion).
+Earlier draft journal formats have no reader or converter; see [the executor reference](executor.md#fresh-installation-and-retained-journals). Databases that ran earlier Mac/VPS branch migrations must be rebuilt.
 
 ## Render and start one LaunchAgent
 

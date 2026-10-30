@@ -150,39 +150,21 @@ def _invoke_participant(
 
 def native_execution_is_unresolved(conn: sqlite3.Connection, conversation_id: str) -> bool:
     """A VPS restart does not prove that an independently hosted child stopped."""
-    tables = {
-        str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
-    if "executor_core_turns" in tables:
-        row = conn.execute(
-            "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
-            (conversation_id,),
-        ).fetchone()
-        if row is not None:
-            try:
-                if json.loads(str(row[0])).get("source_retired") is not True:
-                    return True
-            except (ValueError, TypeError, AttributeError):
+    row = conn.execute(
+        "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+        (conversation_id,),
+    ).fetchone()
+    if row is not None:
+        try:
+            if json.loads(str(row[0])).get("source_retired") is not True:
                 return True
-    if (
-        "executor_child_assignments" in tables
-        and conn.execute(
+        except (ValueError, TypeError, AttributeError):
+            return True
+    return (
+        conn.execute(
             "SELECT 1 FROM executor_child_assignments "
             "WHERE conversation_id=? AND closed_at_ms IS NULL",
             (conversation_id,),
         ).fetchone()
         is not None
-    ):
-        return True
-    if "tickets" in tables:
-        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(tickets)")}
-        if (
-            "locale" in columns
-            and conn.execute(
-                "SELECT 1 FROM tickets WHERE conversation_id=? AND locale='macos'",
-                (conversation_id,),
-            ).fetchone()
-            is not None
-        ):
-            return True
-    return False
+    )

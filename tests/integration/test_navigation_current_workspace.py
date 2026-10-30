@@ -25,6 +25,7 @@ from tests.support.navigation_historical_source import (
     run_historical,
     source_facts,
 )
+from tests.unit.test_db import _migration_tree_through
 
 from planner.core.db import _alembic_config, _migration_engine
 from planner.navigation import data, journal, snapshot
@@ -141,33 +142,35 @@ def test_review_projection_upgrade_resets_old_cursors_without_granting_authority
     revision: str,
     schema_version: int,
     projection_version: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Installed older Review memberships must reset without granting current authority."""
     path = tmp_path / "review-upgrade.db"
-    with current_navigation_database(path) as conn:
-        before = snapshot(conn)
-        conn.execute("BEGIN")
-        # Rewind only this empty synthetic table with the Review source branch.
-        # Its migration descends from Review, so an applied marker would skip
-        # the projection upgrade that this fixture must exercise.
-        assert conn.execute("SELECT COUNT(*) FROM conversation_video_uploads").fetchone()[0] == 0
-        conn.execute("DROP TABLE conversation_video_uploads")
-        conn.execute("UPDATE alembic_version SET version_num=?", (revision,))
-        # This synthetic fixture already contains the independent executor and
-        # workspace branch. Retain its applied marker while rewinding only Review.
-        conn.execute(
-            "INSERT INTO alembic_version(version_num) VALUES ('conversation_workspace_policy')"
-        )
-        conn.execute("UPDATE navigation_meta SET schema_version=?", (schema_version,))
-        conn.execute(
-            "UPDATE navigation_view_meta SET projection_version=?,ordering_generation='review-v2'",
-            (projection_version,),
-        )
-        conn.commit()
+    # This synthetic rewind owns staging's Review projection, before the
+    # Mac/VPS schema is installed. It must not mislabel a final feature schema.
+    with monkeypatch.context() as staging:
+        _migration_tree_through(tmp_path, staging, "video_upload_ledger")
+        with current_navigation_database(path) as conn:
+            before = snapshot(conn)
+            conn.execute("BEGIN")
+            # Rewind only this empty synthetic table with the Review source branch.
+            # Its migration descends from Review, so an applied marker would skip
+            # the projection upgrade that this fixture must exercise.
+            count = conn.execute("SELECT COUNT(*) FROM conversation_video_uploads").fetchone()[0]
+            assert count == 0
+            conn.execute("DROP TABLE conversation_video_uploads")
+            conn.execute("UPDATE alembic_version SET version_num=?", (revision,))
+            conn.execute("UPDATE navigation_meta SET schema_version=?", (schema_version,))
+            conn.execute(
+                "UPDATE navigation_view_meta SET projection_version=?,"
+                "ordering_generation='review-v2'",
+                (projection_version,),
+            )
+            conn.commit()
     engine = _migration_engine(str(path), 1000)
     try:
         with engine.begin() as connection:
-            command.upgrade(_alembic_config(connection), "head")
+            command.upgrade(_alembic_config(connection), "video_upload_ledger")
     finally:
         engine.dispose()
     with closing(sqlite3.connect(path)) as conn:

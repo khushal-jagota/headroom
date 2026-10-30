@@ -1197,7 +1197,7 @@ class ExecutorEndpoint:
                         ask = decoded.ask
                         self.store.publish_ask_in_transaction(
                             conn,
-                            AskReference(event.child, event.turn, ask.ask_id),
+                            AskReference(event.child, event.turn, ask.ask_id, AskKind.permission),
                             tuple(option.option_id for option in ask.options),
                             now_ms(),
                         )

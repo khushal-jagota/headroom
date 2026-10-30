@@ -22,7 +22,7 @@ from tests.integration.test_navigation_cumulative_migration import (
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "provider_owned_model_choices"
+FINAL_HEAD = "mac_vps_execution"
 SENTINELS: dict[str, tuple[object, ...]] = {
     "executor_receipts": (
         "sender",
@@ -92,15 +92,7 @@ def _assert_join(conn: sqlite3.Connection) -> None:
 
 @pytest.mark.parametrize(
     "source_head",
-    [
-        "scheduled_ticket_locale",
-        "merge_resident_native_usage",
-        "owner_message_preview",
-        "conversation_workspace_policy",
-        "merge_mac_vps_staging",
-        "video_upload_ledger",
-    ],
-    ids=["ancestor", "feature", "staging", "workspace", "exact-feature", "exact-staging"],
+    ["scheduled_ticket_locale", "owner_message_preview", "video_upload_ledger"],
 )
 def test_retained_source_heads_join_without_losing_authority(
     tmp_path: Path, source_head: str
@@ -116,9 +108,7 @@ def test_retained_source_heads_join_without_losing_authority(
             command.upgrade(config, source_head)
             conn = _raw(connection)
             seeded = _seed_available_sentinels(conn)
-            if source_head == "merge_mac_vps_staging":
-                assert seeded == set(SENTINELS) - {"conversation_video_uploads"}
-            elif source_head == "video_upload_ledger":
+            if source_head == "video_upload_ledger":
                 assert seeded == {"conversation_video_uploads"}
             command.upgrade(config, "head")
             _assert_join(conn)
@@ -168,9 +158,7 @@ def test_scoped_catalog_migration_keeps_legacy_evidence_unverified(tmp_path: Pat
     """Legacy values survive byte-for-byte and grant neither positive nor negative proof."""
     from tests.unit.test_current_model_resolution import selection
 
-    from planner.conversation.contracts import ConversationBackendKey
     from planner.conversation.launch_intent import bind_model_intent
-    from planner.core.contracts import PlannerError
 
     path = tmp_path / "catalogs.db"
     _seed_pre_lifecycle(path).dispose()
@@ -180,7 +168,7 @@ def test_scoped_catalog_migration_keeps_legacy_evidence_unverified(tmp_path: Pat
     try:
         with engine.begin() as connection:
             config = _alembic_config(connection)
-            command.upgrade(config, "merge_mac_vps_video")
+            command.upgrade(config, "video_upload_ledger")
             conn = _raw(connection)
             conn.execute(
                 "INSERT INTO model_variant_resolutions VALUES (?,?,?,?,?)", legacy_resolution
@@ -210,10 +198,6 @@ def test_scoped_catalog_migration_keeps_legacy_evidence_unverified(tmp_path: Pat
                 for value in conn.execute(
                     "SELECT row_ordinal FROM scoped_model_catalog_rows ORDER BY row_ordinal"
                 )
-            ] == [0, 1]
-        with pytest.raises(ValueError, match="different evidence"):
-            from dataclasses import replace
-
-            store.keep_observation(replace(scoped, rows=(row("gpt-7-sol"),)))
+            ] == []
     finally:
         engine.dispose()

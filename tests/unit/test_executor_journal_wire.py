@@ -13,7 +13,6 @@ from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,
     FileScope,
-    JsonObject,
     ReceiptDisposition,
     WireMessage,
     WireMessageKind,
@@ -239,41 +238,3 @@ def test_input_full_retry_discards_partial_quarantine_without_publishing_it(tmp_
     # The link drops. The same publication restarts at offset zero on reconnect.
     target = receiver.receive_path(snapshot.manifest, snapshot.local_path)
     assert target.read_bytes() == contents
-
-
-def test_version_one_permission_spool_payload_reads_unchanged_under_new_protocol(
-    tmp_path: Path,
-) -> None:
-    from uuid import uuid4
-
-    from pydantic import TypeAdapter
-
-    from planner.executor.contracts import AnswerApplication, AskKind
-
-    spool = FilesystemSpool(tmp_path / "spool")
-    # Exact old payload shape: no AskReference.kind field. Format 2 preserves payloads.
-    payload: JsonObject = {
-        "answer_id": "legacy-answer",
-        "applied_at_mac_ms": 10,
-        "ask": {
-            "child": {
-                "executor_incarnation": str(uuid4()),
-                "child_id": str(uuid4()),
-                "conversation_id": "c_one",
-            },
-            "turn": {"conversation_id": "c_one", "turn_number": 1},
-            "ask_id": "ask",
-        },
-    }
-    row = spool.mint_envelope(
-        conversation_id="c_one", kind=EnvelopeKind.answer_application, payload=payload
-    )
-    entry = tmp_path / "spool" / "entries" / row.submission_id / "envelope.json"
-    before = entry.read_bytes()
-    spool.close()
-    reopened = FilesystemSpool(tmp_path / "spool")
-    assert reopened.pending() == (row,)
-    parsed = TypeAdapter(AnswerApplication).validate_python(reopened.pending()[0].payload)
-    assert parsed.ask.kind == AskKind.permission
-    assert entry.read_bytes() == before
-    reopened.close()

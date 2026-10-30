@@ -6,14 +6,13 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from pydantic import TypeAdapter
 from tests.support.executor_turns import persist_pending_turn
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
 from planner.core.contracts import PlannerError
 from planner.core.db import connect
-from planner.core.migrations.versions.executor_authoritative_acceptance import STATEMENTS
+from planner.core.migrations.versions.mac_vps_execution import STATEMENTS
 from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
@@ -23,12 +22,9 @@ from planner.executor.contracts import (
     AskReference,
     ChildInventory,
     ChildReference,
-    EnvelopeKind,
     ExecutorIdentity,
-    JsonObject,
     ReconciliationInventory,
 )
-from planner.executor.journal import FilesystemSpool
 from planner.executor.store import ExecutorStore
 
 IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "process", 1)
@@ -231,33 +227,3 @@ def test_complete_map_first_selection_after_loss_survives_restart_and_closure(
         ).answers
         == ()
     )
-
-
-def test_current_spool_preserves_old_permission_payload_without_kind(tmp_path: Path) -> None:
-    root = tmp_path / "spool"
-    spool = FilesystemSpool(root)
-    old_payload: JsonObject = {
-        "answer_id": "answer",
-        "applied_at_mac_ms": 1000,
-        "ask": {
-            "child": {
-                "executor_incarnation": "process",
-                "child_id": "child",
-                "conversation_id": "conversation",
-            },
-            "turn": {"conversation_id": "conversation", "turn_number": 1},
-            "ask_id": "same_id",
-        },
-    }
-    original = spool.mint_envelope(
-        conversation_id="conversation", kind=EnvelopeKind.answer_application, payload=old_payload
-    )
-    spool.close()
-    reopened = FilesystemSpool(root)
-    try:
-        assert reopened.pending() == (original,)
-        assert reopened.pending()[0].payload == old_payload
-        application = TypeAdapter(AnswerApplication).validate_python(reopened.pending()[0].payload)
-        assert application.ask.kind is AskKind.permission
-    finally:
-        reopened.close()

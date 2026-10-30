@@ -84,7 +84,7 @@ def _check_spool_directory(
         elif path.name.startswith(".metadata-"):
             if not stat.S_ISREG(mode):
                 raise ValueError("unknown interrupted metadata path")
-        elif path.name.startswith((".incomplete-", ".acknowledged-", ".legacy-", ".conversion-")):
+        elif path.name.startswith((".incomplete-", ".acknowledged-")):
             if not stat.S_ISDIR(mode):
                 raise ValueError("unknown interrupted journal path")
         else:

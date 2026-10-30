@@ -261,7 +261,7 @@ class ExecutorHarness:
     def ask(self) -> AskReference:
         child = next(iter(self.mac.registry.children.values()))
         assert self.native.turn is not None
-        return AskReference(child.reference, self.native.turn, "ask_permission")
+        return AskReference(child.reference, self.native.turn, "ask_permission", AskKind.permission)
 
     @property
     def input_ask(self) -> AskReference:
@@ -2245,7 +2245,10 @@ def test_historical_permission_evidence_cannot_overflow_reconnect_frame(
                 # This history exceeds the 1MiB frame bound when evidence is
                 # echoed as one list. It remains available in the VPS read store.
                 ask = AskReference(
-                    child, TurnToken("c_scripted", index + 2), f"historical_{index}_" + "x" * 2048
+                    child,
+                    TurnToken("c_scripted", index + 2),
+                    f"historical_{index}_" + "x" * 2048,
+                    AskKind.permission,
                 )
                 harness.endpoint.store.publish_ask(ask, ("allow", "deny"), 1000)
             await harness.restart_vps_core()

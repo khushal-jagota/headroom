@@ -301,9 +301,6 @@ class ConversationStore:
 
     def _reconcile_runtime(self, conn: sqlite3.Connection) -> None:
         conn.execute("BEGIN IMMEDIATE")
-        from planner.executor.store import ExecutorStore
-
-        ExecutorStore.retain_legacy_request_ids_in_transaction(conn)
         interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
         ids = conn.execute(
             "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
@@ -2162,9 +2159,6 @@ class ConversationStore:
                 for flag in ("source_retired", "cleanup_evidence_uncertain"):
                     if committed.get(flag):
                         current[flag] = True
-            archive = committed.get("legacy_request_public_ids")
-            if archive:
-                current["legacy_request_public_ids"] = archive
         if assignment is not None and assignment[1] is not None:
             current["source_retired"] = True
         metadata = (metadata[0], metadata[1], json.dumps(current))

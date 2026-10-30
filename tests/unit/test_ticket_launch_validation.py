@@ -57,8 +57,8 @@ def test_upgrade_preserves_existing_wake_members_and_historical_intent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: FakeClock
 ) -> None:
     """A nonempty predecessor protects the rebuild's inbound FK history."""
-    shipped = db_module.MIGRATIONS_DIRECTORY / "versions" / "ticket_launch_validation.py"
-    tree = _migration_tree_through(tmp_path, monkeypatch, "scoped_model_catalogs")
+    shipped = db_module.MIGRATIONS_DIRECTORY / "versions" / "mac_vps_execution.py"
+    tree = _migration_tree_through(tmp_path, monkeypatch, "video_upload_ledger")
     conn = connect(str(tmp_path / "predecessor.db"))
     try:
         create_schema(conn)
