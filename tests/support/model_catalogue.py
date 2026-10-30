@@ -9,7 +9,7 @@ import sqlite3
 import time
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.model_resolution.logic.variants import identify_variant
+from planner.conversation.model_resolution.logic.variants import recognize_variant
 
 
 def seed_test_model_catalogue(conn: sqlite3.Connection) -> None:
@@ -20,7 +20,9 @@ def seed_test_model_catalogue(conn: sqlite3.Connection) -> None:
     ]
     models.extend(("claude", alias, None) for alias in ("opus", "sonnet", "haiku"))
     for backend, model, default_effort in models:
-        variant = identify_variant(ConversationBackendKey(backend), model)
+        variant = recognize_variant(ConversationBackendKey(backend), model)
+        if variant is None:
+            continue
         conn.execute(
             "INSERT OR IGNORE INTO model_variant_resolutions "
             "(backend_key,variant,model,supported_reasoning_efforts,observed_at) "

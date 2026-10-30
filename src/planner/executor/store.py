@@ -31,7 +31,6 @@ from planner.executor.contracts import (
     ChildCommand,
     ChildOperation,
     ChildReference,
-    CommandDisposition,
     CommandOutcome,
     ConnectionState,
     DurableAnswer,
@@ -472,32 +471,6 @@ class ExecutorStore:
         retained_commands: tuple[ChildCommand, ...] = (),
     ) -> None:
         """Retire assignment and asks inside the caller's existing transaction."""
-        # An authoritative retirement receipt fences future native execution. It
-        # releases only commands whose retained journal identity names this child.
-        # Unknown past delivery outcomes stay unknown in their original records.
-        from planner.tickets.launch_authority import settle_command
-
-        command_ids: set[str] = {
-            command.command_id for command in retained_commands if command.child == child
-        }
-        for row in connection.execute(
-            "SELECT outcome_json FROM executor_command_outcomes WHERE executor_incarnation=?",
-            (child.executor_incarnation,),
-        ):
-            outcome = TypeAdapter(CommandOutcome).validate_json(row[0])
-            if outcome.child == child:
-                command_ids.add(outcome.command_id)
-        retained = connection.execute(
-            "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
-            (child.conversation_id,),
-        ).fetchone()
-        if retained is not None:
-            for raw in json.loads(retained[0]).get("initial_commands", ()):
-                command = TypeAdapter(ChildCommand).validate_python(raw)
-                if command.child == child:
-                    command_ids.add(command.command_id)
-        for command_id in command_ids:
-            settle_command(connection, command_id, child.executor_incarnation)
         connection.execute(
             "UPDATE executor_child_assignments SET closed_at_ms=? "
             "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
@@ -1169,19 +1142,11 @@ class ExecutorStore:
         if existing is not None:
             if existing[0] != _record(outcome):
                 raise _invalid("Command outcome conflicts with first result")
-            if outcome.disposition is not CommandDisposition.uncertain:
-                from planner.tickets.launch_authority import settle_command
-
-                settle_command(connection, outcome.command_id, outcome.child.executor_incarnation)
             return
         connection.execute(
             "INSERT INTO executor_command_outcomes VALUES (?,?,?)",
             (outcome.child.executor_incarnation, outcome.command_id, _record(outcome)),
         )
-        if outcome.disposition is not CommandDisposition.uncertain:
-            from planner.tickets.launch_authority import settle_command
-
-            settle_command(connection, outcome.command_id, outcome.child.executor_incarnation)
 
     def verify_connection(self, identity: ExecutorIdentity) -> None:
         with self._transaction() as connection:

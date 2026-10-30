@@ -23,9 +23,7 @@
 </script>
 
 <UnifiedModelPicker
-  canonicalRows={view.canonicalRows}
-  validation={view.validation}
-  refusalValidation={view.refusalValidation}
+  displaySelection={view.displaySelection}
   readError={view.readError}
   {onRetry}
   chevron="drawn"

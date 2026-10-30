@@ -845,7 +845,8 @@ class NativeChildRegistry:
                                 or (
                                     child.reasoning_effort
                                     if command.arguments.get("reasoning_effort_change") is None
-                                    else command.arguments["reasoning_effort_change"]
+                                    and not command.arguments.get("reasoning_effort_is_set", False)
+                                    else command.arguments.get("reasoning_effort_change")
                                 )
                                 != expectation.reasoning_effort
                             ):

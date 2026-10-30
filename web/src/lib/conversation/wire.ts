@@ -1,5 +1,5 @@
-import type { SelectionKind, CanonicalModelValidation, DestinationModelChoicesRequest, DestinationModelChoicesResponse } from "./modelResolutionWire";
-export type { PickerRow, CanonicalModelValidation, ModelSelection, DestinationModelChoicesRequest, DestinationModelChoicesResponse, TicketModelChoicesRequest, DraftModelChoicesRequest } from "./modelResolutionWire";
+import type { SelectionKind, CanonicalModelValidation, BackendScopeRequest } from "./modelResolutionWire";
+export type { CanonicalModelValidation, ModelSelection, BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
@@ -546,6 +546,8 @@ export type OwnerSendBody = {
  * is on reported no catalogue. A start on that is refused rather than guessed at.
  */
 export type ConversationStartValues = {
+  workspace_folder?: string;
+  workspace_path_policy?: "legacy_home_mapping" | "native_absolute";
   backend_key: ConversationBackendKey;
   model: string | null;
   reasoning_effort: string | null;
@@ -733,10 +735,13 @@ export function promoteHeldPrompt(
   );
 }
 
-export function readDestinationModelChoices(
-  selection: DestinationModelChoicesRequest
-): Promise<DestinationModelChoicesResponse> {
-  return request<DestinationModelChoicesResponse>("/backends/model-choices", postJson(selection));
+export async function readScopedBackends(
+  selection: BackendScopeRequest, refresh = false
+): Promise<BackendSnapshot[]> {
+  const answer = await request<{backends: BackendSnapshot[]}>(
+    `/backends${refresh ? "?refresh=true" : ""}`, postJson(selection)
+  );
+  return answer.backends;
 }
 
 export async function readBackends(refresh = false): Promise<BackendSnapshot[]> {

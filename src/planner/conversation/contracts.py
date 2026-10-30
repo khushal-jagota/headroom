@@ -700,12 +700,6 @@ class MoveRetirementResult:
     reason: str | None = None
 
 
-class MoveSourceRetirement(Protocol):
-    """Injected remote source proof; final validation is synchronous through commit."""
-
-    async def retire(self) -> MoveRetirementResult: ...
-
-    def validate_current(self) -> None: ...
 
 
 class ConversationSystem(Protocol):
@@ -741,20 +735,6 @@ class ConversationSystem(Protocol):
         """
         ...
 
-    async def retire_idle_for_move(
-        self,
-        conversation_id: str | None,
-        operation: Callable[[], None],
-        *,
-        source: MoveSourceRetirement | None = None,
-    ) -> MoveRetirementResult:
-        """Hold admission through source retirement and a synchronous canonical write.
-
-        Admission refusal starts no retirement. Uncertain retirement preserves its
-        handle and quarantine. A failed write after retirement reports source state
-        honestly. No database transaction spans an awaited backend operation.
-        """
-        ...
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation named by the request's conversation id.

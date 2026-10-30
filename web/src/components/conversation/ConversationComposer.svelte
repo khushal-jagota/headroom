@@ -109,9 +109,6 @@
     permissionAvailable = true,
     userInputAvailable = true,
     current = { model: null, reasoningEffort: null },
-    canonicalRows,
-    validation = null,
-    refusalValidation = null,
     readError = null,
     onRetryModelChoices,
     onPreviewRunSelection,
@@ -166,9 +163,6 @@
     userInputAvailable?: boolean;
     current?: RunValues;
     /** What this conversation's own backend offers. */
-    canonicalRows?: readonly import("../../lib/conversation/modelResolutionWire").PickerRow[];
-    validation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
-    refusalValidation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
     readError?: string | null;
     onRetryModelChoices?: () => Promise<void>;
     onPreviewRunSelection?: (selection: ComposerRunSelection, backend?: ConversationBackendKey) => void;
@@ -232,11 +226,13 @@
     pickedModel: null,
     pickedReasoningEffort: null
   });
+  let providerSelections: Partial<Record<ConversationBackendKey, ComposerRunSelection>> = {};
   let runSelectionDraftKey = untrack(() => draftKey);
   $effect(() => {
     const key = draftKey;
     if (key === untrack(() => runSelectionDraftKey)) return;
     runSelectionDraftKey = key;
+    providerSelections = {};
     runSelection = {pickedBackend: null, pickedModel: null, pickedReasoningEffort: null};
   });
   let inputElement = $state<HTMLTextAreaElement | null>(null);
@@ -392,9 +388,6 @@
 
   let runControlsInput = $derived<ComposerRunControlsInput>({
     selection: runSelection,
-    canonicalRows,
-    validation,
-    refusalValidation,
     readError,
     backendKey,
     conversationExists,
@@ -411,10 +404,9 @@
     deliveryMode
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
-  let canonicalMode = $derived(canonicalRows !== undefined);
   $effect(() => {
     const selection = runSelection;
-    if (canonicalMode) untrack(() => onPreviewRunSelection?.(selection));
+    if (onPreviewRunSelection) untrack(() => onPreviewRunSelection?.(selection));
   });
   /** A retained page must not reload while this composer owns work or a user decision. */
   let compositionActive = $derived(
@@ -562,7 +554,13 @@
   }
 
   function applyRunSelectionIntent(intent: ComposerRunSelectionIntent): void {
-    const next = applyComposerRunSelectionIntent(runControlsInput, intent);
+    let next = applyComposerRunSelectionIntent(runControlsInput, intent);
+    if (intent.intent === "choose_backend" && !conversationExists) {
+      const previousBackend = runSelection.pickedBackend ?? backendKey;
+      if (previousBackend) providerSelections[previousBackend] = { ...runSelection };
+      next = providerSelections[intent.backendKey] ?? next;
+      next = {...next, pickedBackend: intent.backendKey};
+    }
     const changed = !sameRunSelection(runSelection, next);
     if (changed) {
       runSelection = next;
@@ -617,11 +615,10 @@
 
   const runControlIntents: ComposerRunControlIntents = {
     chooseBackend: (backendKey) => {
-      if (canonicalRows !== undefined) onPreviewRunSelection?.(runSelection, backendKey);
-      else applyRunSelectionIntent({ intent: "choose_backend", backendKey });
+      applyRunSelectionIntent({ intent: "choose_backend", backendKey });
     },
-    chooseModel: (model, reasoningEffort, row) =>
-      applyRunSelectionIntent({ intent: "choose_model", model, reasoningEffort, row }),
+    chooseModel: (model, reasoningEffort) =>
+      applyRunSelectionIntent({ intent: "choose_model", model, reasoningEffort }),
     chooseReasoningEffort: (reasoningEffort) => applyRunSelectionIntent({
       intent: "choose_reasoning_effort",
       reasoningEffort

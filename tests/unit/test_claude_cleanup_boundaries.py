@@ -42,8 +42,6 @@ from planner.conversation.model_resolution.contracts import (
     CatalogRequest,
     SelectionKind,
 )
-from planner.conversation.model_resolution.data import ModelResolutionStore
-from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -159,12 +157,6 @@ def test_claude_stop_result_controls_canonical_retirement(
             store=ConversationStore(remote.db_path),
             backend_child_factories=dict.fromkeys(ConversationBackendKey, remote.factory),
             message_files=ConversationMessageFiles(remote.db_path),
-        )
-        system._model_resolver = ModelResolutionService(
-            snapshots=Catalogue(()),
-            store=ModelResolutionStore(remote.db_path),
-            backend_state=BackendStateStore(remote.db_path),
-            observer=observer,
         )
         system.configure_destination_validation(observer, endpoint=remote)
         remote.runtime = cast(Any, SimpleNamespace(system=system))

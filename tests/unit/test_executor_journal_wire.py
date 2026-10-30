@@ -146,7 +146,7 @@ def test_strict_identity_refuses_coercion_unknown_fields_and_short_sha() -> None
     assert parse_identity(valid).connection_generation == 1
     for malformed in (
         {**valid, "protocol_version": True},
-        {**valid, "protocol_version": 11},
+        {**valid, "protocol_version": 13},
         {**valid, "connection_generation": "1"},
         {**valid, "application_revision": "dev"},
         {**valid, "extra": "ignored"},

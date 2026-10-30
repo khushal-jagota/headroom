@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import html
-import logging
 import os
 import re
 import sqlite3
@@ -268,33 +267,6 @@ def create_app(
                     "WHERE reachability='reachable'"
                 )
                 audit_conn.commit()
-                from planner.tickets.launch_authority import reconcile_persisted_launch_authority
-
-                recovery = reconcile_persisted_launch_authority(audit_conn)
-                app.state.launch_authority_recovery = recovery
-                if recovery.blocked_authority_keys:
-                    retained = [
-                        {
-                            "authority_key": row[0],
-                            "command_id": row[1],
-                            "executor_incarnation": row[2],
-                            "kind": "local_or_unbound" if row[1] is None else "remote_command",
-                        }
-                        for row in audit_conn.execute(
-                            "SELECT authority_key,command_id,executor_incarnation "
-                            "FROM ticket_launch_authority "
-                            "ORDER BY authority_key,command_id",
-                        )
-                    ]
-                    app.state.launch_authority_recovery_scopes = retained
-                    logging.getLogger("planner.runtime").warning(
-                        "Launch authority remains unresolved after startup: %s. "
-                        "The listed Ticket/workspace or model-policy keys retain exclusion; "
-                        "unaffected reads and unrelated configuration remain available. "
-                        "Original immutable evidence, a definitive command outcome or an "
-                        "exact source-retirement receipt is required to settle uncertainty.",
-                        retained,
-                    )
                 tickets_data.audit_ticket_registry_integrity(audit_conn)
                 reconcile_managed_skill_versions(audit_conn)
                 reconcile_provisional_worker_step_bindings(audit_conn)

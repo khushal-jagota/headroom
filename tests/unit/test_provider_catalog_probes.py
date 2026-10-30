@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from claude_agent_sdk import ClaudeAgentOptions
 
 from planner.conversation.backends import claude_model_catalog as claude
 from planner.conversation.backends.codex_app_server import model_catalog as codex
@@ -56,6 +55,9 @@ def test_codex_catalog_walks_pages_and_retains_partial_positive_evidence(
             remaining_budgets.append(timeout_seconds)
             if method == "initialize":
                 return {}
+            if method == "account/read":
+                assert params == {"refreshToken": False}
+                return {"account": {"type": "apiKey"}, "requiresOpenaiAuth": True}
             assert method == "model/list"
             if "cursor" not in params:
                 return {"data": [model("gpt-6.1-terra"), model("hidden", hidden=True)],
@@ -81,68 +83,58 @@ def test_codex_catalog_walks_pages_and_retains_partial_positive_evidence(
             "/selected/codex", environment=scoped_environment, working_directory=tmp_path
         )
         assert result.models[0].model_id == "gpt-6.1-terra"
-        assert all(row.model_id != "hidden" for row in result.models)
+        assert result.models[1].model_id == "hidden" and result.models[1].hidden
+        assert result.authenticated is True
         assert result.complete == (ending == "complete")
         assert result.visibility_limited
-        assert len(requests) == 3
+        assert len(requests) == 4
         assert stopped == [True]
         assert remaining_budgets == sorted(remaining_budgets, reverse=True)
         assert remaining_budgets[0] <= 0.1
         if ending not in ("error", "stalled_page"):
-            assert result.models[1].model_id == "gpt-6.1-fable"
+            assert result.models[2].model_id == "gpt-6.1-fable"
 
     asyncio.run(run())
 
 
-def test_claude_probe_keeps_unknown_effort_distinct_and_no_prompt(
+def test_claude_probe_uses_only_destination_local_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    options: list[ClaudeAgentOptions] = []
-    disconnected: list[bool] = []
+    from subprocess import CompletedProcess
 
-    class Client:
-        def __init__(self, *, options: ClaudeAgentOptions, transport: Any) -> None:
-            self.options = options
-            transport.control_request = self.control_request
+    async def run_process(argv: list[str], **kwargs: Any) -> CompletedProcess[bytes]:
+        assert argv == ["/selected/claude", "--version"]
+        assert kwargs == {"env": {"PROVIDER_FIXTURE": "selected"}, "cwd": tmp_path}
+        return CompletedProcess(argv, 0, b"2.1.280 (Claude Code)", b"")
 
-        async def __aenter__(self) -> Client:
-            options.append(self.options)
-            return self
+    monkeypatch.setattr(claude.anyio, "run_process", run_process)
+    result = asyncio.run(claude.probe_claude_model_catalog(
+        "/selected/claude", environment={"PROVIDER_FIXTURE": "selected"},
+        working_directory=tmp_path,
+    ))
+    rows = {row.model_id: row for row in result.models}
+    assert "claude-opus-5-5" in rows
+    assert "claude-sonnet-5-5" not in rows
+    assert rows["claude-opus-4-7"].reasoning_effort_options == ("low", "medium", "high", "max")
+    assert rows["claude-sonnet-4-6"].reasoning_effort_options == ("low", "medium", "high")
+    assert rows["claude-haiku-4-5"].reasoning_effort_options == ()
+    assert result.default_model_id is None
+    assert set(result.reasoning_effort_options) == {"low", "medium", "high", "xhigh", "max"}
 
-        async def __aexit__(self, *args: object) -> None:
-            disconnected.append(True)
 
-        async def control_request(self, subtype: str) -> dict[str, object]:
-            assert subtype == "list_models"
-            return {"models": [
-                {"value": "opus", "resolvedModel": "claude-opus-5"},
-                {"value": "claude-opus-4", "resolvedModel": "claude-opus-4",
-                 "supportedEffortLevels": []},
-                {"value": "bad-effort", "resolvedModel": "bad-effort",
-                 "supportedEffortLevels": [42]},
-                {"value": "hidden", "resolvedModel": "hidden", "hidden": True},
-                {"value": "sonnet"},
-            ]}
+def test_claude_optional_version_failure_preserves_unbounded_suggestions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unavailable(*args: Any, **kwargs: Any) -> None:
+        raise FileNotFoundError("fixture")
 
-    monkeypatch.setattr(claude, "ClaudeSDKClient", Client)
-
-    async def run() -> None:
-        result = await claude.probe_claude_model_catalog(
-            "/selected/claude", environment={"PROVIDER_FIXTURE": "selected"},
-            working_directory=tmp_path,
-        )
-        assert [entry.model_id for entry in result.models] == [
-            "opus", "claude-opus-4", "bad-effort", "hidden", "sonnet"
-        ]
-        assert [entry.reasoning_effort_options for entry in result.models] == [
-            None, (), None, None, None,
-        ]
-        assert result.models[-2].hidden is True
-        assert result.models[-1].resolved_model_id is None
-        assert result.provider_scope is not None
-        assert options[0].cli_path == "/selected/claude"
-        assert options[0].cwd == tmp_path
-        assert options[0].env == {"PROVIDER_FIXTURE": "selected"}
-        assert disconnected == [True]
-
-    asyncio.run(run())
+    monkeypatch.setattr(claude.anyio, "run_process", unavailable)
+    result = asyncio.run(claude.probe_claude_model_catalog("/missing/claude"))
+    assert {row.model_id for row in result.models} == {
+        "claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-5",
+        "claude-sonnet-4-6", "claude-haiku-4-5",
+    }
+    assert claude.claude_launch_model("opus") == "opus"
+    assert claude.claude_launch_model("opus[1m]") == "opus[1m]"
+    assert claude.claude_launch_model("opus-4.6[1m]") == "claude-opus-4-6[1m]"
+    assert claude.claude_launch_model("custom-exact-token") == "custom-exact-token"

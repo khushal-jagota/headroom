@@ -3,6 +3,7 @@
   import { reconcileDisplaySlots, isMessageRow, type MessageDisplaySlot } from '../../../lib/conversation/displaySlots';
   import type { OutgoingMessage } from '../../../lib/conversation/outgoing';
   import ProjectedMessage from './ProjectedMessage.svelte';
+  import { admitsTranscriptItem, transcriptHistoryEdges } from '../../../lib/conversation/view/presentation';
   import { untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
@@ -33,8 +34,9 @@
   let emptyEndings = new SvelteMap<string, string>();
   const items = $derived.by(() => { const map = new Map<string, ConversationViewItem>(); for (const page of reader.pages)
       for (const item of page.items)
-          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'focus' && (item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call')) return false; if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
+          map.set(item.key, item); return [...map.values()].filter(admitsTranscriptItem).filter(item => { if (reader.lens === 'focus' && (item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call')) return false; if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
       return true; const turn = map.get(item.turn_key); return turn?.kind !== 'turn' || !turn.settled || turn.latest_message_key === item.key || reader.isExpanded({ kind: 'turn', key: turn.key }); }).sort(compareItems); });
+  const historyEdges = $derived(transcriptHistoryEdges(reader.pages, items));
   const exits = new MessageExits<MessageDisplaySlot>();
   let exitRevision = $state(0);
   let previousDisplay: MessageDisplaySlot[] = [];
@@ -73,15 +75,9 @@
       const result = new Map<string, { assistantContinuation: boolean; toolContinuation: boolean }>();
       const before = new Set<string>();
       const after = new Set<string>();
-      for (const page of reader.pages) {
-          if (page.scope.kind === 'timeline')
-              continue;
-          const first = page.items[0];
-          const last = page.items.at(-1);
-          if (page.older && first)
-              before.add(first.key);
-          if (page.newer && last)
-              after.add(last.key);
+      for (const boundary of historyEdges) {
+          if (boundary.anchorKey !== null)
+              (boundary.direction === 'older' ? before : after).add(boundary.anchorKey);
       }
       let previous: ConversationViewItem | undefined;
       for (const item of items) {
@@ -158,14 +154,14 @@
   {/each}
   {#each displaySlots as slot (slot.key)}
     {@const item = slot.item}
+    {#each historyEdges.filter(boundary => boundary.direction === 'older' && boundary.anchorKey === item?.key) as boundary (`older:${boundary.scope.kind}:${boundary.scope.key}`)}
+      <div use:edge={boundary} data-conversation-history-edge="older" aria-hidden="true"></div>
+    {/each}
     {#if slot.local !== null || item !== null && isMessageRow(item)}
       <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register}>
         <ProjectedMessage item={item?.kind === 'row' ? item : null} local={slot.local} {reader} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
       </ViewItem>
     {:else if item !== null}
-    {#each reader.pages.filter(page=>page.scope.kind!=='timeline'&&page.items[0]?.key===item.key&&page.older) as page (`older:${page.scope.kind}:${page.scope.key}`)}
-      {#if page.older}<div use:edge={{scope:page.scope,cursor:page.older,direction:'older'}} data-conversation-history-edge="older" aria-hidden="true"></div>{/if}
-    {/each}
     {#if item.kind!=='row'||presentation.has(item.key)}
     <ViewItem itemKey={item.key} marker={!presentation.has(item.key)} assistantContinuation={presentation.get(item.key)?.assistantContinuation??false} tool={item.kind==='row'&&item.row_kind==='tool_call'} toolContinuation={presentation.get(item.key)?.toolContinuation??false}>
       {#if item.kind==='turn'}
@@ -181,10 +177,13 @@
       {/if}
     </ViewItem>
     {/if}
-    {#each reader.pages.filter(page=>page.scope.kind!=='timeline'&&page.items.at(-1)?.key===item.key&&page.newer) as page (`newer:${page.scope.kind}:${page.scope.key}`)}
-      {#if page.newer}<div use:edge={{scope:page.scope,cursor:page.newer,direction:'newer'}} data-conversation-history-edge="newer" aria-hidden="true"></div>{/if}
-    {/each}
     {/if}
+    {#each historyEdges.filter(boundary => boundary.direction === 'newer' && boundary.anchorKey === item?.key) as boundary (`newer:${boundary.scope.kind}:${boundary.scope.key}`)}
+      <div use:edge={boundary} data-conversation-history-edge="newer" aria-hidden="true"></div>
+    {/each}
+  {/each}
+  {#each historyEdges.filter(boundary => boundary.anchorKey === null) as boundary (`${boundary.direction}:${boundary.scope.kind}:${boundary.scope.key}`)}
+    <div use:edge={boundary} data-conversation-history-edge={boundary.direction} aria-hidden="true"></div>
   {/each}
   {#if reader.lens==='full'&&reader.status?.live_output}
     <ViewItem itemKey="live-output" marker={reader.status.live_output.byte_count===0}><LiveOutput {reader}/></ViewItem>

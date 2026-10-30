@@ -411,18 +411,10 @@ associations and leaves each conversation record behind. A file removed by eithe
 turn an attachment somebody sent into a file nobody can retrieve, while the row still
 says that the attachment was sent.
 
-An explicit Ticket locale move uses a separate idle-retirement operation. It holds
-conversation admission through source retirement and the synchronous locale write.
-It preserves the notebook, session cursor, model settings, and access posture.
-The old child cannot receive the next prompt after a successful move. A missing
-linked conversation refuses rather than supplying an idle proof.
-
-For a Mac source, the executor checks current work and retires the assigned source
-child identities. Old identities remain fenced against delayed commands and IPC
-writes. A later return to the Mac receives fresh child identities. Receipt evidence
-must still match the current executor incarnation and connection generation at commit.
-Admission refusal precedes native effects. Stop uncertainty keeps the child handle
-quarantined. A failed write after confirmed stop reports that the source retired.
+Tickets retain their creation-time machine choice. The former Ticket-switching
+workflow is removed. Existing source-retirement wire receipts and journal facts
+remain readable. Ordinary child retirement, cancellation, identity fencing, and
+replay protection retain their existing behavior.
 
 A finished tool call keeps the readable text that its backend reports. Claude can
 report a result as a list of text and non-text blocks. Panels joins its text blocks
@@ -764,13 +756,16 @@ Panels-only aliases, including Codex family choices, still need a destination ma
 If no mapping exists, Panels refuses before emission with `alias_mapping_unavailable`
 and asks for an explicit provider token. It never sends an invented provider alias.
 
-Discovery runs at the authorized workspace and destination. Mac discovery belongs to
-the authenticated executor. Suggestions retain their observed time and actual owner;
-the 300-second freshness label is advice. Known Codex login generation can identify
-same-runtime reuse. Missing account attribution limits reuse to the owned operation;
-it is not a prerequisite for an exact provider request. Configuration hashes, settings
-snapshots, source-vector collection, and paired settings reads are not admission gates.
-The retired temporary diagnostic machinery no longer runs in production.
+`BackendSnapshotService` owns the destination-local configuration. Its entries belong to
+provider, workspace, runtime or native connection, and known account generation.
+Ordinary reads retain choices. Explicit Refresh coalesces reads for that scope. A failed
+or partial refresh preserves a complete list. A complete empty list remains empty.
+Changed ownership rejects late replies. Unknown accounts stay within the same runtime.
+There is no periodic refresh, persistent observation store, or freshness prerequisite.
+
+Codex discovery uses initialize, account/read, and every model/list page. Claude uses
+the retained T3 recipe and local CLI version bounds. Exact tokens and efforts do not
+need discovery. Only saved Panels aliases need a mapping from retained scoped choices.
 
 Submission retains the selection revision, backend, canonical workspace, actual
 executor and child, turn, and attempt. The final write checks the actual prepared
@@ -792,24 +787,18 @@ submission fact. A later Claude root response model report appends
 `provider_selection_reported`, including tool-only root messages. It does not rewrite
 the original receipt. Neither the submitted token nor a thread default fills an applied
 model or effort field. Native alias targets may differ naturally from a response model.
-A proved concrete or explicit-effort mismatch remains an accepted attempt, records the
-reported fact, and stops further emission under that selection until a permitted change.
-The guard survives a restart through the existing conversation journal.
+Optional model and effort reports remain historical facts. They do not block later sends.
 
-Explicit disables check the backend and deduplicated requested/submitted tokens.
-A mapped Panels alias therefore checks its own token and its actual mapped token.
-An unknown native-alias target grants no policy coverage over an inferred concrete
-model. If the owned child later reports a disabled model, its accepted receipt remains,
-but further emission with that known selection stops until a permitted change.
+Explicit disables check both requested tokens and documented mapped launch tokens.
+An unknown native-alias target grants no policy coverage over an inferred concrete model.
+Provider failures remain actionable through the existing rejection and uncertainty paths.
 
-The existing launch permit protects Ticket, Project, and direct model policy sources.
-Local submission records its runtime, child, conversation, turn, and attempt in the
-existing policy context before possibly emitting I/O. Unknown delivery keeps that hold,
-the reservation, and the quarantined child, and does not drain held messages. Caller
-cancellation cannot abandon the owned exchange. Definitive durable acceptance or
-rejection settles admission ownership; exact child retirement may settle the hold
-without claiming that historical delivery was known. Process death is not non-emission.
-Legacy malformed or conflicting recovery facts retain their conservative recovery marker.
+The owner removed persistent Ticket, Project, Manager, and model-policy edit barriers.
+Configuration edits retain normal SQL concurrency and compare-and-swap checks. Earlier
+commands keep their captured arguments, exact ownership, receipts, and replay behavior.
+Unknown delivery retains its reservation and quarantined child. It never permits automatic
+redispatch. Cancellation cannot abandon an owned exchange. Process death is not proof
+that a provider received nothing. Historical lease rows remain inert migration data.
 
 The strict executor protocol is 13. Both mixed peer directions refuse before work or
 replay; there is no protocol-12 fallback. Spool and outbox containers remain version 2.
@@ -820,7 +809,9 @@ Unknown outcomes retain their exact ownership and never authorize automatic redi
 Recovery requires a compatible build or reviewed coherent restoration preserving later
 work. Removing the migration head or restoring a stale backup is not a downgrade path.
 
-`POST /api/conversation/backends/model-choices` returns advisory `{validation, rows}`.
+`POST /api/conversation/backends` returns the existing `{backends}` snapshot contract.
+Ticket or creation-context authority resolves destination and workspace. The former
+model-choice endpoint, resolver/store, and correction workflow are removed.
 Omitted values preserve saved intent; explicit null effort requests the provider default.
 Ticket detail and workspace reads retain current validation and selection revisions.
 Owner sends may attach `selection_kind` with an explicit model. Held messages preserve

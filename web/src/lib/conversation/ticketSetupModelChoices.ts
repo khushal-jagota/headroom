@@ -1,119 +1,114 @@
 import type { EmployeeConfigurationSnapshot, TicketDetail } from "../types";
-import type { TicketLocale } from "../ticketMachines";
-import type { ConversationBackendKey } from "./wire";
-import type { DestinationModelChoicesResponse, PickerRow, SelectionKind, TicketModelChoicesRequest } from "./modelResolutionWire";
+import type { BackendSnapshot, ConversationBackendKey, ConversationStartValues } from "./wire";
+import type { SelectionKind, TicketBackendScope } from "./modelResolutionWire";
 
 export type SetupConfigurationWrite = EmployeeConfigurationSnapshot & { selection_kind: SelectionKind };
 type SetupTicket = Pick<TicketDetail, "id" | "record_sha256" | "locale" | "launch_validation" | "employee_backend" | "employee_launch_model" | "employee_launch_reasoning_effort">;
 export type TicketSetupChoicesState = {
-  response: DestinationModelChoicesResponse | null;
-  request: TicketModelChoicesRequest | null;
+  response: readonly BackendSnapshot[] | null;
+  intent: SetupConfigurationWrite | null;
+  request: TicketBackendScope | null;
   loading: boolean;
   saving: boolean;
   error: unknown;
   saveError: unknown;
 };
 export const initialTicketSetupChoicesState = (): TicketSetupChoicesState => ({
-  response: null, request: null, loading: false, saving: false, error: null, saveError: null
+  response: null, intent: null, request: null, loading: false, saving: false, error: null, saveError: null
 });
 
 /** Advisory reads never write settings. Only an explicit row choice or destination action writes. */
 export function createTicketSetupModelChoices(dependencies: {
-  read: (request: TicketModelChoicesRequest) => Promise<DestinationModelChoicesResponse>;
+  read: (request: TicketBackendScope, refresh?: boolean) => Promise<readonly BackendSnapshot[]>;
   save: (ticketId: string, configuration: SetupConfigurationWrite) => Promise<unknown>;
-  move: (ticketId: string, locale: TicketLocale, expectedRecord: string) => Promise<unknown>;
   onChange: (state: TicketSetupChoicesState) => void;
 }) {
   let state = initialTicketSetupChoicesState();
   let current: SetupTicket | null = null;
   let signature = "";
+  let scopeKey = "";
   let generation = 0;
   let disposed = false;
+  const intents = new Map<string, SetupConfigurationWrite>();
   const publish = (patch: Partial<TicketSetupChoicesState>) => {
     if (disposed) return;
     state = { ...state, ...patch };
     dependencies.onChange(state);
   };
-  async function read(request: TicketModelChoicesRequest): Promise<void> {
+  async function read(request: TicketBackendScope, refresh = false): Promise<void> {
     if (disposed || !current) return;
     const captured = { ...request };
-    const source = signature;
+    const source = scopeKey;
     const attempt = ++generation;
-    publish({ request: captured, response: null, loading: true, error: null });
+    publish({ request: captured, loading: true, error: null });
     try {
-      const response = await dependencies.read(captured);
-      if (!disposed && generation === attempt && signature === source) publish({ response });
+      const response = await dependencies.read(captured, refresh);
+      if (!disposed && generation === attempt && scopeKey === source) publish({ response });
     } catch (error) {
-      if (!disposed && generation === attempt && signature === source) publish({ error });
+      if (!disposed && generation === attempt && scopeKey === source) publish({ error });
     } finally {
-      if (!disposed && generation === attempt && signature === source) publish({ loading: false });
+      if (!disposed && generation === attempt && scopeKey === source) publish({ loading: false });
     }
   }
-  async function mutate(action: () => Promise<unknown>): Promise<void> {
+  async function mutate(action: () => Promise<unknown>, intent?: SetupConfigurationWrite): Promise<void> {
     if (disposed || state.saving || !current) return;
-    const source = signature;
-    ++generation;
-    publish({ saving: true, loading: false, saveError: null });
+    const source = scopeKey;
+    const previousIntent = state.intent;
+    publish({ saving: true, saveError: null, ...(intent ? {intent} : {}) });
     try {
       await action();
-      // A navigation refresh may already have installed a newer canonical record.
-      if (!disposed && source === signature && current) await read({ ticket_id: current.id });
+      if (!disposed && source === scopeKey && intent) intents.set(intent.employee_backend, intent);
     } catch (saveError) {
-      if (!disposed && source === signature) publish({ saveError });
+      if (!disposed && source === scopeKey) publish({ saveError, intent: previousIntent });
     } finally {
-      if (!disposed) publish({ saving: false });
+      if (!disposed && source === scopeKey) publish({ saving: false });
     }
   }
   return {
-    sync(ticket: SetupTicket | null): void {
+    sync(ticket: SetupTicket | null, workspace?: Pick<ConversationStartValues, "workspace_folder" | "workspace_path_policy">): void {
+      const nextScope = JSON.stringify([ticket?.id, ticket?.locale, workspace?.workspace_folder, workspace?.workspace_path_policy]);
       const next = ticket ? JSON.stringify([ticket.id, ticket.record_sha256, ticket.locale,
-        ticket.employee_backend, ticket.employee_launch_model, ticket.employee_launch_reasoning_effort, ticket.launch_validation]) : "";
+        ticket.employee_backend, ticket.employee_launch_model, ticket.employee_launch_reasoning_effort, ticket.launch_validation, nextScope]) : "";
       if (disposed || next === signature) return;
+      const configurationChanged = current?.id !== ticket?.id || current?.employee_backend !== ticket?.employee_backend
+        || current?.employee_launch_model !== ticket?.employee_launch_model
+        || current?.employee_launch_reasoning_effort !== ticket?.employee_launch_reasoning_effort;
+      const scopeChanged = scopeKey !== nextScope;
+      scopeKey = nextScope;
+      if (scopeChanged) intents.clear();
       signature = next;
       current = ticket;
-      ++generation;
-      publish({ response: null, request: null, loading: false, error: null, saveError: null });
-      if (ticket) void read({ ticket_id: ticket.id });
+      if (scopeChanged) ++generation;
+      publish({ ...(scopeChanged ? {response: null, request: null, saving: false, loading: false, error: null} : {}), saveError: null, ...(configurationChanged ? {intent: null} : {}) });
+      if (ticket && scopeChanged && workspace?.workspace_folder !== undefined) void read({ ticket_id: ticket.id });
     },
     retry(): Promise<void> {
-      return state.request ? read(state.request) : Promise.resolve();
+      return state.request ? read(state.request, true) : Promise.resolve();
     },
     previewBackend(backend: ConversationBackendKey): Promise<void> {
       if (!current || state.saving) return Promise.resolve();
-      // Omitted model/effort preserve exact saved intent; no backend default is selected.
-      return read({ ticket_id: current.id, employee_backend: backend });
-    },
-    chooseModel(row: PickerRow, effort: string | null): Promise<void> {
-      if (!current || state.loading || !state.response?.rows.includes(row)) return Promise.resolve();
-      const ticketId = current.id;
-      const backend = state.response.validation.selection.backend_key;
-      return mutate(() => dependencies.save(ticketId, {
-        employee_backend: backend,
-        employee_launch_model: row.submitted_token,
-        employee_launch_reasoning_effort: effort,
-        selection_kind: row.selection_kind
-      }));
+      if (state.intent) intents.set(state.intent.employee_backend, state.intent);
+      else intents.set(current.employee_backend, {
+        employee_backend: current.employee_backend, employee_launch_model: current.employee_launch_model,
+        employee_launch_reasoning_effort: current.employee_launch_reasoning_effort,
+        selection_kind: "legacy_unclassified"
+      });
+      const intent = intents.get(backend) ?? {
+        employee_backend: backend, employee_launch_model: null,
+        employee_launch_reasoning_effort: null, selection_kind: "legacy_unclassified" as const
+      };
+      publish({request: {ticket_id: current.id, employee_backend: backend}, intent});
+      return Promise.resolve();
     },
     chooseCustomModel(model: string, effort: string | null): Promise<void> {
       if (!current || !model.trim()) return Promise.resolve();
       const ticketId = current.id;
       const backend = state.request?.employee_backend ?? current.employee_backend;
-      return mutate(() => dependencies.save(ticketId, {
-        employee_backend: backend,
-        employee_launch_model: model,
-        employee_launch_reasoning_effort: effort,
-        selection_kind: "legacy_unclassified"
-      }));
-    },
-    chooseDestination(locale: TicketLocale): Promise<void> {
-      if (!current || locale === current.locale) return Promise.resolve();
-      const captured = current;
-      if (!captured.record_sha256) {
-        publish({ saveError: new Error("Read the current Ticket before moving it.") });
-        return Promise.resolve();
-      }
-      const expectedRecord = captured.record_sha256;
-      return mutate(() => dependencies.move(captured.id, locale, expectedRecord));
+      const intent: SetupConfigurationWrite = {
+        employee_backend: backend, employee_launch_model: model,
+        employee_launch_reasoning_effort: effort, selection_kind: "legacy_unclassified"
+      };
+      return mutate(() => dependencies.save(ticketId, intent), intent);
     },
     dispose(): void { disposed = true; ++generation; }
   };

@@ -376,6 +376,11 @@ Read-only spool inspection establishes compatibility without migration or recove
 The [Mac operator runbook](mac-executor-installation.md) supplies the concrete checks.
 No automatic two-host update or general migration mechanism exists.
 
+Protocol 14 removes the unused authorized-action wire variant. Both peers must use
+a compatible protocol-14 build. Format-2 journal bytes and immutable identities stay
+unchanged. An unsupported pending envelope refuses startup without deletion. Recovery
+requires a compatible executable and preserved state, never a reset or silent discard.
+
 ## Fresh installation and retained journals
 
 The production installation path uses a format-2 journal. Read-only preflight
@@ -411,7 +416,7 @@ The proxy preserves the requested port in `Host` and preview-local redirects.
 It strips Panels credentials and hop-by-hop headers before the preview receives a
 request. Hosted access still passes through the existing trusted ingress. Lease,
 remote connection, and stream failures return the existing unavailable response.
-Earlier peers refuse the protocol 9 handshake before replay.
+Earlier peers refuse the protocol 14 handshake before replay.
 
 Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
 a real browser. That proves the software boundary and does not prove physical Mac

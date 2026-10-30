@@ -23,23 +23,20 @@ from planner.conversation.contracts import (
     WorkspacePathPolicy,
 )
 from planner.conversation.events import PromptDeliveryUncertainEventPayload, PromptEventPayload
+from planner.conversation.launch_intent import bind_model_intent
 from planner.conversation.message_content import text_message_content
 from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, SelectionKind
-from planner.conversation.model_resolution.logic.validation import (
-    reported_selection_blocks,
-    submission_validation,
-)
+from planner.conversation.snapshot import BackendModel
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets
-from planner.tickets import launch_authority as authority
 
 
 def test_unknown_alias_target_has_no_inferred_policy_or_concrete_mismatch(tmp_db: Any) -> None:
     for kind in (SelectionKind.provider_alias, SelectionKind.concrete, SelectionKind.panels_alias):
         requested = selection("opus", kind, backend_key=Backend.claude)
-        result = submission_validation(requested)
+        result = bind_model_intent(requested)
         assert result.launch_token == "opus"
         dependencies = recorded_policy_dependencies(
             tmp_db,
@@ -49,36 +46,24 @@ def test_unknown_alias_target_has_no_inferred_policy_or_concrete_mismatch(tmp_db
             evidence=None,
         )
         assert dependencies.model_ids == ("opus",)
-        assert not reported_selection_blocks(
-            result,
-            reported_model="claude-opus-9",
-            reported_effort=None,
-            disabled_models=frozenset({"different-model"}),
-        )
-        assert reported_selection_blocks(
-            result,
-            reported_model="claude-opus-9",
-            reported_effort=None,
-            disabled_models=frozenset({"claude-opus-9"}),
-        )
 
 
 def test_panels_alias_needs_mapping_but_custom_token_and_effort_do_not() -> None:
-    assert submission_validation(selection("sol", SelectionKind.panels_alias)).launch_token is None
-    result = submission_validation(
+    assert bind_model_intent(selection("sol", SelectionKind.panels_alias)).launch_token is None
+    result = bind_model_intent(
         selection(
             "provider-future", SelectionKind.legacy_unclassified, effort="provider-future-effort"
         )
     )
     assert result.launch_token == "provider-future"
     assert result.selection.reasoning_effort == "provider-future-effort"
-    mapped = submission_validation(
-        selection("sol", SelectionKind.panels_alias), observation((row(), row("gpt-7-sol")))
+    mapped = bind_model_intent(
+        selection("sol", SelectionKind.panels_alias), models=(BackendModel("gpt-6-sol"), BackendModel("gpt-7-sol"))
     )
     assert mapped.launch_token == "gpt-7-sol"
-    disabled = submission_validation(
+    disabled = bind_model_intent(
         selection("sol", SelectionKind.panels_alias),
-        observation((row(),)),
+        models=(BackendModel("gpt-6-sol"),),
         disabled_models=frozenset({"gpt-6-sol"}),
     )
     assert disabled.launch_token is None
@@ -95,7 +80,6 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
     source = ScopedCatalogue(observation((row(),), launch=launch))
     service, _, path = setup(tmp_path, source)
     harness = _Harness(path)
-    harness.system._model_resolver = service
     harness.system.configure_destination_validation(source)
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
     original = _FakeBackendChild.write_prompt
@@ -122,6 +106,12 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
     monkeypatch.setattr(_FakeBackendChild, "write_prompt", write)
 
     async def exercise() -> None:
+        refreshed = await harness.system.destination_backend_snapshot(
+            Backend.codex, binding, "vps", refresh=True,
+        )
+        assert refreshed.available_models and len(source.calls) == 1
+        source.calls.clear()
+        source.fail = True
         conn = connect(str(path))
         try:
             ticket = tickets.create_ticket(
@@ -178,22 +168,8 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
                     assert any(
                         isinstance(e.payload, PromptDeliveryUncertainEventPayload) for e in events
                     )
-                    rows = conn.execute(
-                        "SELECT policy_context_json FROM ticket_launch_authority"
-                    ).fetchall()
-                    assert rows and all('"phase":"submitted"' in r[0] for r in rows)
-                    conn.execute(
-                        "UPDATE ticket_launch_authority SET owner_process='recovered:dead'"
-                    )
-                    conn.commit()
-                    authority.reconcile_persisted_launch_authority(conn)
-                    assert conn.execute("SELECT COUNT(*) FROM ticket_launch_authority").fetchone()[
-                        0
-                    ]
-            if case in ("rejected", "cancel_accepted"):
-                assert (
-                    conn.execute("SELECT COUNT(*) FROM ticket_launch_authority").fetchone()[0] == 0
-                )
+            assert conn.execute("SELECT COUNT(*) FROM ticket_launch_authority").fetchone()[0] == 0
+            assert source.calls == []
         finally:
             conn.close()
             await harness.system.shutdown()
@@ -213,8 +189,9 @@ def test_real_core_report_and_held_boundaries(
     from planner.conversation.backends.contracts import BackendPromptAccepted
     from planner.conversation.contracts import (
         HeldPromptPromotionMode,
+        PromptDeliveryInjected,
         PromptDeliveryMode,
-        PromptDeliveryRefused,
+        PromptDeliveryStarted,
     )
     from planner.conversation.events import (
         ConversationTurnEnding,
@@ -232,7 +209,6 @@ def test_real_core_report_and_held_boundaries(
     source = ScopedCatalogue(observation((row(token),), launch=launch))
     service, _, path = setup(tmp_path, source)
     harness = _Harness(path)
-    harness.system._model_resolver = service
     harness.system.configure_destination_validation(source)
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
     original = _FakeBackendChild.write_prompt
@@ -394,7 +370,9 @@ def test_real_core_report_and_held_boundaries(
                 assert state is not None and state.child_is_quarantined
                 assert state.reserved_turn is not None
                 assert attempted_tokens == [token, token]
-                assert conn.execute("SELECT COUNT(*) FROM ticket_launch_authority").fetchone()[0]
+                assert (
+                    conn.execute("SELECT COUNT(*) FROM ticket_launch_authority").fetchone()[0] == 0
+                )
                 assert any(
                     isinstance(e.payload, PromptDeliveryUncertainEventPayload)
                     for e in await harness.events(conversation_id)
@@ -421,39 +399,38 @@ def test_real_core_report_and_held_boundaries(
                 for e in await harness.events(conversation_id)
                 if isinstance(e.payload, ProviderSelectionReportedEventPayload)
             )
-            assert report.blocks_submission is (case in ("mismatch", "reported_disabled"))
+            assert report.blocks_submission is False
             direct = await harness.system.send(
                 conversation_id,
                 text_message_content("direct steer"),
                 sender_label="Owner",
                 mode=PromptDeliveryMode.steer,
             )
-            from planner.conversation.contracts import PromptDeliveryQueued
-
-            assert isinstance(direct, PromptDeliveryQueued) is (
-                case in ("mismatch", "reported_disabled")
-            )
+            assert isinstance(direct, PromptDeliveryInjected)
             await harness.system.send(
                 conversation_id, text_message_content("held steer"), sender_label="Owner"
             )
             held = await harness.system.held_prompts(conversation_id)
-            assert len(held) == (2 if case in ("mismatch", "reported_disabled") else 1)
+            assert len(held) == 1
             promoted = await harness.system.promote_held_prompt(
                 conversation_id, held[0].held_prompt_id, HeldPromptPromotionMode.steer
             )
-            assert isinstance(promoted, PromptDeliveryRefused) is (
-                case in ("mismatch", "reported_disabled")
+            assert isinstance(promoted, PromptDeliveryInjected)
+            # Legacy report payloads remain readable but cannot refuse the next send.
+            conn.execute(
+                "UPDATE conversation_events SET "
+                "payload=json_set(payload, '$.blocks_submission', json('true')) "
+                "WHERE conversation_id=? AND kind='provider_selection_reported'",
+                (conversation_id,),
             )
+            conn.commit()
             await harness.system.shutdown()
             harness = _Harness(path)
-            harness.system._model_resolver = service
             harness.system.configure_destination_validation(source)
             restarted = await harness.system.send(
                 conversation_id, text_message_content("restart"), sender_label="Owner"
             )
-            assert isinstance(restarted, PromptDeliveryRefused) is (
-                case in ("mismatch", "reported_disabled")
-            )
+            assert isinstance(restarted, PromptDeliveryStarted)
         finally:
             conn.close()
             await harness.system.shutdown()

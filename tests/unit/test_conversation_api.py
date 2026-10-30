@@ -1590,7 +1590,6 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     app = create_app(config, build_clock(config), conn_factory)
     with TestClient(app) as client:
         # This wiring proof creates a row without any provider catalogue probe.
-        monkeypatch.setattr(app.state.conversation.system, "_model_resolver", None)
         # Startup discards live reachability but retains conclusive callback closure.
         for ask, expected in zip(
             asks,

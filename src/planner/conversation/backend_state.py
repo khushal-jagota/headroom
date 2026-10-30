@@ -240,10 +240,16 @@ def require_enabled_model(
     model_id: str,
 ) -> None:
     """Refuse a new choice without changing historical selections."""
-    if not model_is_enabled(conn, backend_key, model_id):
+    from planner.conversation.backends.claude_model_catalog import claude_launch_model
+
+    mapped = (claude_launch_model(model_id)
+              if backend_key is ConversationBackendKey.claude else model_id)
+    disabled = next((token for token in dict.fromkeys((model_id, mapped))
+                     if token is not None and not model_is_enabled(conn, backend_key, token)), None)
+    if disabled is not None:
         raise PlannerError(
             ErrorCode.validation,
-            f'Model "{model_id}" is disabled. Choose an enabled model.',
+            f'Model "{disabled}" is disabled. Choose an enabled model.',
             {"employee_backend": str(backend_key), "employee_launch_model": model_id},
         )
 
@@ -254,39 +260,13 @@ def write_model_enablement(
     model_id: str,
     enabled: bool,
 ) -> None:
-    from planner.conversation.admission.policy import policy_key, recovery_policy_key
-    from planner.tickets.launch_authority import _write, acquire_mutation
-
-    with _write(conn):
-        if model_is_enabled(conn, backend_key, model_id) == enabled:
-            return
-        markers = conn.execute(
-            "SELECT authority_key,command_id,lease_id FROM ticket_launch_authority "
-            "WHERE authority_key IN (?,?)",
-            (recovery_policy_key(None), recovery_policy_key(backend_key)),
-        ).fetchall()
-        if markers and backend_key is not ConversationBackendKey.hermes:
-            raise PlannerError(
-                ErrorCode.already_running,
-                "model policy is unavailable until original admission scope "
-                "is recovered or settled",
-                {
-                    "reason": "model_policy_scope_unresolved",
-                    "authority_keys": sorted({str(row[0]) for row in markers}),
-                    "command_ids": sorted({str(row[1]) for row in markers if row[1]}),
-                    "source_leases": sorted({str(row[2]) for row in markers}),
-                },
-            )
-        permit = acquire_mutation(conn, (policy_key(backend_key, model_id),))
-        try:
-            conn.execute(
-                "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) "
-                "VALUES (?, ?, ?) "
-                "ON CONFLICT(backend_key, model_id) DO UPDATE SET enabled = excluded.enabled",
-                (str(backend_key), model_id, int(enabled)),
-            )
-        finally:
-            permit.release(conn)
+    # One upsert is atomic and joins an existing caller transaction when present.
+    conn.execute(
+        "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(backend_key, model_id) DO UPDATE SET enabled = excluded.enabled",
+        (str(backend_key), model_id, int(enabled)),
+    )
 
 
 def resolve_usage_model_scopes(

@@ -71,7 +71,6 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
     service._now = time.time
     harness = _Harness(path)
     harness.clock.now = float(stamp)
-    harness.system._model_resolver = service
     harness.system.configure_destination_validation(source)
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
     original_steer = _FakeBackendChild.steer

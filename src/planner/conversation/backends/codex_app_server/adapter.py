@@ -438,11 +438,15 @@ class CodexAppServerBackendChild:
         no Codex wire field and does not alter the turn. Native commands and automatic
         maintenance still use their dedicated routes without rewritten command text.
         """
+        from planner.conversation.launch_intent import reasoning_effort_is_set
+
         del mode
         thread_id = self._bound_thread()
         model = self._model if model_change is None else model_change
         reasoning_effort = (
-            self._reasoning_effort if reasoning_effort_change is None else reasoning_effort_change
+            self._reasoning_effort
+            if reasoning_effort_change is None and not reasoning_effort_is_set()
+            else reasoning_effort_change
         )
         check = current_emission_check()
         if check is not None:
@@ -504,10 +508,9 @@ class CodexAppServerBackendChild:
                     thread_id=thread_id,
                     content=content,
                     model=model,
-                    reasoning_effort=reasoning_effort,
                     invocation=invocation,
                 )
-                turn.turn_id = await self._start_the_turn(parameters, turn)
+                turn.turn_id = await self._start_the_turn(parameters, turn, reasoning_effort)
         except (PromptWriteFailed, AdmissionRefused, BackendPromptRejected):
             # No turn started, so there is no ending to report and nothing to settle: the
             # core hears one refusal and the conversation is idle again.
@@ -940,7 +943,6 @@ class CodexAppServerBackendChild:
         thread_id: str,
         content: MessageContent,
         model: str | None,
-        reasoning_effort: str | None,
         invocation: _CatalogInvocation | None = None,
     ) -> bindings.TurnStartParams:
         access = self._resolved_start.access
@@ -948,7 +950,7 @@ class CodexAppServerBackendChild:
             threadId=thread_id,
             input=self._turn_input(content, invocation),
             model=model,
-            effort=None if reasoning_effort is None else bindings.ReasoningEffort(reasoning_effort),
+            effort=None,
             approvalPolicy=_approval_policy(access),
             approvalsReviewer=_approvals_reviewer(access),
             sandboxPolicy=_turn_sandbox_policy(access),
@@ -1103,12 +1105,16 @@ class CodexAppServerBackendChild:
             turn.interrupt_turn_id = turn_id
 
     async def _start_the_turn(
-        self, parameters: bindings.TurnStartParams, turn: _TurnInFlight
+        self, parameters: bindings.TurnStartParams, turn: _TurnInFlight, effort: str | None
     ) -> str:
         """Accept only the correlated response; notifications cannot identify a request."""
         turn.awaiting_start_response = True
         try:
-            answer = await self._client.begin_request("turn/start", _wire(parameters))
+            payload = _wire(parameters)
+            # The generated enum describes this pin, not all provider-supported values.
+            # Explicit null must reach Codex instead of inheriting the previous effort.
+            payload["effort"] = effort
+            answer = await self._client.begin_request("turn/start", payload)
             result = await self._client.finish_request("turn/start", answer)
         except CodexRequestRejected as rejected:
             # Activity can contradict non-admission. Keep ownership uncertain in that case.

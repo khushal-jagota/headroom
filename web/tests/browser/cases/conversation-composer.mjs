@@ -17,14 +17,23 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
   import UnifiedModelPicker from "../src/components/conversation/UnifiedModelPicker.svelte";
   import WorkerConfigurationSetup from "../src/components/WorkerConfigurationSetup.svelte";
   import { resolveModelPicker } from "../src/lib/conversation/modelPicker";
-  import { pickerRows, pickerValidation } from "../tests/fixtures/modelPickerFacts";
+  import { pickerModels, representativeClaudeModels, representativeCodexModels } from "../tests/fixtures/modelPickerFacts";
   const pickerProof = new URLSearchParams(location.search).has("picker");
   const missingRetry = new URLSearchParams(location.search).has("missingRetry");
   const selectionProof = new URLSearchParams(location.search).get("selection");
-  const proofRows = selectionProof ? pickerRows.map((row, index) => ({...row, current_selection: selectionProof === "conflict" && index < 2})) : pickerRows;
-  const proofValidation = selectionProof ? undefined : pickerValidation;
-  const legacyModels = [{model_id: "legacy-model", display_name: "Legacy only", reasoning_effort_options: ["legacy-effort"]}];
-  const view = resolveModelPicker({backendKey: "codex", model: "legacy-model", reasoningEffort: "legacy-effort", backends: [], models: legacyModels});
+  const normal = new URLSearchParams(location.search).get("normal");
+  let proofModels = $state.raw(normal === "claude" ? representativeClaudeModels : normal === "codex" ? representativeCodexModels : pickerModels);
+  let proofError = $state<string | null>(null);
+  let proofSelection = $state<any>(normal === "codex"
+    ? {backendKey:"codex",model:"gpt-6-astra",reasoningEffort:"low"}
+    : {backendKey:"claude",model:normal ? "claude-opus-5-5" : "opus",reasoningEffort:"high"});
+  (window as any).__pickerPending = () => {
+    proofSelection = {backendKey:"claude",model:"sonnet",reasoningEffort:null};
+    proofModels = [];
+  };
+  (window as any).__pickerStale = () => {proofModels = pickerModels;};
+  (window as any).__pickerAvailability = () => {proofError = "Claude is not installed on Mac.";};
+  const view = $derived(resolveModelPicker({backendKey: proofSelection.backendKey, model: proofSelection.model, reasoningEffort: proofSelection.reasoningEffort, backends: [], models: proofModels}));
   (window as any).__pickerReads = [];
   (window as any).__pickerChoices = [];
   const scopedRead = Object.freeze({ticket: "fixture", destination: "macos", token: "opus", effort: "high"});
@@ -58,8 +67,11 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
   {#if pickerProof}
     <div class="picker-proof">
       <WorkerConfigurationSetup ticketId="fixture" destination="macos" employeeBackend="claude" employeeLaunchModel="opus" employeeLaunchReasoningEffort="high" onSave={async () => { throw new Error("No fixture Ticket writes"); }} />
-      <UnifiedModelPicker {view} snapshots={[]} models={legacyModels} backendEffortOptions={["legacy-effort"]} canonicalRows={proofRows} validation={proofValidation} onRetry={missingRetry ? undefined : retry} scrollPanel chevron="none"
-        onChooseBackend={() => {}} onChooseModel={(model, effort) => (window as any).__pickerChoices.push({model, effort})} />
+      <UnifiedModelPicker {view} displaySelection={proofSelection} snapshots={[]} models={proofModels} backendEffortOptions={[]} readError={proofError} onRetry={missingRetry ? undefined : retry} scrollPanel chevron="none"
+        onChooseBackend={() => {}} onChooseModel={(model, effort) => {
+          (window as any).__pickerChoices.push({model, effort});
+          if (normal) proofSelection = {...proofSelection, model, reasoningEffort:effort};
+        }} />
     </div>
   {:else}
   <ConversationComposer conversationId="fixture" conversationExists backendKey="claude"

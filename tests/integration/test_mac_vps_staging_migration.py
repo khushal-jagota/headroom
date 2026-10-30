@@ -166,12 +166,10 @@ def test_retained_source_heads_join_without_losing_authority(
 
 def test_scoped_catalog_migration_keeps_legacy_evidence_unverified(tmp_path: Path) -> None:
     """Legacy values survive byte-for-byte and grant neither positive nor negative proof."""
-    from tests.unit.test_current_model_resolution import context, observation, row, selection
+    from tests.unit.test_current_model_resolution import selection
 
     from planner.conversation.contracts import ConversationBackendKey
-    from planner.conversation.model_resolution.data import ModelResolutionStore
-    from planner.conversation.model_resolution.logic.validation import validate_model_selection
-    from planner.conversation.model_resolution.service import resolve_cached_model
+    from planner.conversation.launch_intent import bind_model_intent
     from planner.core.contracts import PlannerError
 
     path = tmp_path / "catalogs.db"
@@ -196,33 +194,9 @@ def test_scoped_catalog_migration_keeps_legacy_evidence_unverified(tmp_path: Pat
                 tuple(value) for value in conn.execute("SELECT * FROM model_catalogue_models")
             ] == [legacy_catalog]
             assert conn.execute("SELECT * FROM scoped_model_catalog_observations").fetchall() == []
-            assert (
-                validate_model_selection(
-                    selection(),
-                    context(),
-                    None,
-                    now=1000,
-                    attempt_id="a",
-                ).state.value
-                == "unresolved"
-            )
-            with pytest.raises(PlannerError, match="verification is unresolved"):
-                resolve_cached_model(conn, ConversationBackendKey.codex, "gpt-5-sol")
-        store = ModelResolutionStore(str(path))
-        duplicate = row()
-        scoped = observation((duplicate, duplicate))
-        store.keep_observation(scoped)
-        assert store.read_observation(context()) == scoped
-        assert (
-            validate_model_selection(
-                selection(),
-                context(),
-                scoped,
-                now=1000,
-                attempt_id="a",
-            ).state.value
-            == "compatible"
-        )
+            exact = bind_model_intent(selection())
+            assert exact.launch_token == selection().submitted_token
+            assert exact.evidence is None
         with engine.begin() as connection:
             conn = _raw(connection)
             assert [

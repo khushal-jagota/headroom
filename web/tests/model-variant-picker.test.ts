@@ -98,28 +98,3 @@ describe("current model variants in the shared picker", () => {
     expect(view.models[0]).toEqual({ value: "opus", name: "Custom model" });
   });
 });
-
-// The old snapshot tests above protect the unchanged conversation input.
-// These facts protect the canonical presentation boundary without an endpoint adapter.
-import { pickerRowName, pickerRowDetail, validationSummary, validationDetail } from "../src/lib/conversation/modelPickerFacts";
-import { pickerRows, pickerValidation } from "./fixtures/modelPickerFacts";
-
-describe("canonical picker presentation", () => {
-  it("keeps alias intent, exact concrete identity and retained offer facts distinct", () => {
-    expect(pickerRowName(pickerRows[0])).toBe("opus → claude-opus-5 (advertised) · was claude-opus-4-5 · unverified · current selection · catalog unknown");
-    expect(pickerRowName(pickerRows[1])).toBe("Opus 5 · claude-opus-5 · stale · catalog present");
-    expect(pickerRowName(pickerRows[2])).toContain("catalog absent");
-    expect(pickerRowDetail(pickerRows[0])).toContain("Effort: unknown.");
-    expect(pickerRowDetail(pickerRows[1])).toContain("Effort: none.");
-  });
-
-  it("keeps canonical destination, reason and corrective action without claiming native failure", () => {
-    expect(validationSummary(pickerValidation)).toBe("Catalog unavailable for Mac.");
-    expect(validationDetail(pickerValidation)).toContain("Reason: catalog_unavailable.");
-    expect(validationDetail(pickerValidation)).toContain("Required action: refresh catalog.");
-    expect(validationDetail(pickerValidation)).toContain("Context: fixture-context.");
-    expect(validationDetail(pickerValidation)).toContain("revision fixture-revision");
-    expect(validationSummary({...pickerValidation, selection: {...pickerValidation.selection, destination: "vps"}})).toBe("Catalog unavailable for VPS.");
-    expect(pickerRowDetail(pickerRows[0])).toContain("Source: fixture-observation, revision fixture-revision, row 0.");
-  });
-});

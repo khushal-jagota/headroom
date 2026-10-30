@@ -17,7 +17,7 @@ export function ticketMastheadImpact(impact:RecordImpact,record:TicketRecord | u
     || impact.kind==='conversation' && impact.id===record.value.conversation_id && impactHas(impact,['attention']);
 }
 
-export type TicketNavigationOperation='title'|'recap'|'blocker'|'scope'|'stage'|'backlog'|'conversation'|'private'|'configuration'|'move';
+export type TicketNavigationOperation='title'|'recap'|'blocker'|'scope'|'stage'|'backlog'|'conversation'|'private'|'configuration';
 
 /** Potential canonical effects from the existing Ticket writers, before dispatch. */
 export function ticketCommandImpact(view:EffectiveNavigationView | null | undefined,id:string,operation:TicketNavigationOperation):CommandImpact {
@@ -28,7 +28,6 @@ export function ticketCommandImpact(view:EffectiveNavigationView | null | undefi
     : operation==='blocker' ? ['blocked','ticket_status','updated_at']
     : operation==='scope' ? ['ceiling','ceiling_holder','proposal_revision','ticket_status','updated_at']
     : operation==='backlog' ? ['is_backlogged','updated_at']
-    : operation==='move' ? ['locale','conversation_id','updated_at']
     : operation==='conversation' ? ['conversation_id','updated_at','ticket_status','worker_step_claim_out']
     : operation==='private' || operation==='configuration' ? ['updated_at']
     : ['stage','blocked','gating_field','stage_ownership','terminal','ceiling','ceiling_holder','proposal_field','proposal_created_at','proposal_revision','ticket_status','worker_step_claim_out','updated_at'];
@@ -40,7 +39,7 @@ export function ticketCommandImpact(view:EffectiveNavigationView | null | undefi
       records.push({kind:'ticket',id:candidate.id,fields:['blocked','ticket_status','updated_at']});
     }
   }
-  if(operation==='conversation' || operation==='stage' || operation==='move') {
+  if(operation==='conversation' || operation==='stage') {
     if(record.value.conversation_id!==null) records.push({kind:'conversation',id:record.value.conversation_id,fields:'*'});
     for(const address of view.publication.records) if(address.kind==='address' && address.value.owner_kind==='ticket' && address.value.owner_id===id) records.push({kind:'address',id:address.id,fields:'*'});
     // New address/conversation identities reach mounted owner/count projections via

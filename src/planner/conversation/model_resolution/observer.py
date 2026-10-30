@@ -87,7 +87,6 @@ class ProductionCatalogObserver:
         )
         self._environment = environment or SubprocessBackendProbeEnvironment()
         self._now = now
-        self._contexts: dict[tuple[object, ...], str] = {}
 
     def _workspace(self, workspace: CatalogWorkspaceBinding) -> Path:
         if (
@@ -123,21 +122,8 @@ class ProductionCatalogObserver:
         localized = self._workspace(workspace)
         _, environment = self._launch(backend_key)
         generation = _account_generation(backend_key, environment, localized)
-        # Unknown accounts stay local to this capture/probe operation. Known login
-        # generations can share advisory rows within this runtime owner only.
-        facts = (
-            self.destination,
-            backend_key,
-            self.executor_identity,
-            workspace,
-            localized,
-            generation,
-        )
-        context_ref = (
-            self._contexts.setdefault(facts, uuid4().hex) if generation is not None else uuid4().hex
-        )
         return LaunchContext(
-            context_ref,
+            uuid4().hex,
             self.destination,
             backend_key,
             self.executor_identity,
@@ -251,7 +237,7 @@ class ProductionCatalogObserver:
                         model.model_id,
                         model.display_name or None,
                         model.reasoning_effort_options,
-                        False,
+                        model.hidden,
                         None,
                         model.model_id,
                         "codex:model/list",
@@ -259,6 +245,9 @@ class ProductionCatalogObserver:
                     for model in catalog.models
                 )
                 complete, limited = catalog.complete, catalog.visibility_limited
+                if catalog.authenticated is not None:
+                    credentials = (PrerequisiteStatus.available if catalog.authenticated
+                                   else PrerequisiteStatus.unavailable)
             else:
                 claude_catalog = await probe_claude_model_catalog(
                     str(executable),
@@ -277,7 +266,7 @@ class ProductionCatalogObserver:
                         model.hidden,
                         model.enabled,
                         model.model_id if model.model_id == model.resolved_model_id else None,
-                        "claude:list_models",
+                        "claude:local-version-recipe",
                     )
                     for model in claude_catalog.models
                 )

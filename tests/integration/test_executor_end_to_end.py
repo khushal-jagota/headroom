@@ -330,19 +330,13 @@ class ExecutorHarness:
 
 def make_core(endpoint: ExecutorEndpoint) -> SqliteProcessConversationSystem:
     from planner.conversation.backend_state import BackendStateStore
-    from planner.conversation.model_resolution.data import ModelResolutionStore
-    from planner.conversation.model_resolution.service import ModelResolutionService
     from planner.conversation.snapshot import BackendSnapshotService
 
     system = SqliteProcessConversationSystem(
         store=ConversationStore(endpoint.db_path),
         backend_child_factories={key: endpoint.factory for key in ConversationBackendKey},
         message_files=ConversationMessageFiles(endpoint.db_path),
-        model_resolver=ModelResolutionService(
-            snapshots=BackendSnapshotService(),
-            store=ModelResolutionStore(endpoint.db_path),
-            backend_state=BackendStateStore(endpoint.db_path),
-        ),
+
     )
     # All transport fixtures are native. Local discovery is never called here.
     system._catalog_endpoint = endpoint
@@ -758,6 +752,16 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                 employee_launch_model="scripted",
                 selection_kind="legacy_unclassified",
             )
+            from planner.runtime.conversation_start import resolve_ticket_launch_selection
+            _, binding = resolve_ticket_launch_selection(conn, ticket)
+            observer = harness.mac._catalog_observer
+            snapshots = await harness.system.destination_backend_snapshot(
+                ConversationBackendKey.codex, binding, "macos", refresh=True,
+            )
+            assert snapshots.available_models and observer.calls > 0
+            observer.calls = 0
+            observer.block = True
+            refreshed_at = time.monotonic()
             original = read_launch_selection(conn, ticket.id)
             assert original.selection_kind is SelectionKind.legacy_unclassified
             exact_text = "Exact lifecycle selection: café\nsecond line"
@@ -805,7 +809,7 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                 assert selection["selection_kind"] == "concrete"
                 assert selection["submitted_token"] == "scripted"
                 assert selection["backend_key"] == "codex"
-                assert expectation["resolved_model_id"] == "scripted"
+                assert expectation["resolved_model_id"] is None
                 assert expectation["launch_token"] == "scripted"
                 assert expectation["child"] == {
                     "executor_incarnation": command.child.executor_incarnation,
@@ -820,6 +824,34 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                         "turn_number": command.turn.turn_number,
                     }
                 )
+            first_delivery_at = time.monotonic()
+            assert observer.calls == 0
+            assert second.sink is not None and second.turn is not None
+            await second.sink.turn_ended(
+                second.turn, ending=ConversationTurnEnding.completed,
+                error_summary=None, standard_error_tail=None,
+            )
+            await eventually(lambda: harness.system._conversations[conversation_id].phase.value == "idle",
+                             "First workflow turn did not settle")
+            async with conversation_link_lock(f"ticket:{ticket.id}"):
+                changed = await send_to_ticket_conversation(
+                    harness.system, conn, ticket.id, text_message_content("Second exact choice"),
+                    conversation_id=conversation_id,
+                    runs_under=ConversationStartOverrides(model="gpt-6.1-terra",
+                        reasoning_effort="future-effort", reasoning_effort_is_set=True),
+                    sender_label="Test", sender=CHIEF_PRINCIPAL,
+                    recipient=Principal(PrincipalKind.ticket, ticket.id), now=int(time.time()),
+                )
+            assert second.prompt_count == 2, changed
+            assert "Second exact choice" in second.delivered_text[1]
+            assert observer.calls == 0
+            writes = [command for command in harness.mac.registry._commands.values()
+                      if command.child.conversation_id == conversation_id
+                      and command.operation is ChildOperation.write_prompt]
+            assert writes[-1].arguments["model_change"] == "gpt-6.1-terra"
+            assert writes[-1].arguments["reasoning_effort_change"] == "future-effort"
+            print(f"synthetic native refresh-to-first-send: {first_delivery_at-refreshed_at:.3f}s; "
+                  f"change-to-second-send: {time.monotonic()-first_delivery_at:.3f}s")
             assert harness.mac.registry.children[first.reference.child_id] is first
             assert harness.native.stop_count == 0
             assert harness.native.sink is not None and harness.native.turn is not None

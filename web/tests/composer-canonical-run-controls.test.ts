@@ -4,7 +4,7 @@ import type { ComposerRunControlsInput } from "../src/lib/conversation/runContro
 import { sendBodyFor } from "../src/lib/conversation/composer";
 import { mintOutgoingMessage, rememberOutgoingMessages, recallOutgoingMessages, resetOutgoingImageReservationsForTest } from "../src/lib/conversation/outgoing";
 import { rowForBody } from "../src/lib/conversation/view/presentation";
-import { pickerRows, pickerValidation } from "./fixtures/modelPickerFacts";
+import { pickerValidation } from "./fixtures/modelPickerFacts";
 
 const input: ComposerRunControlsInput = {
   selection: {pickedBackend: null, pickedModel: "exact-hidden-id", pickedReasoningEffort: "high", selectionKind: "concrete", effortIsSet: true},
@@ -13,7 +13,6 @@ const input: ComposerRunControlsInput = {
   models: [{model_id: "different-id", display_name: "Different", enabled: true}],
   backends: [], effortOptions: ["low"], startsOnModel: "other-default", startsOnReasoningEffort: "low",
   inputDisabled: false, hasSendableContent: true, sendsInFlight: 0,
-  canonicalRows: [], validation: null
 };
 
 // Legacy normalization cannot prove retained canonical intent when a scoped read fails,
@@ -22,20 +21,19 @@ describe("canonical composer intent", () => {
   it("retains exact hidden model and unsupported explicit effort across unavailable reads", () => {
     const view = resolveComposerRunControls({...input, readError: "The scoped request failed."});
     expect(view.readError).toBe("The scoped request failed.");
-    expect(view.validation).toBeNull();
     expect(view.normalizedSelection).toEqual(input.selection);
     expect(view.carriedRunValues).toEqual({model: "exact-hidden-id", reasoningEffort: "high", backendKey: null, selectionKind: "concrete", effortIsSet: true});
-    expect(view.canonicalRows).toEqual([]);
-    expect(view.pickerSource.models).toEqual([]);
+    expect(view.pickerSource.models).toEqual(input.models);
+    expect(view.picker).toMatchObject({backendKey: "claude", modelValue: "exact-hidden-id", reasoningEffort: "high"});
   });
 
   it("carries a deliberate same-token kind choice and null effort without resolving its alias locally", () => {
-    const row = pickerRows[0];
+    const row = {submitted_token: "opus", resolved_model_id: "claude-opus-5"};
     const selection = applyComposerRunSelectionIntent({...input, selection: {...input.selection, pickedModel: row.submitted_token, pickedReasoningEffort: null}}, {
-      intent: "choose_model", model: row.submitted_token, reasoningEffort: null, row
+      intent: "choose_model", model: row.submitted_token, reasoningEffort: null
     });
-    const view = resolveComposerRunControls({...input, selection, canonicalRows: pickerRows, validation: pickerValidation});
-    expect(view.carriedRunValues).toEqual({model: row.submitted_token, reasoningEffort: null, backendKey: null, selectionKind: row.selection_kind, effortIsSet: true});
+    const view = resolveComposerRunControls({...input, selection});
+    expect(view.carriedRunValues).toEqual({model: row.submitted_token, reasoningEffort: null, backendKey: null, selectionKind: "legacy_unclassified", effortIsSet: true});
     expect(view.carriedRunValues.model).not.toBe(row.resolved_model_id);
   });
 });
@@ -82,7 +80,7 @@ it("carries a custom provider token and explicit default effort without catalog 
 
 it("preserves custom token, effort, and explicit null in a direct conversation without canonical rows", () => {
   for (const effort of ["future-effort", null]) {
-    const direct = {...input, canonicalRows: undefined};
+    const direct = {...input};
     const selection = applyComposerRunSelectionIntent(direct, {intent: "choose_model", model: "provider-future", reasoningEffort: effort});
     const view = resolveComposerRunControls({...direct, selection});
     expect(view.carriedRunValues).toMatchObject({model: "provider-future", reasoningEffort: effort, selectionKind: "legacy_unclassified", effortIsSet: true});
@@ -100,4 +98,15 @@ it("shows observed admission separately from a later provider model report", () 
   const report = rowForBody({...item, key: "report"}, {kind: "provider_selection_reported", provider: "claude", source_kind: "response_model", turn_number: 1, child_lifetime: "child-1", model: "claude-reported", reasoning_effort: null});
   expect(report).toMatchObject({kind: "provider_selection_reported", model: "claude-reported", reasoningEffort: null});
   expect(report).not.toHaveProperty("providerSubmission");
+});
+
+// Read metadata must never overrule the newest explicit draft or explicit null effort.
+it("displays latest intent through stale advisory validation and absent rows", () => {
+  const selection = {...input.selection, pickedModel: "newest[1m]", pickedReasoningEffort: null};
+  const view = resolveComposerRunControls({...input, selection});
+  expect(view.picker).toMatchObject({modelValue: "newest[1m]", reasoningEffort: ""});
+  expect(view.picker.modelValue).toBe("newest[1m]");
+  expect(view.picker.reasoningEffort).toBe("");
+  const saved = resolveComposerRunControls({...input, selection: {pickedBackend:null, pickedModel:null, pickedReasoningEffort:null}, current: {model:"sonnet",reasoningEffort:null}, startsOnReasoningEffort:null});
+  expect(saved.picker).toMatchObject({modelValue:"sonnet",reasoningEffort:""});
 });

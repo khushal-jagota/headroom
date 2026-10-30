@@ -466,60 +466,6 @@ def update_worker_requirements(
     return read_worker_settings(conn, registry, worker_type)
 
 
-def correct_chief_model(
-    conn: sqlite3.Connection,
-    *,
-    backend: str,
-    old_model: str,
-    reasoning_effort: str | None,
-    new_model: str,
-) -> bool:
-    """Correct the authorized Chief request without a message or conversation reset."""
-    updated = conn.execute(
-        "UPDATE chief_settings SET employee_launch_model=? WHERE employee_id=? "
-        "AND employee_backend=? AND employee_launch_model=? "
-        "AND employee_launch_reasoning_effort IS ?",
-        (new_model, CHIEF_SETTINGS_KEY, backend, old_model, reasoning_effort),
-    )
-    return updated.rowcount == 1
-
-
-def correct_worker_default_model(
-    conn: sqlite3.Connection,
-    worker_type: str,
-    *,
-    backend: str,
-    old_model: str,
-    reasoning_effort: str | None,
-    new_model: str,
-    now: int,
-) -> bool:
-    """CAS the whole definition so a simultaneous configuration edit cannot be lost."""
-    import json
-
-    row = conn.execute(
-        "SELECT definition_json FROM worker_types WHERE worker_type=?", (worker_type,)
-    ).fetchone()
-    if row is None:
-        return False
-    previous = str(row["definition_json"])
-    payload = json.loads(previous)
-    profile = payload["profile"]
-    if (
-        profile["default_backend"],
-        profile["default_model"],
-        profile["default_reasoning_effort"],
-    ) != (backend, old_model, reasoning_effort):
-        return False
-    profile["default_model"] = new_model
-    updated = conn.execute(
-        "UPDATE worker_types SET definition_json=?, updated_at=? "
-        "WHERE worker_type=? AND definition_json=?",
-        (json.dumps(payload), now, worker_type, previous),
-    )
-    return updated.rowcount == 1
-
-
 def apply_skills(
     conn: sqlite3.Connection,
     raw: dict[str, Any],

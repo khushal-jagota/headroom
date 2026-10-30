@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-PROTOCOL_VERSION: Final = 13
+PROTOCOL_VERSION: Final = 14
 SPOOL_FORMAT_VERSION: Final = 2
 OUTBOX_BUSY_TIMEOUT_MS: Final = 5000
 OUTBOX_COPY_BYTES: Final = 256 * 1024

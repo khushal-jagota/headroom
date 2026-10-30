@@ -98,7 +98,7 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
         # The configured alias and its concrete catalogue resolution are distinct.
         assert (record.backend_key, record.model, record.reasoning_effort) == (
             defaults.employee_backend,
-            "gpt-5.6-sol",
+            "sol",
             defaults.employee_launch_reasoning_effort,
         )
         identity = dict(record.identity_environment_variables)

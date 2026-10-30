@@ -99,25 +99,8 @@ export type CanonicalModelValidation = {
   unavailable: CatalogUnavailable | null;
 };
 
-export type PickerRow = {
-  submitted_token: string;
-  selection_kind: SelectionKind;
-  resolved_model_id: string | null;
-  display_name: string | null;
-  supported_reasoning_efforts: readonly string[] | null;
-  context: LaunchContext | null;
-  observed_at: number | null;
-  evidence_status: EvidenceStatus;
-  catalog_presence: CatalogPresence;
-  current_selection: boolean;
-  current_alias_resolution: AliasResolutionFact | null;
-  previous_alias_resolution: AliasResolutionFact | null;
-  provenance: readonly CatalogRowReference[];
-  validation: CanonicalModelValidation;
-};
-
 /** Advisory metadata read. Writes and admission independently revalidate. */
-export type TicketModelChoicesRequest = {
+export type TicketBackendScope = {
   ticket_id: string;
   locale?: TicketLocale;
   employee_backend?: ConversationBackendKey;
@@ -128,7 +111,7 @@ export type TicketModelChoicesRequest = {
 };
 
 /** Existing creation-draft authority; it never creates a Ticket. */
-export type DraftModelChoicesRequest = {
+export type DraftBackendScope = {
   ticket_id?: never;
   worker_type: string;
   locale?: TicketLocale;
@@ -147,8 +130,4 @@ export type DraftModelChoicesRequest = {
   ceiling_holder?: import("./wire").Principal;
 };
 
-export type DestinationModelChoicesRequest = TicketModelChoicesRequest | DraftModelChoicesRequest;
-export type DestinationModelChoicesResponse = {
-  validation: CanonicalModelValidation;
-  rows: PickerRow[];
-};
+export type BackendScopeRequest = TicketBackendScope | DraftBackendScope;

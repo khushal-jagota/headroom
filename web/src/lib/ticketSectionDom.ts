@@ -5,15 +5,9 @@ import { fieldLabelFor, stageLabelFor } from './lifecycle';
 import { holderLabelFor, holderOptionsFor, holderValue } from './ceilingHolder';
 import { workerPageHistory } from './workerPageHistory';
 
-/** Terminal Tickets retain only their explicit move affordance and its dialog. */
-export function terminalTicketMoveDomMatches(controls:Element,locale:string | undefined):boolean {
-  const line=controls.firstElementChild;
-  if(controls.children.length!==1 || !line?.matches('.actions') || line.children.length!==2) return false;
-  const [move,dialog]=line.children;
-  return move.matches('button[type="button"][data-ticket-move]')
-    && move.textContent===`Move to ${locale==='macos' ? 'VPS' : 'Mac'}…`
-    && dialog.matches('dialog[data-ticket-move-dialog][aria-label="Move Ticket"]')
-    && !controls.querySelector('[data-ticket-backlog-action], [data-ticket-backlogged]');
+/** Terminal Tickets expose no lifecycle actions. */
+export function terminalTicketLifecycleDomMatches(controls:Element):boolean {
+  return controls.hasAttribute('hidden') && controls.children.length===0;
 }
 
 /** Credit only public facts actually mounted in this Ticket section. */
@@ -24,7 +18,7 @@ export function ticketSectionDomMatches(root:HTMLElement,masthead:HTMLElement,se
   if(!controls) return false;
   const actions=controls.querySelectorAll('[data-ticket-backlog-action]'),markers=controls.querySelectorAll('[data-ticket-backlogged]');
   if(row.terminal) {
-    if(actions.length!==0 || markers.length!==0 || !terminalTicketMoveDomMatches(controls,masthead.dataset.ticketLocale)) return false;
+    if(actions.length!==0 || markers.length!==0 || !terminalTicketLifecycleDomMatches(controls)) return false;
   } else if(actions.length!==1 || actions[0].textContent!==(row.is_backlogged ? 'Resume ticket' : 'Backlog ticket')
     || markers.length!==(row.is_backlogged ? 1 : 0) || (row.is_backlogged && markers[0].textContent!=='Backlogged')) return false;
   if(!root.isConnected || root.dataset.ticketSection!==section.record.id || root.dataset.sectionStage!==row.stage) return false;

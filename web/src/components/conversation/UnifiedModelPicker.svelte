@@ -1,18 +1,16 @@
 <script lang="ts">
-  import type { PickerRow, CanonicalModelValidation } from "../../lib/conversation/modelResolutionWire";
-  import { pickerRowName, pickerRowDetail, validationSummary, validationDetail } from "../../lib/conversation/modelPickerFacts";
+  import { type ModelPickerDisplaySelection } from "../../lib/conversation/modelPickerFacts";
+  import { resolvedModelPickerLabel } from "../../lib/conversation/modelPickerLabel";
   import { tick } from "svelte";
   import {
-    backendSelectionDefaults,
     type ModelPickerChoice,
     type ModelPickerView
   } from "../../lib/conversation/modelPicker";
   import { effortOptionsFor } from "../../lib/conversation/composer";
   import {
-    backendRefreshControl,
-    refreshBackendSnapshots
+    backendRefreshControl
   } from "../../lib/conversation/backendRefresh";
-  import type { BackendModel, BackendSnapshot, ConversationBackendKey } from "../../lib/conversation/wire";
+  import { readBackends, type BackendModel, type BackendSnapshot, type ConversationBackendKey } from "../../lib/conversation/wire";
   import BackendMark from "./BackendMark.svelte";
   import ListboxPicker, {
     type ListboxPickerController,
@@ -23,9 +21,7 @@
   import UsageRings from "./UsageRings.svelte";
 
   let {
-    canonicalRows,
-    validation,
-    refusalValidation,
+    displaySelection,
     readError = null,
     onRetry,
     scrollPanel = false,
@@ -44,10 +40,7 @@
     onChooseBackend,
     onChooseModel
   }: {
-    canonicalRows?: readonly PickerRow[];
-    validation?: CanonicalModelValidation | null;
-    /** Historical delivery outcome, separate from this advisory selection read. */
-    refusalValidation?: CanonicalModelValidation | null;
+    displaySelection?: ModelPickerDisplaySelection;
     /** Scoped transport failure; it supplies no canonical launch judgment. */
     readError?: string | null;
     onRetry?: () => Promise<void>;
@@ -72,42 +65,37 @@
       backend: ConversationBackendKey,
       defaults: { model: string | null; reasoningEffort: string | null }
     ) => void;
-    onChooseModel: (model: string, reasoningEffort: string | null, row?: PickerRow) => void;
+    onChooseModel: (model: string, reasoningEffort: string | null) => void;
   } = $props();
 
   let showing = $state<"models" | "efforts">("models");
-  let whyOpen = $state(false);
   let customToken = $state("");
   let customEffort = $state("");
-  let pendingCanonicalRow = $state.raw<PickerRow | null>(null);
   let pendingModel = $state<string | null>(null);
   let feedback = $state<string | null>(null);
   let refreshing = $state(false);
   let picker = $state<ListboxPickerController>(null!);
 
-  let currentRows = $derived(canonicalRows?.filter(row => row.current_selection) ?? []);
-  let canonicalSelection = $derived(currentRows.length === 1 ? currentRows[0] : undefined);
-  let effectiveValidation = $derived(validation ?? canonicalSelection?.validation ?? null);
-  let currentEffort = $derived(canonicalRows !== undefined
-    ? effectiveValidation?.selection.reasoning_effort ?? null
-    : view.reasoningEffort || null);
-  let activeBackendKey = $derived(canonicalRows !== undefined
-    ? effectiveValidation?.selection.backend_key ?? canonicalSelection?.context?.backend_key ?? null
-    : view.backendKey);
-  let activeBackendName = $derived(activeBackendKey ? activeBackendKey[0].toUpperCase() + activeBackendKey.slice(1) : "Backend unobserved");
-  let reasoningUnavailable = $derived(canonicalRows !== undefined
-    ? !canonicalSelection?.supported_reasoning_efforts?.length
-    : view.reasoningUnavailableReason !== null);
-  let effortRows = $derived(
-    (canonicalRows !== undefined ? (pendingCanonicalRow ?? canonicalSelection)?.supported_reasoning_efforts ?? [] : effortOptionsFor(models, pendingModel ?? view.modelValue, backendEffortOptions))
+  let displayed = $derived(displaySelection ?? {
+    backendKey: view.backendKey,
+    model: view.modelValue,
+    reasoningEffort: view.reasoningEffort || null
+  });
+  let currentEffort = $derived(displayed.reasoningEffort);
+  let activeBackendKey = $derived(displayed.backendKey);
+  let activeBackendName = $derived(activeBackendKey ? activeBackendKey[0].toUpperCase() + activeBackendKey.slice(1) : "");
+  let reasoningUnavailable = $derived(false);
+  let effortRows = $derived([
+    {value: "", name: "Provider default"},
+    ...effortOptionsFor(models, pendingModel ?? displayed.model ?? "", backendEffortOptions)
       .map((effort) => ({ value: effort, name: effort }))
-  );
-  let factualRows = $derived(canonicalRows?.map((row, index) => ({value: `canonical-${index}`, name: pickerRowName(row)})));
-  let rows = $derived((showing === "models" ? factualRows ?? view.models : effortRows) as readonly ListboxPickerItem[]);
-  let chosenValue = $derived(showing === "models" ? canonicalRows ? currentRows.length === 1 ? `canonical-${canonicalRows.indexOf(currentRows[0])}` : null : view.modelValue : currentEffort);
-  let triggerFace = $derived(canonicalRows ? currentRows.length > 1 ? "Selection unresolved" : canonicalSelection ? pickerRowName(canonicalSelection) : effectiveValidation?.selection.submitted_token ?? "Selection unobserved" : view.face);
-  let foot = $derived(feedback ?? readError ?? (effectiveValidation && effectiveValidation.state !== "compatible" ? validationSummary(effectiveValidation) : null) ?? (refusalValidation ? "Recorded delivery refusal." : null) ?? (canonicalRows ? null : view.staleModelReason ?? view.catalogueWarning));
-  let pickerBusy = $derived(disabled || refreshing);
+  ]);
+  let rows = $derived((showing === "models" ? view.models : effortRows) as readonly ListboxPickerItem[]);
+  let chosenValue = $derived(showing === "models" ? displayed.model : currentEffort ?? "");
+  let triggerFace = $derived(displaySelection
+    ? [resolvedModelPickerLabel(models, displayed.model ?? ""), currentEffort].filter(Boolean).join(" ") : view.face);
+  let foot = $derived(feedback ?? readError);
+  let pickerBusy = $derived(disabled);
   let refreshControl = $derived(backendRefreshControl(refreshing));
 
   function snapshotFor(key: ConversationBackendKey): BackendSnapshot | null {
@@ -129,10 +117,8 @@
   function preparePanel(): void {
     showing = "models";
     pendingModel = null;
-    pendingCanonicalRow = null;
-    whyOpen = false;
     feedback = null;
-    customToken = effectiveValidation?.selection.submitted_token ?? view.modelValue;
+    customToken = displayed.model ?? "";
     customEffort = currentEffort ?? "";
   }
 
@@ -146,95 +132,43 @@
   function take(choice: ModelPickerChoice): void {
     if (disabled) return;
     if (showing === "models") {
-      const row = canonicalRows?.[Number(choice.value.replace("canonical-", ""))];
-      if (canonicalRows !== undefined && !row) return;
-      const model = row?.submitted_token ?? choice.value;
-      if (row && (row.supported_reasoning_efforts === null || row.supported_reasoning_efforts.length === 0)) {
-        onChooseModel(model, effectiveValidation ? currentEffort : row.validation.selection.reasoning_effort, row);
-        picker.close(!afterChoose);
-        if (afterChoose) void tick().then(afterChoose);
-        return;
-      }
-      pendingCanonicalRow = row ?? null;
-      const effort = currentEffort;
-      if (effort === null) {
-        onChooseModel(model, null, row);
-        picker.close(!afterChoose);
-        if (afterChoose) void tick().then(afterChoose);
-        return;
-      }
-      pendingModel = model;
+      pendingModel = choice.value;
       showing = "efforts";
-      void tick().then(() => picker.setActiveValue(effort));
+      void tick().then(() => picker.setActiveValue(currentEffort ?? ""));
       return;
-    } else {
-      const row = pendingCanonicalRow ?? canonicalSelection;
-      if (canonicalRows !== undefined && !row) {
-        feedback = "Current selection is unresolved. Choose a model row first.";
-        showing = "models";
-        return;
-      }
-      onChooseModel(row?.submitted_token ?? pendingModel ?? view.modelValue, choice.value === "" ? null : choice.value, row);
-      pendingModel = null;
     }
+    onChooseModel(pendingModel ?? displayed.model ?? "", choice.value === "" ? null : choice.value);
+    pendingModel = null;
     picker.close(!afterChoose);
     if (afterChoose) void tick().then(afterChoose);
   }
 
-  function chooseBackend(key: ConversationBackendKey, unavailableReason: string | null): void {
+  function chooseBackend(key: ConversationBackendKey, _unavailableReason: string | null): void {
     if (disabled) return;
-    if (!canonicalRows && unavailableReason !== null) {
-      feedback = unavailableReason;
+    if (view.backendLocked && key !== activeBackendKey) {
+      feedback = _unavailableReason;
       return;
     }
     feedback = null;
     showing = "models";
     pendingModel = null;
-    pendingCanonicalRow = null;
-    if (key === activeBackendKey) {
-      picker.setActiveValue(canonicalRows ? chosenValue : view.modelValue);
-      return;
-    }
-    onChooseBackend(key, canonicalRows !== undefined
-      ? {model: effectiveValidation?.selection.submitted_token ?? canonicalSelection?.submitted_token ?? null, reasoningEffort: currentEffort}
-      : backendSelectionDefaults(snapshots, key));
-    void tick().then(() => picker.setActiveValue(canonicalRows ? chosenValue : view.modelValue));
+    if (key !== activeBackendKey) onChooseBackend(key, {model: null, reasoningEffort: null});
+    void tick().then(() => picker.setActiveValue(displayed.model));
   }
 
   function showReasoning(): void {
     if (disabled) return;
-    if (canonicalRows !== undefined) {
-      const row = pendingCanonicalRow ?? canonicalSelection;
-      if (!row) {
-        feedback = currentRows.length > 1 ? "Current selection facts conflict. Choose a model row first." : "Current selection is unobserved. Choose a model row first.";
-        return;
-      }
-      if (!row.supported_reasoning_efforts?.length) {
-        feedback = row.supported_reasoning_efforts === null ? "Reasoning effort support is unknown." : "This catalog row lists no reasoning efforts.";
-        return;
-      }
-      feedback = null;
-      showing = "efforts";
-      void tick().then(() => picker.setActiveValue(currentEffort));
-      return;
-    }
-    if (!canonicalRows && view.reasoningUnavailableReason !== null) {
-      feedback = view.reasoningUnavailableReason;
-      return;
-    }
     feedback = null;
     pendingModel = null;
-    pendingCanonicalRow = null;
     showing = "efforts";
-    void tick().then(() => picker.setActiveValue(currentEffort));
+    void tick().then(() => picker.setActiveValue(currentEffort ?? ""));
   }
 
   function showModels(): void {
     if (disabled) return;
     showing = "models";
     pendingModel = null;
-    pendingCanonicalRow = null;
-    void tick().then(() => picker.setActiveValue(canonicalRows ? chosenValue : view.modelValue));
+    void tick().then(() => picker.setActiveValue(displayed.model));
   }
 
   async function runRefresh(): Promise<void> {
@@ -243,13 +177,10 @@
     feedback = null;
     try {
       if (onRetry) await onRetry();
-      else if (canonicalRows) return;
       else {
-        const result = await refreshBackendSnapshots();
-        if (result.snapshots !== null) snapshots = result.snapshots;
-        feedback = result.error;
+        snapshots = await readBackends(true);
       }
-    } catch { feedback = "The read failed. Check again."; }
+    } catch (error) { feedback = error instanceof Error ? error.message : "The read failed. Check again."; }
     finally { refreshing = false; }
     await tick();
     picker.focusList();
@@ -268,15 +199,13 @@
   {chevron}
   {scrollPanel}
   {below}
-  attributes={{ "data-conversation-model-picker": "", "data-canonical-model-picker": canonicalRows ? "" : undefined, ...attributes }}
+  attributes={{ "data-conversation-model-picker": "", ...attributes }}
   panelBusy={pickerBusy}
   bind:controller={picker}
   triggerAttributes={{ "data-conversation-picker-trigger": "" }}
   panelAttributes={{ "data-conversation-picker-panel": "" }}
   optionAttributes={(choice, active, selected) => ({
-    "aria-label": canonicalRows && showing === "models" ? pickerRowDetail(canonicalRows[Number(choice.value.replace("canonical-", ""))]) : undefined,
-    "title": canonicalRows && showing === "models" ? pickerRowDetail(canonicalRows[Number(choice.value.replace("canonical-", ""))]) : undefined,
-    "data-conversation-picker-choice": canonicalRows && showing === "models" ? canonicalRows[Number(choice.value.replace("canonical-", ""))]?.submitted_token : choice.value,
+    "data-conversation-picker-choice": choice.value,
     "data-conversation-picker-active": active ? "true" : undefined,
     "data-conversation-picker-chosen": selected ? "true" : undefined
   })}
@@ -296,20 +225,20 @@
         <PickerRailRow
           held={backend.key === activeBackendKey}
           on={backend.key === activeBackendKey && showing === "models"}
-          dim={!canonicalRows && backend.unavailableReason !== null}
+          dim={view.backendLocked && backend.key !== activeBackendKey}
           disabled={pickerBusy}
           label={backend.name}
           attributes={{
             "data-conversation-backend": backend.key,
             "data-conversation-backend-showing": backend.key === activeBackendKey ? "true" : undefined,
             "aria-pressed": backend.key === activeBackendKey && showing === "models" ? "true" : "false",
-            "aria-disabled": !canonicalRows && backend.unavailableReason !== null ? "true" : undefined
+            "aria-disabled": view.backendLocked && backend.key !== activeBackendKey ? "true" : undefined
           }}
           onclick={() => chooseBackend(backend.key, backend.unavailableReason)}
         >
           {#snippet icon()}<BackendMark backend={backend.key} />{/snippet}
           {#snippet trailing()}
-            {#if !canonicalRows && showUsage && showsBackendUsage(backend.key)}
+            {#if showUsage && showsBackendUsage(backend.key)}
               <UsageRings windows={snapshotFor(backend.key)?.cached_usage?.windows ?? []} compact />
             {/if}
           {/snippet}
@@ -327,7 +256,7 @@
           </PickerRailRow>
         {/if}
         <PickerRailRow
-          disabled={pickerBusy || (canonicalRows !== undefined && !onRetry)}
+          disabled={pickerBusy || refreshing}
           label={refreshControl.label}
           attributes={{
             "data-conversation-picker-refresh": "",
@@ -360,12 +289,8 @@
   {/snippet}
   {#snippet optionContent(choice, selected)}
     <span class="model-picker-choice-name">{choice.name}
-      {#if canonicalRows && showing === "models"}
-        {@const row = canonicalRows[Number(choice.value.replace("canonical-", ""))]}
-        {#if row}<span class="model-picker-choice-detail">Effort: {row.supported_reasoning_efforts === null ? "unknown" : row.supported_reasoning_efforts.join(", ") || "none"} · {row.validation.state}</span>{/if}
-      {/if}
     </span>
-    {#if !canonicalRows && showUsage && showing === "models" && hasModelUsage(choice.value)}
+    {#if showUsage && showing === "models" && hasModelUsage(choice.value)}
       <UsageRings
         windows={snapshotFor(view.backendKey ?? "claude")?.cached_usage?.windows ?? []}
         modelId={choice.value}
@@ -376,21 +301,13 @@
   {/snippet}
   {#snippet afterList()}
     <form class="model-picker-custom" onsubmit={(event) => { event.preventDefault(); chooseCustom(); }}>
-      <label>Provider token<input aria-label="Provider token" data-model-picker-token bind:value={customToken} disabled={disabled} autocomplete="off" spellcheck="false" /></label>
-      <label>Effort<input aria-label="Provider effort" data-model-picker-effort bind:value={customEffort} disabled={disabled} placeholder="Provider default" autocomplete="off" spellcheck="false" /></label>
+      <label><input aria-label="Provider token" placeholder="Custom model" data-model-picker-token bind:value={customToken} disabled={disabled} autocomplete="off" spellcheck="false" /></label>
+      <label><input aria-label="Provider effort" data-model-picker-effort bind:value={customEffort} disabled={disabled} placeholder="Provider default" autocomplete="off" spellcheck="false" /></label>
       <button type="submit" data-listbox-picker-action disabled={pickerBusy || !customToken.trim()}>Use</button>
-      <span>Catalog suggestions are advisory. Blank effort uses the provider default.</span>
     </form>
     {#if foot}
       <div class="model-picker-foot" data-conversation-picker-feedback>
         <div class="model-picker-summary" aria-live="polite">{foot}</div>
-        <div class="model-picker-warning-actions">
-          <button type="button" data-listbox-picker-action data-model-picker-why aria-expanded={whyOpen} onclick={() => whyOpen = !whyOpen}>Why</button>
-          <button type="button" data-listbox-picker-action data-model-picker-check disabled={canonicalRows !== undefined && !onRetry} aria-disabled={refreshing} aria-busy={refreshing} onmousedown={(event) => event.preventDefault()} onclick={() => void runRefresh()}>Check again</button>
-        </div>
-        {#if whyOpen}
-          <div class="model-picker-detail">{effectiveValidation ? validationDetail(effectiveValidation) : `${foot} Observation context and corrective action are unavailable${canonicalRows !== undefined ? " in these canonical facts" : " in this legacy read"}. This does not establish a native destination failure. Check again repeats the same read.`}{refusalValidation ? ` Recorded delivery refusal for ${refusalValidation.selection.submitted_token} (${refusalValidation.selection.selection_kind}), selection revision ${refusalValidation.selection.selection_revision}. ${validationDetail(refusalValidation)}` : ""}</div>
-        {/if}
       </div>
       {/if}
   {/snippet}
@@ -400,18 +317,13 @@
   :global([data-canonical-model-picker] .picker-rail-row.dim) { color: var(--text-muted); opacity: 1; }
   .model-picker-custom { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-custom label { min-width: 0; font-size: var(--type-xs); color: var(--text-muted); }
-  .model-picker-custom input { display: block; width: 100%; min-width: 0; box-sizing: border-box; margin-top: var(--space-1); padding: var(--space-1) var(--space-2); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); background: var(--surface-recessed); color: var(--text-default); font: inherit; }
+  .model-picker-custom input { display: block; width: 100%; min-width: 0; box-sizing: border-box; padding: var(--space-1) var(--space-2); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); background: var(--surface-recessed); color: var(--text-default); font: inherit; }
   .model-picker-custom button { align-self: end; min-height: 28px; padding: var(--space-1) var(--space-2); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-default); background: var(--surface-recessed); cursor: pointer; }
-  .model-picker-custom span { grid-column: 1 / -1; font-size: var(--type-xs); color: var(--text-muted); }
   .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }
-  .model-picker-choice-name { min-width: 0; overflow-wrap: anywhere; }
-  .model-picker-choice-detail { display: block; font-size: var(--type-xs); color: var(--text-muted); }
+  .model-picker-choice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-picker-warning-actions { display: flex; gap: var(--space-2); }
-  .model-picker-warning-actions button { min-height: 24px; min-width: 24px; color: var(--text-default); background: transparent; border: 0; cursor: pointer; font: inherit; }
-  .model-picker-detail { overflow-wrap: anywhere; margin-top: var(--space-2); }
   .model-picker-foot {
     grid-column: 1 / -1; border-top: var(--border-hairline) solid var(--border-color);
     background: var(--surface-recessed); color: var(--text-muted); font-size: var(--type-xs);

@@ -427,18 +427,13 @@ Leaving Reasoning at its native value means the backend chooses its own default,
 a real answer because some models take none. A missing or unavailable explicit value fails
 visibly instead of silently selecting something else.
 
-Model verification uses destination-scoped evidence and preserves exact requested choices.
-The shared contracts distinguish explicit concrete choices, aliases, and unknown historical intent.
-See [model choices and destination evidence](conversation-system.md#model-choices-and-destination-evidence).
+The shared backend snapshots supply optional destination-local model and effort suggestions.
+Exact requested tokens remain independent of these suggestions. Refresh does not alter
+saved intent, and execution does not wait for catalog reads. Explicit disables still apply.
+See [model choices and provider acceptance](conversation-system.md#model-choices-and-provider-acceptance).
 
-Canonical Ticket writers preserve offline configuration, exact effort, and durable
-verification state. Execution requires applicable destination and workspace evidence.
-Unknown effort support differs from a known empty support list. An explicit model never
-inherits another model's effort support. Presentation integration remains separately gated.
-
-Saved-choice correction preserves exact tokens and existing compare-before-write authority.
-It does not upgrade concrete models, grant approval, or advance work.
-See [model correction commands](cli.md#correct-saved-models).
+Canonical writers preserve exact tokens and nullable effort through ordinary authorized
+configuration writes. Provider failures retain their existing actionable error path.
 
 Access is not a launch setting and is never copied onto a Ticket. Every conversation runs
 under full access inside its workspace folder; how each backend realises that belongs to its

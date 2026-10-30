@@ -1212,64 +1212,12 @@ def run(browser, urls):
     page.locator('[data-ticket-id="t_done"]').wait_for()
     expect(page.locator("[data-ticket-backlog-action], [data-ticket-backlogged]")).to_have_count(0)
     assert page.evaluate("window.__wait()")["status"] == "included"
-    # The real terminal action line passes paint proof. Extra lifecycle controls never do.
+    # Existing Tickets retain their machine; terminal sections expose no switch workflow.
     assert page.evaluate("window.__terminalMoveProof()") == {
-        "valid": True, "extraAction": False, "backlogMarker": False,
-        "unmarkedAction": False, "unrelatedDialog": False, "restored": True,
+        "valid": True, "extraAction": False, "visible": False, "restored": True,
     }
-
-    # Gap: a noninteractive machine mark must retain guarded move access, including terminal Tickets.
-    # Reuse this TicketRoute host. Full reads and refused writes remain finite browser fixtures.
-    move_started = time.perf_counter()
-    move_original_viewport = dict(page.viewport_size)
-    expect(page.locator('[data-ticket-masthead-id="t_done"]')).to_be_visible()
-    expect(page.locator('[data-ticket-backlog-action]')).to_have_count(0)
-    expect(page.locator('.machine-heading')).to_have_count(0)
-    expect(page.locator('button.machine-identity')).to_have_count(0)
-    action = page.get_by_role('button', name='Move to Mac…', exact=True)
-    evidence = Path(os.environ.get('PANELS_SIDEBAR_ARTIFACT_DIR', '/tmp/panels-layout')) / 'machine-layout'
-    evidence.mkdir(parents=True, exist_ok=True)
-    machine_samples = []
-    for width in [1280, 390]:
-        page.set_viewport_size({"width": width, "height": 900})
-        page.evaluate('document.fonts.ready')
-        mark = page.locator('[data-ticket-identity] .machine-identity')
-        bounds = mark.bounding_box()
-        assert bounds and bounds['width'] == 15 and bounds['height'] == 15, bounds
-        assert mark.get_attribute('tabindex') is None
-        action_bounds = action.bounding_box()
-        assert action_bounds and action_bounds['width'] >= 24 and action_bounds['height'] >= 24
-        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-        machine_samples.append({"width": width, "mark": bounds, "move": action_bounds})
-        page.screenshot(path=str(evidence / f'ticket-machine-{width}.png'), animations='disabled')
-    action.focus()
-    page.keyboard.press('Enter')
-    dialog = page.get_by_role('dialog', name='Move Ticket')
-    confirm = dialog.get_by_role('button', name='Move Ticket', exact=True)
-    expect(confirm).to_be_enabled()
-    dialog_accessibility = dialog.aria_snapshot()
-    (evidence / 'move-dialog-accessibility.yml').write_text(dialog_accessibility)
-    destination_control = dialog.get_by_role('combobox', name='Destination', exact=True)
-    expect(destination_control).to_be_enabled()
-    select_bounds = destination_control.bounding_box()
-    assert select_bounds and select_bounds['width'] >= 24 and select_bounds['height'] >= 24, select_bounds
-    assert move_reads == ['t_done']
-    confirm.click()
-    expect(dialog.get_by_role('alert')).to_have_text('Source state unknown.')
-    expect(confirm).to_be_disabled()
-    assert move_writes == [{"locale": "macos", "expected_record_sha256": format(1, '064x')}]
-    dialog.get_by_role('button', name='Review again').click()
-    expect(confirm).to_be_enabled()
-    assert move_reads == ['t_done', 't_done']
-    confirm.click()
-    expect(dialog.get_by_role('alert')).to_have_text('Source state unknown.')
-    assert move_writes[-1] == {"locale": "macos", "expected_record_sha256": format(2, '064x')}
-    assert len(move_writes) == 2
-    dialog.get_by_role('button', name='Close', exact=True).click()
-    expect(dialog).not_to_be_visible()
-    expect(action).to_be_focused()
-    (evidence / 'ticket-machine-layout.json').write_text(json.dumps({"samples": machine_samples, "seconds": time.perf_counter() - move_started, "newHosts": 0, "moveReads": move_reads, "moveWrites": move_writes}, indent=2))
-    page.set_viewport_size(move_original_viewport)
+    assert page.locator('[data-ticket-move], [data-ticket-move-dialog], [data-employee-destination-picker]').count() == 0
+    assert move_reads == [] and move_writes == []
 
     assert page.locator("[data-copy]").count() == 0
     assert page.locator(".ticket-operating").count() == 0

@@ -493,7 +493,7 @@ def _run(browser, urls):
 
     # Set this to keep a picture of what the assertions checked. The test proves the same
     # thing with or without it.
-    screenshot_dir = os.environ.get("UNANSWERED_SEND_SCREENSHOT_DIR")
+    screenshot_dir = os.environ.get("UNANSWERED_SEND_SCREENSHOT_DIR", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     if screenshot_dir:
         os.makedirs(screenshot_dir, exist_ok=True)
 
@@ -1241,10 +1241,11 @@ def _run(browser, urls):
     )
     assert (
         model_picker.locator("button").evaluate_all(
-            "buttons => buttons.filter(button => button.tabIndex === 0).length"
+            "buttons => buttons.filter(button => !button.closest('form') && button.tabIndex === 0).length"
         )
         == 1
     )
+    assert model_picker.get_by_role("button", name="Use", exact=True).evaluate("button => button.tabIndex === 0")
     _settle_conversation_layout(page)
     page.mouse.move(0, 0)
     model_picker.locator('[data-conversation-picker-choice="sonnet"]').hover()
@@ -1258,6 +1259,7 @@ def _run(browser, urls):
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'"
     )
     model_picker.get_by_role("listbox").press("Enter")
+    model_picker.get_by_role("option", name="Provider default", exact=True).click()
     page.wait_for_function(
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')"
     )
@@ -1303,6 +1305,7 @@ def _run(browser, urls):
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'"
     )
     model_picker.get_by_role("listbox").press("Enter")
+    model_picker.get_by_role("option", name="Provider default", exact=True).click()
     page.wait_for_function(
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')"
     )
@@ -1610,6 +1613,7 @@ def _run(browser, urls):
     # fallback is a queued message that explains it is waiting to apply that change.
     page.locator("[data-conversation-picker-model] [data-conversation-picker-trigger]").click()
     page.locator('[data-conversation-picker-choice="sonnet"]').click()
+    page.get_by_role("option", name="Provider default", exact=True).click()
     page.locator(INPUT).fill("steer with a run change")
     page.locator(INPUT).press("Enter")
     page.wait_for_function("window.__sentModes?.length === 3")
@@ -1790,7 +1794,7 @@ def _run(browser, urls):
     for text in ("Owner answer one.", "Owner answer two.", "final answer", "middle commentary"):
         page.get_by_text(text, exact=True).wait_for()
         assert page.get_by_text(text, exact=True).count() == 1
-    legacy_evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    legacy_evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     if legacy_evidence:
         from pathlib import Path
         Path(legacy_evidence, "legacy-owner-fold-proof.json").write_text(json.dumps({
@@ -2530,7 +2534,7 @@ def _projected_visual_relationships(browser, url):
     }""")
     proof = {"focus": focus, "full": full}
     print("PROJECTED_VISUAL_PROOF " + json.dumps(proof), flush=True)
-    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     if evidence:
         output = Path(evidence)
         output.mkdir(parents=True, exist_ok=True)
@@ -2562,7 +2566,7 @@ def _conversation_repairs(browser, url):
     from pathlib import Path
     from urllib.parse import unquote
 
-    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     output = Path(evidence) if evidence else None
     if output:
         output.mkdir(parents=True, exist_ok=True)
@@ -2793,7 +2797,7 @@ def _overlay_menu_bounds(browser, url):
         settle()
 
     try:
-        page.route('**/api/conversation/backends/refresh', lambda route: route.fulfill(status=503,json={'detail':'Fixture refresh boundary'}))
+        page.route('**/api/conversation/backends?refresh=true', lambda route: route.fulfill(status=503,json={'detail':'Fixture refresh boundary'}))
         page.goto(url, wait_until="domcontentloaded")
         page.evaluate("window.__setConversationState('opened')")
         input_box = page.locator('[data-conversation-input]')
@@ -2887,9 +2891,17 @@ def _overlay_menu_bounds(browser, url):
                             hit(effort)
                             effort.click()
                         else:
-                            picker.get_by_role('listbox').press('Home')
+                            picker.get_by_role('listbox').press('h')
                             picker.get_by_role('listbox').press('Enter')
                         proof['actions'].append([mode,'effort',method,'high'])
+                    else:
+                        default = picker.get_by_role('option', name='Provider default', exact=True)
+                        if method == 'pointer':
+                            hit(default)
+                            default.click()
+                        else:
+                            picker.get_by_role('listbox').press('Home')
+                            picker.get_by_role('listbox').press('Enter')
                     expect(trigger).to_have_attribute('aria-label', re.compile(model,re.I))
                     proof['actions'].append([mode,'model',method,model])
             for method in ('pointer','keyboard'):
@@ -2907,17 +2919,17 @@ def _overlay_menu_bounds(browser, url):
                         page.mouse.click(x,y)
                     else:
                         keyboard_rail(item,'Space')
-                    if control.startswith('backend:'):
+                    if control in ('backend:codex','backend:hermes'):
                         expect(picker.locator('[data-conversation-picker-feedback]')).to_be_visible()
                     elif control=='reasoning':
                         expect(picker.locator('[data-conversation-picker-choice="high"]')).to_be_visible()
                     elif control=='models':
                         expect(picker.locator('[data-conversation-picker-choice="opus"]')).to_be_visible()
-                    else:
+                    elif control=='refresh':
                         expect(picker.locator('.model-picker-summary')).to_have_text('Fixture refresh boundary')
                         feedback = picker.locator('[data-conversation-picker-feedback]')
-                        expect(feedback.get_by_role('button', name='Why', exact=True)).to_be_visible()
-                        expect(feedback.get_by_role('button', name='Check again', exact=True)).to_be_visible()
+                        expect(feedback.get_by_role('button', name='Why', exact=True)).to_have_count(0)
+                        expect(feedback.get_by_role('button', name='Check again', exact=True)).to_have_count(0)
                     settle()
                     proof['actions'].append([mode,'runRail',method,control])
                 page.screenshot(path=str(output / (mode+'-run-picker.png')))

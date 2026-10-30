@@ -369,7 +369,41 @@ def run_retirement(browser, urls):
         (output / 'reply-space-retirement-proof.json').write_text(json.dumps(data, indent=2))
 
 
+def run_scope(browser, urls):
+    """Actual Ticket composer must not rediscover after failed discovery and sends."""
+    import time
+    started = time.perf_counter()
+    page = browser.new_page(viewport={"width": 1100, "height": 800})
+    page.goto(urls[0] + "?scope-proof=1", wait_until="domcontentloaded")
+    page.wait_for_function("window.__catalogReads === 1")
+    picker = page.locator('[data-conversation-model-picker]')
+    for number, model, effort in [(1, "gpt-6.1-terra", ""), (2, "provider-next", "future-effort")]:
+        picker.locator('[data-conversation-picker-trigger]').click()
+        picker.get_by_role('textbox', name='Provider token', exact=True).fill(model)
+        picker.get_by_role('textbox', name='Provider effort', exact=True).fill(effort)
+        picker.get_by_role('button', name='Use', exact=True).click()
+        page.locator('[data-conversation-input]').fill(f"Scope proof {number}")
+        page.locator('[data-conversation-input]').press('Enter')
+        page.wait_for_function("number => window.__sends?.length === number", arg=number)
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+        sent = page.evaluate('window.__sends.at(-1)')
+        assert sent['model'] == model
+        assert 'reasoning_effort' in sent and sent['reasoning_effort'] == (effort or None)
+        assert page.evaluate('window.__catalogReads') == 1
+    page.evaluate("window.__scopeWorkspace('/second-project')")
+    page.wait_for_function('window.__catalogReads === 2')
+    page.evaluate("window.__scopeWorkspace('/third-project')")
+    page.wait_for_function('window.__catalogReads === 3')
+    page.evaluate('window.__oldScopeReply()')
+    picker.locator('[data-conversation-picker-trigger]').click()
+    page.get_by_role('option', name='current-workspace-model', exact=True).wait_for()
+    assert page.get_by_role('option', name='old-workspace-model', exact=True).count() == 0
+    page.close()
+    print(f"SCOPED_SEND_PROOF two sends, zero additional reads; late workspace reply rejected; {time.perf_counter()-started:.3f}s", flush=True)
+
+
 def run(browser, urls):
+    run_scope(browser, urls)
     run_retirement(browser, urls)
 
     INPUT = "[data-conversation-input]"

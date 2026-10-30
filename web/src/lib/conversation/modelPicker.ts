@@ -27,6 +27,7 @@ export type ModelPickerBackend = Readonly<{
 
 export type ModelPickerView = Readonly<{
   backendKey: ConversationBackendKey | null;
+  backendLocked?: boolean;
   backendName: string;
   modelValue: string;
   modelName: string;
@@ -105,6 +106,7 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
 
   return {
     backendKey: input.backendKey,
+    backendLocked: input.backendLocked ?? false,
     backendName: name,
     modelValue,
     modelName,

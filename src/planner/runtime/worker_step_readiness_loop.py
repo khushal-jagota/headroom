@@ -23,7 +23,6 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
-from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from time import monotonic as _monotonic
 from typing import Any, Final, Literal
@@ -128,20 +127,13 @@ async def start_ready_worker_step(
     given back only when the send was refused, or when a failure occurred before a fate.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
     """
-    from planner.tickets.launch_authority import (
-        acquire_read,
-        acquire_ticket_mutation,
-        launch_authority_scope,
-    )
-    from planner.tickets.validation.data import read_launch_selection, selection_is_historical
+    from planner.tickets.validation.data import read_launch_selection
 
     conn = connect_database()
-    permit = None
     link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
     link_acquired = False
     try:
         # Observe busy state after any restart/reset that already owns the link.
-        # This read takes no workspace permit and cannot obstruct its retirement.
         async with link_lock:
             initial_ticket = tickets_data.read_ticket(conn, ticket_id)
             if initial_ticket.conversation_id is not None and await conversation_system.is_running(
@@ -157,41 +149,6 @@ async def start_ready_worker_step(
                     "corrective_action": "classify_selection",
                 },
             )
-        initial_selection = read_launch_selection(conn, ticket_id)
-        if (
-            initial_selection.backend_key.value != "hermes"
-            and initial_selection.selection_kind.value == "legacy_unclassified"
-            and not selection_is_historical(conn, ticket_id)
-        ):
-            mutation = acquire_ticket_mutation(conn, ticket_id)
-            try:
-                with launch_authority_scope(mutation):
-                    async with link_lock:
-                        candidate = tickets_data.read_ticket(conn, ticket_id)
-                        if not worker_step_readiness.is_ready_for_worker_step(
-                            conn,
-                            candidate,
-                            worker_type_definition=worker_type_registry.require(
-                                candidate.worker_type
-                            ),
-                        ):
-                            return WorkerStepStartResult(started=False)
-                        classified = await conversation_start.verify_ticket_launch(
-                            conversation_system,
-                            conn,
-                            candidate,
-                            classify_new=True,
-                            notify=True,
-                            now=now(),
-                        )
-                        if classified.launch_token is None:
-                            return WorkerStepStartResult(
-                                started=False, launch_validation=classified
-                            )
-            finally:
-                mutation.release(conn)
-        if initial_ticket.employee_backend != "hermes":
-            permit = acquire_read(conn, ticket_id)
         await link_lock.acquire()
         link_acquired = True
         ticket = tickets_data.read_ticket(conn, ticket_id)
@@ -310,20 +267,19 @@ async def start_ready_worker_step(
                     conn, conversation_id
                 ),
             )
-            with launch_authority_scope(permit) if permit is not None else nullcontext():
-                delivered = await conversation_start.send_to_ticket_conversation(
-                    conversation_system,
-                    conn,
-                    ticket_id,
-                    text_message_content(prompt.model_text),
-                    conversation_id=conversation_id,
-                    created_conversation_id=conversation_start.new_conversation_id(),
-                    sender_label=LOOP_SENDER_LABEL,
-                    mode=PromptDeliveryMode.queue,
-                    sender_message_id=sender_message_id,
-                    worker_type_registry=worker_type_registry,
-                    now=now(),
-                )
+            delivered = await conversation_start.send_to_ticket_conversation(
+                conversation_system,
+                conn,
+                ticket_id,
+                text_message_content(prompt.model_text),
+                conversation_id=conversation_id,
+                created_conversation_id=conversation_start.new_conversation_id(),
+                sender_label=LOOP_SENDER_LABEL,
+                mode=PromptDeliveryMode.queue,
+                sender_message_id=sender_message_id,
+                worker_type_registry=worker_type_registry,
+                now=now(),
+            )
             conversation_id = delivered.conversation_id
             fate = delivered.fate
         except Exception:
@@ -413,8 +369,6 @@ async def start_ready_worker_step(
         if link_acquired:
             link_lock.release()
         if conn is not None:
-            if permit is not None:
-                permit.release(conn)
             conn.close()
 
 

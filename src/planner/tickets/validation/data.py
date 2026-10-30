@@ -26,7 +26,6 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.manager_wakes import data as wakes
 from planner.manager_wakes.contracts import WakeSourceKind
 from planner.tickets import data as tickets
-from planner.tickets import launch_authority
 from planner.tickets.contracts import TicketLocale
 from planner.tickets.validation.contracts import StoredLaunchValidation
 
@@ -112,19 +111,18 @@ def set_selection_kind_in_transaction(
     kind = SelectionKind(kind)
     if not conn.in_transaction:
         raise RuntimeError("selection classification requires an owned transaction")
-    with launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",)):
-        before = read_launch_selection(conn, ticket_id)
-        if before.selection_revision != expected_selection_revision:
-            raise PlannerError(
-                ErrorCode.already_running, "Ticket selection changed", {"ticket_id": ticket_id}
-            )
-        if before.selection_kind is not kind:
-            conn.execute(
-                "UPDATE ticket_launch_validation SET selection_kind=?,intent_origin='new',"
-                "launch_revision=launch_revision+1 WHERE ticket_id=?",
-                (kind.value, ticket_id),
-            )
-        return read_launch_selection(conn, ticket_id)
+    before = read_launch_selection(conn, ticket_id)
+    if before.selection_revision != expected_selection_revision:
+        raise PlannerError(
+            ErrorCode.already_running, "Ticket selection changed", {"ticket_id": ticket_id}
+        )
+    if before.selection_kind is not kind:
+        conn.execute(
+            "UPDATE ticket_launch_validation SET selection_kind=?,intent_origin='new',"
+            "launch_revision=launch_revision+1 WHERE ticket_id=?",
+            (kind.value, ticket_id),
+        )
+    return read_launch_selection(conn, ticket_id)
 
 
 def _semantic(value: Any) -> Any:

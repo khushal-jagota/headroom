@@ -16,26 +16,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from tests.unit.test_current_model_resolution import (
-    Catalogue,
-    ScopedCatalogue,
-    context,
-    observation,
-    row,
-)
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.model_resolution.contracts import (
-    CanonicalModelValidation,
-    CatalogWorkspaceBinding,
-    ModelSelection,
-)
-from planner.conversation.model_resolution.data import ModelResolutionStore
-from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.core.clock import RealClock
-from planner.core.db import connect
 from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
@@ -51,59 +36,13 @@ from planner.executor.vps import ExecutorEndpoint
 
 
 class ScriptedPreparation:
-    def __init__(self, path: str, *, refuse: bool = False) -> None:
-        self.path = path
-        self.calls = 0
-        self.refuse = refuse
-        self.after_probe: Callable[[], None] | None = None
-        self.service = ModelResolutionService(
-            snapshots=Catalogue(()),
-            store=ModelResolutionStore(path),
-            backend_state=BackendStateStore(path),
-            now=lambda: 1000,
-        )
+    """Any provider preparation on this creation path is a regression."""
+    calls = 0
+    after_probe: Callable[[], None] | None = None
 
-    async def validate_launch_selection(
-        self,
-        desired: ModelSelection,
-        binding: CatalogWorkspaceBinding,
-        *,
-        attempt_id: str,
-        classify_new: bool = False,
-    ) -> CanonicalModelValidation:
-        preparation = self
-        launch = context(
-            backend_key=desired.backend_key,
-            workspace=binding,
-            localized_workspace_folder=binding.workspace_folder,
-        )
-
-        class Probe(ScopedCatalogue):
-            async def observe(self, *args: Any, **kwargs: Any) -> Any:
-                preparation.calls += 1
-                # The real service calls this metadata probe outside any write lease.
-                other = connect(preparation.path)
-                try:
-                    other.execute("PRAGMA busy_timeout=50")
-                    other.execute("BEGIN IMMEDIATE")
-                    await asyncio.sleep(0)
-                    other.rollback()
-                finally:
-                    other.close()
-                result = await super().observe(*args, **kwargs)
-                if preparation.after_probe is not None:
-                    preparation.after_probe()
-                return result
-
-        source = Probe(
-            observation((row(desired.submitted_token, enabled=not self.refuse),), launch=launch)
-        )
-        return await self.service.validate_selection(
-            desired,
-            workspace=binding,
-            attempt_id=attempt_id,
-            observer=source,
-        )
+    async def validate_launch_selection(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls += 1
+        raise AssertionError("creation must bind exact intent without provider preparation")
 
 
 def _setup(
@@ -129,8 +68,20 @@ def _setup(
     endpoint.store.mark_ready(identity, 1001)
     child = ChildReference("incarnation", "child", "source-conversation")
     endpoint.store.register_child(child, *child_actor, 1002)
-    resolver = ScriptedPreparation(path, refuse=refuse)
-    endpoint.runtime = SimpleNamespace(model_resolution=resolver.service, system=resolver)
+    resolver = ScriptedPreparation()
+    endpoint.runtime = SimpleNamespace(system=resolver)
+    if refuse:
+        BackendStateStore(path).write_model_enablement(ConversationBackendKey.codex, "gpt-6-sol", False)
+    from planner.tickets import api as ticket_api
+    original_validation = ticket_api.validate_ticket_creation
+
+    async def validate(*args: Any, **kwargs: Any) -> Any:
+        result = await original_validation(*args, **kwargs)
+        if resolver.after_probe is not None:
+            resolver.after_probe()
+        return result
+
+    monkeypatch.setattr(ticket_api, "validate_ticket_creation", validate)
     payload = encode_value(
         CliWrite(
             "ticket.create",
@@ -167,12 +118,12 @@ def test_creation_preparation_receipt_and_replay_share_canonical_semantics(
 ) -> None:
     endpoint, resolver, envelope, identity = _setup(tmp_db, tmp_path, monkeypatch, refuse=refuse)
     receipt = asyncio.run(endpoint.accept_envelope(envelope, identity))
-    assert resolver.calls == 1
+    assert resolver.calls == 0
     assert receipt.disposition is (
         ReceiptDisposition.refused if refuse else ReceiptDisposition.accepted
     )
     if refuse:
-        assert "model_incompatible" in str(receipt.result)
+        assert "disabled" in str(receipt.result)
         assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
     else:
         ticket = tmp_db.execute(
@@ -200,7 +151,7 @@ def test_creation_preparation_receipt_and_replay_share_canonical_semantics(
     tmp_db.execute("UPDATE executor_child_assignments SET closed_at_ms=2000")
     tmp_db.commit()
     assert asyncio.run(endpoint.accept_envelope(envelope, identity)) == receipt
-    assert resolver.calls == 1
+    assert resolver.calls == 0
 
 
 def test_receipt_insert_failure_rolls_back_the_real_creation_writer(
@@ -214,7 +165,7 @@ def test_receipt_insert_failure_rolls_back_the_real_creation_writer(
     tmp_db.commit()
     with pytest.raises(sqlite3.IntegrityError, match="receipt fault"):
         asyncio.run(endpoint.accept_envelope(envelope, identity))
-    assert resolver.calls == 1
+    assert resolver.calls == 0
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
     assert endpoint.store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
 
@@ -248,7 +199,7 @@ def test_native_creation_unauthorized_child_refuses_before_metadata_and_replays(
     assert preparation.calls == 0
 
 
-def test_native_creation_source_closure_during_probe_is_a_durable_refusal(
+def test_native_creation_source_closure_before_commit_is_a_durable_refusal(
     tmp_db: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -259,7 +210,7 @@ def test_native_creation_source_closure_during_probe_is_a_durable_refusal(
     receipt = asyncio.run(endpoint.accept_envelope(envelope, identity))
     assert receipt.disposition is ReceiptDisposition.refused
     assert "child assignment changed" in str(receipt.result)
-    assert preparation.calls == 1
+    assert preparation.calls == 0
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
     assert asyncio.run(endpoint.accept_envelope(envelope, identity)) == receipt
-    assert preparation.calls == 1
+    assert preparation.calls == 0

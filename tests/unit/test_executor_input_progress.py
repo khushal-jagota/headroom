@@ -37,7 +37,7 @@ def test_policy_bounds_and_protocol_are_explicit() -> None:
     assert configuration.INPUT_PROGRESS_TIMEOUT_SECONDS == 30
     assert configuration.INPUT_FINALIZATION_TIMEOUT_SECONDS == 120
     assert configuration.INPUT_CANCEL_TIMEOUT_SECONDS == 5
-    assert configuration.PROTOCOL_VERSION == 13
+    assert configuration.PROTOCOL_VERSION == 14
     assert configuration.SPOOL_FORMAT_VERSION == 2
 
 

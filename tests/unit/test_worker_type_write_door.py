@@ -115,9 +115,9 @@ def test_launch_defaults_are_the_type_and_take_effect_at_once(
     assert response.status_code == 200, response.text
     record = test_client.get("/api/worker-types/coding").json()
     assert record["profile"]["default_backend"] == "claude"
-    assert record["profile"]["default_model"] == "opus"
+    assert record["profile"]["default_model"] == "claude-opus-5"
     assert (
-        configured_worker_type_registry().require("coding").worker_profile.default_model == "opus"
+        configured_worker_type_registry().require("coding").worker_profile.default_model == "claude-opus-5"
     )
 
 

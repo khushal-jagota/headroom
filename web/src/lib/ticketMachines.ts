@@ -16,7 +16,7 @@ export type TicketCreationDraft = {
   manager?: {kind: "chief" | "manager"; id: string};
   employee_backend?: string;
   employee_launch_model?: string;
-  employee_launch_reasoning_effort?: string;
+  employee_launch_reasoning_effort?: string | null;
   locale?: TicketLocale;
 };
 export type DraftCreationContext = {

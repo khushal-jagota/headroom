@@ -34,8 +34,6 @@ from planner.conversation.model_resolution.contracts import (
     LaunchContext,
     SelectionKind,
 )
-from planner.conversation.model_resolution.data import ModelResolutionStore
-from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
@@ -207,13 +205,11 @@ class HeldFixture:
             idle_child_sweep_interval_seconds=0.005,
         )
         observer = HeldCatalogObserver()
-        system._model_resolver = ModelResolutionService(
-            snapshots=Catalogue(()),
-            store=ModelResolutionStore(self.path),
-            backend_state=BackendStateStore(self.path),
-            observer=observer,
-        )
         system.configure_destination_validation(observer)
+        from types import SimpleNamespace
+        system._catalog_endpoint = SimpleNamespace(
+            identity=IDENTITY, ready=True, owns_conversation=lambda _: True,
+        )
         self.systems.append(system)
         return system
 
@@ -477,7 +473,7 @@ def test_terminal_held_action_and_original_receipt_replay_never_resurrect(
                     held[0].held_prompt_id,
                     HeldPromptPromotionMode.send_now,
                 )
-                assert isinstance(fate, PromptDeliveryStarted)
+                assert isinstance(fate, PromptDeliveryStarted), repr(fate)
             assert fixture.held_rows()[0]["held_state"] == "consumed"
             native_before = list(fixture.native.commands)
             fresh = await fixture.new_core()
