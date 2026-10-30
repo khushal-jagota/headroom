@@ -1,7 +1,6 @@
 """Require admitted containment before any explicitly requested probe imports."""
 
 import pytest
-
 from test_containment.admission import requested_containment
 from test_containment.contracts import ContainmentRefusal
 
