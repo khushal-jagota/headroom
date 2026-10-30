@@ -710,12 +710,15 @@ def agent_unit_spacing(browser, url):
             session = context.new_cdp_session(page) if phone else None
             if not phone:
                 plot.focus()
-            for index, value, day in ((30, 0, "2026-10-29"), (26, 2, "2026-10-25")):
+            # Chromium's touch adjustment can select the axis gutter at the edge.
+            # Inspect an interior retained zero on phone, and the latest zero by keyboard.
+            zero_point = (15, 0, "2026-10-14") if phone else (30, 0, "2026-10-29")
+            for index, value, day in (zero_point, (26, 2, "2026-10-25")):
                 if phone:
                     plot.scroll_into_view_if_needed()
                     box = plot.bounding_box()
                     assert box
-                    point = {"x": box["x"] + min(box["width"] - 1, box["width"] * index / 30),
+                    point = {"x": box["x"] + box["width"] * index / 30,
                              "y": box["y"] + box["height"] / 2}
                     session.send("Input.dispatchTouchEvent", {
                         "type": "touchStart", "touchPoints": [point],
