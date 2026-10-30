@@ -18,7 +18,6 @@
  import type {ConversationState} from '../../lib/conversation/conversationState';
  import type {ManagedFileTarget} from '../../lib/filePreview';
  import ManagerFrame from '../ManagerFrame.svelte';
- import ArtifactsBand from '../ArtifactsBand.svelte';
  import LiveConversation from '../conversation/LiveConversation.svelte';
  import PageDocument from '../pageKit/PageDocument.svelte';
  import PageChart from '../pageKit/PageChart.svelte';
@@ -64,7 +63,6 @@
  <!-- The saved page is the goal's content. It carries its own authored headings; the page
       renderer adds none, and nothing here wraps it in a section of our own naming. -->
  {#if renderedPage}<div class="goal-page"><PageDocument document={renderedPage} showHeader={false}/></div>{/if}
- <ArtifactsBand owner={{kind:'goal',id}}/>
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}
  </div>
  {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:goal:${id}`} label={goal?.title??'Goal'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={{kind:'goal',id}}/>{/snippet}

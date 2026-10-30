@@ -257,16 +257,18 @@
                   </button>
                   {#if expanded === step.id}
                     <div id="{uid}-{step.id}-panel" class="step-panel" role="region" aria-labelledby="{uid}-{step.id}-title" transition:grow={{ duration: 260 }}>
-                      <div class="step-panel-inner">
-                    {#if step.detail}<p class="detail">{step.detail}</p>{/if}
-                        {#if step.blocked && !done.includes(step.id)}<p class="blocked">Blocked</p>{/if}
-                        {#if step.action}
-                          <button type="button" class="action" data-action onclick={() => check(step.id)}>
-                            {step.action}
-                            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg>
-                          </button>
-                        {/if}
-                      </div>
+                      {#if step.detail?.trim() || (step.blocked && !done.includes(step.id)) || step.action?.trim()}
+                        <div class="step-panel-inner">
+                          {#if step.detail?.trim()}<p class="detail">{step.detail}</p>{/if}
+                          {#if step.blocked && !done.includes(step.id)}<p class="blocked">Blocked</p>{/if}
+                          {#if step.action?.trim()}
+                            <button type="button" class="action" data-action onclick={() => check(step.id)}>
+                              {step.action}
+                              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg>
+                            </button>
+                          {/if}
+                        </div>
+                      {/if}
                     </div>
                   {/if}
                 </div>
