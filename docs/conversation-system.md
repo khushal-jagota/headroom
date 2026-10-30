@@ -802,7 +802,7 @@ Unknown delivery retains its reservation and quarantined child. It never permits
 redispatch. Cancellation cannot abandon an owned exchange. Process death is not proof
 that a provider received nothing. Historical lease rows remain inert migration data.
 
-The executor accepts only wire protocol 15, journal format 3, and outbox schema 3.
+The executor accepts only wire protocol 15, outbox format 4.
 Migration `mac_vps_execution` installs the final schema from staging; databases that
 ran earlier migrations from this unshipped branch must be rebuilt. Recorded command
 state lives in Mac memory until its process ends. After a short link loss, one

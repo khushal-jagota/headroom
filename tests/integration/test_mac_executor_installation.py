@@ -99,54 +99,6 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
         PLAN_TICKET_ID="t_fixture",
         PLAN_ACTOR="worker",
     )
-    # The runbook imports configuration then preflight in a cold installed process.
-    # Runtime-first imports below cannot prove that order is safe.
-    preflight_root = outside_source / "preflight-executor-root"
-    assert not preflight_root.exists()
-    cold_preflight = subprocess.run(
-        [
-            python,
-            "-I",
-            "-B",
-            "-c",
-            """from planner.executor.configuration import SPOOL_FORMAT_VERSION, executor_paths
-from planner.executor.preflight import check_spool_compatibility
-check_spool_compatibility(executor_paths().root, SPOOL_FORMAT_VERSION)
-import json, sys, sysconfig
-from pathlib import Path
-assert sys.flags.isolated and sys.flags.dont_write_bytecode
-sites = {Path(sysconfig.get_path(key)).resolve() for key in ('purelib', 'platlib')}
-source, repository, expected_root = map(Path, sys.argv[1:])
-assert executor_paths().root == expected_root
-assert not expected_root.exists()
-for value in sys.path:
-    assert value
-    path = Path(value).resolve()
-    assert not path.is_relative_to(source) and not path.is_relative_to(repository), path
-origins = {}
-for name, module in tuple(sys.modules.items()):
-    if name == 'planner' or name.startswith('planner.'):
-        origin = Path(module.__file__).resolve()
-        assert any(origin.is_relative_to(site) for site in sites), (name, str(origin))
-        origins[name] = str(origin)
-print(json.dumps(origins))
-""",
-            str(source),
-            str(repository),
-            str(preflight_root),
-        ],
-        cwd=outside_source,
-        env={**environment, "PLAN_EXECUTOR_ROOT": str(preflight_root)},
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    preflight_origins = json.loads(cold_preflight.stdout)
-    assert {"planner.executor.configuration", "planner.executor.preflight"} <= set(
-        preflight_origins
-    )
-    assert all(Path(origin).is_relative_to(paths.venv) for origin in preflight_origins.values())
-    assert not preflight_root.exists()
     # Eager CLI help never imports the executor's actual runtime or the transport client.
     # Resolve that dependency closure from installed wheels under an isolated
     # interpreter, without a checkout path, connection, or provider instance.
@@ -160,7 +112,7 @@ print(json.dumps(origins))
 from pathlib import Path
 names = (
     'planner.executor.mac', 'planner.executor.app_transport', 'planner.executor.transfers',
-    'planner.executor.preflight', 'planner.cli.main', 'aiohttp',
+    'planner.executor.mac_outbox', 'planner.cli.main', 'aiohttp',
 )
 modules = {name: importlib.import_module(name) for name in names}
 assert modules['planner.executor.mac'].MacExecutor.__module__ == 'planner.executor.mac'
@@ -220,7 +172,7 @@ assert 'planner.core.db' not in sys.modules
         "planner.executor.mac",
         "planner.executor.app_transport",
         "planner.executor.transfers",
-        "planner.executor.preflight",
+        "planner.executor.mac_outbox",
         "planner.cli.main",
         "aiohttp",
     }

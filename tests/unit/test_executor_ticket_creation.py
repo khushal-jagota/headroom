@@ -27,10 +27,11 @@ from planner.executor.contracts import (
     CliWrite,
     EnvelopeKind,
     ExecutorIdentity,
+    OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
 )
-from planner.executor.journal import FilesystemSpool
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.vps import ExecutorEndpoint
 
 
@@ -94,11 +95,13 @@ def _setup(
         )
     )
     assert isinstance(payload, dict)
-    envelope = FilesystemSpool(tmp_path / "spool").mint_envelope(
-        conversation_id=child.conversation_id,
-        kind=EnvelopeKind.cli_write,
-        payload=payload,
-        submission_id="native-create",
+    envelope = MacOutbox(tmp_path / "spool").add(
+        OutboxEntry(
+            conversation_id=child.conversation_id,
+            kind=EnvelopeKind.cli_write,
+            payload=payload,
+            submission_id="native-create",
+        )
     )
     return endpoint, resolver, envelope, identity
 
@@ -150,7 +153,7 @@ def test_receipt_insert_failure_rolls_back_the_real_creation_writer(
 ) -> None:
     endpoint, resolver, envelope, identity = _setup(tmp_db, tmp_path, monkeypatch)
     tmp_db.execute(
-        "CREATE TRIGGER refuse_receipt BEFORE INSERT ON executor_receipts "
+        "CREATE TRIGGER refuse_receipt BEFORE INSERT ON mac_inbox_positions "
         "BEGIN SELECT RAISE(ABORT,'receipt fault'); END"
     )
     tmp_db.commit()

@@ -38,7 +38,7 @@ def test_policy_bounds_and_protocol_are_explicit() -> None:
     assert configuration.INPUT_FINALIZATION_TIMEOUT_SECONDS == 120
     assert configuration.INPUT_CANCEL_TIMEOUT_SECONDS == 5
     assert configuration.PROTOCOL_VERSION == 15
-    assert configuration.SPOOL_FORMAT_VERSION == 3
+    assert configuration.SPOOL_FORMAT_VERSION == 4
 
 
 def test_only_positive_download_bytes_renew_inactivity(monkeypatch: pytest.MonkeyPatch) -> None:

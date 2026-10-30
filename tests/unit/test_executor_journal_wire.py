@@ -14,20 +14,23 @@ from planner.executor.contracts import (
     EnvelopeKind,
     FileScope,
     IpcResponse,
+    OutboxEntry,
     ReceiptDisposition,
 )
 from planner.executor.files import snapshot_file
-from planner.executor.journal import FilesystemSpool
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.wire import ProtocolRefused, encode_frame, read_typed_frame
 
 
 def test_journal_restarts_after_ack_without_reusing_sequence(tmp_path: Path) -> None:
-    spool = FilesystemSpool(tmp_path / "spool")
-    first = spool.mint_envelope(
-        conversation_id="c_one",
-        kind=EnvelopeKind.cli_write,
-        payload={"value": 1},
-        submission_id="stable",
+    spool = MacOutbox(tmp_path / "spool")
+    first = spool.add(
+        OutboxEntry(
+            conversation_id="c_one",
+            kind=EnvelopeKind.cli_write,
+            payload={"value": 1},
+            submission_id="stable",
+        )
     )
     spool.acknowledge(
         AcceptanceReceipt(
@@ -40,26 +43,13 @@ def test_journal_restarts_after_ack_without_reusing_sequence(tmp_path: Path) -> 
         )
     )
     spool.close()
-    reopened = FilesystemSpool(tmp_path / "spool")
-    second = reopened.mint_envelope(
-        conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={"value": 2}
+    reopened = MacOutbox(tmp_path / "spool")
+    second = reopened.add(
+        OutboxEntry(conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={"value": 2})
     )
     assert second.sequence == 2
     assert second.sender_id == first.sender_id
-    retry = reopened.mint_envelope(
-        conversation_id="c_one",
-        kind=EnvelopeKind.cli_write,
-        payload={"value": 1},
-        submission_id="stable",
-    )
-    assert retry == first
-    with pytest.raises(ValueError, match="different content"):
-        reopened.mint_envelope(
-            conversation_id="c_one",
-            kind=EnvelopeKind.cli_write,
-            payload={"value": 3},
-            submission_id="stable",
-        )
+    assert reopened.lookup("stable") is None
     reopened.close()
 
 
@@ -72,9 +62,11 @@ def test_snapshot_bytes_immutable_after_enqueue(tmp_path: Path) -> None:
         root=source, relative_path="binary", scope=FileScope.ticket, owner_id="t_example"
     )
     (source / "binary").write_bytes(b"changed before enqueue")
-    spool = FilesystemSpool(tmp_path / "spool")
-    envelope = spool.mint_envelope(
-        conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={}, snapshots=(snapshot,)
+    spool = MacOutbox(tmp_path / "spool")
+    envelope = spool.add(
+        OutboxEntry(
+            conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={}, snapshots=(snapshot,)
+        )
     )
     (source / "binary").write_bytes(b"changed")
     durable = spool.snapshots(envelope.submission_id)[0]
@@ -84,12 +76,11 @@ def test_snapshot_bytes_immutable_after_enqueue(tmp_path: Path) -> None:
 
 
 def test_incomplete_entry_not_replayed_and_bad_receipt_keeps_entry(tmp_path: Path) -> None:
-    spool = FilesystemSpool(tmp_path / "spool")
-    incomplete = spool.root / ".incomplete-test"
-    incomplete.mkdir()
-    (incomplete / "envelope.json").write_text("partial")
-    envelope = spool.mint_envelope(conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={})
-    with pytest.raises(ValueError, match="digest"):
+    spool = MacOutbox(tmp_path / "spool")
+    envelope = spool.add(
+        OutboxEntry(conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={})
+    )
+    with pytest.raises(ValueError, match="identity"):
         spool.acknowledge(
             AcceptanceReceipt(
                 envelope.sender_id,
@@ -101,7 +92,7 @@ def test_incomplete_entry_not_replayed_and_bad_receipt_keeps_entry(tmp_path: Pat
             )
         )
     spool.close()
-    reopened = FilesystemSpool(tmp_path / "spool")
+    reopened = MacOutbox(tmp_path / "spool")
     assert reopened.pending() == (envelope,)
     reopened.close()
 
@@ -178,7 +169,7 @@ def test_disk_failure_never_grants_queue_receipt_or_consumes_sequence(
 ) -> None:
     import os
 
-    spool = FilesystemSpool(tmp_path / "spool")
+    spool = MacOutbox(tmp_path / "spool")
     real_fsync = os.fsync
 
     def disk_full(descriptor: int) -> None:
@@ -186,34 +177,40 @@ def test_disk_failure_never_grants_queue_receipt_or_consumes_sequence(
 
     monkeypatch.setattr(os, "fsync", disk_full)
     with pytest.raises(OSError, match="disk full"):
-        spool.mint_envelope(
+        spool.add(
+            OutboxEntry(
+                conversation_id="c_one",
+                kind=EnvelopeKind.cli_write,
+                payload={"value": 1},
+                submission_id="retry",
+            )
+        )
+    assert spool.pending() == ()
+    monkeypatch.setattr(os, "fsync", real_fsync)
+    retried = spool.add(
+        OutboxEntry(
             conversation_id="c_one",
             kind=EnvelopeKind.cli_write,
             payload={"value": 1},
             submission_id="retry",
         )
-    assert spool.pending() == ()
-    monkeypatch.setattr(os, "fsync", real_fsync)
-    retried = spool.mint_envelope(
-        conversation_id="c_one",
-        kind=EnvelopeKind.cli_write,
-        payload={"value": 1},
-        submission_id="retry",
     )
     assert retried.sequence == 1
     spool.close()
 
 
 def test_oversized_envelope_never_becomes_a_queued_poison_entry(tmp_path: Path) -> None:
-    spool = FilesystemSpool(tmp_path / "spool")
+    spool = MacOutbox(tmp_path / "spool")
     with pytest.raises(ProtocolRefused, match="limit"):
-        spool.mint_envelope(
-            conversation_id="c_one",
-            kind=EnvelopeKind.cli_write,
-            payload={"text": "x" * (1024 * 1024)},
+        spool.add(
+            OutboxEntry(
+                conversation_id="c_one",
+                kind=EnvelopeKind.cli_write,
+                payload={"text": "x" * (1024 * 1024)},
+            )
         )
     assert spool.pending() == ()
-    first = spool.mint_envelope(conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={})
+    first = spool.add(OutboxEntry(conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={}))
     assert first.sequence == 1
     spool.close()
 

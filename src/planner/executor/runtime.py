@@ -44,7 +44,6 @@ from planner.executor.codec import encode_backend_event, encode_value, invoke_ch
 from planner.executor.configuration import NATIVE_SKILLS_DIR_ENV, ExecutorPaths
 from planner.executor.contracts import (
     LIVE_BACKEND_EVENT_METHODS,
-    AllocatingDurableSpool,
     AnswerApplication,
     AskKind,
     AskReference,
@@ -62,6 +61,8 @@ from planner.executor.contracts import (
     EnvelopeKind,
     FileSnapshot,
     JsonObject,
+    MacOutboxWriter,
+    OutboxEntry,
     Quiescence,
 )
 from planner.executor.files import safe_component
@@ -134,7 +135,7 @@ class NativeChildRegistry:
         self,
         *,
         incarnation: str,
-        spool: AllocatingDurableSpool,
+        spool: MacOutboxWriter,
         factory: Callable[[ResolvedConversationStart, str, ChildReference], BackendChildFactory],
         message_files: ConversationMessageFiles,
         paths: ExecutorPaths | None = None,
@@ -227,6 +228,10 @@ class NativeChildRegistry:
             if not tasks:
                 self._source_tasks.pop(child, None)
             self.end_source_work(child)
+
+    def record_lost_output(self, child: ChildReference) -> None:
+        """An authored write failed to enter the durable outbox; stop stays unproved."""
+        self._failed_source_work.add(child)
 
     def end_source_work(self, child: ChildReference) -> None:
         key = child
@@ -897,14 +902,9 @@ class NativeChildRegistry:
     ) -> None:
         payload = cast(JsonObject, encode_value(value))
         await asyncio.to_thread(
-            self.spool.mint_envelope,
-            conversation_id=conversation_id,
-            kind=kind,
-            payload=payload,
-            snapshots=snapshots,
-            submission_id=submission_id,
+            self.spool.add,
+            OutboxEntry(conversation_id, kind, payload, submission_id, snapshots),
         )
-        self.outbound_ready.set()
 
     async def report_event(
         self,
@@ -964,14 +964,14 @@ class NativeChildRegistry:
             )
         ):
             await asyncio.to_thread(
-                self.spool.mint_ticket_envelope,
-                paths=self.paths,
+                self.spool.add,
+                OutboxEntry(
+                    reference.conversation_id,
+                    EnvelopeKind.backend_event,
+                    cast(JsonObject, encode_value(event)),
+                ),
                 ticket_id=child.ticket_id,
-                child=reference,
-                kind=EnvelopeKind.backend_event,
-                payload=cast(JsonObject, encode_value(event)),
             )
-            self.outbound_ready.set()
             return
         await self._emit(reference.conversation_id, EnvelopeKind.backend_event, event, snapshots)
 

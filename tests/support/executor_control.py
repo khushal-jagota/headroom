@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from unittest.mock import patch
 
 from planner.executor.app_transport import ControlWebSocket
+from planner.executor.contracts import OutboxLink, QueuedEnvelope
+from planner.executor.mac_outbox import MacOutbox
 
 
 class BinaryPeer:
@@ -34,3 +39,20 @@ class MessageReader(ControlWebSocket):
 
     def feed_eof(self) -> None:
         self.feed_data(b"")
+
+
+@asynccontextmanager
+async def paused_outbox(outbox: MacOutbox) -> AsyncIterator[None]:
+    """Hold item transport, without holding a database or connection lifecycle lock."""
+    release = asyncio.Event()
+    send = outbox._send_one
+
+    async def held(link: OutboxLink, envelope: QueuedEnvelope) -> None:
+        await release.wait()
+        await send(link, envelope)
+
+    with patch.object(outbox, "_send_one", held):
+        try:
+            yield
+        finally:
+            release.set()

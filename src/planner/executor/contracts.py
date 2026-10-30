@@ -20,7 +20,6 @@ from pydantic import ConfigDict, Field
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.events import UserInputAnswer
-from planner.executor.configuration import ExecutorPaths
 
 # Payloads carry existing domain types as JSON; operation-specific codecs validate
 # exact fields before dispatch. Credentials and arbitrary caller headers never travel.
@@ -283,8 +282,9 @@ class EnvelopeKind(StrEnum):
 class QueuedEnvelope:
     """Digest binds routing identity, kind, payload and ordered file dependencies.
 
-    sender_id survives process restart in the spool metadata. Sequence starts at 1
-    per (sender_id, conversation_id); submission_id never changes during retries.
+    sender_id survives process restart in the sender row.
+    Sequence increases globally for the sender;
+    submission_id never changes during retries.
     Authority is bound by VPS child assignment, never taken from payload claims.
     """
 
@@ -301,6 +301,7 @@ class QueuedEnvelope:
 class ReceiptDisposition(StrEnum):
     accepted = "accepted"
     refused = "refused"
+    uncertain = "uncertain"
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,9 +340,22 @@ class UnconfirmedCliResult:
 
 
 @dataclass(frozen=True, slots=True)
-class JournalPublication:
+class OutboxRecord:
     envelope: QueuedEnvelope
-    pending: bool
+    receipt: AcceptanceReceipt | None = None
+
+    @property
+    def pending(self) -> bool:
+        return self.receipt is None
+
+
+@dataclass(frozen=True, slots=True)
+class OutboxEntry:
+    conversation_id: str
+    kind: EnvelopeKind
+    payload: JsonObject
+    submission_id: str | None = None
+    snapshots: tuple[FileSnapshot, ...] = ()
 
 
 class ChildOperation(StrEnum):
@@ -464,38 +478,6 @@ class Quiescence:
         )
 
 
-class DurableSpool(Protocol):
-    """Methods are synchronous; async callers use a worker thread for disk I/O."""
-
-    def enqueue(self, envelope: QueuedEnvelope, snapshots: tuple[FileSnapshot, ...] = ()) -> None:
-        """Return after snapshots, metadata, publication and parent directory fsync."""
-        ...
-
-    def pending(self) -> tuple[QueuedEnvelope, ...]: ...
-
-    def pending_heads(self) -> tuple[QueuedEnvelope, ...]:
-        """First pending submission per conversation, retaining conversation order."""
-        ...
-
-    def pending_sequence_ceilings(self) -> dict[str, int]:
-        """Highest pending sequence per conversation in one metadata snapshot."""
-        ...
-
-    def pending_count(self) -> int: ...
-
-    def has_pending(self, conversation_id: str | None = None) -> bool: ...
-
-    def snapshots(self, submission_id: str) -> tuple[FileSnapshot, ...]: ...
-
-    def pin_snapshots(self, submission_id: str) -> AbstractContextManager[tuple[FileSnapshot, ...]]:
-        """Retain immutable paths until exit without a network-spanning transaction."""
-        ...
-
-    def acknowledge(self, receipt: AcceptanceReceipt) -> None:
-        """Delete only matching sender/ID/digest after a durable VPS first result."""
-        ...
-
-
 class TransactionalWriter(Protocol):
     def __call__(self, connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
         """Validate original authority and apply effect; never commit or do native I/O.
@@ -540,6 +522,7 @@ class WireMessageKind(StrEnum):
     live_backend_event = "live_backend_event"
     envelope = "envelope"
     receipt = "receipt"
+    missing_files = "missing_files"
     file_manifest = "file_manifest"
     file_complete = "file_complete"
     file_accepted = "file_accepted"
@@ -624,45 +607,14 @@ class LiveReadRequest:
     params: JsonObject
 
 
-class AllocatingDurableSpool(DurableSpool, Protocol):
-    def lookup_publication(self, submission_id: str) -> JournalPublication | None:
-        """Read retained publication metadata without altering replay state."""
-        ...
+class MacOutboxWriter(Protocol):
+    """The runner only produces durable output and checks its delivery barrier."""
 
-    @property
-    def sender_id(self) -> str:
-        """Persisted sender identity, independent of process incarnation."""
-        ...
+    def add(self, entry: OutboxEntry, *, ticket_id: str | None = None) -> QueuedEnvelope: ...
 
-    def mint_ticket_envelope(
-        self,
-        *,
-        paths: ExecutorPaths,
-        ticket_id: str,
-        child: ChildReference,
-        kind: EnvelopeKind,
-        payload: JsonObject,
-        submission_id: str | None = None,
-    ) -> QueuedEnvelope:
-        """Capture changed artifacts and persist their exact dependencies."""
-        ...
+    def pending_count(self, conversation_id: str | None = None) -> int: ...
 
-    def mint_envelope(
-        self,
-        *,
-        conversation_id: str,
-        kind: EnvelopeKind,
-        payload: JsonObject,
-        snapshots: tuple[FileSnapshot, ...] = (),
-        submission_id: str | None = None,
-    ) -> QueuedEnvelope:
-        """Allocate sequence and persist envelope atomically before returning.
-
-        A failed allocation must not strand a sequence gap. Counters survive empty
-        journals, acknowledgments and process restart. A supplied existing ID returns
-        its identical immutable envelope; conflicting content is refused.
-        """
-        ...
+    def has_pending(self, conversation_id: str | None = None) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -721,3 +673,11 @@ class ControlMessageWriter(Protocol):
 
 class RemoteInputTransferFailed(RuntimeError):
     """Local input failure before any native command emission."""
+
+
+class OutboxLink(Protocol):
+    async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage: ...
+
+    async def publish_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
+        """Temporary adapter to the existing file publication exchange."""
+        ...

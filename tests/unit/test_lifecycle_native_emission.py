@@ -31,7 +31,7 @@ from planner.conversation.model_resolution.contracts import (
 )
 from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.executor.contracts import ExecutorIdentity
+from planner.executor.contracts import ExecutorIdentity, OutboxEntry
 from planner.tickets.contracts import TicketLocale
 
 
@@ -110,8 +110,8 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
         WireMessage,
         WireMessageKind,
     )
-    from planner.executor.journal import FilesystemSpool
     from planner.executor.mac import MacExecutor
+    from planner.executor.mac_outbox import MacOutbox
     from planner.executor.wire import ProtocolRefused, parse_identity
 
     def payload_object(value: object) -> JsonObject:
@@ -188,23 +188,23 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
             reopened.close()
 
         paths = ExecutorPaths(tmp_path / "native")
-        spool = FilesystemSpool(paths.spool)
+        spool = MacOutbox(paths.spool)
         outcomes = (
             CommandOutcome("first-stop", child, CommandDisposition.succeeded, {}),
             CommandOutcome("later-stop", child, CommandDisposition.succeeded, {}),
         )
         envelopes = tuple(
-            spool.mint_envelope(
-                conversation_id=child.conversation_id,
-                kind=EnvelopeKind.child_stopped,
-                payload=payload_object(value),
+            spool.add(
+                OutboxEntry(
+                    conversation_id=child.conversation_id,
+                    kind=EnvelopeKind.child_stopped,
+                    payload=payload_object(value),
+                )
             )
             for value in outcomes
         )
         sender = spool.sender_id
-        before = spool._db.execute(
-            "SELECT submission_id,envelope_json,pending FROM envelopes ORDER BY submission_id"
-        ).fetchall()
+        before = spool.pending()
         spool.close()
         executor = MacExecutor(
             paths=paths,
@@ -214,13 +214,7 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
         )
         try:
             assert executor.spool.sender_id == sender
-            assert (
-                executor.spool._db.execute(
-                    "SELECT submission_id,envelope_json,pending FROM envelopes "
-                    "ORDER BY submission_id"
-                ).fetchall()
-                == before
-            )
+            assert executor.spool.pending() == before
             assert executor.spool.pending() == envelopes
             assert executor.identity.executor_incarnation != child.executor_incarnation
 
@@ -258,13 +252,20 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
                 return WireMessage(WireMessageKind.receipt, "fixture", payload_object(receipt))
 
             executor._request = request  # type: ignore[method-assign]
-            await executor._replay()
+            sender_task = asyncio.create_task(executor.spool.send_pending(executor))
+            try:
+                async with asyncio.timeout(2):
+                    while executor.spool.pending_count():
+                        await asyncio.sleep(0.001)
+            finally:
+                sender_task.cancel()
+                await asyncio.gather(sender_task, return_exceptions=True)
             original = {entry.submission_id: encode_value(entry) for entry in envelopes}
             replayed_original = [entry for entry in submitted if entry["submission_id"] in original]
             assert len(replayed_original) == 2
             assert all(entry == original[entry["submission_id"]] for entry in replayed_original)
             assert executor.spool.pending_count() == 0 and not executor.registry.children
-            assert PROTOCOL_VERSION == 15 and SPOOL_FORMAT_VERSION == 3
+            assert PROTOCOL_VERSION == 15 and SPOOL_FORMAT_VERSION == 4
             with pytest.raises(ProtocolRefused):
                 parse_identity(
                     encode_value(
@@ -384,7 +385,7 @@ def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
         ChildReference,
         CommandDisposition,
     )
-    from planner.executor.journal import FilesystemSpool
+    from planner.executor.mac_outbox import MacOutbox
     from planner.executor.runtime import NativeChildRegistry
 
     async def run() -> None:
@@ -394,7 +395,7 @@ def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
         reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
         registry = NativeChildRegistry(
             incarnation="11111111-1111-4111-8111-111111111111",
-            spool=FilesystemSpool(tmp_path / "spool"),
+            spool=MacOutbox(tmp_path / "spool"),
             factory=never_create,
             message_files=ConversationMessageFiles(tmp_path / "db"),
         )
@@ -434,7 +435,7 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
         ChildReference,
         CommandDisposition,
     )
-    from planner.executor.journal import FilesystemSpool
+    from planner.executor.mac_outbox import MacOutbox
     from planner.executor.runtime import NativeChildRegistry, _Child
 
     async def run() -> None:
@@ -456,7 +457,7 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
         exact = replace(exact, child=reference, turn=turn)
         registry = NativeChildRegistry(
             incarnation="11111111-1111-4111-8111-111111111111",
-            spool=FilesystemSpool(tmp_path / "spool"),
+            spool=MacOutbox(tmp_path / "spool"),
             factory=cast(Any, None),
             message_files=ConversationMessageFiles(tmp_path / "db"),
         )
@@ -505,7 +506,7 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
         ChildReference,
         CommandDisposition,
     )
-    from planner.executor.journal import FilesystemSpool
+    from planner.executor.mac_outbox import MacOutbox
     from planner.executor.runtime import NativeChildRegistry, _Child
 
     async def run() -> None:
@@ -538,7 +539,7 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
 
         registry = NativeChildRegistry(
             incarnation=reference.executor_incarnation,
-            spool=FilesystemSpool(tmp_path / "spool"),
+            spool=MacOutbox(tmp_path / "spool"),
             factory=cast(Any, None),
             message_files=ConversationMessageFiles(tmp_path / "db"),
         )
@@ -575,7 +576,7 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
         assert writes == ["alias"]
         assert await registry.execute_command(command) == outcome
         assert writes == ["alias"]
-        cast(FilesystemSpool, registry.spool).close()
+        cast(MacOutbox, registry.spool).close()
 
     asyncio.run(run())
 
@@ -606,7 +607,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.executor.configuration import ExecutorPaths
     from planner.executor.contracts import ChildCommand, ChildReference, CommandDisposition
-    from planner.executor.journal import FilesystemSpool
+    from planner.executor.mac_outbox import MacOutbox
     from planner.executor.remote import RemoteBackendChild, RemoteCommandUncertain
     from planner.executor.runtime import NativeChildRegistry
 
@@ -640,7 +641,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
                 return BackendPromptAccepted(True, provider_submission=fact)
 
         native = Native()
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         registry = NativeChildRegistry(
             paths=ExecutorPaths(tmp_path / "native"),
             incarnation=reference.executor_incarnation,

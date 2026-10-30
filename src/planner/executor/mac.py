@@ -7,6 +7,7 @@ import contextlib
 import json
 import math
 import os
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -70,6 +71,7 @@ from planner.executor.contracts import (
     EnvelopeKind,
     ExecutorHealth,
     ExecutorIdentity,
+    FileSnapshot,
     FileTransfer,
     InputTransferCancel,
     InputTransferCancelled,
@@ -81,9 +83,10 @@ from planner.executor.contracts import (
     IpcResponse,
     IpcRetryPayload,
     IpcWritePayload,
-    JournalPublication,
     JsonObject,
     LiveReadRequest,
+    OutboxEntry,
+    OutboxRecord,
     QueuedCliResult,
     QueuedEnvelope,
     QuiescenceReceipt,
@@ -98,7 +101,7 @@ from planner.executor.contracts import (
 from planner.executor.diagnostics import connection_diagnostics
 from planner.executor.files import IncomingFiles, safe_component
 from planner.executor.input_transfers import InputTransferDeadline
-from planner.executor.journal import FilesystemSpool
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry, now_ms
 from planner.executor.transfers import settled_io, wait_for_settlement
 from planner.executor.wire import (
@@ -121,8 +124,7 @@ class _IpcConflict(ValueError):
 @dataclass
 class _IpcPublication:
     write: CliWrite
-    task: asyncio.Task[JournalPublication]
-    receipt: asyncio.Future[AcceptanceReceipt]
+    task: asyncio.Task[OutboxRecord]
     observers: int = 0
     admitted: bool = False
 
@@ -147,8 +149,7 @@ class MacExecutor:
         self._transfers = 0
         self._transfer_capacity = asyncio.Semaphore(MAX_TRANSFERS)
         self._transport_admission_stopped = False
-        self._replay_lock = asyncio.Lock()
-        self.spool = FilesystemSpool(paths.spool)
+        self.spool = MacOutbox(paths.spool)
         self.identity = ExecutorIdentity(
             PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, str(uuid4()), 0
         )
@@ -158,9 +159,8 @@ class MacExecutor:
         self._writer: ControlMessageWriter | None = None
         self._write_lock = asyncio.Lock()
         self._pending: dict[str, asyncio.Future[WireMessage]] = {}
-        self._receipts: dict[str, asyncio.Future[AcceptanceReceipt]] = {}
         self._publications: dict[str, _IpcPublication] = {}
-        self._ipc_lookups: set[asyncio.Task[JournalPublication | None]] = set()
+        self._ipc_lookups: set[asyncio.Task[OutboxRecord | None]] = set()
         self._stop = asyncio.Event()
         self.exit_committed = False
         self._ipc_stopping = False
@@ -649,94 +649,50 @@ class MacExecutor:
             self._input_transfers.pop(message.request_id, None)
             self._transfers -= 1
 
-    async def _replay(self) -> None:
-        # Drain the pending prefix captured for this pass, not newly produced work.
-        # Admit one head per conversation and refill capacity after every receipt.
-        async with self._replay_lock:
-            ceilings = await asyncio.to_thread(self.spool.pending_sequence_ceilings)
-            tasks: dict[asyncio.Task[None], str] = {}
+    async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+        return await self._request(kind, payload)
 
-            async def admit() -> None:
-                active = set(tasks.values())
-                for envelope in await asyncio.to_thread(self.spool.pending_heads):
-                    if len(tasks) >= MAX_TRANSFERS:
-                        break
-                    if (
-                        envelope.sequence <= ceilings.get(envelope.conversation_id, 0)
-                        and envelope.conversation_id not in active
-                    ):
-                        tasks[asyncio.create_task(self._replay_envelope(envelope))] = (
-                            envelope.conversation_id
-                        )
-                        active.add(envelope.conversation_id)
-
-            try:
-                await admit()
-                while tasks:
-                    done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                    for task in done:
-                        tasks.pop(task)
-                        await task
-                    await admit()
-            finally:
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _replay_envelope(self, envelope: QueuedEnvelope) -> None:
+    async def publish_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
+        """Temporary adapter to the retained file publication protocol."""
         identity = self.identity
-        with self.spool.pin_snapshots(envelope.submission_id) as snapshots:
-            for snapshot in snapshots:
-                if await asyncio.to_thread(
-                    self.spool.dependency_acknowledged, envelope, snapshot.manifest
-                ):
-                    continue
-                payload = envelope.payload
-                child = payload.get("child")
-                if child is None:
-                    ask = cast(JsonObject, payload.get("ask", {}))
-                    child = ask.get("child")
-                if child is None:
-                    raise ValueError("file publication lacks assigned child")
-                publication: JsonObject = {"manifest": as_object(snapshot.manifest), "child": child}
-                response = await self._request(WireMessageKind.file_manifest, publication)
+        payload = envelope.payload
+        child = payload.get("child")
+        if child is None:
+            ask = cast(JsonObject, payload.get("ask", {}))
+            child = ask.get("child")
+        if child is None:
+            raise ValueError("file publication lacks assigned child")
+        publication: JsonObject = {"manifest": as_object(snapshot.manifest), "child": child}
+        response = await self._request(WireMessageKind.file_manifest, publication)
+        if identity != self.identity or not self._handshake_accepted:
+            raise ConnectionError("publication generation changed")
+        if response.kind != WireMessageKind.file_accepted:
+            slot = TypeAdapter(FileTransfer).validate_python(response.payload)
+            if (
+                response.kind is not WireMessageKind.file_slot
+                or slot.direction != "upload"
+                or slot.manifest != snapshot.manifest
+                or self._app_client is None
+            ):
+                raise ValueError("invalid publication slot")
+            client = self._app_client
+            self._transfers += 1
+            try:
+                async with self._transfer_capacity:
+                    assert client is not None
+                    await client.upload(slot, snapshot.local_path)
                 if identity != self.identity or not self._handshake_accepted:
                     raise ConnectionError("publication generation changed")
-                if response.kind != WireMessageKind.file_accepted:
-                    slot = TypeAdapter(FileTransfer).validate_python(response.payload)
-                    if (
-                        response.kind is not WireMessageKind.file_slot
-                        or slot.direction != "upload"
-                        or slot.manifest != snapshot.manifest
-                        or self._app_client is None
-                    ):
-                        raise ValueError("invalid publication slot")
-                    client = self._app_client
-                    self._transfers += 1
-                    try:
-                        async with self._transfer_capacity:
-                            assert client is not None
-                            await client.upload(slot, snapshot.local_path)
-                        if identity != self.identity or not self._handshake_accepted:
-                            raise ConnectionError("publication generation changed")
-                        completion = await self._request(WireMessageKind.file_complete, publication)
-                        if (
-                            completion.kind is not WireMessageKind.file_accepted
-                            or completion.payload != as_object(snapshot.manifest)
-                        ):
-                            raise ValueError("publication did not confirm complete bytes")
-                    finally:
-                        self._transfers -= 1
-                elif response.payload != as_object(snapshot.manifest):
-                    raise ValueError("publication receipt manifest changed")
-            if identity != self.identity or not self._handshake_accepted:
-                raise ConnectionError("publication generation changed")
-            response = await self._request(WireMessageKind.envelope, as_object(envelope))
-            receipt = TypeAdapter(AcceptanceReceipt).validate_python(response.payload)
-            await asyncio.to_thread(self.spool.acknowledge, receipt)
-            future = self._receipts.get(envelope.submission_id)
-            if future is not None and not future.done():
-                future.set_result(receipt)
+                completion = await self._request(WireMessageKind.file_complete, publication)
+                if (
+                    completion.kind is not WireMessageKind.file_accepted
+                    or completion.payload != as_object(snapshot.manifest)
+                ):
+                    raise ValueError("publication did not confirm complete bytes")
+            finally:
+                self._transfers -= 1
+        elif response.payload != as_object(snapshot.manifest):
+            raise ValueError("publication receipt manifest changed")
 
     async def _connected(self) -> None:
         phase = ConnectionPhase.app_connect
@@ -791,14 +747,7 @@ class MacExecutor:
                     self.lost_at_ms = None
                     self.state = ConnectionState.ready
                     phase = ConnectionPhase.steady_state
-                    while not self._stop.is_set():
-                        # Clear before draining so publications during replay stay signalled.
-                        self.registry.outbound_ready.clear()
-                        await self._replay()
-                        with contextlib.suppress(TimeoutError):
-                            await asyncio.wait_for(
-                                self.registry.outbound_ready.wait(), RECONNECT_INTERVAL_SECONDS
-                            )
+                    await self.spool.send_pending(self)
 
                 session_task = asyncio.create_task(
                     observe(session(), ConnectionFailureOrigin.session)
@@ -922,11 +871,11 @@ class MacExecutor:
                         request.request_id, retry.submission_id, publication, deadline
                     )
                 lookup = asyncio.create_task(
-                    asyncio.to_thread(self.spool.lookup_publication, retry.submission_id)
+                    asyncio.to_thread(self.spool.lookup, retry.submission_id)
                 )
                 self._ipc_lookups.add(lookup)
 
-                def looked_up(task: asyncio.Task[JournalPublication | None]) -> None:
+                def looked_up(task: asyncio.Task[OutboxRecord | None]) -> None:
                     self._ipc_lookups.discard(task)
                     if not task.cancelled():
                         task.exception()
@@ -963,50 +912,39 @@ class MacExecutor:
             else:
                 if self.registry.admission_stopped:
                     raise PermissionError("executor admission stopped")
-                receipt: asyncio.Future[AcceptanceReceipt] = (
-                    asyncio.get_running_loop().create_future()
-                )
-                self._receipts[request.request_id] = receipt
 
-                async def publish_write() -> JournalPublication:
+                async def publish_write() -> OutboxRecord:
                     assert publication is not None
-                    publication.admitted = True
-                    previous = await asyncio.to_thread(
-                        self.spool.lookup_publication, request.request_id
-                    )
+                    previous = await asyncio.to_thread(self.spool.lookup, request.request_id)
                     if previous is not None:
                         if previous.envelope.kind != EnvelopeKind.cli_write:
                             raise _IpcConflict("submission identity conflicts with journal")
                         self._match_publication(
                             TypeAdapter(CliWrite).validate_python(previous.envelope.payload), write
                         )
-                        self.registry.outbound_ready.set()
+                        publication.admitted = True
                         return previous
-                    if child.ticket_id is not None:
+                    publication.admitted = True
+                    try:
                         envelope = await asyncio.to_thread(
-                            self.spool.mint_ticket_envelope,
-                            paths=self.paths,
+                            self.spool.add,
+                            OutboxEntry(
+                                child.reference.conversation_id,
+                                EnvelopeKind.cli_write,
+                                as_object(write),
+                                request.request_id,
+                            ),
                             ticket_id=child.ticket_id,
-                            child=child.reference,
-                            kind=EnvelopeKind.cli_write,
-                            payload=as_object(write),
-                            submission_id=request.request_id,
                         )
-                    else:
-                        envelope = await asyncio.to_thread(
-                            self.spool.mint_envelope,
-                            conversation_id=child.reference.conversation_id,
-                            kind=EnvelopeKind.cli_write,
-                            payload=as_object(write),
-                            submission_id=request.request_id,
-                        )
-                    self.registry.outbound_ready.set()
-                    return JournalPublication(envelope, True)
+                    except (OSError, ValueError, sqlite3.Error):
+                        self.registry.record_lost_output(child.reference)
+                        raise
+                    return OutboxRecord(envelope)
 
                 task = asyncio.create_task(
                     self.registry.source_work(child.reference, publish_write, new_work=True)
                 )
-                publication = _IpcPublication(write, task, receipt)
+                publication = _IpcPublication(write, task)
                 # Reserve before the first await, including a blocked journal lookup.
                 self._publications[request.request_id] = publication
                 task.add_done_callback(
@@ -1049,7 +987,7 @@ class MacExecutor:
         )
 
     def _publication_status(
-        self, request_id: str, submission_id: str, row: JournalPublication | None
+        self, request_id: str, submission_id: str, row: OutboxRecord | None
     ) -> IpcResponse:
         if row is None:
             return self._unconfirmed(request_id, submission_id, "unknown")
@@ -1058,7 +996,8 @@ class MacExecutor:
         if row.pending:
             # Keep the existing durable queue contract for callers that already use it.
             return IpcResponse(request_id, None, None, QueuedCliResult(submission_id))
-        return self._unconfirmed(request_id, submission_id, "acknowledged")
+        assert row.receipt is not None
+        return self._receipt_response(request_id, row.receipt)
 
     def _release_publication(self, submission_id: str, publication: _IpcPublication) -> None:
         if not publication.task.done():
@@ -1067,24 +1006,26 @@ class MacExecutor:
             publication.task.exception()  # Consume failure even after every caller disconnects.
         if publication.observers == 0 and self._publications.get(submission_id) is publication:
             del self._publications[submission_id]
-            if self._receipts.get(submission_id) is publication.receipt:
-                del self._receipts[submission_id]
-            if not publication.receipt.done():
-                publication.receipt.cancel()
 
     async def _observe_publication(
         self, request_id: str, submission_id: str, publication: _IpcPublication, deadline: float
     ) -> IpcResponse:
         publication.observers += 1
+        confirmation = asyncio.create_task(
+            self.spool.wait_confirmed(submission_id, max(0, deadline - time.monotonic()))
+        )
         try:
-            # Neither a timeout nor cancellation of this observer owns the source task.
-            await asyncio.wait(
-                (publication.task, publication.receipt),
+            done, _ = await asyncio.wait(
+                (publication.task, confirmation),
                 timeout=max(0, deadline - time.monotonic()),
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if publication.receipt.done() and not publication.receipt.cancelled():
-                return self._receipt_response(request_id, publication.receipt.result())
+            if confirmation in done and not publication.admitted:
+                await asyncio.wait((publication.task,), timeout=max(0, deadline - time.monotonic()))
+            if confirmation.done() and confirmation.result() is not None and publication.admitted:
+                receipt = confirmation.result()
+                assert receipt is not None
+                return self._receipt_response(request_id, receipt)
             if publication.task.cancelled():
                 return self._unconfirmed(request_id, submission_id, "unknown")
             if publication.task.done():
@@ -1092,19 +1033,17 @@ class MacExecutor:
                 if error is not None:
                     if not publication.admitted or isinstance(error, _IpcConflict):
                         raise error
-                    # Even a local error can follow the journal commit. Do not infer refusal.
                     return self._unconfirmed(request_id, submission_id, "unknown")
-                row = publication.task.result()
-                if not publication.receipt.done() and row.pending:
-                    await asyncio.wait(
-                        (publication.receipt,), timeout=max(0, deadline - time.monotonic())
-                    )
-                if not publication.receipt.done():
-                    return self._publication_status(request_id, submission_id, row)
-            if publication.receipt.done() and not publication.receipt.cancelled():
-                return self._receipt_response(request_id, publication.receipt.result())
+                receipt = await confirmation
+                if receipt is not None:
+                    return self._receipt_response(request_id, receipt)
+                return self._publication_status(
+                    request_id, submission_id, publication.task.result()
+                )
             return self._unconfirmed(request_id, submission_id, "preparing")
         finally:
+            confirmation.cancel()
+            await asyncio.gather(confirmation, return_exceptions=True)
             publication.observers -= 1
             self._release_publication(submission_id, publication)
 

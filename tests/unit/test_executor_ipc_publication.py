@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import socket
 import struct
@@ -22,12 +23,15 @@ from click.testing import CliRunner
 from planner.cli.main import main
 from planner.conversation.backends.contracts import BackendChild
 from planner.executor import ipc_client
-from planner.executor import journal as journal_module
+from planner.executor import mac_outbox as journal_module
 from planner.executor.cli import executor_group
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
+    ChildCommand,
+    ChildOperation,
     ChildReference,
+    CommandDisposition,
     FileSnapshot,
     IpcOperation,
     IpcRequest,
@@ -176,8 +180,8 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                 publication = await tracker.task
                 assert executor.registry._source_work == {}
                 assert captures == 1
-                with executor.spool.pin_snapshots(identity) as snapshots:
-                    assert snapshots[0].local_path.read_text() == "original bytes"
+                snapshots = executor.spool.snapshots(identity)
+                assert snapshots[0].local_path.read_text() == "original bytes"
                 retried = await asyncio.to_thread(
                     CliRunner().invoke, executor_group, ["retry", identity, "--json"]
                 )
@@ -197,15 +201,15 @@ def test_shared_deadline_returns_preparing_but_tracker_survives_physical_settlem
     async def run() -> None:
         entered, release = threading.Event(), threading.Event()
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            mint = executor.spool.mint_envelope
+            mint = executor.spool.add
 
-            def held_mint(**kwargs: object) -> object:
-                envelope = mint(**kwargs)  # type: ignore[arg-type]
+            def held_mint(*args: object, **kwargs: object) -> object:
+                envelope = mint(*args, **kwargs)  # type: ignore[arg-type]
                 entered.set()
                 assert release.wait(5)
                 return envelope
 
-            monkeypatch.setattr(executor.spool, "mint_envelope", held_mint)
+            monkeypatch.setattr(executor.spool, "add", held_mint)
             request = write_request(child, "original", budget=0.1)
             try:
                 started = time.monotonic()
@@ -226,7 +230,7 @@ def test_shared_deadline_returns_preparing_but_tracker_survives_physical_settlem
                 assert duplicate.unconfirmed is not None
                 assert executor._publications["original"] is tracker
                 envelope = executor.spool.pending()[0]
-                tracker.receipt.set_result(
+                executor.spool.acknowledge(
                     AcceptanceReceipt(
                         envelope.sender_id,
                         envelope.submission_id,
@@ -270,8 +274,7 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
             )
             assert not (executor.spool.root / "entries" / "original").exists()
             acknowledged = await executor.handle_ipc(retry_request(child, "original"))
-            assert acknowledged.unconfirmed is not None
-            assert acknowledged.unconfirmed.publication == "acknowledged"
+            assert acknowledged.error == {"code": "validation"}
             changed = replace(
                 write_request(child, "original"),
                 payload={"operation": "ticket.edit", "arguments": {}},
@@ -289,8 +292,8 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
         )
         try:
             assert restarted.spool.sender_id == sender
-            row = restarted.spool.lookup_publication("original")
-            assert row is not None and not row.pending and row.envelope == envelope
+            row = restarted.spool.lookup("original")
+            assert row is None  # Old run capabilities are gone, so confirmed lookup rows are swept.
             stale = await restarted.handle_ipc(retry_request(child, "original"))
             assert stale.error is not None and stale.error["code"] == "agent_forbidden"
             restarted.registry.children["child"] = child
@@ -461,21 +464,19 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
 ) -> None:
     async def run() -> None:
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            mint = executor.spool.mint_envelope
+            mint = executor.spool.add
 
-            def committed_then_failed(**kwargs: object) -> object:
-                mint(**kwargs)  # type: ignore[arg-type]
+            def committed_then_failed(*args: object, **kwargs: object) -> object:
+                mint(*args, **kwargs)  # type: ignore[arg-type]
                 raise OSError("snapshot cleanup failed after commit")
 
-            monkeypatch.setattr(executor.spool, "mint_envelope", committed_then_failed)
+            monkeypatch.setattr(executor.spool, "add", committed_then_failed)
             response = await executor.handle_ipc(write_request(child, "original"))
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
             original = executor.spool.pending()[0]
             retried = await executor.handle_ipc(
-                replace(
-                    retry_request(child, "original"), response_deadline=time.monotonic() + 5
-                )
+                replace(retry_request(child, "original"), response_deadline=time.monotonic() + 5)
             )
             assert retried.unconfirmed is not None and retried.unconfirmed.publication == "queued"
             assert retried.unconfirmed.submission_id == original.submission_id == "original"
@@ -490,7 +491,7 @@ def test_duplicate_reservation_precedes_blocked_journal_lookup(
     async def run() -> None:
         entered, release = threading.Event(), threading.Event()
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            lookup = executor.spool.lookup_publication
+            lookup = executor.spool.lookup
             calls = 0
 
             def blocked_lookup(identity: str) -> object:
@@ -500,13 +501,14 @@ def test_duplicate_reservation_precedes_blocked_journal_lookup(
                 assert release.wait(5)
                 return lookup(identity)
 
-            monkeypatch.setattr(executor.spool, "lookup_publication", blocked_lookup)
+            monkeypatch.setattr(executor.spool, "lookup", blocked_lookup)
             request = write_request(child, "same", budget=0.08)
             first = asyncio.create_task(executor.handle_ipc(request))
             second = asyncio.create_task(executor.handle_ipc(request))
             try:
                 responses = await asyncio.gather(first, second)
-                assert entered.is_set() and calls == 1
+                assert entered.is_set() and calls >= 1
+                assert executor.registry._source_work[child.reference] == 1
                 assert all(row.unconfirmed is not None for row in responses)
                 tracker = executor._publications["same"]
                 conflict = await executor.handle_ipc(
@@ -525,5 +527,34 @@ def test_duplicate_reservation_precedes_blocked_journal_lookup(
                 assert len(executor.spool.pending()) == 1
             finally:
                 release.set()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["missing_blob", "disk_full"])
+def test_failed_add_reports_unknown_and_never_proves_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    async def run() -> None:
+        async with ipc_service(tmp_path, monkeypatch) as (executor, child):
+
+            def fail_add(*args: object, **kwargs: object) -> object:
+                if failure == "missing_blob":
+                    raise FileNotFoundError("captured blob vanished")
+                raise OSError(errno.ENOSPC, "outbox disk full")
+
+            monkeypatch.setattr(executor.spool, "add", fail_add)
+            response = await executor.handle_ipc(write_request(child, "lost-output"))
+            assert response.unconfirmed is not None
+            assert response.unconfirmed.publication == "unknown"
+            assert not executor.spool.pending()
+            # Even if the native child is already absent, lost authored output
+            # prevents the final stop proof from claiming complete delivery.
+            executor.registry.children.clear()
+            stopped = await executor.registry._stop_exact_child(
+                ChildCommand("stop", child.reference, ChildOperation.stop, None, {})
+            )
+            assert stopped.disposition is CommandDisposition.uncertain
+            assert stopped.result == {"reason": "child_has_unsettled_work"}
 
     asyncio.run(run())

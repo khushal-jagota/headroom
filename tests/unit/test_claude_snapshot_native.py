@@ -40,7 +40,7 @@ from planner.executor.contracts import (
     ChildReference,
     CommandDisposition,
 )
-from planner.executor.journal import FilesystemSpool
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
 
 
@@ -49,6 +49,7 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     launches = launch_fixture(tmp_path, monkeypatch)
+
     async def run() -> None:
         actual: list[ScriptedTransport] = []
 
@@ -63,7 +64,7 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
             return ClaudeAgentSdkBackendChildFactory(launches.claude, client_factory=client_factory)
 
         reference = ChildReference(str(uuid4()), str(uuid4()), "native-claude")
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         registry = NativeChildRegistry(
             paths=ExecutorPaths(tmp_path),
             incarnation=reference.executor_incarnation,
@@ -114,7 +115,8 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
             outcome = await registry.execute_command(prompt)
             assert outcome.disposition is CommandDisposition.succeeded
             assert outcome.result["provider_submission"] == {
-                "provider": "claude", "status": "accepted",
+                "provider": "claude",
+                "status": "accepted",
                 "observation_kind": "user_message_admitted",
                 "correlation_id": next(f["uuid"] for f in actual[0].frames if f["type"] == "user"),
             }

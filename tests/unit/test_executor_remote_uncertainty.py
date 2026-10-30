@@ -256,7 +256,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
     import json
     from typing import Any, cast
 
-    from planner.executor.codec import encode_value
+    from planner.executor.codec import encode_value, envelope_payload_digest
     from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
     from planner.executor.contracts import (
         EnvelopeKind,
@@ -264,7 +264,6 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         JsonObject,
         QueuedEnvelope,
     )
-    from planner.executor.journal import envelope_payload_digest
     from planner.executor.routing import LocaleBackendChildFactory
     from planner.executor.store import ExecutorStore
 

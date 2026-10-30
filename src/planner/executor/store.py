@@ -70,6 +70,14 @@ def _invalid(message: str) -> PlannerError:
     return PlannerError(ErrorCode.validation, message)
 
 
+class MissingFiles(Exception):
+    """The item may be retried after the existing file adapter uploads its bytes."""
+
+    def __init__(self, manifests: tuple[FileManifest, ...]) -> None:
+        self.manifests = manifests
+        super().__init__("File dependencies are not durably published")
+
+
 class ExecutorStore:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
@@ -99,7 +107,7 @@ class ExecutorStore:
         connection = connect(self.db_path)
         try:
             row = connection.execute(
-                "SELECT * FROM executor_receipts WHERE sender_id=? AND submission_id=?",
+                "SELECT * FROM mac_inbox_positions WHERE sender_id=? AND submission_id=?",
                 (sender_id, submission_id),
             ).fetchone()
             return self._receipt(row) if row else None
@@ -108,14 +116,7 @@ class ExecutorStore:
 
     @staticmethod
     def _receipt(row: sqlite3.Row) -> AcceptanceReceipt:
-        return AcceptanceReceipt(
-            sender_id=row["sender_id"],
-            submission_id=row["submission_id"],
-            payload_sha256=row["payload_sha256"],
-            disposition=ReceiptDisposition(row["disposition"]),
-            result=cast(JsonObject, json.loads(row["result_json"])),
-            accepted_at_vps_ms=row["accepted_at_vps_ms"],
-        )
+        return TypeAdapter(AcceptanceReceipt).validate_json(row["result_json"])
 
     def accept(
         self,
@@ -124,6 +125,7 @@ class ExecutorStore:
         now_ms: int,
         *,
         identity: ExecutorIdentity,
+        check_files: bool = True,
         transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
         | None = None,
         before_commit: Callable[[sqlite3.Connection], None] | None = None,
@@ -140,39 +142,35 @@ class ExecutorStore:
                 before_outcome_commit(connection, selected, effect_accepted)
 
         with self._transaction(transaction_context, publish_effect) as connection:
-            previous = self._preflight(connection, envelope, identity)
+            previous = self._prior_receipt(connection, envelope, identity)
             if previous is not None:
                 selected = previous
                 return previous
             disposition = ReceiptDisposition.accepted
             connection.execute("SAVEPOINT domain_write")
             try:
+                self._validate_envelope(connection, envelope, check_files=check_files)
                 result = writer(connection, envelope)
                 if not connection.in_transaction:
                     raise RuntimeError("Executor domain writer committed its transaction")
                 connection.execute("RELEASE SAVEPOINT domain_write")
                 effect_accepted = True
-            except PlannerError as error:
-                if error.code == ErrorCode.gateway_offline:
-                    raise
+            except (PlannerError, ValueError, KeyError, TypeError) as error:
                 connection.execute("ROLLBACK TO SAVEPOINT domain_write")
                 connection.execute("RELEASE SAVEPOINT domain_write")
                 disposition = ReceiptDisposition.refused
-                result = cast(JsonObject, error.to_payload())
+                refusal = error if isinstance(error, PlannerError) else _invalid(str(error))
+                result = cast(JsonObject, refusal.to_payload())
                 self._mark_refused_cleanup_evidence(connection, envelope, identity)
-            connection.execute(
-                "INSERT INTO executor_receipts VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    envelope.sender_id,
-                    envelope.submission_id,
-                    envelope.conversation_id,
-                    envelope.sequence,
-                    envelope.payload_sha256,
-                    disposition.value,
-                    _json(result),
-                    now_ms,
-                ),
-            )
+            if disposition is ReceiptDisposition.accepted and result.get("fate") == "uncertain":
+                disposition = ReceiptDisposition.uncertain
+            if (
+                disposition is ReceiptDisposition.refused
+                and envelope.kind is EnvelopeKind.cli_write
+            ):
+                from planner.executor.refusals import record_refused_write
+
+                record_refused_write(connection, self.db_path, envelope, result)
             selected = AcceptanceReceipt(
                 envelope.sender_id,
                 envelope.submission_id,
@@ -180,6 +178,20 @@ class ExecutorStore:
                 disposition,
                 result,
                 now_ms,
+            )
+            connection.execute(
+                "INSERT INTO mac_inbox_positions VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(sender_id,conversation_id) DO UPDATE SET "
+                "sequence=excluded.sequence,submission_id=excluded.submission_id,"
+                "disposition=excluded.disposition,result_json=excluded.result_json",
+                (
+                    envelope.sender_id,
+                    envelope.conversation_id,
+                    envelope.sequence,
+                    envelope.submission_id,
+                    disposition.value,
+                    _record(selected),
+                ),
             )
             return selected
 
@@ -257,35 +269,16 @@ class ExecutorStore:
 
     def has_accepted_command_outcome(self, outcome: CommandOutcome) -> bool:
         """A retained result alone does not prove its original FIFO publication."""
-        submission_id = "stopped_" + hashlib.sha256(outcome.command_id.encode()).hexdigest()
         connection = connect(self.db_path)
         try:
             row = connection.execute(
-                "SELECT outcome_json FROM executor_command_outcomes "
+                "SELECT outcome_json,output_confirmed FROM executor_command_outcomes "
                 "WHERE executor_incarnation=? AND command_id=?",
                 (outcome.child.executor_incarnation, outcome.command_id),
             ).fetchone()
             if row is None or row[0] != _record(outcome):
                 return False
-            from planner.executor.journal import envelope_payload_digest
-
-            for receipt in connection.execute(
-                "SELECT * FROM executor_receipts WHERE submission_id=? AND conversation_id=? "
-                "AND disposition=?",
-                (submission_id, outcome.child.conversation_id, ReceiptDisposition.accepted.value),
-            ).fetchall():
-                digest = envelope_payload_digest(
-                    cast(JsonObject, asdict(outcome)),
-                    (),
-                    sender_id=receipt["sender_id"],
-                    conversation_id=outcome.child.conversation_id,
-                    sequence=receipt["sequence"],
-                    submission_id=submission_id,
-                    kind=EnvelopeKind.child_stopped,
-                )
-                if digest == receipt["payload_sha256"]:
-                    return True
-            return False
+            return bool(row[1])
         finally:
             connection.close()
 
@@ -985,7 +978,7 @@ class ExecutorStore:
 
     @staticmethod
     def record_command_outcome_in_transaction(
-        connection: sqlite3.Connection, outcome: CommandOutcome
+        connection: sqlite3.Connection, outcome: CommandOutcome, *, output_confirmed: bool = False
     ) -> None:
         existing = connection.execute(
             "SELECT outcome_json FROM executor_command_outcomes "
@@ -995,10 +988,21 @@ class ExecutorStore:
         if existing is not None:
             if existing[0] != _record(outcome):
                 raise _invalid("Command outcome conflicts with first result")
+            if output_confirmed:
+                connection.execute(
+                    "UPDATE executor_command_outcomes SET output_confirmed=1 "
+                    "WHERE executor_incarnation=? AND command_id=?",
+                    (outcome.child.executor_incarnation, outcome.command_id),
+                )
             return
         connection.execute(
-            "INSERT INTO executor_command_outcomes VALUES (?,?,?)",
-            (outcome.child.executor_incarnation, outcome.command_id, _record(outcome)),
+            "INSERT INTO executor_command_outcomes VALUES (?,?,?,?)",
+            (
+                outcome.child.executor_incarnation,
+                outcome.command_id,
+                _record(outcome),
+                int(output_confirmed),
+            ),
         )
 
     def verify_connection(self, identity: ExecutorIdentity) -> None:
@@ -1006,7 +1010,7 @@ class ExecutorStore:
             self._connected(connection, identity)
 
     def preflight(
-        self, envelope: QueuedEnvelope, *, identity: ExecutorIdentity
+        self, envelope: QueuedEnvelope, *, identity: ExecutorIdentity, check_files: bool = True
     ) -> AcceptanceReceipt | None:
         """Validate prior result/order/files before a separately serialized native act.
 
@@ -1014,16 +1018,53 @@ class ExecutorStore:
         lock through native outcome recording and must preserve sender dedup IDs.
         """
         with self._transaction() as connection:
-            return self._preflight(connection, envelope, identity)
+            return self._preflight(connection, envelope, identity, check_files=check_files)
+
+    def _prior_receipt(
+        self, connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
+    ) -> AcceptanceReceipt | None:
+        self._connected(connection, identity)
+        previous = connection.execute(
+            "SELECT * FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?",
+            (envelope.sender_id, envelope.conversation_id),
+        ).fetchone()
+        if previous is None or envelope.sequence > previous["sequence"]:
+            return None
+        stored = self._receipt(previous)
+        if envelope.sequence == previous["sequence"]:
+            if (stored.submission_id, stored.payload_sha256) != (
+                envelope.submission_id,
+                envelope.payload_sha256,
+            ):
+                raise _invalid("Submission identity conflicts with its first receipt")
+            return stored
+        # Old sequences are acknowledged without rerunning effects or regressing position.
+        return AcceptanceReceipt(
+            envelope.sender_id,
+            envelope.submission_id,
+            envelope.payload_sha256,
+            ReceiptDisposition.accepted,
+            {},
+            stored.accepted_at_vps_ms,
+        )
 
     def _preflight(
         self,
         connection: sqlite3.Connection,
         envelope: QueuedEnvelope,
         identity: ExecutorIdentity,
+        *,
+        check_files: bool = True,
     ) -> AcceptanceReceipt | None:
-        # Import lazily: journal owns the shared canonical digest, not app acceptance.
-        from planner.executor.journal import envelope_payload_digest
+        previous = self._prior_receipt(connection, envelope, identity)
+        if previous is None:
+            self._validate_envelope(connection, envelope, check_files=check_files)
+        return previous
+
+    def _validate_envelope(
+        self, connection: sqlite3.Connection, envelope: QueuedEnvelope, *, check_files: bool = True
+    ) -> None:
+        from planner.executor.codec import envelope_payload_digest
 
         if envelope.payload_sha256 != envelope_payload_digest(
             envelope.payload,
@@ -1035,30 +1076,14 @@ class ExecutorStore:
             kind=envelope.kind,
         ):
             raise _invalid("Envelope digest does not match content")
-        self._connected(connection, identity)
-        previous = connection.execute(
-            "SELECT * FROM executor_receipts WHERE sender_id=? AND submission_id=?",
-            (envelope.sender_id, envelope.submission_id),
-        ).fetchone()
-        if previous is not None:
-            if (
-                previous["payload_sha256"] != envelope.payload_sha256
-                or previous["conversation_id"] != envelope.conversation_id
-                or previous["sequence"] != envelope.sequence
-            ):
-                raise _invalid("Submission identity conflicts with its first receipt")
-            return self._receipt(previous)
-        latest = connection.execute(
-            "SELECT COALESCE(MAX(sequence),0) FROM executor_receipts "
-            "WHERE sender_id=? AND conversation_id=?",
-            (envelope.sender_id, envelope.conversation_id),
-        ).fetchone()[0]
-        if envelope.sequence != latest + 1:
-            raise _invalid("Earlier conversation submission has no receipt")
-        for manifest in envelope.file_dependencies:
-            if not self._publication_matches(connection, manifest):
-                raise _invalid("File dependency is not durably published")
-        return None
+        if check_files:
+            missing = tuple(
+                m
+                for m in envelope.file_dependencies
+                if not self._publication_matches(connection, m)
+            )
+            if missing:
+                raise MissingFiles(missing)
 
     @classmethod
     def revoke_turn_callbacks_in_transaction(

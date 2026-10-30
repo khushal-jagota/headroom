@@ -24,10 +24,11 @@ from planner.executor.contracts import (
     ControlMessageWriter,
     EnvelopeKind,
     ExecutorIdentity,
+    OutboxEntry,
     ReceiptDisposition,
 )
-from planner.executor.journal import FilesystemSpool
 from planner.executor.mac import as_object
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
 from planner.tickets import data
@@ -74,7 +75,7 @@ def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> Exec
 @pytest.mark.parametrize("bad_case", range(4))
 def test_retired_delayed_start_refuses_without_live_child_authority(
     tmp_db: Connection,
-    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    native_registry: tuple[NativeChildRegistry, MacOutbox, ScriptedChild, ChildCommand],
     bad_case: int,
 ) -> None:
     async def run() -> None:
@@ -101,7 +102,7 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
         outcome = await registry.execute_command(start)
         assert outcome.disposition is CommandDisposition.refused
         assert native.starts == 0
-        assert registry.spool.pending() == ()
+        assert spool.pending() == ()
         assert registry.ask((start.command_id,))[0].outcome == outcome
         assert await registry.execute_command(start) == outcome
         # Its direct refusal grants no authority to publish fresh child output.
@@ -126,8 +127,10 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
             ),
         ]
         kind, payload = bad_payloads[bad_case]
-        row = registry.spool.mint_envelope(
-            conversation_id=start.child.conversation_id, kind=kind, payload=as_object(payload)
+        row = registry.spool.add(
+            OutboxEntry(
+                conversation_id=start.child.conversation_id, kind=kind, payload=as_object(payload)
+            )
         )
         receipt = await remote.accept_envelope(row, identity)
         assert receipt.disposition is ReceiptDisposition.refused

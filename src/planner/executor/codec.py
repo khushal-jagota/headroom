@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -44,6 +46,8 @@ from planner.executor.contracts import (
     BackendEventMethod,
     ChildCommand,
     ChildOperation,
+    EnvelopeKind,
+    FileManifest,
     JsonObject,
     JsonValue,
 )
@@ -79,7 +83,9 @@ async def invoke_child(child: BackendChild, command: ChildCommand) -> JsonObject
                     command.turn,
                     TypeAdapter(MessageContent).validate_python(args["content"]),
                     sender_label=args["sender_label"],
-                    sender_content=TypeAdapter(MessageContent).validate_python(args["sender_content"]),
+                    sender_content=TypeAdapter(MessageContent).validate_python(
+                        args["sender_content"]
+                    ),
                     sender_message_count=args.get("sender_message_count", 1),
                     mode=PromptDeliveryMode(args["mode"]),
                     model_change=args.get("model_change"),
@@ -182,3 +188,29 @@ def decode_provider_submission(raw: object) -> ProviderSubmissionFact | None:
     if raw is None:
         return None
     return TypeAdapter(ProviderSubmissionFact).validate_python(raw)
+
+
+def envelope_payload_digest(
+    payload: JsonObject,
+    manifests: tuple[FileManifest, ...],
+    *,
+    sender_id: str,
+    conversation_id: str,
+    sequence: int,
+    submission_id: str,
+    kind: EnvelopeKind,
+) -> str:
+    value = {
+        "payload": payload,
+        "sender_id": sender_id,
+        "conversation_id": conversation_id,
+        "sequence": sequence,
+        "submission_id": submission_id,
+        "kind": kind.value,
+        "file_dependencies": TypeAdapter(tuple[FileManifest, ...]).dump_python(
+            manifests, mode="json"
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()

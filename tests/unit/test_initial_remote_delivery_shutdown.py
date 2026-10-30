@@ -52,7 +52,7 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
         endpoint = ExecutorEndpoint(db_path, RealClock())
         endpoint.ready = True
         endpoint.writer = cast(ControlMessageWriter, SimpleNamespace(close=lambda: None, send=None))
-        from planner.executor.codec import encode_value
+        from planner.executor.codec import encode_value, envelope_payload_digest
         from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
         from planner.executor.contracts import (
             EnvelopeKind,
@@ -60,7 +60,6 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
             JsonObject,
             QueuedEnvelope,
         )
-        from planner.executor.journal import envelope_payload_digest
 
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "original-incarnation", 1
@@ -388,14 +387,13 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
 
     from planner.conversation.backends.contracts import TurnToken
     from planner.core.errors import PlannerError
-    from planner.executor.codec import encode_value
+    from planner.executor.codec import encode_value, envelope_payload_digest
     from planner.executor.contracts import (
         EnvelopeKind,
         JsonObject,
         QueuedEnvelope,
         ReceiptDisposition,
     )
-    from planner.executor.journal import envelope_payload_digest
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     endpoint = ExecutorEndpoint(db_path, RealClock())

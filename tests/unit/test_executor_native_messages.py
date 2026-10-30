@@ -38,8 +38,10 @@ from planner.executor.contracts import (
     EnvelopeKind,
     ExecutorIdentity,
     JsonObject,
+    OutboxEntry,
+    ReceiptDisposition,
 )
-from planner.executor.journal import FilesystemSpool
+from planner.executor.mac_outbox import MacOutbox
 from planner.executor.native_messages import bound_native_principal, deliver_native_message
 from planner.executor.remote import RemoteBackendChild
 from planner.executor.store import ExecutorStore
@@ -51,7 +53,6 @@ def _configure_scoped_metadata(
     path: str,
     identity: ExecutorIdentity,
 ) -> None:
-    from planner.conversation.backend_state import BackendStateStore
     from planner.conversation.model_resolution.contracts import (
         CatalogWorkspaceBinding,
         LaunchContext,
@@ -210,14 +211,16 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 reference,
                 TurnToken("c_source", 1),
             )
-            spool = FilesystemSpool(tmp_path / "spool")
+            spool = MacOutbox(tmp_path / "spool")
             payload = encode_value(write)
             assert isinstance(payload, dict)
-            envelope = spool.mint_envelope(
-                conversation_id="c_source",
-                kind=EnvelopeKind.cli_write,
-                payload=payload,
-                submission_id="native_help",
+            envelope = spool.add(
+                OutboxEntry(
+                    conversation_id="c_source",
+                    kind=EnvelopeKind.cli_write,
+                    payload=payload,
+                    submission_id="native_help",
+                )
             )
             resolutions: list[Principal] = []
 
@@ -244,6 +247,14 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             with pytest.raises(SimulatedCrash):
                 await deliver()
             assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+            connection = connect(path)
+            try:
+                assert connection.execute(
+                    "SELECT state FROM executor_native_messages WHERE submission_id=?",
+                    (envelope.submission_id,),
+                ).fetchone()[0] == ("completed" if committed else "dispatching")
+            finally:
+                connection.close()
             domain = await system._store.sender_message_outcome("c_source", "native_help")
             if committed:
                 assert domain is not None and domain.kind.value == "message_to_owner"
@@ -278,6 +289,9 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 clock=RealClock(),
                 conversations=system,
                 resolve_recipient=recipient,
+            )
+            assert recovered.disposition is (
+                ReceiptDisposition.accepted if committed else ReceiptDisposition.uncertain
             )
             assert recovered.result == {
                 "target": {"kind": "owner", "id": "owner"},
@@ -380,7 +394,7 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
             message_files=ConversationMessageFiles(path),
         )
         _configure_scoped_metadata(system, path, identity)
-        spool = FilesystemSpool(tmp_path / "spool")
+        spool = MacOutbox(tmp_path / "spool")
         try:
             await system.start_conversation(ConversationStartRequest("c_idle", "scripted"))
             data.write_ticket_conversation_start(
@@ -407,11 +421,13 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
             )
             payload = encode_value(write)
             assert isinstance(payload, dict)
-            envelope = spool.mint_envelope(
-                conversation_id="c_source",
-                kind=EnvelopeKind.cli_write,
-                payload=payload,
-                submission_id="idle_steer",
+            envelope = spool.add(
+                OutboxEntry(
+                    conversation_id="c_source",
+                    kind=EnvelopeKind.cli_write,
+                    payload=payload,
+                    submission_id="idle_steer",
+                )
             )
 
             def resolve(

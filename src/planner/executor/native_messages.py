@@ -221,7 +221,7 @@ def record_native_message_admission_in_transaction(
             "UPDATE executor_native_messages SET state=?,result_json=? "
             "WHERE sender_id=? AND submission_id=?",
             (
-                "bound" if queued else "dispatched",
+                "bound" if queued else "dispatching",
                 _json(result),
                 row["sender_id"],
                 row["submission_id"],
@@ -232,7 +232,7 @@ def record_native_message_admission_in_transaction(
 def interrupt_native_messages_in_transaction(connection: sqlite3.Connection) -> None:
     """A runtime restart loses waiting text; an attempted dispatch stays unknown."""
     for row in connection.execute(
-        "SELECT * FROM executor_native_messages WHERE state IN ('bound','dispatched')"
+        "SELECT * FROM executor_native_messages WHERE state IN ('bound','dispatching')"
     ).fetchall():
         result: JsonObject = {
             "target": cast(JsonObject, json.loads(row["recipient_json"])),
@@ -320,7 +320,7 @@ async def deliver_native_message(
                 if row["result_json"] is not None:
                     result = cast(JsonObject, json.loads(row["result_json"]))
                     dispatch = False
-                elif row["state"] == "dispatched":
+                elif row["state"] == "dispatching":
                     result = {
                         "target": cast(JsonObject, json.loads(row["recipient_json"])),
                         "conversation_id": None,
@@ -355,7 +355,7 @@ async def deliver_native_message(
                     "executor_native_messages(sender_id,submission_id,payload_sha256,"
                     "principal_json,recipient_json,source_turn_json,state,result_json,"
                     "created_at_ms) "
-                    "VALUES (?,?,?,?,?,?,'dispatched',NULL,?)",
+                    "VALUES (?,?,?,?,?,?,'dispatching',NULL,?)",
                     (
                         envelope.sender_id,
                         envelope.submission_id,
