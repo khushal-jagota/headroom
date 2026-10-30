@@ -297,7 +297,7 @@ def test_rollback_restores_exact_prior_configuration_bytes(tmp_path: Path) -> No
     path = current / "data" / "executor-launch.json"
     write_vps_launch(path, LOCAL)
     (path.parent / "planning.db").write_text("database")
-    original = b'{ "socket": null, "mode": "local", "version": 1 }\n'
+    original = b'{ "executor_id": null, "mode": "local", "version": 2 }\n'
     path.write_bytes(original)
     service = Service(path, fail_candidate=True)
     result = deploy_app(
@@ -312,7 +312,7 @@ def test_rollback_restores_exact_prior_configuration_bytes(tmp_path: Path) -> No
     )
     assert result.status == "rolled_back"
     assert path.read_bytes() == original
-    assert service.seen == [REMOTE, VpsExecutorLaunchConfiguration("local", version=1)]
+    assert service.seen == [REMOTE, LOCAL]
 
 
 @pytest.mark.parametrize("legacy_shared_directory", [False, True])
