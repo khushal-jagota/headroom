@@ -50,6 +50,7 @@ from planner.executor.configuration import (
     REQUEST_TIMEOUT_SECONDS,
 )
 from planner.executor.contracts import (
+    LIVE_BACKEND_EVENT_METHODS,
     AcceptanceReceipt,
     AnswerApplication,
     AskKind,
@@ -1988,6 +1989,14 @@ class ExecutorEndpoint:
                             command, identity, writer
                         ):
                             await self._release_closed_answer(command, future)
+                return
+            elif message.kind is WireMessageKind.live_backend_event:
+                event = TypeAdapter(BackendEvent).validate_python(message.payload)
+                if event.method not in LIVE_BACKEND_EVENT_METHODS:
+                    raise ValueError("live frame must not carry a recorded event")
+                if event.child.executor_incarnation != identity.executor_incarnation:
+                    raise ValueError("live event incarnation conflicts with connection")
+                await self.runtime.system.receive_remote_live_backend_event(event)
                 return
             elif message.kind is WireMessageKind.envelope:
                 envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)

@@ -58,6 +58,7 @@ from planner.executor.configuration import (
 )
 from planner.executor.contracts import (
     AcceptanceReceipt,
+    BackendEvent,
     ChildCommand,
     ChildReference,
     CliWrite,
@@ -244,6 +245,21 @@ class MacExecutor:
             if writer is None:
                 raise ConnectionError("executor link unavailable")
             await writer.send(message)
+
+    async def _send_live_event(self, event: BackendEvent) -> None:
+        # Live text has no receipt or retry. Never carry it into a new generation.
+        writer = self._writer
+        identity = self.identity
+        if writer is None or self.state is not ConnectionState.ready:
+            return
+        with contextlib.suppress(ConnectionError, OSError):
+            async with self._write_lock:
+                if self._writer is writer and self.identity == identity:
+                    await writer.send(
+                        WireMessage(
+                            WireMessageKind.live_backend_event, uuid4().hex, as_object(event)
+                        )
+                    )
 
     async def _request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
         request_id = uuid4().hex
@@ -1139,6 +1155,7 @@ class MacExecutor:
                 await writer.wait_closed()
 
     async def run(self) -> None:
+        self.registry.send_live_event = self._send_live_event
         self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.paths.ipc_socket.unlink(missing_ok=True)
         server = await asyncio.start_unix_server(self._ipc_client, path=self.paths.ipc_socket)

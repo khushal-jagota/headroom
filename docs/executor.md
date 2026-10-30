@@ -165,6 +165,11 @@ an acceptance keeps its lock until the database operation has settled. A domain
 change and its first receipt still commit together after checking the connection
 generation. Backend events use the conversation write worker for that transaction.
 
+Text deltas, thinking signals, and tool progress use one-way live frames. They go
+straight to the conversation live tail, without an outbox item or a VPS receipt
+row. A lost link drops them. Completed messages and all other recorded events
+still use the durable outbox and replay after reconnect.
+
 ## Files precede their references
 
 Workers use ordinary file tools in a resolved Ticket directory. Publication

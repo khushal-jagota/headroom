@@ -967,6 +967,93 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
     asyncio.run(run())
 
 
+def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.conversation import system as conversation_module
+    from planner.conversation.events import (
+        AgentMessageDeltaFrame,
+        ModelThinkingFrame,
+        ToolCallProgressFrame,
+    )
+    from planner.conversation.live_tail import ConversationLiveTail
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        resume = None
+        try:
+            tail = ConversationLiveTail()
+            monkeypatch.setattr(harness.system, "_live_tail", tail)
+            sink, turn = harness.native.sink, harness.native.turn
+            assert sink is not None and turn is not None
+            completed = []
+            complete = conversation_module.completed_backend_text_event
+
+            def observe_completion(content: MessageContent) -> None:
+                completed.append(content)
+                complete(content)
+
+            monkeypatch.setattr(
+                conversation_module, "completed_backend_text_event", observe_completion
+            )
+            minted = []
+            mint = harness.mac.spool.mint_envelope
+
+            def observe_mint(**arguments: Any) -> QueuedEnvelope:
+                envelope = mint(**arguments)
+                minted.append(envelope)
+                return envelope
+
+            monkeypatch.setattr(harness.mac.spool, "mint_envelope", observe_mint)
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                before = connection.execute("SELECT count(*) FROM executor_receipts").fetchone()[0]
+                with tail.subscribe("c_scripted") as watcher:
+                    await sink.agent_message_delta(turn, "Live text")
+                    await sink.model_thinking_happened(turn)
+                    await sink.tool_call_progress(turn, tool_call_id="tool", detail="Working")
+                    assert await asyncio.wait_for(watcher.next_item(), 2) == AgentMessageDeltaFrame(
+                        text_delta="Live text"
+                    )
+                    assert await asyncio.wait_for(watcher.next_item(), 2) == ModelThinkingFrame()
+                    assert await asyncio.wait_for(watcher.next_item(), 2) == ToolCallProgressFrame(
+                        tool_call_id="tool", detail="Working"
+                    )
+                    assert not minted and not harness.mac.spool.pending()
+                    assert (
+                        connection.execute("SELECT count(*) FROM executor_receipts").fetchone()[0]
+                        == before
+                    )
+                    resume = await hold_reconnection(harness, monkeypatch)
+                    await eventually(lambda: harness.mac._writer is None, "Mac link stayed open")
+                    await sink.agent_message_delta(turn, "Lost text")
+                    await sink.model_thinking_happened(turn)
+                    await sink.tool_call_progress(turn, tool_call_id="tool", detail="Lost progress")
+                    assert not minted and not harness.mac.spool.pending()
+                    await sink.agent_message_completed(turn, text_message_content("Full reply"))
+                    pending = harness.mac.spool.pending()
+                    assert len(pending) == 1
+                    resume.set()
+                    await eventually(
+                        lambda: not harness.mac.spool.pending(), "Completed reply did not replay"
+                    )
+                    assert completed == [text_message_content("Full reply")]
+                    # Nothing shown while disconnected is replayed to live watchers.
+                    with pytest.raises(TimeoutError):
+                        await asyncio.wait_for(watcher.next_item(), 0.05)
+                    assert (
+                        harness.endpoint.store.lookup_receipt(
+                            pending[0].sender_id, pending[0].submission_id
+                        )
+                        is not None
+                    )
+        finally:
+            if resume is not None:
+                resume.set()
+            await harness.close()
+
+    asyncio.run(run())
+
+
 def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1246,7 +1333,9 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
                     )
                     await adapter._publish_catalog()
                     produced[pass_number].append(harness.mac.spool.pending()[-1])
-                    await sink.agent_message_delta(turn, f"retained pass {pass_number}")
+                    await sink.agent_message_completed(
+                        turn, text_message_content(f"retained pass {pass_number}")
+                    )
                     produced[pass_number].append(harness.mac.spool.pending()[-1])
 
                 async def observe_request(

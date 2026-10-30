@@ -6311,6 +6311,29 @@ class SqliteProcessConversationSystem:
                 self._take_in_written_rows(state, written)
             return receipt
 
+    async def receive_remote_live_backend_event(self, event: BackendEvent) -> None:
+        from planner.executor.codec import decode_event_arguments
+        from planner.executor.remote import RemoteBackendChild
+
+        state = await self._conversation_state(event.child.conversation_id)
+        if state is None or event.turn is None:
+            return
+        child = state.child
+        if not isinstance(child, RemoteBackendChild) or child.reference != event.child:
+            return
+        sink = state.child_event_sink
+        if not isinstance(sink, _CoreBackendEventSink):
+            return
+        args = decode_event_arguments(event)
+        if isinstance(args, AgentMessageDeltaArguments):
+            await sink.agent_message_delta(event.turn, args.text_delta)
+        elif isinstance(args, ModelThinkingHappenedArguments):
+            await sink.model_thinking_happened(event.turn)
+        elif isinstance(args, ToolCallProgressArguments):
+            await sink.tool_call_progress(
+                event.turn, tool_call_id=args.tool_call_id, detail=args.detail
+            )
+
     async def receive_remote_backend_event(
         self,
         event: BackendEvent,

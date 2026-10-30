@@ -377,6 +377,15 @@ class BackendEventMethod(StrEnum):
     composer_catalog_reported = "composer_catalog_reported"
 
 
+LIVE_BACKEND_EVENT_METHODS = frozenset(
+    (
+        BackendEventMethod.agent_message_delta,
+        BackendEventMethod.model_thinking_happened,
+        BackendEventMethod.tool_call_progress,
+    )
+)
+
+
 @dataclass(frozen=True, slots=True)
 class BackendEvent:
     child: ChildReference
@@ -530,6 +539,7 @@ class WireMessageKind(StrEnum):
     reconcile_inventory = "reconcile_inventory"
     reconcile_result = "reconcile_result"
     reconciliation_ready = "reconciliation_ready"
+    live_backend_event = "live_backend_event"
     envelope = "envelope"
     receipt = "receipt"
     file_manifest = "file_manifest"
