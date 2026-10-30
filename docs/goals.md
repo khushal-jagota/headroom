@@ -28,6 +28,20 @@ Each command returns `schema`, `examples`, and `notes` without stdin or a server
 
 _Code paths:_ `src/planner/goals/`, `src/planner/core/request_guidance.py`, and `src/planner/runtime/logic/conversation_start_resolution.py`.
 
+## Native page edits
+
+The owner edits goal title and rationale in place. Project, deadline, active state, completion display, and quantitative thresholds use native inline controls. Each change uses the same revision-checked writer.
+
+Focus loss saves text, dates, and numeric thresholds. Enter saves single-line fields. Ctrl/Cmd+Enter saves multiline text. Escape discards the draft.
+
+Native selects save explicit selection changes. Failed structured edits retain their value and expose Retry save and Discard edit.
+
+On the full goal page, visible authored strings outside charts also support native text edits. This includes nested sections, view labels, callouts, saved metric and property strings, row copy, checklist wording, and table copy. Stable block and item IDs remain intact. Table edits retain original row identity after display sorting. Generated counts, chart titles, and measurement readings keep their existing behavior.
+
+Text blocks retain Markdown, artifact previews, source links, and download fallbacks. Other authored fields remain plain text. Text editors and disclosure, sort, view selection, or completion actions use separate targets. Sidebar previews and the component gallery retain their existing controls without page-text editors.
+
+Each text draft retains its original goal and revision through background refreshes. A stale write fails visibly instead of replacing newer data. The draft remains until an explicit retry or discard. Accepted edits survive reload.
+
 ## Sidebar previews
 
 Active goals appear inside the full Chief card, before its Worker groups. Each row links to its goal page. Hover, keyboard focus, or a touch hold opens the goal preview. The preview shows the Project, deadline, full title, and primary content.
@@ -44,7 +58,7 @@ Checklist and binary edits share the goal page's revision-checked writer. Queued
 
 Effective completion comes from the selected display's saved input. Panels derives it when it reads a goal. It does not save another completion flag. A binary display uses its saved checked input. A quantitative goal keeps its chart and uses that binary input for completion.
 
-A binary goal can select one saved checklist through Completion display in Edit goal. The selector also lists checklists inside layouts. The selected checklist appears in the primary area with its existing item controls. Its original page block stays intact and appears only once. Other checklists remain ordinary page content.
+A binary goal can select one saved checklist through the inline Completion display selector. The selector also lists checklists inside layouts. The selected checklist appears in the primary area with its existing item controls. Its original page block stays intact and appears only once. Other checklists remain ordinary page content.
 
 A selected checklist completes the goal only when it contains items and every item is done. An empty checklist stays incomplete. Open and blocked items keep it incomplete. Uncheck an item or add an unfinished item to reopen the goal. Active state stays independent of these results.
 

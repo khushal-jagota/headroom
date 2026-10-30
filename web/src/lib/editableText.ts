@@ -13,8 +13,34 @@ export function paintPlainEditable(element: HTMLElement, value: unknown): void {
   setEmptyState(element, raw);
 }
 
-export function readPlainEditable(element: HTMLElement): string {
-  return element.textContent || "";
+export function readPlainEditable(element: HTMLElement, multiline = false): string {
+  const text = element.textContent || "";
+  if (!multiline || !text) return text;
+  // Select-all/delete can leave the accepted trailing newline as an empty
+  // caret line. Treat a document containing only line breaks as cleared text.
+  if (!text.replace(/[\r\n]/g, "")) return "";
+  // Native plain editors use div/p boundaries for Enter and br for Shift+Enter.
+  // A final br only holds the caret on an empty line. innerText counts that
+  // placeholder as another break under pre-wrap, so read these boundaries once.
+  function read(parent: Node): string {
+    let raw = "";
+    let previousBlock = false;
+    for (const [index, child] of Array.from(parent.childNodes).entries()) {
+      const block = child.nodeName === "DIV" || child.nodeName === "P";
+      if (block) {
+        if (index > 0 && !previousBlock && child.previousSibling?.nodeName !== "BR") raw += "\n";
+        raw += read(child);
+        if (child.nextSibling) raw += "\n";
+      } else if (child.nodeName === "BR") {
+        if (child.nextSibling) raw += "\n";
+      } else {
+        raw += child.nodeType === Node.TEXT_NODE ? child.textContent || "" : read(child);
+      }
+      previousBlock = block;
+    }
+    return raw;
+  }
+  return read(element).replace(/\r\n?/g, "\n");
 }
 
 export function editableMarkupSnapshot(element: HTMLElement): string {
@@ -25,8 +51,8 @@ export function editableMarkupChanged(element: HTMLElement, snapshot: string): b
   return element.innerHTML !== snapshot;
 }
 
-export function refreshPlainEditableEmptyState(element: HTMLElement): void {
-  setEmptyState(element, readPlainEditable(element));
+export function refreshPlainEditableEmptyState(element: HTMLElement, multiline = false): void {
+  setEmptyState(element, readPlainEditable(element, multiline));
 }
 
 export function handlePlainTextPaste(event: ClipboardEvent): void {

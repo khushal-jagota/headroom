@@ -1,6 +1,11 @@
 <script lang="ts">
+  import { getContext } from "svelte";
   import { fade } from "svelte/transition";
-  import type { TableBlock } from "../../lib/pageKit";
+  import type { Block, TableBlock } from "../../lib/pageKit";
+
+  import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
+  import PageText from "./PageText.svelte";
+  const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
 
   let { block, selectable = false }: { block: TableBlock; selectable?: boolean } = $props();
 
@@ -179,11 +184,21 @@
     tableEl?.querySelector<HTMLInputElement>("[data-role=all]")?.focus();
   }
 
+  function columnText(index: number, raw: string, old: Block): Block {
+    if (old.type !== "table" || index >= old.columns.length) throw new Error("This table column no longer exists.");
+    return { ...old, columns: old.columns.map((column, sourceIndex) => sourceIndex === index ? raw : column) };
+  }
+
+  function cellText(row: number, column: number, raw: string, old: Block): Block {
+    if (old.type !== "table" || !old.rows[row] || column >= old.rows[row].length) throw new Error("This table cell no longer exists.");
+    return { ...old, rows: old.rows.map((cells, sourceRow) => sourceRow === row ? cells.map((cell, sourceColumn) => sourceColumn === column ? raw : cell) : cells) };
+  }
+
   function onRowClick(event: MouseEvent, key: number) {
     if (!selectable) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (target.closest("a, button, input, label, select, textarea, [role=button], [contenteditable=true]")) return;
+    if (target.closest("a, button, input, label, select, textarea, [role=button], [role=textbox], [contenteditable=true]")) return;
     if (window.getSelection()?.toString()) return;
     toggleRow(key, event.shiftKey);
     (event.currentTarget as HTMLElement).querySelector<HTMLInputElement>("input[type=checkbox]")?.focus({ preventScroll: true });
@@ -193,7 +208,7 @@
     shiftHeld = event.shiftKey;
     if (!selectable || !event.shiftKey) return;
     const target = event.target;
-    if (target instanceof Element && target.closest("input, label")) return;
+    if (target instanceof Element && target.closest("a, button, input, label, select, textarea, [role=button], [role=textbox], [contenteditable=true]")) return;
     event.preventDefault();
   }
 
@@ -231,6 +246,7 @@
   }
 
   function moveFocus(node: HTMLElement, event: KeyboardEvent) {
+    if (event.target instanceof Element && event.target.closest("[contenteditable=true], textarea, [role=textbox]")) return;
     if (event.key === " " || event.key === "Enter") shiftHeld = event.shiftKey;
     if (event.key === "Escape" && selectable && selectedCount > 0) {
       event.preventDefault();
@@ -317,7 +333,10 @@
 {/snippet}
 
 <div class="table-block" class:reduced data-block="table" data-selectable={selectable ? "" : undefined} use:keys>
-  {#if block.caption}<p class="caption">{block.caption}</p>{/if}
+  {#if block.caption}<div class="caption"><PageText blockId={block.id} field="caption" value={block.caption} label="Table caption" update={(old, raw) => {
+    if (old.type !== "table") throw new Error("This table no longer exists.");
+    return { ...old, caption: raw };
+  }} /></div>{/if}
   <div class="card">
     <div class="scroller">
       {#if band}<span class="band" style:left="{band.left}px" style:width="{band.width}px" aria-hidden="true"></span>{/if}
@@ -340,23 +359,35 @@
                 {@render box(allSelected, selectedCount > 0 && !allSelected, "Select all rows", "head", "all", () => toggleAll())}
               </th>
             {/if}
-            {#each block.columns as column, index (column)}
+            {#each block.columns as column, index (index)}
               <th
                 scope="col"
-                data-key={column}
+                data-key={index}
                 aria-sort={ariaSort(index)}
                 data-sorted={sort?.index === index ? "" : undefined}
                 data-numeric={numeric[index] ? "" : undefined}
               >
-                <button type="button" class="sort" data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
-                  <span class="sort-inner">
-                    <span>{column}</span>
-                    <span class="sort-icon" aria-hidden="true">
-                      <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
-                      <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+                {#if context?.authorText}
+                  <div class="editable-sort">
+                    <PageText blockId={block.id} field={`columns.${index}`} value={column} label={`Table column ${index + 1}`} update={(old, raw) => columnText(index, raw, old)} />
+                    <button type="button" class="sort icon-only" data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
+                      <span class="sort-icon" aria-hidden="true">
+                        <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+                        <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+                      </span>
+                    </button>
+                  </div>
+                {:else}
+                  <button type="button" class="sort" data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
+                    <span class="sort-inner">
+                      <span>{column}</span>
+                      <span class="sort-icon" aria-hidden="true">
+                        <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+                        <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+                      </span>
                     </span>
-                  </span>
-                </button>
+                  </button>
+                {/if}
               </th>
             {/each}
           </tr>
@@ -364,7 +395,12 @@
         <tbody>
           {#if ordered.length === 0}
             <tr>
-              <td class="empty" colspan={block.columns.length + (selectable ? 1 : 0)}>{block.empty_message ?? "No rows to show"}</td>
+              <td class="empty" colspan={block.columns.length + (selectable ? 1 : 0)}>
+                {#if block.empty_message !== undefined}<PageText blockId={block.id} field="empty_message" value={block.empty_message} label="Table empty message" update={(old, raw) => {
+                  if (old.type !== "table") throw new Error("This table no longer exists.");
+                  return { ...old, empty_message: raw };
+                }} />{:else}No rows to show{/if}
+              </td>
             </tr>
           {:else}
             {#each ordered as line (line.key)}
@@ -379,14 +415,14 @@
                     {@render box(selectedSet.has(line.key), false, `Select ${line.cells[0] || "row"}`, "row", "", (extend) => toggleRow(line.key, extend))}
                   </td>
                 {/if}
-                {#each line.cells as cell, index (block.columns[index])}
+                {#each line.cells as cell, index (index)}
                   <td
                     data-primary={index === 0 ? "" : undefined}
                     data-sorted={sort?.index === index ? "" : undefined}
                     data-numeric={numeric[index] ? "" : undefined}
                     data-tone={block.cell_tones?.[line.key]?.[index] ?? undefined}
                     data-missing={missing(cell) ? "" : undefined}
-                  ><div class="cell-copy">{#if block.cell_tones?.[line.key]?.[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}{cell}</div></td>
+                  ><div class="cell-copy">{#if block.cell_tones?.[line.key]?.[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}<PageText blockId={block.id} field={`rows.${line.key}.${index}`} value={cell} label={`${block.columns[index] ?? `Column ${index + 1}`}, row ${line.key + 1}`} update={(old, raw) => cellText(line.key, index, raw, old)} /></div></td>
                 {/each}
               </tr>
             {/each}
@@ -583,6 +619,9 @@
     cursor: pointer;
   }
   th[data-numeric] .sort { justify-content: flex-end; }
+  .editable-sort { display: flex; min-height: 44px; align-items: center; padding-left: var(--space-4); }
+  .sort.icon-only { width: 40px; flex: none; justify-content: center; padding: 0; }
+  th[data-numeric] .editable-sort { justify-content: flex-end; }
   .sort-inner { display: inline-flex; align-items: center; gap: 6px; }
   th[data-numeric] .sort-inner { flex-direction: row-reverse; }
   .sort-icon {
@@ -718,6 +757,8 @@
     th { display: block; flex: none; height: auto; border: 0; padding: 0; background: transparent; }
     th.select-cell { position: sticky; left: -8px; z-index: 1; width: 40px; margin-left: -8px; padding: 0 0 0 12px; background: var(--chart-surface); }
     th.select-cell .hit { height: 32px; }
+    .editable-sort { min-height: 32px; padding-left: 10px; }
+    th .sort.icon-only { width: 32px; padding: 0; }
     th .sort { width: auto; height: 32px; border-radius: 8px; padding: 0 10px; }
     th[data-sorted] .sort { background: var(--chart-surface-muted); }
     th[data-numeric] .sort-inner { flex-direction: row; }

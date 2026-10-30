@@ -2,8 +2,9 @@
   import { tick, untrack, getContext } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fly } from "svelte/transition";
-  import type { ChecklistBlock } from "../../lib/pageKit";
+  import type { Block, ChecklistBlock } from "../../lib/pageKit";
   import ChecklistSummary from "./ChecklistSummary.svelte";
+  import PageText from "./PageText.svelte";
 
   import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
   const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
@@ -203,6 +204,11 @@
     root?.querySelector<HTMLElement>(`[data-step="${id}"] [data-check]`)?.focus();
   }
 
+  function itemText(id: string, field: "label" | "detail" | "action", raw: string, old: Block): Block {
+    if (old.type !== "checklist" || !old.items.some(item => item.id === id)) throw new Error("This checklist item no longer exists.");
+    return { ...old, items: old.items.map(item => item.id === id ? { ...item, [field]: raw } : item) };
+  }
+
   function toggleStep(id: string): void {
     expanded = expanded === id ? null : id;
   }
@@ -226,7 +232,7 @@
 </script>
 
 <section class="card" class:reduced bind:this={root} data-block="checklist" data-complete={allDone ? "true" : undefined} aria-labelledby="{uid}-title">
-  <ChecklistSummary checked={doneCount} {total} {title} {doneTitle} {reduced} headingId={`${uid}-title`}>
+  <ChecklistSummary {block} checked={doneCount} {total} {title} {doneTitle} {reduced} headingId={`${uid}-title`}>
     {#snippet actions()}
       <button type="button" class="hide" aria-expanded={!hidden} aria-controls="{uid}-body" onclick={() => { hidden = !hidden; }}>
         <span class="hide-label">{hidden ? "Show" : "Hide"}</span>
@@ -251,21 +257,36 @@
                   </span>
                 </button>
                 <div class="step-main">
-                  <!-- The item's wording is written once, and it is the disclosure control. -->
-                  <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
-                    <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
-                  </button>
+                  {#if context?.authorText}
+                    <div class="step-heading">
+                      <div id="{uid}-{step.id}-title" class="step-title authored-title"><div class="title-text"><PageText blockId={block.id} field={`items.${step.id}.label`} value={step.title} label="Checklist item label" update={(old, raw) => itemText(step.id, "label", raw, old)} /></div></div>
+                      <button type="button" class="disclosure" data-title aria-label={`Details for ${step.title}`} aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
+                        <svg class="chevron" class:turned={expanded === step.id} viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6" /></svg>
+                      </button>
+                    </div>
+                  {:else}
+                    <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
+                      <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
+                    </button>
+                  {/if}
                   {#if expanded === step.id}
                     <div id="{uid}-{step.id}-panel" class="step-panel" role="region" aria-labelledby="{uid}-{step.id}-title" transition:grow={{ duration: 260 }}>
                       {#if step.detail?.trim() || (step.blocked && !done.includes(step.id)) || step.action?.trim()}
                         <div class="step-panel-inner">
-                          {#if step.detail?.trim()}<p class="detail">{step.detail}</p>{/if}
+                          {#if step.detail?.trim()}<div class="detail"><PageText blockId={block.id} field={`items.${step.id}.detail`} value={step.detail} label={`Details for ${step.title}`} multiline update={(old, raw) => itemText(step.id, "detail", raw, old)} /></div>{/if}
                           {#if step.blocked && !done.includes(step.id)}<p class="blocked">Blocked</p>{/if}
                           {#if step.action?.trim()}
-                            <button type="button" class="action" data-action onclick={() => check(step.id)}>
-                              {step.action}
-                              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg>
-                            </button>
+                            {#if context?.authorText}
+                              <div class="authored-action">
+                                <PageText blockId={block.id} field={`items.${step.id}.action`} value={step.action} label={`Action label for ${step.title}`} update={(old, raw) => itemText(step.id, "action", raw, old)} />
+                                <button type="button" class="action" data-action aria-label={step.action} onclick={() => check(step.id)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg></button>
+                              </div>
+                            {:else}
+                              <button type="button" class="action" data-action onclick={() => check(step.id)}>
+                                {step.action}
+                                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg>
+                              </button>
+                            {/if}
                           {/if}
                         </div>
                       {/if}
@@ -294,7 +315,7 @@
                           <svg class="check-mark" viewBox="0 0 22 22"><path d="M6.75 11.25 9.75 14.25 15.25 8.25" pathLength="1" /></svg>
                         </span>
                       </button>
-                      <span class="completed-title"><span id="{uid}-{step.id}-done" class="title-text">{step.title}</span></span>
+                      <div class="completed-title"><div id="{uid}-{step.id}-done" class="title-text"><PageText blockId={block.id} field={`items.${step.id}.label`} value={step.title} label="Completed checklist item label" update={(old, raw) => itemText(step.id, "label", raw, old)} /></div></div>
                     </div>
                   </li>
                 {/each}
@@ -419,6 +440,13 @@
     line-height: 1.4;
     text-align: left;
   }
+  .step-heading { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .step-heading .authored-title { min-width: 0; flex: 1; cursor: text; }
+  .disclosure { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-faint); cursor: pointer; }
+  .disclosure:hover { background: var(--surface-recessed); color: var(--text-strong); }
+  .disclosure:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: 2px; }
+  .authored-action { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); color: var(--text-strong); font-size: var(--type-sm); font-weight: 500; }
+  .authored-action .action { flex: none; margin-top: 0; padding: 0 var(--space-3); }
   .step-title { cursor: pointer; border-radius: var(--radius-md); }
   .title-text {
     background-image: linear-gradient(currentColor, currentColor);

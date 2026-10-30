@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { Block, SectionBlock } from "../../lib/pageKit";
+  import PageText from "./PageText.svelte";
   import PageSegmented from "./PageSegmented.svelte";
 
   let { block, view }: { block: SectionBlock; view: Snippet<[Block[]]> } = $props();
@@ -13,12 +14,12 @@
 <section class="section" data-block="section">
   <header class="section-header">
     <div class="section-heading">
-      <h2>{block.title}</h2>
-      {#if block.summary}<p class="section-summary">{block.summary}</p>{/if}
+      <div class="section-title" role="heading" aria-level="2"><PageText blockId={block.id} field="title" value={block.title} label="Section title" update={(current, raw) => current.type === "section" ? {...current, title: raw} : current} /></div>
+      {#if block.summary}<div class="section-summary"><PageText blockId={block.id} field="summary" value={block.summary} label="Section summary" multiline update={(current, raw) => current.type === "section" ? {...current, summary: raw} : current} /></div>{/if}
     </div>
     {#if block.views}
       <div class="section-actions">
-        <PageSegmented views={block.views} bind:selected />
+        <PageSegmented blockId={block.id} views={block.views} bind:selected />
       </div>
     {/if}
   </header>
@@ -44,7 +45,7 @@
     gap: var(--space-3);
     min-width: 0;
   }
-  h2 {
+  .section-title {
     margin: 0;
     font-size: var(--type-lg);
     font-weight: 500;
