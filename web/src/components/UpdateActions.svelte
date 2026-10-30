@@ -51,28 +51,52 @@
 
 {#if hasContent}
 <div class="update-actions" data-update-activity={status.activity}>
+  {#if !active && request?.state === "failed"}<span role="alert">Update failed</span>{/if}
   {#if active && request}
-    <span>{request.state === "applying" ? "Update in progress" : request.mode === "idle" && request.state === "pending" ? "Update waits for idle" : "Update queued"} · {request.release.manifest.app_sha.slice(0, 7)}</span>
-    {#if request.detail}<span>{request.detail}</span>{/if}
-    {#if canCancelUpdate(request)}<button type="button" class="button button--quiet" disabled={submitting} onclick={cancel}>Cancel update</button>{/if}
+    <span>{request.state === "applying" ? "Update in progress" : request.mode === "idle" && request.state === "pending" ? "Update waits for idle" : "Update queued"}</span>
+    {#if canCancelUpdate(request)}<button type="button" class="ghost" disabled={submitting} onclick={cancel}>Cancel update</button>{/if}
   {:else if confirming}
     <span>{status.activity === "busy" ? "Work is active. Update now can interrupt it." : "Activity is unknown. Update now can interrupt work."}</span>
     {#if usableUpdate(confirming, now)}
-      <button type="button" class="button button--quiet" disabled={submitting} onclick={() => submit(confirming!, "now", true)}>Proceed with update</button>
+      <button type="button" class="ghost" disabled={submitting} onclick={() => submit(confirming!, "now", true)}>Proceed with update</button>
     {:else}<span>This update expired. Refresh its availability.</span>{/if}
-    <button type="button" class="button button--quiet" disabled={submitting} onclick={() => { confirming = null; }}>Go back</button>
+    <button type="button" class="ghost" disabled={submitting} onclick={() => { confirming = null; }}>Go back</button>
   {:else if status.configured && usableUpdate(status.available, now)}
-    <span>Update available · {status.available.manifest.app_sha.slice(0, 7)}</span>
-    <button type="button" class="button button--quiet" disabled={submitting} onclick={() => submit(status.available!, "now")}>Update now</button>
-    <button type="button" class="button button--quiet" disabled={submitting} onclick={() => submit(status.available!, "idle")}>Update when idle</button>
+    <!-- Availability is independent of request state. Only pending, dispatched, and
+         applying block a new request. After a failed request, the change-stream
+         refetch restores both actions while the release remains usable. If the
+         release expired or disappeared, the failure has no retry actions. -->
+    <button type="button" class="primary" disabled={submitting} onclick={() => submit(status.available!, "idle")}>Update when idle</button>
+    <button type="button" class="ghost" disabled={submitting} onclick={() => submit(status.available!, "now")}>Update now</button>
   {/if}
-  {#if !active && request?.state === "failed"}<span>{request.detail ?? "Update failed"}</span>{/if}
   {#if error}<span role="alert">{error}</span>{/if}
 </div>
 {/if}
 
 <style>
-  .update-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); width: 100%; }
-  .update-actions > span { flex-basis: 100%; }
-  .update-actions button { font-size: inherit; padding: var(--space-1) var(--space-2); }
+  .update-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    width: 100%;
+    /* The old status-card set this slot to --type-xs (11px). Set it here explicitly:
+       the update controls no longer rely on a card or ancestor for their type scale. */
+    font-size: var(--type-xs);
+  }
+  .update-actions > span { flex-basis: 100%; color: var(--text-faint); }
+  .update-actions > span[role="alert"] { color: var(--accent-error); }
+
+  /* Replace the old generic padding override, which fought the button classes.
+     These are the app's primary/ghost pills, scaled to this --type-xs slot. Keep
+     padding on each identity so a generic ancestor cannot flatten their spacing. */
+  .update-actions button { font: inherit; cursor: pointer; border: 0; border-radius: var(--radius-pill); font-weight: 500; }
+  .update-actions button:disabled { opacity: .5; cursor: default; }
+  /* The card-free slot clips overflow for shell transitions. Keep keyboard focus
+     inside the pills so its outline remains visible without card padding. */
+  .update-actions button:focus-visible { outline-offset: calc(-1 * var(--border-strong)); }
+  .update-actions .primary { background: var(--accent-bright); color: var(--surface-ink); padding: 4px 12px; }
+  .update-actions .primary:focus-visible { outline-color: var(--surface-ink); }
+  .update-actions .ghost { background: transparent; color: var(--text-faint); padding: 4px 10px; }
+  .update-actions .ghost:hover:not(:disabled) { background-image: var(--interaction-hover); color: var(--text-strong); }
 </style>
