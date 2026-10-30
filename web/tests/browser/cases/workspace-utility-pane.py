@@ -1569,7 +1569,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
     try:
         page.goto(url + "?overlay=1&owner-updates=1#/workspace/chief-of-staff", wait_until="domcontentloaded")
         expect(box).to_be_visible()
-        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         page.screenshot(path=str(evidence / "update-available.png"))
         # Capture the real App shell before the interaction proof. The same six
         # states and neighbors are used on the baseline and changed revision.
@@ -1591,12 +1591,15 @@ def verify_owner_updates(browser, url, *, problem_only=False):
                 if name == "confirming":
                     proceed = card.get_by_role("button", name="Proceed with update", exact=True)
                     if not proceed.is_visible():
-                        card.get_by_role("button", name="Update now", exact=True).click()
+                        card.get_by_role("button", name="Start update", exact=True).click()
                     expect(proceed).to_be_visible()
                     expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
                 elif name in {"available", "failed-retry"}:
                     expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
-                    expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+                    expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
+                elif name == "active-requested":
+                    expect(card.get_by_text("Update requested", exact=True)).to_be_visible()
+                    expect(card.get_by_role("button", name="Cancel update", exact=True)).to_be_visible()
                 elif name == "active-idle":
                     expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
                     expect(card.get_by_role("button", name="Cancel update", exact=True)).to_be_visible()
@@ -1606,7 +1609,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
                 if name.startswith("failed-"):
                     expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
                 if name == "failed-expired":
-                    expect(card.get_by_role("button", name="Update now", exact=True)).to_have_count(0)
+                    expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
                 # Reduced motion still has a one-millisecond transition. Wait for
                 # two animation frames rather than capturing an intermediate frame.
                 page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
@@ -1619,7 +1622,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         for size, viewport in (("desktop", {"width": 1280, "height": 900}),
                                ("mobile", {"width": 390, "height": 844})):
             page.set_viewport_size(viewport)
-            for label in ("Update when idle", "Update now"):
+            for label in ("Update when idle", "Start update"):
                 button = card.get_by_role("button", name=label, exact=True)
                 page.keyboard.press("Tab")
                 button.focus()
@@ -1629,7 +1632,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         page.set_viewport_size({"width": 1280, "height": 900})
         backend.activity.activity = "busy"
         signal()
-        card.get_by_role("button", name="Update now", exact=True).click()
+        card.get_by_role("button", name="Start update", exact=True).click()
         expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
         capture("confirming")
         # Desktop and compact shells have distinct local confirmation state.
@@ -1648,12 +1651,12 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         capture("active-applying")
         backend.store.transition("capture", frozenset({"applying"}), "failed", detail="Update failed")
         signal()
-        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         capture("failed-retry")
         backend.provider.offered = replace(offered, expires_at="2000-01-01T00:00:00Z")
         backend.service.refresh_available(force=True)
         signal()
-        expect(card.get_by_role("button", name="Update now", exact=True)).to_have_count(0)
+        expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
         capture("failed-expired")
         backend.store.path.unlink()
         for name, state, outcome in (("neighbor-problem", "problem", "failed"),
@@ -1671,7 +1674,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         backend.service.refresh_available(force=True)
         backend.activity.activity = "unknown"
         signal()
-        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         (evidence / "banner-capture-proof.json").write_text(json.dumps({
             "seconds": round(time.perf_counter() - capture_started, 3),
             "newHosts": 0, "boundary": "Actual AppWithQueryClient + ShellStatus + real update routes and request store; external provider synthetic",
@@ -1687,7 +1690,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(health).to_have_text("Navigation reconnecting")
         expect(box).to_have_value(retained_draft)
         expect(page.locator("[data-chief-conversation-error], [data-chief-conversation-retry], .rail-work .error-line, .chief-workspace .error-line")).to_have_count(0)
-        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         page.screenshot(path=str(evidence / "navigation-reconnecting.png"))
         page.evaluate("window.__navigationOffline = false")
         expect(health).to_have_count(0)
@@ -1718,23 +1721,25 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             recovery = "Recovery required: the candidate did not complete its commit."
             deployment.update(state="unknown", detail=recovery)
             signal()
-            expect(card.get_by_text(recovery, exact=True)).to_be_visible()
+            expect(card.locator(".deployment-detail")).to_have_text(recovery)
+            expect(card.locator(".deployment-detail")).to_be_visible()
             expect(card.get_by_text("Reconnecting", exact=True)).to_be_visible()
             page.screenshot(path=str(evidence / "recovery-required.png"))
             deployment.update(state="idle", detail=None)
             signal()
-            expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
 
         # The actual ShellStatus composition must retain controls under a permanent
         # deployment failure. Opening confirmation before the transition also proves
         # that the shared UpdateActions instance keeps its local decision state.
         failure = "The previous update failed. The installed application remains available."
-        card.get_by_role("button", name="Update now", exact=True).click()
+        card.get_by_role("button", name="Start update", exact=True).click()
         expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
         deployment.update(state="problem", outcome="failed", detail=failure)
         signal()
         expect(card.get_by_text("Problem", exact=True)).to_be_visible()
-        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        expect(card.locator(".deployment-detail")).to_have_text(failure)
+        expect(card.locator(".deployment-detail")).to_be_visible()
         expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
         deployment.update(state="idle", outcome=None, detail=None)
         signal()
@@ -1743,7 +1748,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         signal()
         expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
         card.get_by_role("button", name="Go back", exact=True).click()
-        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         expect(health).to_have_attribute("data-navigation-health", "degraded")
         expect(box).to_have_value(retained_draft)
         page.screenshot(path=str(evidence / "problem-with-update-actions.png"))
@@ -1751,7 +1756,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         page.evaluate("void window.__refreshNavigation()")
         expect(health).to_have_count(0)
         expect(card.get_by_text("Problem", exact=True)).to_be_visible()
-        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         expect(box).to_have_value(retained_draft)
         box.fill("")
         (evidence / "navigation-health-proof.json").write_text(json.dumps({
@@ -1760,20 +1765,22 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             "compactReason": dimensions, "reason": reason,
         }, indent=2))
 
-        for activity, warning in (("unknown", "Activity is unknown."), ("busy", "Work is active.")):
+        for activity, warning in (("unknown", "Activity is unknown. The update can interrupt work."), ("busy", "Work is active. The update can interrupt it.")):
             backend.activity.activity = activity
             signal()
             expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", activity)
             before_posts, before_dispatches = len(posts), len(backend.provider.dispatched)
-            card.get_by_role("button", name="Update now", exact=True).click()
-            expect(card.get_by_text(warning, exact=False)).to_be_visible()
+            card.get_by_role("button", name="Start update", exact=True).click()
+            expect(card.get_by_text(warning, exact=True)).to_be_visible()
             assert len(posts) == before_posts and len(backend.provider.dispatched) == before_dispatches
             if activity == "unknown":
                 page.screenshot(path=str(evidence / "confirmation.png"))
             card.get_by_role("button", name="Proceed with update", exact=True).click()
-            expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+            expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
             receipt = backend.store.read()
             assert receipt is not None and receipt.state == "dispatched" and receipt.confirm_activity
+            if activity == "unknown":
+                capture("active-requested")
             assert len(backend.provider.dispatched) == before_dispatches + 1
             body = posts[-1]["body"]
             selected = backend.provider.offered
@@ -1786,7 +1793,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             assert posts[-1]["boot_sha"] == "a" * 40
             assert backend.provider.dispatched[-1].request_id == receipt.request_id
             expect(card.get_by_text("Problem", exact=True)).to_be_visible()
-            expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            expect(card.locator(".deployment-detail")).to_have_text(failure)
+            expect(card.locator(".deployment-detail")).to_be_visible()
             if activity == "busy":
                 # A failed request leaves an available publication usable for retry.
                 # Its failure and the deployment failure remain visible at each step.
@@ -1794,19 +1802,22 @@ def verify_owner_updates(browser, url, *, problem_only=False):
                 backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed", detail=failed_request)
                 signal()
                 expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
-                card.get_by_role("button", name="Update now", exact=True).click()
+                card.get_by_role("button", name="Start update", exact=True).click()
                 expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
-                expect(card.get_by_text(failure, exact=True)).to_be_visible()
+                expect(card.locator(".deployment-detail")).to_have_text(failure)
+                expect(card.locator(".deployment-detail")).to_be_visible()
                 expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
                 assert len(backend.provider.dispatched) == before_dispatches + 1
                 page.screenshot(path=str(evidence / "problem-with-retry-confirmation.png"))
                 card.get_by_role("button", name="Proceed with update", exact=True).click()
-                expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+                expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
                 assert len(backend.provider.dispatched) == before_dispatches + 2
-                expect(card.get_by_text(failure, exact=True)).to_be_visible()
+                expect(card.locator(".deployment-detail")).to_have_text(failure)
+                expect(card.locator(".deployment-detail")).to_be_visible()
             card.get_by_role("button", name="Cancel update", exact=True).click()
             expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
-            expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            expect(card.locator(".deployment-detail")).to_have_text(failure)
+            expect(card.locator(".deployment-detail")).to_be_visible()
             assert backend.store.read().state == "cancelled"
 
         backend.activity.activity = "unknown"
@@ -1817,7 +1828,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         assert backend.store.read().state == "pending"
         assert backend.store.read().release == backend.provider.offered
         assert len(backend.provider.dispatched) == 3
-        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        expect(card.locator(".deployment-detail")).to_have_text(failure)
+        expect(card.locator(".deployment-detail")).to_be_visible()
         page.screenshot(path=str(evidence / "problem-with-pending-cancel.png"))
         pinned_receipt = backend.store.read()
         assert pinned_receipt is not None
@@ -1833,10 +1845,11 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         assert backend.store.read().release == pinned
         expect(card.get_by_text("bbbbbbb", exact=False)).to_have_count(0)
         card.get_by_role("button", name="Cancel update", exact=True).click()
-        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         expect(card.get_by_text("fffffff", exact=False)).to_have_count(0)
         assert backend.store.read().state == "cancelled"
-        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        expect(card.locator(".deployment-detail")).to_have_text(failure)
+        expect(card.locator(".deployment-detail")).to_be_visible()
         if problem_only:
             assert errors == [], errors
             (evidence / "problem-composition-proof.json").write_text(json.dumps({
@@ -1851,10 +1864,10 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         backend.service.refresh_available(force=True)
         backend.activity.activity = "idle"
         signal()
-        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", "idle")
-        card.get_by_role("button", name="Update now", exact=True).click()
-        expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+        card.get_by_role("button", name="Start update", exact=True).click()
+        expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
         receipt = backend.store.read()
         backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "applying")
         signal()
