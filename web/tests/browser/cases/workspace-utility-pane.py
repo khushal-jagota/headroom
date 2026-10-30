@@ -20,6 +20,9 @@ from playwright.sync_api import expect
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "support"))
 from vps_metrics_fixture import MetricsFixture  # noqa: E402
 
+_state_barriers = runpy.run_path(str(Path(__file__).resolve().parents[1] / "support/state_barriers.py"))
+establish_scrollback = _state_barriers["establish_scrollback"]
+
 
 def run(browser, urls):
     url = urls[0]
@@ -1260,9 +1263,10 @@ def verify_conversation_overlay(browser, url):
         highwater = document.evaluate('e=>e.scrollHeight')
         # A scrollback reader keeps the same content while the composer changes.
         # Reader input releases an older exact-text destination before scrollback.
-        thread.hover()
-        page.mouse.wheel(0, -500)
-        page.wait_for_timeout(100)
+        thread.focus()
+        growth = box.evaluate("e=>parseFloat(getComputedStyle(e.closest('.ticket-page,.manager-page')??e.closest('[data-conversation-pane]')).getPropertyValue('--composer-growth'))||0")
+        establish_scrollback(page, lambda page=page: page.keyboard.press('PageUp'),
+                             min_clearance=growth + 2, input_kind='keydown', key='PageUp')
         anchor = thread.evaluate('''e=>{const r=e.getBoundingClientRect();const row=[...e.querySelectorAll('[data-conversation-row]')].find(n=>n.getBoundingClientRect().bottom>r.top+10);return row?{key:row.closest('[data-conversation-view-key]')?.getAttribute('data-conversation-view-key'),text:row.textContent,top:row.getBoundingClientRect().top-r.top,bottomOffset:row.getBoundingClientRect().top-r.bottom}:null;}''')
         assert anchor and anchor['key'], (name, anchor)
         anchor_proof = []

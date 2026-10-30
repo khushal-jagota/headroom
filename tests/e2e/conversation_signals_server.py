@@ -18,6 +18,7 @@ from tests.support.model_catalogue import seed_test_model_catalogue
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPromptAccepted,
+    BackendPromptRejected,
     BackendSteerAccepted,
     BackendUserInputRequest,
     TurnToken,
@@ -45,6 +46,7 @@ class ScriptedChild:
         self.token: TurnToken | None = None
         self.answers: dict[str, tuple[UserInputAnswer, ...]] = {}
         self.delivered_text: list[str] = []
+        self.reject_next_prompt = False
 
     async def start(self, *args: Any, **kwargs: Any) -> None:
         pass
@@ -52,6 +54,9 @@ class ScriptedChild:
     async def write_prompt(
         self, turn_token: TurnToken, content: MessageContent, *args: Any, **kwargs: Any,
     ) -> BackendPromptAccepted:
+        if self.reject_next_prompt:
+            self.reject_next_prompt = False
+            raise BackendPromptRejected("Synthetic provider refused this prompt.")
         self.token = turn_token
         self.delivered_text.append("\n".join(
             piece.text for piece in content if isinstance(piece, MessageText)
@@ -226,6 +231,11 @@ def build_app(config: Config) -> FastAPI:
             request_id: {answer.question_id: {"answers": list(answer.answers)} for answer in values}
             for request_id, values in children[conversation_id].answers.items()
         }
+
+    @app.post("/api/test/signals/{conversation_id}/reject-next-prompt")
+    async def reject_next_prompt(conversation_id: str) -> dict[str, bool]:
+        children[conversation_id].reject_next_prompt = True
+        return {"ok": True}
 
     @app.get("/api/test/signals/{conversation_id}/delivered")
     async def delivered(conversation_id: str) -> dict[str, list[str]]:

@@ -3205,11 +3205,15 @@ def _position_commit(browser, url):
         moving=[b for a,b in zip(frames,frames[1:],strict=False) if b['top']-a['top']>.5]
         # Linear per-line motion exposes its duration as line height / screen speed.
         # This measures the written pixels, rather than a duration constant or call.
-        import statistics
         line_height=page.locator('[data-conversation-content]').evaluate('node=>parseFloat(getComputedStyle(node.lastElementChild).lineHeight)')
-        speeds=[(b['top']-a['top'])/(b['ms']-a['ms']) for a,b in zip(frames,frames[1:],strict=False)
-          if b['top']-a['top']>1 and 8 < b['ms']-a['ms'] < 30]
-        observed_line_ms=line_height/statistics.median(speeds)
+        # scrollTop is rounded to pixels. Filtering out one-pixel frames biases
+        # instantaneous speed upward on 120 Hz displays. Measure the whole moving
+        # interval so those frames and their elapsed time receive equal credit.
+        intervals=[(a,b) for a,b in zip(frames,frames[1:],strict=False) if b['top']>a['top']]
+        assert intervals, frames
+        start, end = intervals[0][0], intervals[-1][1]
+        speed=(end['top']-start['top'])/(end['ms']-start['ms'])
+        observed_line_ms=line_height/speed
         assert 100 <= observed_line_ms <= 145, {'lineHeight':line_height,'observedLineMs':observed_line_ms,'frames':frames}
         proof['streaming']={'frames':frames,'events':page.evaluate('window.__presentationEvents')}
         assert len(moving)>3 and moving[-1]['ms']>300,proof['streaming']

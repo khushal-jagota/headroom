@@ -52,31 +52,30 @@ def test_ticket_setup_scoped_composer_and_durable_refusal(
     trigger = picker.locator("[data-conversation-picker-trigger]")
     expect(trigger).to_be_enabled()
     before = api.get(server, detail_path)
+    # Backend choice previews the already-loaded destination catalog. It neither
+    # rereads suggestions nor writes canonical configuration.
+    observations = api.direct_post(server, "/api/test/ticket-model-catalog", {})["observations"]
     trigger.click()
-    with page.expect_response(lambda response: response.url.endswith(
-        "/api/conversation/backends/model-choices"
-    ) and _request_body(response.request).get("employee_backend") == "claude") as preview:
-        page.locator('[data-conversation-backend="claude"]').click()
-    assert preview.value.ok, preview.value.text()
-    assert _request_body(preview.value.request) == {
-        "ticket_id": identity, "employee_backend": "claude"
-    }
+    page.locator('[data-conversation-backend="claude"]').click()
+    expect(setup).to_have_attribute("data-employee-configuration-backend", "claude")
     after_preview = api.get(server, detail_path)
     for key in ("record_sha256", "employee_backend", "employee_launch_model",
                 "employee_launch_reasoning_effort"):
         assert after_preview[key] == before[key]
-    with page.expect_response(lambda response: response.url.endswith(
-        "/api/conversation/backends/model-choices"
-    ) and _request_body(response.request).get("employee_backend") == "codex"):
-        page.locator('[data-conversation-backend="codex"]').click()
+    page.locator('[data-conversation-backend="codex"]').click()
+    expect(setup).to_have_attribute("data-employee-configuration-backend", "codex")
+    assert api.direct_post(
+        server, "/api/test/ticket-model-catalog", {}
+    )["observations"] == observations
+    page.locator('[data-conversation-picker-choice="gpt-browser-proof"]').click()
     with page.expect_response(lambda response: response.url.endswith(
         f"/api/tickets/{identity}/employee-configuration"
     )) as saved:
-        page.locator('[data-conversation-picker-choice="gpt-browser-proof"]').click()
+        page.locator('[data-conversation-picker-choice=""]').click()
     assert saved.value.ok, saved.value.text()
     assert _request_body(saved.value.request) == {
         "employee_backend": "codex", "employee_launch_model": "gpt-browser-proof",
-        "employee_launch_reasoning_effort": None, "selection_kind": "concrete",
+        "employee_launch_reasoning_effort": None, "selection_kind": "legacy_unclassified",
     }
     page.reload()
     expect(setup).to_have_attribute("data-employee-configuration-model", "gpt-browser-proof")
@@ -92,7 +91,8 @@ def test_ticket_setup_scoped_composer_and_durable_refusal(
     assert first.value.ok, first.value.text()
     assert first.value.json()["fate"] == "started"
     first_body = _request_body(first.value.request)
-    assert "model" not in first_body
+    # The initial launch carries its displayed model; untouched effort/kind stay absent.
+    assert first_body["model"] == "gpt-browser-proof"
     assert "selection_kind" not in first_body
     assert "reasoning_effort" not in first_body
     conversation = first.value.json()["conversation_id"]
@@ -102,26 +102,29 @@ def test_ticket_setup_scoped_composer_and_durable_refusal(
         for text in receipts
     )
     api.direct_post(server, f"/api/test/signals/{conversation}/finish", {})
-    # A deliberate typed row selection is intent even with the same submitted token.
+    # A deliberate model and Provider default effort travel as exact send intent.
     composer.locator("[data-conversation-picker-trigger]").click()
-    page.locator('[data-conversation-picker-choice="gpt-browser-proof"]').click()
-    box.fill("Mounted explicit kind reaches the provider transport.")
+    page.locator('[data-conversation-picker-choice="gpt-browser-initial"]').click()
+    page.locator('[data-conversation-picker-choice=""]').click()
+    box.fill("Mounted explicit model reaches the provider transport.")
     with page.expect_response(lambda response: response.url.endswith(send_path)) as second:
         composer.locator("[data-conversation-send]").click()
     assert second.value.ok, second.value.text()
     assert second.value.json()["fate"] == "started"
     second_body = _request_body(second.value.request)
-    assert second_body["model"] == "gpt-browser-proof"
-    assert second_body["selection_kind"] == "concrete"
-    # A model-only choice preserves effort presence; default null stays omitted.
-    assert "reasoning_effort" not in second_body
+    assert second_body["model"] == "gpt-browser-initial"
+    assert "selection_kind" not in second_body
+    # Explicit Provider default is null; untouched effort on the first send was absent.
+    assert second_body["reasoning_effort"] is None
     receipts = api.get(server, f"/api/test/signals/{conversation}/delivered")["texts"]
-    assert any("Mounted explicit kind reaches the provider transport." in text for text in receipts)
+    assert any(
+        "Mounted explicit model reaches the provider transport." in text for text in receipts
+    )
     api.direct_post(server, f"/api/test/signals/{conversation}/finish", {})
 
-    # Affirmative credential unavailability is safe structured evidence, not absence
-    # misrepresented as incompatibility. The real send performs another scoped read.
-    api.direct_post(server, "/api/test/ticket-model-catalog", {"credentials_unavailable": True})
+    # Catalog evidence is advisory. The provider owns acceptance, and an explicit
+    # provider refusal must survive the real send writer, mounted row and reload.
+    api.direct_post(server, f"/api/test/signals/{conversation}/reject-next-prompt", {})
     refused_words = "These exact words survive canonical refusal and reload."
     box.fill(refused_words)
     with page.expect_response(lambda response: response.url.endswith(send_path)) as refused:
@@ -129,26 +132,23 @@ def test_ticket_setup_scoped_composer_and_durable_refusal(
     assert refused.value.ok, refused.value.text()
     refusal = refused.value.json()
     assert refusal["fate"] == "refused"
-    assert refusal["model_validation"]["reason"] == "credentials_unavailable"
-    assert refusal["model_validation"]["corrective_action"] == "authenticate_provider"
+    assert refusal["refusal_reason"] == "backend_rejected_prompt"
     assert api.get(server, f"/api/test/signals/{conversation}/delivered")["texts"] == receipts
     page.reload()
     # Opening the transcript is an explicit view choice; reload starts at the dock.
     page.locator("[data-conversation-expand]").click()
     expect(page.locator('[data-conversation-row="prompt_refused"]')).to_contain_text(refused_words)
+    events = api.get(server, f"/api/conversation/conversations/{conversation}/events")["events"]
+    recorded = [event for event in events if event["kind"] == "prompt_delivery_refused"]
+    assert len(recorded) == 1
+    assert recorded[0]["payload"]["refusal_reason"] == "backend_rejected_prompt"
+    assert recorded[0]["payload"]["refusal_detail"] == "Synthetic provider refused this prompt."
+    # Refresh repeats a destination-scoped advisory read, without changing settings.
     composer.locator("[data-conversation-picker-trigger]").click()
-    page.locator("[data-model-picker-why]").click()
-    expect(page.locator(".model-picker-detail")).to_contain_text("credentials_unavailable")
-    expect(page.locator(".model-picker-detail")).to_contain_text(
-        "Required action: authenticate provider"
-    )
-    expect(page.locator(".model-picker-detail")).to_contain_text(
-        "Check again repeats the same read"
-    )
     with page.expect_response(lambda response: response.url.endswith(
-        "/api/conversation/backends/model-choices"
+        "/api/conversation/backends?refresh=true"
     )) as retry:
-        page.locator("[data-model-picker-check]").click()
+        page.locator("[data-conversation-picker-refresh]").click()
     assert retry.value.ok, retry.value.text()
-    assert retry.value.json()["validation"]["corrective_action"] == "authenticate_provider"
+    assert _request_body(retry.value.request) == {"ticket_id": identity}
     page.screenshot(path=str(tmp_path / "ticket-model-lifecycle.png"), full_page=True)

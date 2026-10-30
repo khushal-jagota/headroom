@@ -282,7 +282,7 @@ def run(browser, urls):
     page.goto([__file__, *urls][1])
     page.locator(INPUT).click()
     page.evaluate("navigator.clipboard.writeText('pasted one\\npasted two\\npasted three')")
-    page.keyboard.press("Control+V")
+    page.keyboard.press("ControlOrMeta+V")
     page.wait_for_function(
         "document.querySelector('[data-conversation-input]').value.includes('pasted three')"
     )
