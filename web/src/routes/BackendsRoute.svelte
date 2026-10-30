@@ -86,5 +86,5 @@
   {/if}
 </section>
 <style>
-  .backends-page { max-width:70rem; margin:0 auto; padding:var(--space-5); }.error { color:var(--accent-error); font-size:var(--type-sm); }@media(max-width:600px) { .backends-page { padding:var(--space-3); } }
+  .backends-page { width:min(100%,1016px); margin:0 auto; padding:var(--space-5); }.error { color:var(--accent-error); font-size:var(--type-sm); }@media(max-width:600px) { .backends-page { padding:var(--space-3); } }
 </style>
