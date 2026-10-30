@@ -1,0 +1,105 @@
+name: Disposable containment proof
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  containment-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Require the authorized Ticket branch
+        env:
+          PANELS_DISPATCH_REF: ${{ github.ref }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/containment-evidence"
+          printf '%s\n' "$PANELS_DISPATCH_REF" > "$RUNNER_TEMP/containment-evidence/dispatch-ref.txt"
+          test "$PANELS_DISPATCH_REF" = refs/heads/ticket/t_hucau9zu-containment
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Record exact source archive and hosted image
+        env:
+          PANELS_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          test "$(git rev-parse HEAD)" = "$PANELS_SOURCE_SHA"
+          git archive --format=tar HEAD | gzip -n > "$RUNNER_TEMP/containment-evidence/source.tar.gz"
+          (
+            cd "$RUNNER_TEMP/containment-evidence"
+            sha256sum source.tar.gz > source.sha256
+          )
+          {
+            printf 'Source revision: %s\n' "$PANELS_SOURCE_SHA"
+            git rev-parse 'HEAD^{tree}'
+            printf 'Runner image: %s\nImage version: %s\n' "$ImageOS" "$ImageVersion"
+            cat /etc/os-release
+            uname -a
+            python3 --version
+            /usr/bin/python3 --version
+            node --version
+            npm --version
+          } | tee "$RUNNER_TEMP/containment-evidence/environment.txt"
+      - name: Install disposable runner prerequisites
+        run: |
+          set -o pipefail
+          {
+            sudo apt-get update
+            sudo apt-get install -y bubblewrap dbus-user-session libicu-dev pkg-config build-essential
+            # Match the existing hosted publication prerequisite; test the strict boundary below.
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            bwrap --version
+            sysctl kernel.unprivileged_userns_clone kernel.apparmor_restrict_unprivileged_userns
+          } 2>&1 | tee "$RUNNER_TEMP/containment-evidence/prerequisites.log"
+      - name: Set up fresh source-local pinned dependencies through guard
+        id: setup
+        run: |
+          set -o pipefail
+          scripts/dev setup 2>&1 | tee "$RUNNER_TEMP/containment-evidence/setup.log"
+      - name: Run strict startup and admission probe
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          set +e
+          .venv/bin/python scripts/test_containment/verification.py \
+            --evidence /tmp/panels-hosted-containment-proof --tool probe \
+            2>&1 | tee "$RUNNER_TEMP/containment-evidence/startup-probe.log"
+          probe_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${probe_status[0]}" > "$RUNNER_TEMP/containment-evidence/startup-probe.exit-status"
+          test "${probe_status[1]}" -eq 0 || exit "${probe_status[1]}"
+          exit "${probe_status[0]}"
+      - name: Run focused integration admission probe
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          set +e
+          .venv/bin/python scripts/test_containment/verification.py \
+            --evidence /tmp/panels-hosted-integration-proof --tool pytest -- \
+            tests/integration/test_contained_pytest.py \
+            2>&1 | tee "$RUNNER_TEMP/containment-evidence/integration-probe.log"
+          probe_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${probe_status[0]}" > "$RUNNER_TEMP/containment-evidence/integration-probe.exit-status"
+          test "${probe_status[1]}" -eq 0 || exit "${probe_status[1]}"
+          exit "${probe_status[0]}"
+      - name: Preserve exact evidence even on refusal
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: containment-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/containment-evidence/
+            /tmp/panels-hosted-containment-proof/
+            /tmp/panels-hosted-integration-proof/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
