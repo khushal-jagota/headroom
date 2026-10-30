@@ -344,6 +344,18 @@ before it waits for the journal to drain. Final native events remain admitted
 and every unaccepted entry still blocks exit. Quiescence rechecks the process
 identity after awaited shutdown work.
 
+Each command has one typed set of inputs: start, write prompt, steer, cancel turn,
+answer permission, answer user input, or stop. JSON is decoded at the command boundary;
+a command cannot carry another operation's inputs or unknown settings. Start owns
+workspace localization, canonical skill installation, and native home setup.
+
+Provider calls receive their admission expectation and final write check explicitly.
+The Mac checks the retained child and its original launch inputs immediately before
+possible provider emission; the VPS still checks its authority before sending.
+Omitted effort keeps the running value. An explicit clear requests the provider default.
+Native message writes carry their receipt participation through cancellation and the
+SQLite append, so another send cannot inherit it.
+
 Commands for another executor incarnation receive a definitive refusal before
 native execution. After admission closes, new starts and prompts also receive
 refusals before native execution. A prompt waits for its child's current operation,

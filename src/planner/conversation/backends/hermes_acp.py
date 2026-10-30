@@ -58,7 +58,7 @@ from collections.abc import Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from acp import AGENT_METHODS, CLIENT_METHODS, PROTOCOL_VERSION
 from acp.client.connection import ClientSideConnection
@@ -92,7 +92,12 @@ from acp.schema import (
 from acp.transports import spawn_stdio_transport
 
 from planner import __version__
+
+if TYPE_CHECKING:
+    from planner.conversation.admission.contracts import AdmissionExpectation
+
 from planner.conversation.backends.contracts import (
+    BackendEmissionInputs,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -101,6 +106,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
+    EmissionCheck,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
@@ -396,6 +402,8 @@ class HermesAcpBackendChild:
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         """Spawn hermes, speak ACP to it, and bind the session this conversation runs in.
 
@@ -406,7 +414,7 @@ class HermesAcpBackendChild:
         """
         self._resolved_start = resolved_start
         try:
-            connection = await self._spawn(resolved_start)
+            connection = await self._spawn(resolved_start, emission_check=emission_check)
             if vendor_session_cursor is None:
                 await self._create_session(connection, resolved_start)
             else:
@@ -428,6 +436,9 @@ class HermesAcpBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Put the session on carried values and start a prompt or native command.
 
@@ -437,9 +448,7 @@ class HermesAcpBackendChild:
         way to name that again — the child as it stands is no longer what the conversation
         is running on, and the honest answer is to start it again.
         """
-        native_command = (
-            sender_message_count == 1 and self._is_catalog_command(sender_content)
-        )
+        native_command = sender_message_count == 1 and self._is_catalog_command(sender_content)
         if automatic_compaction:
             content = await self._automatic_compaction_content(sender_content)
         elif native_command:
@@ -459,7 +468,11 @@ class HermesAcpBackendChild:
 
         try:
             prompt = await self._write_prompt_to_the_wire(
-                turn_token, content, sender_label=sender_label, mode=mode
+                turn_token,
+                content,
+                sender_label=sender_label,
+                mode=mode,
+                emission_check=emission_check,
             )
         except PromptWriteFailed:
             if model_change is not None or reasoning_effort_change is not None:
@@ -503,6 +516,8 @@ class HermesAcpBackendChild:
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         """Ask the Panels extension to admit text to this exact Hermes turn."""
         sender_content = content if sender_content is None else sender_content
@@ -536,6 +551,14 @@ class HermesAcpBackendChild:
                 PromptDeliveryRefusalReason.message_cannot_be_steered
             )
         try:
+            if emission_check is not None:
+                emission_check(
+                    BackendEmissionInputs(
+                        self._session_model,
+                        self._session_reasoning_effort,
+                        self._resolved_start.workspace_folder,
+                    )
+                )
             response = await self._guarded(
                 connection.ext_method(
                     PANELS_STEER_EXTENSION_METHOD,
@@ -696,10 +719,25 @@ class HermesAcpBackendChild:
 
     # --- starting -----------------------------------------------------------------------
 
-    async def _spawn(self, resolved_start: ResolvedConversationStart) -> ClientSideConnection:
+    async def _spawn(
+        self,
+        resolved_start: ResolvedConversationStart,
+        *,
+        emission_check: EmissionCheck | None = None,
+    ) -> ClientSideConnection:
         """Get the process up and speaking ACP, or say it would not start."""
         launch = self._launch
         try:
+            if emission_check is not None:
+                emission_check(
+                    BackendEmissionInputs(
+                        resolved_start.model,
+                        resolved_start.reasoning_effort,
+                        resolved_start.workspace_folder,
+                        launch.argv[0],
+                        _child_environment(launch, resolved_start),
+                    )
+                )
             reader, writer, process = await self._processes.enter_async_context(
                 spawn_stdio_transport(
                     launch.argv[0],
@@ -987,6 +1025,7 @@ class HermesAcpBackendChild:
         *,
         sender_label: str,
         mode: PromptDeliveryMode,
+        emission_check: EmissionCheck | None = None,
     ) -> asyncio.Task[Any]:
         """Start a ``session/prompt`` and return once its bytes are out, not once it answers.
 
@@ -999,6 +1038,14 @@ class HermesAcpBackendChild:
         # Read off disk before the wire is touched: a picture that cannot be read is a
         # write that never happens rather than a turn started on half a message.
         prompt_blocks = await self._prompt_blocks(content)
+        if emission_check is not None:
+            emission_check(
+                BackendEmissionInputs(
+                    self._session_model,
+                    self._session_reasoning_effort,
+                    self._resolved_start.workspace_folder,
+                )
+            )
         reached_the_wire: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._prompt_write_waiters.append(reached_the_wire)
         prompt = asyncio.create_task(

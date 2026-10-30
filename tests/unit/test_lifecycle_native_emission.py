@@ -15,13 +15,18 @@ from typing import Any, cast
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
+from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.admission.service import check_expectation, parse_expectation
 from planner.conversation.backends.claude_agent_sdk import _ClaudeCleanupTransport
 from planner.conversation.backends.codex_app_server.client import CodexAppServerClient
-from planner.conversation.backends.contracts import AdmissionRefused, emission_check_scope
-from planner.conversation.contracts import ConversationBackendKey, WorkspacePathPolicy
+from planner.conversation.backends.contracts import AdmissionRefused
+from planner.conversation.contracts import (
+    ConversationBackendKey,
+    ResolvedConversationStart,
+    WorkspacePathPolicy,
+)
 from planner.conversation.model_resolution.contracts import (
     CatalogEvidenceReference,
     CatalogWorkspaceBinding,
@@ -31,7 +36,14 @@ from planner.conversation.model_resolution.contracts import (
 )
 from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.executor.contracts import ExecutorIdentity, OutboxEntry
+from planner.executor.contracts import (
+    ExecutorIdentity,
+    OutboxEntry,
+    StartRun,
+    Steer,
+    WritePrompt,
+    decode_command_arguments,
+)
 from planner.tickets.contracts import TicketLocale
 
 
@@ -77,6 +89,21 @@ def expectation(workspace: Path) -> AdmissionExpectation:
         "conversation",
         "exact",
         executor_identity=context.executor_identity,
+    )
+
+
+def resolved_for(exact: AdmissionExpectation, workspace: Path) -> ResolvedConversationStart:
+    from planner.conversation.contracts import ConversationAccess
+
+    return ResolvedConversationStart(
+        exact.conversation_id,
+        exact.selection.backend_key,
+        exact.launch_token,
+        exact.reasoning_effort,
+        None,
+        workspace,
+        ConversationAccess.full,
+        workspace_path_policy=exact.workspace.workspace_path_policy,
     )
 
 
@@ -140,15 +167,19 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
             child,
             ChildOperation.start,
             None,
-            {"resolved_start": encode_value(resolved)},
+            decode_command_arguments(
+                ChildOperation.start,
+                {
+                    "resolved_start": encode_value(resolved),
+                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                },
+            ),
         )
+        assert isinstance(old.arguments, StartRun)
         new = replace(
             old,
             command_id="new-pending",
-            arguments={
-                **old.arguments,
-                "admission_expectation": encode_value(replace(exact, child=child)),
-            },
+            arguments=replace(old.arguments, admission_expectation=replace(exact, child=child)),
         )
         database = str(tmp_path / "core.db")
         conn = connect(database)
@@ -180,10 +211,10 @@ def test_retained_initial_commands_and_stop_proofs_survive_disk_reopen(
                 TypeAdapter(ChildCommand).validate_python(raw) for raw in stored["initial_commands"]
             )
             assert restored == (old, new)
-            assert "admission_expectation" not in restored[0].arguments
-            assert restored[1].arguments["admission_expectation"] == encode_value(
-                replace(exact, child=child)
-            )
+            assert isinstance(restored[0].arguments, (StartRun, WritePrompt, Steer))
+            assert restored[0].arguments.admission_expectation is None
+            assert isinstance(restored[1].arguments, (StartRun, WritePrompt, Steer))
+            assert restored[1].arguments.admission_expectation == replace(exact, child=child)
         finally:
             reopened.close()
 
@@ -313,8 +344,9 @@ def test_codex_guard_runs_after_owned_write_lock_and_cleans_pending_request() ->
                 raise AdmissionRefused("context_changed")
 
         await client._write_lock.acquire()
-        with emission_check_scope(check):
-            pending = asyncio.create_task(client.begin_request("turn/start", {"model": "exact"}))
+        pending = asyncio.create_task(
+            client.begin_request("turn/start", {"model": "exact"}, emission_check=check)
+        )
         await asyncio.sleep(0)
         valid = False
         client._write_lock.release()
@@ -413,7 +445,13 @@ def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
             reference,
             ChildOperation.start,
             None,
-            {"resolved_start": encode_value(resolved)},
+            decode_command_arguments(
+                ChildOperation.start,
+                {
+                    "resolved_start": encode_value(resolved),
+                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                },
+            ),
         )
         first = await registry.execute_command(command)
         assert first.disposition is CommandDisposition.refused
@@ -426,7 +464,7 @@ def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
 
 
 def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path: Path) -> None:
-    from planner.conversation.backends.contracts import TurnToken, current_emission_check
+    from planner.conversation.backends.contracts import TurnToken
     from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.executor.contracts import (
@@ -446,8 +484,8 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
                 nonlocal prepared
                 prepared = True
                 registry._retiring_children.add(reference.child_id)
-                check = current_emission_check()
-                assert check is not None
+                check = kwargs.get("emission_check")
+                assert callable(check)
                 check()
                 pytest.fail("failed final guard submitted provider bytes")
 
@@ -466,9 +504,11 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
             "capability",
             cast(Any, Native()),
             ticket_id="ticket",
-            launch_context=exact.context,
-            workspace_binding=exact.workspace,
-            localized_workspace=tmp_path,
+            launch_input=StartRun(
+                resolved_start=resolved_for(exact, tmp_path),
+                canonical_skill_snapshot=canonical_snapshot(),
+            ),
+            localized_start=resolved_for(exact, tmp_path),
             model="exact",
             backend_key=ConversationBackendKey.codex,
         )
@@ -479,13 +519,16 @@ def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path:
             reference,
             ChildOperation.write_prompt,
             turn,
-            {
-                "admission_expectation": encode_value(exact),
-                "content": content,
-                "sender_content": content,
-                "sender_label": "Owner",
-                "mode": "queue",
-            },
+            decode_command_arguments(
+                ChildOperation.write_prompt,
+                {
+                    "admission_expectation": encode_value(exact),
+                    "content": content,
+                    "sender_content": content,
+                    "sender_label": "Owner",
+                    "mode": "queue",
+                },
+            ),
         )
         outcome = await registry.execute_command(command)
         assert outcome.disposition is CommandDisposition.refused
@@ -548,11 +591,12 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
             "capability",
             cast(Any, Native()),
             ticket_id="ticket",
-            launch_context=context,
-            workspace_binding=exact.workspace,
-            localized_workspace=tmp_path,
+            launch_input=StartRun(
+                resolved_start=resolved_for(exact, tmp_path),
+                canonical_skill_snapshot=canonical_snapshot(),
+            ),
+            localized_start=resolved_for(exact, tmp_path),
             model="alias",
-            resolved_model_id="old-advertised-target",
             backend_key=ConversationBackendKey.claude,
         )
         registry.children[reference.child_id] = child
@@ -562,14 +606,17 @@ def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: 
             reference,
             ChildOperation.write_prompt,
             turn,
-            {
-                "admission_expectation": encode_value(exact),
-                "content": content,
-                "sender_content": content,
-                "sender_label": "Owner",
-                "mode": "queue",
-                "model_change": "alias",
-            },
+            decode_command_arguments(
+                ChildOperation.write_prompt,
+                {
+                    "admission_expectation": encode_value(exact),
+                    "content": content,
+                    "sender_content": content,
+                    "sender_label": "Owner",
+                    "mode": "queue",
+                    "model_change": "alias",
+                },
+            ),
         )
         outcome = await registry.execute_command(command)
         assert outcome.disposition is CommandDisposition.succeeded, outcome.result
@@ -590,7 +637,6 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     """The real native codec and remote decoder must agree before ownership can settle."""
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
-    from planner.conversation.admission.service import admission_scope
     from planner.conversation.backends.contracts import (
         BackendPromptAccepted,
         BackendPromptRejected,
@@ -668,22 +714,21 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
             workspace_path_policy=WorkspacePathPolicy.native_absolute,
         )
         try:
-            with admission_scope(exact):
-                await remote.start(resolved, vendor_session_cursor=None)
+            await remote.start(resolved, vendor_session_cursor=None)
             exact = replace(exact, turn=turn)
             content = text_message_content("literal intent without catalog")
 
             async def write() -> BackendPromptAccepted:
-                with admission_scope(exact):
-                    return await remote.write_prompt(
-                        turn,
-                        content,
-                        sender_content=content,
-                        sender_label="Owner",
-                        mode=PromptDeliveryMode.queue,
-                        model_change="exact",
-                        reasoning_effort_change=None,
-                    )
+                return await remote.write_prompt(
+                    turn,
+                    content,
+                    sender_content=content,
+                    sender_label="Owner",
+                    mode=PromptDeliveryMode.queue,
+                    model_change="exact",
+                    reasoning_effort_change=None,
+                    admission_expectation=exact,
+                )
 
             if fate == "unknown":
                 with pytest.raises(RemoteCommandUncertain):

@@ -26,6 +26,7 @@ from planner.conversation.contracts import (
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
+    NativeMessageOperation,
     PromptDeliveryFate,
     PromptDeliveryInjected,
     PromptDeliveryMode,
@@ -40,15 +41,7 @@ from planner.conversation.contracts import (
     backend_supports_steer,
 )
 from planner.conversation.events import UserInputAnswer, UserInputQuestion
-from planner.conversation.launch_intent import (
-    effort_presence,
-)
-from planner.conversation.launch_intent import (
-    reasoning_effort_is_set as effort_presence_is_set,
-)
-from planner.conversation.launch_intent import (
-    selection_kind as authored_selection_kind,
-)
+from planner.conversation.launch_intent import validate_launch_intent
 from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -273,6 +266,7 @@ class InMemoryConversationSystem:
         recipient: Principal | None = None,
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         receipt = await self.send_with_receipt(
             conversation_id,
@@ -290,10 +284,10 @@ class InMemoryConversationSystem:
             recipient=recipient,
             reply_requested=reply_requested,
             recovery_references=recovery_references,
+            native_message_operation=native_message_operation,
         )
         return receipt.fate
 
-    @effort_presence
     async def send_with_receipt(
         self,
         conversation_id: str,
@@ -313,7 +307,9 @@ class InMemoryConversationSystem:
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> AddressedPromptDeliveryReceipt:
+        validate_launch_intent(model_change, selection_kind)
         require_message_content(content)
         if record_refusal and sender_message_id is None:
             raise ValueError("record_refusal requires a sender_message_id")
@@ -346,8 +342,8 @@ class InMemoryConversationSystem:
                     recipient,
                     model_change,
                     reasoning_effort_change,
-                    effort_presence_is_set(),
-                    authored_selection_kind(),
+                    reasoning_effort_is_set,
+                    selection_kind,
                 ):
                     raise ValueError("sender_message_id already names a different message")
                 return AddressedPromptDeliveryReceipt(
@@ -399,6 +395,7 @@ class InMemoryConversationSystem:
                 recipient=recipient,
                 reply_requested=reply_requested,
                 recovery_references=recovery_references,
+                reasoning_effort_is_set=reasoning_effort_is_set,
             )
         elif mode is PromptDeliveryMode.queue:
             fate = self._hold_prompt(
@@ -414,6 +411,8 @@ class InMemoryConversationSystem:
                 recipient=recipient,
                 reply_requested=reply_requested,
                 recovery_references=recovery_references,
+                reasoning_effort_is_set=reasoning_effort_is_set,
+                selection_kind=selection_kind,
             )
         elif mode is PromptDeliveryMode.steer:
             if any(not isinstance(piece, MessageText) for piece in content):
@@ -421,7 +420,7 @@ class InMemoryConversationSystem:
             elif (
                 model_change is not None
                 or reasoning_effort_change is not None
-                or effort_presence_is_set()
+                or reasoning_effort_is_set
             ):
                 queue_reason = PromptQueueReason.run_change
             else:
@@ -435,6 +434,7 @@ class InMemoryConversationSystem:
                     recipient=recipient,
                     reply_requested=reply_requested,
                     recovery_references=recovery_references,
+                    reasoning_effort_is_set=reasoning_effort_is_set,
                 )
                 if isinstance(steer_fate, PromptDeliveryInjected):
                     fate = steer_fate
@@ -455,6 +455,8 @@ class InMemoryConversationSystem:
                     recipient=recipient,
                     reply_requested=reply_requested,
                     recovery_references=recovery_references,
+                    reasoning_effort_is_set=reasoning_effort_is_set,
+                    selection_kind=selection_kind,
                 )
         else:
             # send-now against a busy agent: the incumbent dies first, and this message runs
@@ -473,11 +475,14 @@ class InMemoryConversationSystem:
                 recipient=recipient,
                 reply_requested=reply_requested,
                 recovery_references=recovery_references,
+                reasoning_effort_is_set=reasoning_effort_is_set,
             )
             if isinstance(fate, PromptDeliveryRefused):
                 # The incumbent is already dead and the agent is free, so the held prompts
                 # are owed their run even though this delivery could not happen.
-                self._drain(state)
+                self._drain(
+                    state,
+                )
         return AddressedPromptDeliveryReceipt(
             fate=fate,
             newly_accepted=not isinstance(fate, PromptDeliveryRefused),
@@ -498,12 +503,14 @@ class InMemoryConversationSystem:
         recipient: Principal | None = None,
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        reasoning_effort_is_set: bool = False,
+        selection_kind: SelectionKind | None = None,
     ) -> PromptDeliveryQueued:
         state.held_prompts_created += 1
         state.held_prompts.append(
             _HeldPrompt(
-                reasoning_effort_is_set=effort_presence_is_set(),
-                selection_kind=authored_selection_kind(),
+                reasoning_effort_is_set=reasoning_effort_is_set,
+                selection_kind=selection_kind,
                 held_prompt_id=f"held-{state.held_prompts_created}",
                 content=content,
                 sender_label=sender_label,
@@ -536,6 +543,7 @@ class InMemoryConversationSystem:
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         credit_explicit_reply: bool = True,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> None:
         require_message_content(content)
         state = self._conversations.get(conversation_id)
@@ -986,6 +994,7 @@ class InMemoryConversationSystem:
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         recorded_messages: Sequence[_HeldPrompt] = (),
+        reasoning_effort_is_set: bool = False,
     ) -> _InMemoryBackendSession | PromptDeliveryRefused:
         established = self._establish_backend_session(state)
         if isinstance(established, PromptDeliveryRefusalReason):
@@ -997,7 +1006,7 @@ class InMemoryConversationSystem:
         explicit_effort = (
             recorded_messages[0].reasoning_effort_is_set
             if recorded_messages
-            else effort_presence_is_set()
+            else reasoning_effort_is_set
         )
         if model_change is not None or reasoning_effort_change is not None or explicit_effort:
             # The change lands with the delivery, so it is applied only once the write
@@ -1090,6 +1099,7 @@ class InMemoryConversationSystem:
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         recorded_messages: Sequence[_HeldPrompt] = (),
+        reasoning_effort_is_set: bool = False,
     ) -> PromptDeliveryStarted | PromptDeliveryRefused:
         written = self._write_to_backend(
             state,
@@ -1105,14 +1115,13 @@ class InMemoryConversationSystem:
             reply_requested=reply_requested,
             recovery_references=recovery_references,
             recorded_messages=recorded_messages,
+            reasoning_effort_is_set=reasoning_effort_is_set,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
         prompt_senders: dict[Principal, None] = {}
         messages = recorded_messages or (
             _HeldPrompt(
-                reasoning_effort_is_set=effort_presence_is_set(),
-                selection_kind=authored_selection_kind(),
                 held_prompt_id="",
                 content=content,
                 sender_label=sender_label,
@@ -1144,6 +1153,7 @@ class InMemoryConversationSystem:
         recipient: Principal | None = None,
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        reasoning_effort_is_set: bool = False,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused:
         if not backend_supports_steer(state.resolved_start.backend_key):
             return PromptDeliveryRefused(
@@ -1164,6 +1174,7 @@ class InMemoryConversationSystem:
             recipient=recipient,
             reply_requested=reply_requested,
             recovery_references=recovery_references,
+            reasoning_effort_is_set=reasoning_effort_is_set,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written

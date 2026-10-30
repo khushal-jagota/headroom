@@ -11,7 +11,7 @@ from pydantic import ConfigDict, Field
 
 from planner.conversation.backends.codex_app_server.login import CodexLoginGeneration
 from planner.conversation.contracts import ConversationBackendKey, WorkspacePathPolicy
-from planner.executor.contracts import ExecutorIdentity
+from planner.execution_identity import ExecutorIdentity
 from planner.tickets.contracts import TicketLocale
 
 

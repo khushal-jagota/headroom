@@ -16,10 +16,25 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, ClassVar, Literal, Protocol, TypedDict
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
+from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import TurnToken
+from planner.conversation.contracts import PromptDeliveryMode, ResolvedConversationStart
 from planner.conversation.events import UserInputAnswer
+from planner.conversation.message_content import MessageContent
+from planner.execution_identity import (
+    AskKind as AskKind,
+)
+from planner.execution_identity import (
+    AskReference as AskReference,
+)
+from planner.execution_identity import (
+    ChildReference as ChildReference,
+)
+from planner.execution_identity import (
+    ExecutorIdentity as ExecutorIdentity,
+)
 
 # Payloads carry existing domain types as JSON; operation-specific codecs validate
 # exact fields before dispatch. Credentials and arbitrary caller headers never travel.
@@ -41,15 +56,6 @@ class CanonicalSkillSnapshot:
 
     sources: tuple[CanonicalSkillSource, ...]
     required_skill_names: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutorIdentity:
-    protocol_version: int
-    application_revision: str
-    spool_format_version: int
-    executor_incarnation: str
-    connection_generation: int
 
 
 class ConnectionPhase(StrEnum):
@@ -156,28 +162,6 @@ class ExecutorHealthRead(TypedDict):
     lost_at_ms: int | None
     last_contact_at_ms: int | None
     last_contact_source: Literal["vps_received_valid_executor_frame"]
-
-
-@dataclass(frozen=True, slots=True)
-class ChildReference:
-    """Child IDs are UUIDs minted at child creation, never vendor session IDs."""
-
-    executor_incarnation: str
-    child_id: str
-    conversation_id: str
-
-
-class AskKind(StrEnum):
-    permission = "permission"
-    user_input = "user_input"
-
-
-@dataclass(frozen=True, slots=True)
-class AskReference:
-    child: ChildReference
-    turn: TurnToken
-    ask_id: str
-    kind: AskKind
 
 
 class AskReachability(StrEnum):
@@ -404,14 +388,156 @@ class BackendEvent:
     arguments: JsonObject
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StartRun:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    resolved_start: ResolvedConversationStart
+    canonical_skill_snapshot: CanonicalSkillSnapshot
+    vendor_session_cursor: str | None = None
+    workspace_home_relative: str | None = None
+    admission_expectation: AdmissionExpectation | None = None
+    kind: Literal["start"] = "start"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WritePrompt:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    content: MessageContent
+    sender_content: MessageContent
+    sender_label: str
+    mode: PromptDeliveryMode
+    sender_message_count: int = 1
+    model_change: str | None = None
+    reasoning_effort_change: str | None = None
+    reasoning_effort_is_set: bool = False
+    automatic_compaction: bool = False
+    admission_expectation: AdmissionExpectation | None = None
+    kind: Literal["write_prompt"] = "write_prompt"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Steer:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    content: MessageContent
+    sender_label: str
+    sender_content: MessageContent | None = None
+    admission_expectation: AdmissionExpectation | None = None
+    kind: Literal["steer"] = "steer"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CancelTurn:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    kind: Literal["cancel_running_turn"] = "cancel_running_turn"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AnswerPermission:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    ask_id: str
+    option_id: str
+    answer: DurableAnswer | None = None
+    kind: Literal["answer_permission_ask"] = "answer_permission_ask"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AnswerUserInput:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    request_id: str
+    answers: tuple[UserInputAnswer, ...]
+    answer: DurableAnswer | None = None
+    kind: Literal["answer_user_input"] = "answer_user_input"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StopRun:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    kind: Literal["stop"] = "stop"
+
+
+type ChildCommandArguments = Annotated[
+    StartRun | WritePrompt | Steer | CancelTurn | AnswerPermission | AnswerUserInput | StopRun,
+    Field(discriminator="kind"),
+]
+
+
+def decode_command_arguments(operation: ChildOperation, raw: object) -> ChildCommandArguments:
+    """Decode the JSON command at ingress, including the previous untagged wire form."""
+    if isinstance(raw, dict):
+        raw = {"kind": operation.value, **raw}
+        if raw.get("admission_expectation") is not None:
+            from planner.conversation.admission.service import parse_expectation
+
+            raw["admission_expectation"] = parse_expectation(raw["admission_expectation"])
+        # Saved answers have one stable identity and their complete chosen value.
+        if "answer" in raw and raw["answer"] is not None:
+            answer = TypeAdapter(DurableAnswer).validate_python(raw["answer"])
+            raw = {**raw, "answer": answer}
+            if operation is ChildOperation.answer_permission_ask:
+                raw.setdefault("ask_id", answer.ask.ask_id)
+                raw.setdefault("option_id", answer.option_id)
+            elif operation is ChildOperation.answer_user_input:
+                raw.setdefault("request_id", answer.ask.ask_id)
+                raw.setdefault("answers", answer.user_input_answers)
+    result: ChildCommandArguments = TypeAdapter(ChildCommandArguments).validate_python(raw)
+    if result.kind != operation.value:
+        raise ValueError("command operation conflicts with arguments")
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class ChildCommand:
     command_id: str
     child: ChildReference
     operation: ChildOperation
     turn: TurnToken | None
-    arguments: JsonObject
+    arguments: ChildCommandArguments
     file_dependencies: tuple[FileManifest, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def decode_arguments(cls, value: object) -> object:
+        if isinstance(value, dict):
+            return {
+                **value,
+                "arguments": decode_command_arguments(
+                    ChildOperation(value["operation"]), value["arguments"]
+                ),
+            }
+        return value
+
+    def __post_init__(self) -> None:
+        # Python callers supply typed arguments; the wire decoder admits old JSON.
+        if self.arguments.kind != self.operation.value:
+            raise ValueError("command operation conflicts with arguments")
+        if isinstance(self.arguments, (WritePrompt, Steer)) and self.turn is None:
+            raise ValueError("prompt command needs its exact turn")
+        if isinstance(self.arguments, (AnswerPermission, AnswerUserInput)):
+            answer = self.arguments.answer
+            if answer is not None and (
+                answer.answer_id != self.command_id
+                or answer.ask.child != self.child
+                or answer.ask.turn != self.turn
+                or (
+                    isinstance(self.arguments, AnswerPermission)
+                    and (
+                        answer.ask.kind is not AskKind.permission
+                        or answer.ask.ask_id != self.arguments.ask_id
+                        or answer.option_id != self.arguments.option_id
+                        or answer.user_input_answers is not None
+                    )
+                )
+                or (
+                    isinstance(self.arguments, AnswerUserInput)
+                    and (
+                        answer.ask.kind is not AskKind.user_input
+                        or answer.ask.ask_id != self.arguments.request_id
+                        or answer.user_input_answers != self.arguments.answers
+                        or answer.option_id is not None
+                    )
+                )
+            ):
+                raise ValueError("durable answer conflicts with command")
 
 
 class CommandDisposition(StrEnum):

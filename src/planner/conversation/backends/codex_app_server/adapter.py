@@ -45,8 +45,9 @@ import re
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from functools import partial
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -76,6 +77,10 @@ from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     read_stored_codex_login,
 )
+
+if TYPE_CHECKING:
+    from planner.conversation.admission.contracts import AdmissionExpectation
+
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
     BackendEmissionInputs,
@@ -89,12 +94,12 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    EmissionCheck,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
     UserInputAnswerWriteFailed,
-    current_emission_check,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
@@ -376,6 +381,8 @@ class CodexAppServerBackendChild:
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         """Spawn codex, shake hands, and bind the thread this conversation runs in."""
         self._resolved_start = resolved_start
@@ -385,31 +392,38 @@ class CodexAppServerBackendChild:
             overrides=self._launch.environment_overrides,
             identity=self._identity_environment(resolved_start),
         )
-        check = current_emission_check()
-        if check is not None:
-            check(
+        check = emission_check
+        emission_check = (
+            partial(
+                check,
                 BackendEmissionInputs(
                     resolved_start.model,
                     resolved_start.reasoning_effort,
                     resolved_start.workspace_folder,
                     self._launch.argv[0],
                     environment,
-                )
+                ),
             )
+            if check is not None
+            else None
+        )
         try:
             await self._client.start(
                 argv=self._launch.argv,
                 environment=environment,
                 working_directory=resolved_start.workspace_folder,
+                emission_check=emission_check,
             )
         except CodexChildWouldNotStart as would_not_spawn:
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
         try:
             await self._shake_hands()
             if vendor_session_cursor is None:
-                await self._start_thread(resolved_start)
+                await self._start_thread(resolved_start, emission_check=emission_check)
             else:
-                await self._resume_thread(resolved_start, vendor_session_cursor)
+                await self._resume_thread(
+                    resolved_start, vendor_session_cursor, emission_check=emission_check
+                )
             await self._publish_catalog()
             self._catalog_coordinator.start()
         except BaseException:
@@ -431,6 +445,9 @@ class CodexAppServerBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Start a turn with this message, on these values, and return when codex has it.
 
@@ -438,23 +455,26 @@ class CodexAppServerBackendChild:
         no Codex wire field and does not alter the turn. Native commands and automatic
         maintenance still use their dedicated routes without rewritten command text.
         """
-        from planner.conversation.launch_intent import reasoning_effort_is_set
 
         del mode
         thread_id = self._bound_thread()
         model = self._model if model_change is None else model_change
         reasoning_effort = (
             self._reasoning_effort
-            if reasoning_effort_change is None and not reasoning_effort_is_set()
+            if reasoning_effort_change is None and not reasoning_effort_is_set
             else reasoning_effort_change
         )
-        check = current_emission_check()
-        if check is not None:
-            check(
+        check = emission_check
+        emission_check = (
+            partial(
+                check,
                 BackendEmissionInputs(
                     model, reasoning_effort, self._resolved_start.workspace_folder
-                )
+                ),
             )
+            if check is not None
+            else None
+        )
         turn = _TurnInFlight(
             token=turn_token,
             started=asyncio.get_running_loop().create_future(),
@@ -501,7 +521,10 @@ class CodexAppServerBackendChild:
             if native_command:
                 assert invocation is not None
                 turn.turn_id = await self._start_native_command(
-                    thread_id=thread_id, invocation=invocation, turn=turn
+                    thread_id=thread_id,
+                    invocation=invocation,
+                    turn=turn,
+                    emission_check=emission_check,
                 )
             else:
                 parameters = self._turn_start_parameters(
@@ -510,7 +533,9 @@ class CodexAppServerBackendChild:
                     model=model,
                     invocation=invocation,
                 )
-                turn.turn_id = await self._start_the_turn(parameters, turn, reasoning_effort)
+                turn.turn_id = await self._start_the_turn(
+                    parameters, turn, reasoning_effort, emission_check=emission_check
+                )
         except (PromptWriteFailed, AdmissionRefused, BackendPromptRejected):
             # No turn started, so there is no ending to report and nothing to settle: the
             # core hears one refusal and the conversation is idle again.
@@ -537,6 +562,8 @@ class CodexAppServerBackendChild:
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         """Ask Codex to admit this content to the exact captured ordinary turn.
 
@@ -591,6 +618,7 @@ class CodexAppServerBackendChild:
             result = await self._client.request(
                 "turn/steer",
                 _wire(parameters),
+                emission_check=emission_check,
                 poison_wire_on_timeout=False,
             )
         except CodexRequestRejected as rejected:
@@ -732,7 +760,12 @@ class CodexAppServerBackendChild:
             # is no live backend to write to — which is what a spawn failure names.
             raise BackendSpawnFailed(str(would_not_come_up)) from would_not_come_up
 
-    async def _start_thread(self, resolved_start: ResolvedConversationStart) -> None:
+    async def _start_thread(
+        self,
+        resolved_start: ResolvedConversationStart,
+        *,
+        emission_check: EmissionCheck | None = None,
+    ) -> None:
         parameters = bindings.ThreadStartParams(
             cwd=str(resolved_start.workspace_folder),
             model=resolved_start.model,
@@ -742,14 +775,18 @@ class CodexAppServerBackendChild:
             developerInstructions=_role_text(resolved_start),
         )
         started = await self._ask_about_the_thread(
-            "thread/start", parameters, bindings.ThreadStartResponse
+            "thread/start", parameters, bindings.ThreadStartResponse, emission_check=emission_check
         )
         self._thread_id = started.thread.id
         self._thread_is_ephemeral = started.thread.ephemeral
         await self._sink.vendor_session_cursor_rebound(started.thread.id)
 
     async def _resume_thread(
-        self, resolved_start: ResolvedConversationStart, vendor_session_cursor: str
+        self,
+        resolved_start: ResolvedConversationStart,
+        vendor_session_cursor: str,
+        *,
+        emission_check: EmissionCheck | None = None,
     ) -> None:
         """Pick the conversation's thread back up, or say plainly that it did not.
 
@@ -768,7 +805,10 @@ class CodexAppServerBackendChild:
             developerInstructions=_role_text(resolved_start),
         )
         resumed = await self._ask_about_the_thread(
-            "thread/resume", parameters, bindings.ThreadResumeResponse
+            "thread/resume",
+            parameters,
+            bindings.ThreadResumeResponse,
+            emission_check=emission_check,
         )
         if resumed.thread.id != vendor_session_cursor:
             raise SessionLoadFailed(
@@ -780,10 +820,17 @@ class CodexAppServerBackendChild:
         self._thread_is_ephemeral = resumed.thread.ephemeral
 
     async def _ask_about_the_thread[ResponseT: BaseModel](
-        self, method: str, parameters: BaseModel, response_model: type[ResponseT]
+        self,
+        method: str,
+        parameters: BaseModel,
+        response_model: type[ResponseT],
+        *,
+        emission_check: EmissionCheck | None = None,
     ) -> ResponseT:
         try:
-            result = await self._client.request(method, _wire(parameters))
+            result = await self._client.request(
+                method, _wire(parameters), emission_check=emission_check
+            )
         except CodexAppServerError as would_not_bind:
             raise SessionLoadFailed(str(would_not_bind)) from would_not_bind
         try:
@@ -962,13 +1009,18 @@ class CodexAppServerBackendChild:
         thread_id: str,
         invocation: _CatalogInvocation,
         turn: _TurnInFlight,
+        emission_check: EmissionCheck | None = None,
     ) -> str | None:
         if invocation.name == "compact":
             compact_parameters = bindings.ThreadCompactStartParams(threadId=thread_id)
-            return await self._start_compaction(compact_parameters, turn)
+            return await self._start_compaction(
+                compact_parameters, turn, emission_check=emission_check
+            )
 
         if invocation.name.startswith("goal_"):
-            await self._run_goal_command(thread_id=thread_id, invocation=invocation, turn=turn)
+            await self._run_goal_command(
+                thread_id=thread_id, invocation=invocation, turn=turn, emission_check=emission_check
+            )
             return None
 
         instructions = invocation.path or ""
@@ -980,7 +1032,7 @@ class CodexAppServerBackendChild:
         review_parameters = bindings.ReviewStartParams(
             threadId=thread_id, delivery="inline", target=target
         )
-        return await self._start_review(review_parameters, turn)
+        return await self._start_review(review_parameters, turn, emission_check=emission_check)
 
     async def _run_goal_command(
         self,
@@ -988,6 +1040,7 @@ class CodexAppServerBackendChild:
         thread_id: str,
         invocation: _CatalogInvocation,
         turn: _TurnInFlight,
+        emission_check: EmissionCheck | None = None,
     ) -> None:
         """Run one goal RPC and close its synthetic turn through the ordinary sink."""
         if self._thread_is_ephemeral:
@@ -997,6 +1050,7 @@ class CodexAppServerBackendChild:
                 result = await self._client.request(
                     "thread/goal/get",
                     _wire(bindings.ThreadGoalGetParams(threadId=thread_id)),
+                    emission_check=emission_check,
                 )
                 get_response = bindings.ThreadGoalGetResponse.model_validate(result)
                 message = _goal_inspection_message(get_response.goal)
@@ -1010,6 +1064,7 @@ class CodexAppServerBackendChild:
                             status="active",
                         )
                     ),
+                    emission_check=emission_check,
                 )
                 set_response = bindings.ThreadGoalSetResponse.model_validate(result)
                 message = f"Goal set: {set_response.goal.objective}"
@@ -1017,6 +1072,7 @@ class CodexAppServerBackendChild:
                 result = await self._client.request(
                     "thread/goal/clear",
                     _wire(bindings.ThreadGoalClearParams(threadId=thread_id)),
+                    emission_check=emission_check,
                 )
                 clear_response = bindings.ThreadGoalClearResponse.model_validate(result)
                 message = "Goal cleared." if clear_response.cleared else "No goal was set."
@@ -1035,11 +1091,17 @@ class CodexAppServerBackendChild:
         turn.ended.set()
 
     async def _start_compaction(
-        self, parameters: bindings.ThreadCompactStartParams, turn: _TurnInFlight
+        self,
+        parameters: bindings.ThreadCompactStartParams,
+        turn: _TurnInFlight,
+        *,
+        emission_check: EmissionCheck | None = None,
     ) -> str | None:
         """Accept compaction on its immediate response or its standard turn notification."""
         try:
-            answer = await self._client.begin_request("thread/compact/start", _wire(parameters))
+            answer = await self._client.begin_request(
+                "thread/compact/start", _wire(parameters), emission_check=emission_check
+            )
         except CodexAppServerError as did_not_reach:
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
         accepted = asyncio.create_task(
@@ -1060,11 +1122,17 @@ class CodexAppServerBackendChild:
         return turn.turn_id
 
     async def _start_review(
-        self, parameters: bindings.ReviewStartParams, turn: _TurnInFlight
+        self,
+        parameters: bindings.ReviewStartParams,
+        turn: _TurnInFlight,
+        *,
+        emission_check: EmissionCheck | None = None,
     ) -> str | None:
         """Keep the parent review id and the nested interrupt id distinct."""
         try:
-            answer = await self._client.begin_request("review/start", _wire(parameters))
+            answer = await self._client.begin_request(
+                "review/start", _wire(parameters), emission_check=emission_check
+            )
         except CodexAppServerError as did_not_reach:
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
         accepted = asyncio.create_task(
@@ -1105,7 +1173,12 @@ class CodexAppServerBackendChild:
             turn.interrupt_turn_id = turn_id
 
     async def _start_the_turn(
-        self, parameters: bindings.TurnStartParams, turn: _TurnInFlight, effort: str | None
+        self,
+        parameters: bindings.TurnStartParams,
+        turn: _TurnInFlight,
+        effort: str | None,
+        *,
+        emission_check: EmissionCheck | None = None,
     ) -> str:
         """Accept only the correlated response; notifications cannot identify a request."""
         turn.awaiting_start_response = True
@@ -1114,7 +1187,9 @@ class CodexAppServerBackendChild:
             # The generated enum describes this pin, not all provider-supported values.
             # Explicit null must reach Codex instead of inheriting the previous effort.
             payload["effort"] = effort
-            answer = await self._client.begin_request("turn/start", payload)
+            answer = await self._client.begin_request(
+                "turn/start", payload, emission_check=emission_check
+            )
             result = await self._client.finish_request("turn/start", answer)
         except CodexRequestRejected as rejected:
             # Activity can contradict non-admission. Keep ownership uncertain in that case.

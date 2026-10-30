@@ -20,7 +20,6 @@ from planner.conversation.backends.claude_settings import (
 )
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
-    emission_check_scope,
 )
 
 SECRET = "synthetic-never-disclose-settings-value"
@@ -148,8 +147,9 @@ def test_user_emission_needs_only_final_token_policy_guard() -> None:
         try:
             inner.error = True  # Metadata cannot veto a literal provider token.
             checks: list[object] = []
-            with emission_check_scope(lambda prepared=None: checks.append(prepared)):
-                await client.query(message("exact-uuid"))
+            await client.query(
+                message("exact-uuid"), emission_check=lambda prepared=None: checks.append(prepared)
+            )
             users = [frame for frame in inner.frames if frame["type"] == "user"]
             assert [frame["uuid"] for frame in users] == ["exact-uuid"]
             assert len(checks) == 1
@@ -168,8 +168,9 @@ def test_final_policy_refusal_reaches_actual_user_write_lock() -> None:
         try:
             def refuse(prepared: object = None) -> None:
                 raise AdmissionRefused("explicit token disabled")
-            with emission_check_scope(refuse), pytest.raises(AdmissionRefused):
-                await client.query(message("never-written"))
+
+            with pytest.raises(AdmissionRefused):
+                await client.query(message("never-written"), emission_check=refuse)
             assert not [frame for frame in inner.frames if frame["type"] == "user"]
         finally:
             await client.disconnect()

@@ -13,7 +13,7 @@ from planner.conversation.model_resolution.contracts import (
     ModelSelection,
     NonemptyText,
 )
-from planner.executor.contracts import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference, ExecutorIdentity
 
 
 @dataclass(frozen=True, slots=True)

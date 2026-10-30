@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 
+from planner.conversation.backends.contracts import TurnToken
 from planner.executor import input_transfers
 from planner.executor.contracts import (
     FileManifest,
@@ -14,6 +15,7 @@ from planner.executor.contracts import (
     FileTransfer,
     InputTransferProgress,
     InputTransferRequest,
+    decode_command_arguments,
 )
 from planner.executor.input_transfers import InputTransferDeadline
 
@@ -281,15 +283,16 @@ def test_failed_input_removes_only_commands_without_possible_native_admission(
         endpoint._send_lock = asyncio.Lock()
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()
-        endpoint.runtime = SimpleNamespace(
-            system=SimpleNamespace()
-        )
+        endpoint.runtime = SimpleNamespace(system=SimpleNamespace())
         command = ChildCommand(
             "command",
             ChildReference("native", "child", "conversation"),
             ChildOperation.write_prompt,
-            None,
-            {},
+            TurnToken("conversation", 1),
+            decode_command_arguments(
+                ChildOperation.write_prompt,
+                {"content": [], "sender_content": [], "sender_label": "Owner", "mode": "queue"},
+            ),
         )
         transferred = asyncio.Event()
 
@@ -366,15 +369,16 @@ def test_canceled_input_command_preserves_only_possible_native_outcome(
         endpoint._send_lock = asyncio.Lock()
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()
-        endpoint.runtime = SimpleNamespace(
-            system=SimpleNamespace()
-        )
+        endpoint.runtime = SimpleNamespace(system=SimpleNamespace())
         command = ChildCommand(
             "command",
             ChildReference("native", "child", "conversation"),
             ChildOperation.write_prompt,
-            None,
-            {},
+            TurnToken("conversation", 1),
+            decode_command_arguments(
+                ChildOperation.write_prompt,
+                {"content": [], "sender_content": [], "sender_label": "Owner", "mode": "queue"},
+            ),
         )
         entered = asyncio.Event()
 

@@ -25,6 +25,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import UserInputAnswer
+from planner.conversation.message_content import MessageFile, MessageImage
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
     CatalogObservation,
@@ -53,6 +54,8 @@ from planner.executor.contracts import (
     LIVE_BACKEND_EVENT_METHODS,
     AcceptanceReceipt,
     AnswerApplication,
+    AnswerPermission,
+    AnswerUserInput,
     AskKind,
     AskReference,
     BackendEvent,
@@ -87,8 +90,11 @@ from planner.executor.contracts import (
     ReconnectAsk,
     ReconnectResult,
     RemoteInputTransferFailed,
+    StartRun,
+    Steer,
     WireMessage,
     WireMessageKind,
+    WritePrompt,
 )
 from planner.executor.files import snapshot_file
 from planner.executor.input_transfers import InputTransferDeadline, InputTransferExchange
@@ -746,14 +752,17 @@ class ExecutorEndpoint:
             raise ConnectionError("file generation unavailable")
         service = self._transports[identity]
         seen: set[str] = set()
-        for key in ("content", "sender_content"):
-            content = command.arguments.get(key)
-            if not isinstance(content, list):
+        args = command.arguments
+        contents = (
+            (args.content, args.sender_content) if isinstance(args, (WritePrompt, Steer)) else ()
+        )
+        for content in contents:
+            if content is None:
                 continue
             for piece in content:
-                if not isinstance(piece, dict) or not isinstance(piece.get("stored_file_id"), str):
+                if not isinstance(piece, (MessageImage, MessageFile)):
                     continue
-                stored_file_id = str(piece["stored_file_id"])
+                stored_file_id = piece.stored_file_id
                 if stored_file_id in seen:
                     continue
                 seen.add(stored_file_id)
@@ -849,7 +858,7 @@ class ExecutorEndpoint:
                     WireMessage(WireMessageKind.command, command.command_id, _object(command)),
                 )
                 return True
-        answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
+        answer = self._command_answer(command)
         identity, writer = self.identity, self.writer
         emitted = False
 
@@ -892,11 +901,18 @@ class ExecutorEndpoint:
             ChildOperation.answer_permission_ask,
             ChildOperation.answer_user_input,
         ):
-            answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
+            answer = self._command_answer(command)
             if not await settled_io(self.store.answer_target_is_open, answer.ask):
                 # No native result exists for an untransmitted closed callback.
                 # Cancel bookkeeping only; the durable choice remains unapplied.
                 future.cancel()
+
+    @staticmethod
+    def _command_answer(command: ChildCommand) -> DurableAnswer:
+        args = command.arguments
+        if not isinstance(args, (AnswerPermission, AnswerUserInput)) or args.answer is None:
+            raise ValueError("saved answer command requires its recorded answer")
+        return args.answer
 
     async def _dispatch_answer(self, answer: DurableAnswer) -> None:
         if (
@@ -912,7 +928,13 @@ class ExecutorEndpoint:
             if answer.ask.kind is AskKind.user_input
             else ChildOperation.answer_permission_ask,
             answer.ask.turn,
-            {"answer": _object(answer)},
+            AnswerUserInput(
+                request_id=answer.ask.ask_id, answers=answer.user_input_answers or (), answer=answer
+            )
+            if answer.ask.kind is AskKind.user_input
+            else AnswerPermission(
+                ask_id=answer.ask.ask_id, option_id=answer.option_id or "", answer=answer
+            ),
         )
         if command.command_id in self.pending_commands:
             return
@@ -983,12 +1005,17 @@ class ExecutorEndpoint:
         """Use original policy facts; never turn uncertain delivery into an unsent refusal."""
         if command.operation not in (ChildOperation.start, ChildOperation.write_prompt):
             return True
-        from planner.conversation.admission.contracts import AdmissionExpectation
         from planner.conversation.admission.policy import check_expectation_policy
 
         conn = connect(self.db_path)
         try:
-            if "admission_expectation" not in command.arguments:
+            args = command.arguments
+            expected = (
+                args.admission_expectation
+                if isinstance(args, (StartRun, WritePrompt, Steer))
+                else None
+            )
+            if expected is None:
                 original = conn.execute(
                     "SELECT a.principal_kind,c.backend_key FROM executor_child_assignments a "
                     "LEFT JOIN conversations c ON c.conversation_id=a.conversation_id "
@@ -1028,9 +1055,12 @@ class ExecutorEndpoint:
                     raise ValueError("recorded outcome conflicts with command child")
                 return outcome
             try:
-                expected = TypeAdapter(AdmissionExpectation).validate_python(
-                    command.arguments.get("admission_expectation", {})
-                )
+                if expected is None:
+                    raise AdmissionRefused(
+                        "model verification legacy_unscoped",
+                        reason="legacy_unscoped",
+                        corrective_action="classify_selection",
+                    )
                 check_expectation_policy(conn, expected)
                 if expected.executor_identity != identity:
                     raise AdmissionRefused(

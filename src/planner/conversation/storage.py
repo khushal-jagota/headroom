@@ -41,7 +41,10 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     DeploymentRecoveryReference,
+    NativeMessageAdmission,
+    NativeMessageOperation,
     PromptDeliveryMode,
+    PromptDeliveryStarted,
     PromptDispatchDecision,
     ResolvedConversationStart,
     WorkspacePathPolicy,
@@ -96,6 +99,9 @@ from planner.executor.contracts import (
     ExecutorEffectAcceptor,
     JsonObject,
     QueuedEnvelope,
+    StartRun,
+    Steer,
+    WritePrompt,
 )
 from planner.executor.store import ExecutorStore
 from planner.manager_wakes import data as manager_wakes_data
@@ -572,9 +578,13 @@ class ConversationStore:
             self._apply_signal_mutation(conn, admission)
             if launch_command is not None:
                 from planner.conversation.admission.policy import check_expectation_policy
-                from planner.conversation.admission.service import current_admission_expectation
 
-                expectation = current_admission_expectation()
+                args = launch_command.arguments
+                expectation = (
+                    args.admission_expectation
+                    if isinstance(args, (StartRun, WritePrompt, Steer))
+                    else None
+                )
                 if expectation is not None:
                     check_expectation_policy(conn, expectation)
             claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
@@ -696,7 +706,7 @@ class ConversationStore:
                 finally:
                     self._recording_failures.pop(task, None)
 
-    async def _write[T](self, operation: Callable[..., T], *args: object) -> T:
+    async def _write[T](self, operation: Callable[..., T], *args: object, **kwargs: object) -> T:
         """Retain one SQLite operation through caller cancellation and lock contention.
 
         A synchronous attempt closes its connection (and rolls back any transaction)
@@ -715,7 +725,7 @@ class ConversationStore:
                     conn.close()
                 if evidence is not None:
                     return cast(T, self._decode_signal_result(evidence[1]))
-            return operation(*args)
+            return operation(*args, **kwargs)
 
         async def finish() -> T:
             while True:
@@ -792,6 +802,8 @@ class ConversationStore:
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
         executor_turn: tuple[str, str, str] | None = None,
+        native_message_operation: NativeMessageOperation | None = None,
+        native_message_admission: NativeMessageAdmission | None = None,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
         return await self._write(
@@ -803,6 +815,8 @@ class ConversationStore:
             owner_read_through_sequence,
             lifecycle,
             executor_turn,
+            native_message_operation=native_message_operation,
+            native_message_admission=native_message_admission,
         )
 
     async def append_initial_shutdown_disposition(
@@ -1093,6 +1107,7 @@ class ConversationStore:
         executor_turn: tuple[str, str, str] | None = None,
         original_ticket_selection: ModelSelection | None = None,
         requested_ticket_validation: CanonicalModelValidation | None = None,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -1113,25 +1128,21 @@ class ConversationStore:
         later delivery from crediting rows that arrived after the owner left.
         Returns the rows in the order they were written.
         """
-        from planner.conversation.contracts import PromptDeliveryStarted
-        from planner.executor.native_messages import native_message_admission
 
-        with native_message_admission(
-            PromptDeliveryStarted(), composed_content_delivered=composed_content_delivered
-        ):
-            return await self._write(
-                self._append_delivered_prompt_sync,
-                conversation_id,
-                prompt,
-                model_change,
-                extra_prompts,
-                owner_read_through_sequence,
-                lifecycle,
-                composed_content_delivered,
-                executor_turn,
-                original_ticket_selection,
-                requested_ticket_validation,
-            )
+        return await self._write(
+            self._append_delivered_prompt_sync,
+            conversation_id,
+            prompt,
+            model_change,
+            extra_prompts,
+            owner_read_through_sequence,
+            lifecycle,
+            composed_content_delivered,
+            executor_turn,
+            original_ticket_selection,
+            requested_ticket_validation,
+            native_message_operation=native_message_operation,
+        )
 
     async def read_events_after(
         self, conversation_id: str, after_sequence: int
@@ -1395,12 +1406,22 @@ class ConversationStore:
         owner_read_through_sequence: int | None,
         lifecycle: tuple[LifecycleFact, ...] = (),
         executor_turn: tuple[str, str, str] | None = None,
+        *,
+        native_message_operation: NativeMessageOperation | None = None,
+        native_message_admission: NativeMessageAdmission | None = None,
     ) -> StoredConversationEvent:
         with self._publication_connection() as (conn, admission):
             try:
                 snapshot = self._begin_validated_attention_write(conn, conversation_id)
                 self._apply_signal_mutation(conn, admission)
-                written = self._insert_rows(conn, conversation_id, (payload,), lifecycle)
+                written = self._insert_rows(
+                    conn,
+                    conversation_id,
+                    (payload,),
+                    lifecycle,
+                    native_message_operation=native_message_operation,
+                    native_message_admission=native_message_admission,
+                )
                 stored = written[0]
                 if agent_activity:
                     conn.execute(
@@ -1476,6 +1497,8 @@ class ConversationStore:
         executor_turn: tuple[str, str, str] | None = None,
         original_ticket_selection: ModelSelection | None = None,
         requested_ticket_validation: CanonicalModelValidation | None = None,
+        *,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -1485,7 +1508,16 @@ class ConversationStore:
             try:
                 snapshot = self._begin_validated_attention_write(conn, conversation_id)
                 self._apply_signal_mutation(conn, admission)
-                written = self._insert_rows(conn, conversation_id, payloads, lifecycle)
+                written = self._insert_rows(
+                    conn,
+                    conversation_id,
+                    payloads,
+                    lifecycle,
+                    native_message_operation=native_message_operation,
+                    native_message_admission=NativeMessageAdmission(
+                        PromptDeliveryStarted(), composed_content_delivered
+                    ),
+                )
                 interruption_data.settle_delivery(
                     conn,
                     conversation_id,
@@ -1695,6 +1727,9 @@ class ConversationStore:
         conversation_id: str,
         payloads: tuple[ConversationEventPayload, ...],
         lifecycle: tuple[LifecycleFact, ...] = (),
+        *,
+        native_message_operation: NativeMessageOperation | None = None,
+        native_message_admission: NativeMessageAdmission | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Add rows to the end of a conversation's record. A transaction must be open.
 
@@ -1742,7 +1777,13 @@ class ConversationStore:
             )
             from planner.executor.native_messages import record_native_message_event_in_transaction
 
-            record_native_message_event_in_transaction(conn, conversation_id, payload)
+            record_native_message_event_in_transaction(
+                conn,
+                conversation_id,
+                payload,
+                native_message_operation=native_message_operation,
+                native_message_admission=native_message_admission,
+            )
             written.append(
                 StoredConversationEvent(
                     conversation_id=conversation_id,

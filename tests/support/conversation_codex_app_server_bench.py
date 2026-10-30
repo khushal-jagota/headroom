@@ -278,6 +278,7 @@ class _ScriptedChild:
         *,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> None:
         await self.child.write_prompt(
             TurnToken(conversation_id="c", turn_number=turn_number),
@@ -287,6 +288,7 @@ class _ScriptedChild:
             mode=PromptDeliveryMode.queue,
             model_change=model,
             reasoning_effort_change=reasoning_effort,
+            reasoning_effort_is_set=reasoning_effort_is_set,
         )
 
     def transcript(self) -> list[dict[str, Any]]:

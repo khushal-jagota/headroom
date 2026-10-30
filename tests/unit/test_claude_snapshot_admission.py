@@ -16,13 +16,12 @@ from tests.unit.test_current_model_resolution import (
 )
 
 from planner.conversation.admission.contracts import AdmissionExpectation
-from planner.conversation.admission.service import current_admission_expectation
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
     BackendEmissionInputs,
     BackendSteerOutcome,
+    EmissionCheck,
     TurnToken,
-    current_emission_check,
 )
 from planner.conversation.contracts import (
     ConversationBackendKey,
@@ -68,7 +67,7 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
         )
     )
     service, _, path = setup(tmp_path, source)
-    service._now = time.time
+    monkeypatch.setattr(service, "_now", time.time)
     harness = _Harness(path)
     harness.clock.now = float(stamp)
     harness.system.configure_destination_validation(source)
@@ -83,13 +82,15 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
-        requirement = current_admission_expectation()
+        requirement = admission_expectation
         assert requirement is not None
         requirements.append(requirement)
         assert requirement.launch_token == "haiku"
         assert requirement.turn == turn_token
-        check = current_emission_check()
+        check = emission_check
         assert check is not None
         prepared = BackendEmissionInputs("haiku", None, tmp_path)
         with pytest.raises(AdmissionRefused):

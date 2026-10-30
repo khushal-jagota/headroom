@@ -42,6 +42,7 @@ from planner.executor.contracts import (
     ChildReference,
     CommandDisposition,
     CommandOutcome,
+    StopRun,
 )
 from planner.executor.store import ExecutorStore
 from planner.manager_wakes import data as wakes
@@ -398,7 +399,7 @@ def test_reopen_edit_and_retirement_preserve_captured_command_and_uncertain_outc
         "UPDATE tickets SET conversation_id='legacy-conversation' WHERE id=?", (ticket_id,)
     )
     child = ChildReference("executor-legacy", "child-old", "legacy-conversation")
-    command = ChildCommand("legacy-unknown", child, ChildOperation.start, None, {})
+    command = ChildCommand("legacy-unknown", child, ChildOperation.stop, None, StopRun())
     runtime = {"initial_commands": [TypeAdapter(ChildCommand).dump_python(command, mode="json")]}
     tmp_db.execute(
         "INSERT INTO executor_core_turns VALUES(?,?,?,?)",

@@ -458,7 +458,9 @@ def test_catalog_publication_failures_back_off_and_republish_after_sink_recovery
 
 @pytest.mark.parametrize("respond", ["never", "error"])
 def test_ordinary_start_needs_correlated_response(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, respond: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    respond: str,
 ) -> None:
     from planner.conversation.backends.codex_app_server import client
     from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
@@ -476,35 +478,52 @@ def test_ordinary_start_needs_correlated_response(
                 assert failure.value.provider_submission is not None
                 assert failure.value.provider_submission.status == "rejected"
             assert scripted.sink.endings == []
+
     _run(exercise)
 
 
 def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_path: Path) -> None:
     async def exercise() -> None:
-        script: dict[str, Any] = {"turns": [{
-            "started_turn_id": "stale-turn", "response_order": "after_actions",
-            "actions": [{"do": "agent_delta", "item_id": "a", "text": "early output"},
-                        {"do": "complete", "status": "completed"}],
-        }]}
+        script: dict[str, Any] = {
+            "turns": [
+                {
+                    "started_turn_id": "stale-turn",
+                    "response_order": "after_actions",
+                    "actions": [
+                        {"do": "agent_delta", "item_id": "a", "text": "early output"},
+                        {"do": "complete", "status": "completed"},
+                    ],
+                }
+            ]
+        }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
             await scripted.write_prompt(1, text_message_content("request"))
             await scripted.sink.wait_for_the_turn_to_end()
             assert scripted.sink.agent_message_texts == ["early output"]
             assert len(scripted.sink.endings) == 1
+
     _run(exercise)
 
 
-@pytest.mark.parametrize("effort,present,expected", [(None, False, "medium"), (None, True, None), ("future-effort", True, "future-effort")])
-def test_exact_effort_presence_reaches_codex(tmp_path: Path, effort, present, expected) -> None:
-    from planner.conversation.launch_intent import carried_effort_presence
+@pytest.mark.parametrize(
+    "effort,present,expected",
+    [(None, False, "medium"), (None, True, None), ("future-effort", True, "future-effort")],
+)
+def test_exact_effort_presence_reaches_codex(
+    tmp_path: Path, effort: str | None, present: bool, expected: str | None
+) -> None:
 
     async def exercise() -> None:
         async with _scripted_child(tmp_path, script={"turns": [{"actions": []}]}) as scripted:
             await scripted.start(cursor=None)
-            with carried_effort_presence(present):
-                await scripted.write_prompt(1, text_message_content("Exact request"),
-                                            model="gpt-6.1-terra", reasoning_effort=effort)
+            await scripted.write_prompt(
+                1,
+                text_message_content("Exact request"),
+                model="gpt-6.1-terra",
+                reasoning_effort=effort,
+                reasoning_effort_is_set=present,
+            )
             parameters = scripted.sent("turn/start")["params"]
             assert parameters["model"] == "gpt-6.1-terra"
             assert parameters["effort"] == expected

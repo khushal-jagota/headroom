@@ -1,12 +1,8 @@
-"""Sender-authored nullable effort presence, retained across asynchronous settlement."""
+"""Validate sender-authored selection kinds and bind saved model intent."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Coroutine, Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
-from functools import wraps
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from planner.conversation.model_resolution.contracts import SelectionKind
 
@@ -18,50 +14,15 @@ if TYPE_CHECKING:
     from planner.conversation.snapshot import BackendModel
 
 
-_selection_kind: ContextVar[SelectionKind | None] = ContextVar("selection_kind", default=None)
-
-
-def selection_kind() -> SelectionKind | None:
-    return _selection_kind.get()
-
-
-_effort_is_set: ContextVar[bool] = ContextVar("reasoning_effort_is_set", default=False)
-
-
-def reasoning_effort_is_set() -> bool:
-    return _effort_is_set.get()
-
-
-@contextmanager
-def carried_effort_presence(is_set: bool) -> Iterator[None]:
-    """Restore captured nullable intent when a queued or native command executes."""
-    token = _effort_is_set.set(is_set)
-    try:
-        yield
-    finally:
-        _effort_is_set.reset(token)
-
-
-def effort_presence[**P, T](
-    function: Callable[P, Awaitable[T]],
-) -> Callable[P, Coroutine[Any, Any, T]]:
-    @wraps(function)
-    async def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
-        kind = kwargs.get("selection_kind")
-        if kind is not None:
-            if not isinstance(kind, SelectionKind) or kind is SelectionKind.legacy_unclassified:
-                raise ValueError("selection_kind must be an explicit selection kind")
-            if kwargs.get("model_change") is None:
-                raise ValueError("selection_kind requires an explicit model")
-        kind_token = _selection_kind.set(kind)
-        token = _effort_is_set.set(bool(kwargs.get("reasoning_effort_is_set", False)))
-        try:
-            return await function(*args, **kwargs)
-        finally:
-            _effort_is_set.reset(token)
-            _selection_kind.reset(kind_token)
-
-    return wrapped
+def validate_launch_intent(model_change: str | None, selection_kind: SelectionKind | None) -> None:
+    if selection_kind is not None:
+        if (
+            not isinstance(selection_kind, SelectionKind)
+            or selection_kind is SelectionKind.legacy_unclassified
+        ):
+            raise ValueError("selection_kind must be an explicit selection kind")
+        if model_change is None:
+            raise ValueError("selection_kind requires an explicit model")
 
 
 def bind_model_intent(

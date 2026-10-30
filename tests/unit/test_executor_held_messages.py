@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from sqlite3 import Connection
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from tests.support.executor_catalog import ScriptedCatalogObserver
@@ -21,6 +21,7 @@ from planner.conversation.contracts import (
     HeldPromptPromotionMode,
     PromptDeliveryQueued,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
@@ -59,7 +60,9 @@ from planner.tickets.contracts import TicketLocale
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 CHIEF = Principal(PrincipalKind.chief, "chief")
-IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "process", 1)
+IDENTITY = ExecutorIdentity(
+    PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "11111111-1111-1111-1111-111111111111", 1
+)
 
 
 class InjectedCrash(RuntimeError):
@@ -73,6 +76,7 @@ class ScriptedNative:
         self.commands: list[ChildCommand] = []
         self.fail_next_write = False
         self.uncertain_next_write = False
+        self.uncertain_next_steer = False
         self.refuse_next_steer = False
         self.cancel_next_steer = False
 
@@ -92,6 +96,14 @@ class ScriptedNative:
                 raise InjectedCrash("native write outcome interrupted")
             result: JsonObject = {"kind": "prompt_accepted", "composed_content_delivered": True}
         elif command.operation is ChildOperation.steer:
+            if self.uncertain_next_steer:
+                self.uncertain_next_steer = False
+                return CommandOutcome(
+                    command.command_id,
+                    command.child,
+                    CommandDisposition.uncertain,
+                    {"kind": "steer_uncertain", "composed_content_delivered": True},
+                )
             if self.cancel_next_steer:
                 self.cancel_next_steer = False
                 raise asyncio.CancelledError
@@ -171,7 +183,11 @@ class HeldFixture:
         def factory(**kwargs: Any) -> RemoteBackendChild:
             start = kwargs["resolved_start"]
             return RemoteBackendChild(
-                ChildReference("process", "child_" + start.conversation_id, start.conversation_id),
+                ChildReference(
+                    "11111111-1111-1111-1111-111111111111",
+                    "child_" + start.conversation_id,
+                    start.conversation_id,
+                ),
                 native,
                 lambda start: canonical_snapshot(),
             )
@@ -187,10 +203,13 @@ class HeldFixture:
         system.configure_destination_validation(observer)
         from types import SimpleNamespace
 
-        system._catalog_endpoint = SimpleNamespace(
-            identity=IDENTITY,
-            ready=True,
-            owns_conversation=lambda _: True,
+        system._catalog_endpoint = cast(
+            Any,
+            SimpleNamespace(
+                identity=IDENTITY,
+                ready=True,
+                owns_conversation=lambda _: True,
+            ),
         )
         self.systems.append(system)
         return system
@@ -205,7 +224,7 @@ class HeldFixture:
                     "mode": "queue",
                 }
             },
-            ChildReference("process", "child_c_source", "c_source"),
+            ChildReference("11111111-1111-1111-1111-111111111111", "child_c_source", "c_source"),
             TurnToken("c_source", 1),
         )
         payload = encode_value(write)
@@ -390,7 +409,7 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("action", ["discard", "promote", "drain"])
+@pytest.mark.parametrize("action", ["discard", "promote", "drain", "uncertain_steer"])
 def test_native_terminal_held_outcome_retains_receipt_and_composed_reply_credit(
     tmp_db: Connection, tmp_path: Path, action: str
 ) -> None:
@@ -402,6 +421,14 @@ def test_native_terminal_held_outcome_retains_receipt_and_composed_reply_credit(
             held = (await fixture.system.held_prompts("c_target"))[0]
             if action == "discard":
                 assert await fixture.system.discard_held_prompt("c_target", held.held_prompt_id)
+            elif action == "uncertain_steer":
+                fixture.native.uncertain_next_steer = True
+                assert isinstance(
+                    await fixture.system.promote_held_prompt(
+                        "c_target", held.held_prompt_id, HeldPromptPromotionMode.steer
+                    ),
+                    PromptDeliveryUncertain,
+                )
             elif action == "promote":
                 assert isinstance(
                     await fixture.system.promote_held_prompt(
@@ -414,7 +441,11 @@ def test_native_terminal_held_outcome_retains_receipt_and_composed_reply_credit(
                 await fixture.system.wait_until_quiescent()
             assert await fixture.system.held_prompts("c_target") == ()
             assert operation_result(fixture, "terminal")["fate"] == (
-                "discarded" if action == "discard" else "started"
+                "discarded"
+                if action == "discard"
+                else "uncertain"
+                if action == "uncertain_steer"
+                else "started"
             )
             assert await fixture.source_reply_credited() is (action != "discard")
             before = list(fixture.native.commands)

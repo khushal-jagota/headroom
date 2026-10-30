@@ -28,6 +28,7 @@ from planner.conversation.contracts import (
     ConversationStartRequest,
     ConversationSystem,
     HeldPrompt,
+    NativeMessageOperation,
     PromptDeliveryFate,
     PromptDeliveryMode,
     PromptDeliveryUncertain,
@@ -42,7 +43,6 @@ from planner.conversation.model_resolution.contracts import (
     ModelSelection,
     SelectionKind,
 )
-from planner.conversation.snapshot import BackendSnapshotService
 from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
@@ -122,8 +122,13 @@ class _ScopedMetadataConversationSystem(InMemoryConversationSystem):
         # Explicit fixture ingress supplies concrete intent; no resolver-selected
         # model or effort substitutes for the requested tuple.
         from planner.conversation.launch_intent import bind_model_intent
-        return bind_model_intent(selection, disabled_models=BackendStateStore(self.db_path).read_disabled_models(selection.backend_key))
 
+        return bind_model_intent(
+            selection,
+            disabled_models=BackendStateStore(self.db_path).read_disabled_models(
+                selection.backend_key
+            ),
+        )
 
 
 class _MetadataDelegate:
@@ -745,6 +750,7 @@ class _UncertainConversationSystem(_MetadataDelegate):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         return PromptDeliveryUncertain()
 
@@ -883,12 +889,14 @@ class _QueueingConversationSystem(_MetadataDelegate):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
+        native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         if not await self._system.is_running(self._conversation_id):
             await self._system.send(
                 self._conversation_id,
                 text_message_content("collision"),
                 sender_label="browser",
+                native_message_operation=native_message_operation,
             )
         return await self._system.send(
             conversation_id,
@@ -902,6 +910,7 @@ class _QueueingConversationSystem(_MetadataDelegate):
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             owner_read_through_sequence=owner_read_through_sequence,
+            native_message_operation=native_message_operation,
         )
 
     async def interrupt(self, conversation_id: str) -> None:

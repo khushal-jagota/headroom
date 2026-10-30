@@ -70,6 +70,8 @@ from planner.executor.contracts import (
     ChildReference,
     CommandOutcome,
     ExecutorIdentity,
+    Steer,
+    WritePrompt,
 )
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
@@ -167,7 +169,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         commands: list[tuple[ChildCommand, CommandOutcome]] = []
         control = ScriptedAcpAgentControl(str(tmp_path / "agent.sock"))
 
-        def make_client(options: Any) -> _ScriptedClaudeSdkClient:
+        def make_client(options: Any, *, emission_check: Any = None) -> _ScriptedClaudeSdkClient:
             client = _ScriptedClaudeSdkClient(
                 options, handshake={"commands": [{"name": "inspect", "description": "Inspect"}]}
             )
@@ -294,7 +296,13 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                 for command, _ in commands
                 if command.operation in (ChildOperation.write_prompt, ChildOperation.steer)
             ]
-            assert [command.arguments["sender_content"] for command in delivered] == [
+            for command in delivered:
+                assert isinstance(command.arguments, (WritePrompt, Steer))
+            assert [
+                encode_value(command.arguments.sender_content)
+                for command in delivered
+                if isinstance(command.arguments, (WritePrompt, Steer))
+            ] == [
                 encode_value(text_message_content(text))
                 for text in (
                     "ordinary authored bytes",
@@ -435,11 +443,17 @@ def test_native_context_scope_and_rebind_do_not_duplicate_composed_content(
                 command for command in commands if command.operation is ChildOperation.write_prompt
             ]
             assert len(written) == 2
-            assert written[0].arguments["content"] == written[1].arguments["content"]
+            assert isinstance(written[0].arguments, (WritePrompt, Steer))
+            assert isinstance(written[1].arguments, (WritePrompt, Steer))
+            assert encode_value(written[0].arguments.content) == encode_value(
+                written[1].arguments.content
+            )
             for command in written:
-                assert command.arguments["sender_content"] == encode_value(content)
+                assert isinstance(command.arguments, (WritePrompt, Steer))
+                assert encode_value(command.arguments.sender_content) == encode_value(content)
+                assert isinstance(command.arguments, (WritePrompt, Steer))
                 decoded_content: MessageContent = TypeAdapter(MessageContent).validate_python(
-                    command.arguments["content"]
+                    encode_value(command.arguments.content)
                 )
                 text = message_content_text(decoded_content)
                 assert text.startswith("[Authenticated Panels reply requirement]\n")
@@ -610,7 +624,11 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
                 assert len(starts) == len(written) == 2
                 assert starts[0].child != starts[1].child
                 assert written[0].turn == written[1].turn == reservation.token
-                assert written[0].arguments["content"] == written[1].arguments["content"]
+                assert isinstance(written[0].arguments, (WritePrompt, Steer))
+                assert isinstance(written[1].arguments, (WritePrompt, Steer))
+                assert encode_value(written[0].arguments.content) == encode_value(
+                    written[1].arguments.content
+                )
                 if outcome == "second_refusal":
                     assert isinstance(result, PromptDeliveryRefused)
                     assert state.child is None

@@ -199,7 +199,9 @@ class ScopedCatalogue:
         return replace(self.value, evidence=evidence)
 
 
-def setup(tmp_path: Path, source: ScopedCatalogue | None = None) -> tuple[BackendSnapshotService, None, Path]:
+def setup(
+    tmp_path: Path, source: ScopedCatalogue | None = None
+) -> tuple[BackendSnapshotService, None, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "models.db"
     conn = connect(str(path))
@@ -339,7 +341,7 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
         )
     )
     service, store, path = setup(tmp_path, source)
-    service._now = time.time
+    monkeypatch.setattr(service, "_now", time.time)
     harness = _Harness(path)
     harness.clock.now = float(stamp)
     harness.system.configure_destination_validation(source)
@@ -411,7 +413,9 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
                         observation_revision="2",
                     ),
                 )
-                await harness.system.destination_backend_snapshot(Backend.claude, binding, "vps", refresh=True)
+                await harness.system.destination_backend_snapshot(
+                Backend.claude, binding, "vps", refresh=True
+            )
             elif change == "default_effort":
                 # Preserve a legacy conversation whose recorded process used explicit high,
                 # while its canonical request now asks for the provider default.
@@ -592,7 +596,7 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
     )
     source.fail = True
     service, _, path = setup(tmp_path, source)
-    service._now = time.time
+    monkeypatch.setattr(service, "_now", time.time)
     harness = _Harness(path)
     harness.clock.now = float(stamp)
     harness.system.configure_destination_validation(source)
@@ -746,7 +750,7 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
     )
     source = ScopedCatalogue(observation((alias,), launch=launch, stamp=stamp))
     service, catalogue_store, path = setup(tmp_path, source)
-    service._now = time.time
+    monkeypatch.setattr(service, "_now", time.time)
     harness = _Harness(path)
     harness.clock.now = float(stamp)
     harness.system.configure_destination_validation(source)
@@ -791,7 +795,9 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
                     observation_revision="2",
                 ),
             )
-            await harness.system.destination_backend_snapshot(Backend.claude, binding, "vps", refresh=True)
+            await harness.system.destination_backend_snapshot(
+                Backend.claude, binding, "vps", refresh=True
+            )
             body = OwnerSendBody(
                 content=[SentTextPiece(piece="text", text="Explicit concrete choice")],
                 model="fable",
@@ -886,7 +892,7 @@ def test_explicit_kind_rejects_orphans_and_does_not_leak_to_a_later_send() -> No
     from pydantic import ValidationError
 
     from planner.conversation.api import OwnerSendBody, SentTextPiece
-    from planner.conversation.launch_intent import effort_presence, selection_kind
+    from planner.conversation.launch_intent import validate_launch_intent
     from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
 
     with pytest.raises(ValidationError, match="explicit model"):
@@ -898,13 +904,10 @@ def test_explicit_kind_rejects_orphans_and_does_not_leak_to_a_later_send() -> No
     with pytest.raises(ValueError, match="explicit model"):
         ConversationStartOverrides(selection_kind=SelectionKind.concrete)
 
-    @effort_presence
     async def capture(
         *, model_change: str | None = None, selection_kind: SelectionKind | None = None
     ) -> None:
-        from planner.conversation.launch_intent import selection_kind as captured_kind
-
-        assert captured_kind() is selection_kind
+        validate_launch_intent(model_change, selection_kind)
         if model_change is not None:
             raise RuntimeError("send failed")
 
@@ -913,7 +916,6 @@ def test_explicit_kind_rejects_orphans_and_does_not_leak_to_a_later_send() -> No
             await capture(selection_kind=SelectionKind.concrete)
         with pytest.raises(RuntimeError, match="send failed"):
             await capture(model_change="exact", selection_kind=SelectionKind.concrete)
-        assert selection_kind() is None
         await capture()
 
     asyncio.run(exercise())

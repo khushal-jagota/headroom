@@ -1,8 +1,5 @@
 """Bind exact expectations to commands and their final provider emission checks."""
 
-from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
 from dataclasses import replace
 from typing import Protocol
 
@@ -12,8 +9,8 @@ from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
     BackendEmissionInputs,
+    EmissionCheck,
     TurnToken,
-    emission_check_scope,
 )
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
@@ -31,15 +28,6 @@ class AdmissionContextObserver(Protocol):
     def verify_prepared_launch(
         self, expected: LaunchContext, prepared: BackendEmissionInputs
     ) -> bool: ...
-
-
-_expectation: ContextVar[AdmissionExpectation | None] = ContextVar(
-    "admission_expectation", default=None
-)
-
-
-def current_admission_expectation() -> AdmissionExpectation | None:
-    return _expectation.get()
 
 
 def parse_expectation(raw: object) -> AdmissionExpectation:
@@ -160,14 +148,12 @@ def bind_command(
     return replace(expectation, child=child, turn=turn)
 
 
-@contextmanager
-def admission_scope(
+def admission_check(
     expectation: AdmissionExpectation,
     observer: AdmissionContextObserver | None = None,
-) -> Iterator[None]:
+) -> EmissionCheck:
     """Remote callers serialize comparisons. Local composition supplies its observer."""
     check_expectation(expectation)
-    token = _expectation.set(expectation)
 
     def check(prepared: BackendEmissionInputs | None = None) -> None:
         check_expectation(expectation)
@@ -195,9 +181,4 @@ def admission_scope(
             ):
                 raise AdmissionRefused("model verification prepared launch context changed")
 
-    try:
-        with ExitStack() as stack:
-            stack.enter_context(emission_check_scope(check))
-            yield
-    finally:
-        _expectation.reset(token)
+    return check

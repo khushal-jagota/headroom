@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import inspect
 import os
 import secrets
 import time
@@ -13,43 +12,50 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
-from pydantic import TypeAdapter
-
+from planner.conversation.admission.contracts import AdmissionExpectation
+from planner.conversation.admission.service import check_expectation
 from planner.conversation.backends.codex_app_server.login import codex_home
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
     BackendAdapterError,
     BackendChild,
     BackendChildFactory,
-    BackendEventSink,
+    BackendEmissionInputs,
     BackendPermissionAsk,
     BackendPromptRejected,
     BackendSpawnFailed,
+    BackendSteerAccepted,
+    BackendSteerRefused,
     BackendUserInputRequest,
+    EmissionCheck,
     NeedsRebind,
     PromptWriteRefused,
     SessionLoadFailed,
     TurnToken,
 )
 from planner.conversation.contracts import (
+    ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ResolvedConversationStart,
 )
+from planner.conversation.events import ConversationTurnEnding, PlanEntry, ToolCallStatus
 from planner.conversation.logic.user_input import ordered_user_input_answers
+from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, LaunchContext
 from planner.environments.hermes_home import resolve_planner_home
-from planner.executor.codec import encode_backend_event, encode_value, invoke_child
+from planner.executor.codec import encode_backend_event, encode_value
 from planner.executor.configuration import NATIVE_SKILLS_DIR_ENV, ExecutorPaths
 from planner.executor.contracts import (
     LIVE_BACKEND_EVENT_METHODS,
     AnswerApplication,
+    AnswerPermission,
+    AnswerUserInput,
     AskKind,
     AskReference,
     BackendEvent,
     BackendEventMethod,
-    CanonicalSkillSnapshot,
+    CancelTurn,
     ChildCommand,
     ChildInventory,
     ChildOperation,
@@ -64,6 +70,9 @@ from planner.executor.contracts import (
     MacOutboxWriter,
     OutboxEntry,
     Quiescence,
+    StartRun,
+    Steer,
+    WritePrompt,
 )
 from planner.executor.files import safe_component
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
@@ -91,13 +100,56 @@ class _Child:
         default_factory=dict
     )
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    launch_context: object | None = None
+    launch_input: StartRun | None = None
     model: str | None = None
     reasoning_effort: str | None = None
     backend_key: ConversationBackendKey | None = None
-    resolved_model_id: str | None = None
-    workspace_binding: CatalogWorkspaceBinding | None = None
-    localized_workspace: Path | None = None
+    localized_start: ResolvedConversationStart | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _NativeEmissionGuard:
+    registry: NativeChildRegistry
+    child: _Child
+    command: ChildCommand
+    expectation: AdmissionExpectation
+    model: str | None
+    reasoning_effort: str | None
+
+    def __call__(self, prepared: BackendEmissionInputs | None = None) -> None:
+        expected = self.expectation
+        child = self.child
+        check_expectation(expected)
+        launch = child.launch_input
+        localized = child.localized_start
+        if (
+            self.registry.children.get(child.reference.child_id) is not child
+            or child.reference != self.command.child
+            or self.registry.admission_stopped
+            or child.reference.child_id in self.registry._retiring_children
+            or child.reference.child_id in self.registry._retired_children
+            or expected.child != self.command.child
+            or expected.turn != self.command.turn
+            or expected.executor_identity is None
+            or expected.executor_identity.executor_incarnation != self.registry.incarnation
+            or expected.selection.destination is not TicketLocale.macos
+            or expected.selection.backend_key != child.backend_key
+            or launch is None
+            or localized is None
+            or expected.workspace.workspace_folder != launch.resolved_start.workspace_folder
+            or expected.workspace.workspace_path_policy
+            != launch.resolved_start.workspace_path_policy
+            or expected.workspace.workspace_home_relative != launch.workspace_home_relative
+            or expected.launch_token != self.model
+            or expected.reasoning_effort != self.reasoning_effort
+        ):
+            raise AdmissionRefused("destination execution ownership or parameters changed")
+        if prepared is not None and (
+            prepared.model != self.model
+            or prepared.reasoning_effort != self.reasoning_effort
+            or prepared.workspace != localized.workspace_folder
+        ):
+            raise AdmissionRefused("model verification provider parameters changed")
 
 
 class JournalEventSink:
@@ -105,29 +157,175 @@ class JournalEventSink:
         self.registry = registry
         self.reference = reference
 
-    def __getattr__(self, name: str) -> Callable[..., Awaitable[None]]:
-        method = BackendEventMethod(name)
-        signature = inspect.signature(getattr(BackendEventSink, name))
-
-        async def report(*args: object, **kwargs: object) -> None:
-            bound = signature.bind(None, *args, **kwargs)
-            arguments = dict(bound.arguments)
-            arguments.pop("self", None)
-            turn = cast(TurnToken | None, arguments.pop("turn_token", None))
-            if method in LIVE_BACKEND_EVENT_METHODS:
-                if self.registry.send_live_event is not None:
-                    await self.registry.send_live_event(
-                        BackendEvent(
-                            self.reference,
-                            method,
-                            turn,
-                            encode_backend_event(method, turn, arguments),
-                        )
+    async def _report(
+        self, method: BackendEventMethod, turn: TurnToken | None, arguments: dict[str, object]
+    ) -> None:
+        if method in LIVE_BACKEND_EVENT_METHODS:
+            if self.registry.send_live_event is not None:
+                await self.registry.send_live_event(
+                    BackendEvent(
+                        self.reference, method, turn, encode_backend_event(method, turn, arguments)
                     )
-                return
-            await self.registry.report_event(self.reference, method, turn, arguments)
+                )
+            return
+        await self.registry.report_event(self.reference, method, turn, arguments)
 
-        return report
+    async def provider_selection_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        provider: ConversationBackendKey,
+        source_kind: str,
+        model: str,
+        child_lifetime: str,
+        reasoning_effort: str | None = None,
+    ) -> None:
+        await self._report(
+            BackendEventMethod.provider_selection_reported,
+            turn_token,
+            {
+                "provider": provider,
+                "source_kind": source_kind,
+                "model": model,
+                "child_lifetime": child_lifetime,
+                "reasoning_effort": reasoning_effort,
+            },
+        )
+
+    async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
+        await self._report(
+            BackendEventMethod.agent_message_delta, turn_token, {"text_delta": text_delta}
+        )
+
+    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
+        await self._report(BackendEventMethod.model_thinking_happened, turn_token, {})
+
+    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
+        await self._report(
+            BackendEventMethod.agent_message_completed, turn_token, {"content": content}
+        )
+
+    async def tool_call_started(
+        self,
+        turn_token: TurnToken,
+        *,
+        tool_call_id: str,
+        title: str,
+        tool_kind: str,
+        detail: str | None,
+    ) -> None:
+        await self._report(
+            BackendEventMethod.tool_call_started,
+            turn_token,
+            {
+                "tool_call_id": tool_call_id,
+                "title": title,
+                "tool_kind": tool_kind,
+                "detail": detail,
+            },
+        )
+
+    async def tool_call_progress(
+        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
+    ) -> None:
+        await self._report(
+            BackendEventMethod.tool_call_progress,
+            turn_token,
+            {"tool_call_id": tool_call_id, "detail": detail},
+        )
+
+    async def tool_call_finished(
+        self,
+        turn_token: TurnToken,
+        *,
+        tool_call_id: str,
+        tool_call_status: ToolCallStatus,
+        detail: str | None,
+    ) -> None:
+        await self._report(
+            BackendEventMethod.tool_call_finished,
+            turn_token,
+            {"tool_call_id": tool_call_id, "tool_call_status": tool_call_status, "detail": detail},
+        )
+
+    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
+        await self._report(BackendEventMethod.plan_updated, turn_token, {"entries": entries})
+
+    async def token_usage_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_input_tokens: int | None,
+        cost_usd: float | None,
+    ) -> None:
+        await self._report(
+            BackendEventMethod.token_usage_reported,
+            turn_token,
+            {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cached_input_tokens": cached_input_tokens,
+                "cost_usd": cost_usd,
+            },
+        )
+
+    async def context_compacted(self, turn_token: TurnToken) -> None:
+        await self._report(BackendEventMethod.context_compacted, turn_token, {})
+
+    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
+        await self._report(BackendEventMethod.permission_ask_raised, turn_token, {"ask": ask})
+
+    async def user_input_requested(
+        self, turn_token: TurnToken, request: BackendUserInputRequest
+    ) -> None:
+        await self._report(
+            BackendEventMethod.user_input_requested, turn_token, {"request": request}
+        )
+
+    async def user_input_failed(
+        self, turn_token: TurnToken, *, request_id: str, detail: str
+    ) -> None:
+        await self._report(
+            BackendEventMethod.user_input_failed,
+            turn_token,
+            {"request_id": request_id, "detail": detail},
+        )
+
+    async def turn_ended(
+        self,
+        turn_token: TurnToken,
+        *,
+        ending: ConversationTurnEnding,
+        error_summary: str | None,
+        standard_error_tail: str | None,
+    ) -> None:
+        await self._report(
+            BackendEventMethod.turn_ended,
+            turn_token,
+            {
+                "ending": ending,
+                "error_summary": error_summary,
+                "standard_error_tail": standard_error_tail,
+            },
+        )
+
+    async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
+        await self._report(
+            BackendEventMethod.vendor_session_cursor_rebound,
+            None,
+            {"vendor_session_cursor": vendor_session_cursor},
+        )
+
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
+    ) -> None:
+        await self._report(
+            BackendEventMethod.composer_catalog_reported,
+            None,
+            {"composer_catalog": composer_catalog},
+        )
 
 
 class NativeChildRegistry:
@@ -295,12 +493,10 @@ class NativeChildRegistry:
         resolved: ResolvedConversationStart,
         reference: ChildReference,
         capability: str,
-        arguments: JsonObject,
+        workspace_home_relative: str | None,
     ) -> ResolvedConversationStart:
         try:
-            relative = arguments.get("workspace_home_relative")
-            if "workspace_home_relative" in arguments and not isinstance(relative, str):
-                raise ValueError("unsafe home-relative workspace")
+            relative = workspace_home_relative
             workspace = localize_workspace(
                 resolved.workspace_folder,
                 workspace_home=self.workspace_home,
@@ -445,17 +641,265 @@ class NativeChildRegistry:
             # Await accounting instead of spinning on already finished tasks.
             await idle.wait()
 
-    async def _invoke_admitted(self, child: _Child, command: ChildCommand) -> JsonObject:
-        previous_turn = child.active_turn
-        if command.operation is ChildOperation.write_prompt:
-            child.active_turn = command.turn
+    def _emission_guard(
+        self,
+        child: _Child,
+        command: ChildCommand,
+        expectation: AdmissionExpectation | None,
+        *,
+        model: str | None,
+        reasoning_effort: str | None,
+    ) -> EmissionCheck | None:
+        if expectation is None:
+            if (
+                child.ticket_id is not None
+                and child.backend_key is not ConversationBackendKey.hermes
+            ):
+                raise AdmissionRefused(
+                    "model verification legacy_unscoped",
+                    reason="legacy_unscoped",
+                    corrective_action="classify_selection",
+                )
+            return None
+        return _NativeEmissionGuard(self, child, command, expectation, model, reasoning_effort)
+
+    async def _start_run(self, command: ChildCommand, args: StartRun) -> JsonObject:
+        if command.child.child_id in self.children:
+            raise BackendSpawnFailed("child identity already has a native start")
+        if self.admission_stopped:
+            raise _CommandAdmissionRefused("executor is quiescing")
+        resolved = args.resolved_start
+        if resolved.conversation_id != command.child.conversation_id:
+            raise ValueError("child conversation mismatch")
+        identity = dict(
+            resolved.role_materials.identity_environment_variables
+            if resolved.role_materials
+            else ()
+        )
+        ticket_id = identity.get("PLAN_TICKET_ID")
+        if ticket_id is not None and any(
+            existing.ticket_id == ticket_id for existing in self.children.values()
+        ):
+            raise BackendSpawnFailed("Ticket already has a retained source child")
+        expectation = args.admission_expectation
+        if (
+            ticket_id is not None
+            and resolved.backend_key is not ConversationBackendKey.hermes
+            and expectation is None
+        ):
+            raise AdmissionRefused(
+                "model verification legacy_unscoped",
+                reason="legacy_unscoped",
+                corrective_action="classify_selection",
+            )
+        if expectation is not None and expectation.conversation_id != resolved.conversation_id:
+            raise AdmissionRefused("model verification start parameters changed")
+        capability = secrets.token_urlsafe(32)
+        resolved = self._localize_start(
+            resolved, command.child, capability, args.workspace_home_relative
+        )
         try:
+            validate_skill_snapshot(args.canonical_skill_snapshot)
+            if self.paths is None:
+                raise ValueError("executor paths are required for canonical skills")
+            if resolved.backend_key is ConversationBackendKey.codex:
+                native_home = codex_home(os.environ)
+            elif resolved.backend_key is ConversationBackendKey.hermes:
+                native_home = resolve_planner_home()
+            else:
+                configured_home = os.environ.get("CLAUDE_CONFIG_DIR", "")
+                native_home = (
+                    Path(configured_home).expanduser()
+                    if configured_home
+                    else Path.home() / ".claude"
+                )
+            generation = install_native_skill_snapshot(
+                args.canonical_skill_snapshot, paths=self.paths, native_home=native_home
+            )
+            assert resolved.role_materials is not None
+            identity = dict(resolved.role_materials.identity_environment_variables)
+            identity[NATIVE_SKILLS_DIR_ENV] = str(generation / "skills")
+            resolved = replace(
+                resolved,
+                role_materials=replace(
+                    resolved.role_materials, identity_environment_variables=tuple(identity.items())
+                ),
+            )
+        except Exception as error:
+            raise BackendSpawnFailed(f"Canonical skill bootstrap failed: {error}") from error
+        native = self.factory(resolved, capability, command.child)(
+            resolved_start=resolved,
+            event_sink=JournalEventSink(self, command.child),
+            message_files=self.message_files,
+        )
+        child = _Child(
+            command.child,
+            capability,
+            native,
+            ticket_id=ticket_id,
+            launch_input=args,
+            localized_start=resolved,
+            model=resolved.model,
+            reasoning_effort=resolved.reasoning_effort,
+            backend_key=resolved.backend_key,
+        )
+        self.children[command.child.child_id] = child
+        async with child.lock:
+            self._check_child_admission(child)
+            guard = self._emission_guard(
+                child,
+                command,
+                expectation,
+                model=resolved.model,
+                reasoning_effort=resolved.reasoning_effort,
+            )
             self._invoking_commands.add(command.command_id)
-            return await invoke_child(child.native, command)
+            await native.start(
+                resolved,
+                vendor_session_cursor=args.vendor_session_cursor,
+                emission_check=guard,
+                admission_expectation=expectation,
+            )
+        return {}
+
+    def _check_child_admission(self, child: _Child) -> None:
+        if (
+            child.reference.child_id in self._retired_children
+            or child.reference.child_id in self._retiring_children
+        ):
+            raise _CommandAdmissionRefused("source child identity is retiring")
+
+    async def _write_prompt(
+        self, child: _Child, command: ChildCommand, args: WritePrompt
+    ) -> JsonObject:
+        if self.admission_stopped:
+            raise _CommandAdmissionRefused("executor is quiescing")
+        assert command.turn is not None
+        model = child.model if args.model_change is None else args.model_change
+        effort = (
+            child.reasoning_effort
+            if args.reasoning_effort_change is None and not args.reasoning_effort_is_set
+            else args.reasoning_effort_change
+        )
+        guard = self._emission_guard(
+            child, command, args.admission_expectation, model=model, reasoning_effort=effort
+        )
+        previous_turn = child.active_turn
+        child.active_turn = command.turn
+        self._invoking_commands.add(command.command_id)
+        try:
+            result = await child.native.write_prompt(
+                command.turn,
+                args.content,
+                sender_label=args.sender_label,
+                sender_content=args.sender_content,
+                sender_message_count=args.sender_message_count,
+                mode=args.mode,
+                model_change=args.model_change,
+                reasoning_effort_change=args.reasoning_effort_change,
+                reasoning_effort_is_set=args.reasoning_effort_is_set,
+                automatic_compaction=args.automatic_compaction,
+                emission_check=guard,
+                admission_expectation=args.admission_expectation,
+            )
         except (AdmissionRefused, BackendPromptRejected):
-            # A proved non-admission owns no new active provider turn.
             child.active_turn = previous_turn
             raise
+        child.model, child.reasoning_effort = model, effort
+        return {
+            "kind": "prompt_accepted",
+            "provider_submission": encode_value(result.provider_submission),
+            "composed_content_delivered": result.composed_content_delivered,
+        }
+
+    async def _steer(self, child: _Child, command: ChildCommand, args: Steer) -> JsonObject:
+        if self.admission_stopped:
+            raise _CommandAdmissionRefused("executor is quiescing")
+        assert command.turn is not None
+        guard = self._emission_guard(
+            child,
+            command,
+            args.admission_expectation,
+            model=child.model,
+            reasoning_effort=child.reasoning_effort,
+        )
+        self._invoking_commands.add(command.command_id)
+        outcome = await child.native.steer(
+            command.turn,
+            args.content,
+            sender_content=args.sender_content,
+            sender_label=args.sender_label,
+            emission_check=guard,
+            admission_expectation=args.admission_expectation,
+        )
+        if isinstance(outcome, BackendSteerRefused):
+            return {
+                "kind": "steer_refused",
+                "refusal_reason": outcome.refusal_reason.value,
+                "provider_submission": encode_value(outcome.provider_submission),
+            }
+        return {
+            "kind": "steer_accepted"
+            if isinstance(outcome, BackendSteerAccepted)
+            else "steer_uncertain",
+            "composed_content_delivered": outcome.composed_content_delivered,
+            "provider_submission": encode_value(outcome.provider_submission)
+            if isinstance(outcome, BackendSteerAccepted)
+            else None,
+        }
+
+    async def _cancel_turn(self, child: _Child, command: ChildCommand) -> JsonObject:
+        self._invoking_commands.add(command.command_id)
+        await child.native.cancel_running_turn()
+        return {}
+
+    def _check_answer(
+        self, child: _Child, command: ChildCommand, answer: DurableAnswer | None
+    ) -> None:
+        if answer is None:
+            return
+        previous = self._answers.get(answer.answer_id)
+        if previous is not None and previous != answer:
+            raise ValueError("answer id reused with different recorded answer")
+        self._answers[answer.answer_id] = answer
+        if child.active_turn is not None and child.active_turn != answer.ask.turn:
+            raise _CommandAdmissionRefused("answer turn is no longer active")
+        if answer.ask.kind is AskKind.permission:
+            if child.asks.get(answer.ask.ask_id) != answer.ask:
+                raise _CommandAdmissionRefused("permission callback is gone")
+        else:
+            pending = child.user_inputs.get(answer.ask.ask_id)
+            if pending is None or pending[0] != answer.ask:
+                raise _CommandAdmissionRefused("user input callback is gone")
+            normalized = ordered_user_input_answers(
+                pending[1].questions, answer.user_input_answers or ()
+            )
+            if normalized is None or normalized != answer.user_input_answers:
+                raise ValueError("recorded user input map is incomplete")
+
+    def _answer_application(self, command: ChildCommand, ask: AskReference | None) -> JsonObject:
+        if ask is None:
+            return {}
+        application = AnswerApplication(command.command_id, ask, now_ms())
+        self._applications[command.command_id] = application
+        return {"answer_application": encode_value(application)}
+
+    async def _answer_permission(
+        self, child: _Child, command: ChildCommand, args: AnswerPermission
+    ) -> JsonObject:
+        self._check_answer(child, command, args.answer)
+        self._invoking_commands.add(command.command_id)
+        await child.native.answer_permission_ask(args.ask_id, args.option_id)
+        return self._answer_application(command, child.asks.pop(args.ask_id, None))
+
+    async def _answer_user_input(
+        self, child: _Child, command: ChildCommand, args: AnswerUserInput
+    ) -> JsonObject:
+        self._check_answer(child, command, args.answer)
+        self._invoking_commands.add(command.command_id)
+        await child.native.answer_user_input(args.request_id, args.answers)
+        pending = child.user_inputs.pop(args.request_id, None)
+        return self._answer_application(command, None if pending is None else pending[0])
 
     async def _execute(self, command: ChildCommand) -> CommandOutcome:
         if command.child.executor_incarnation != self.incarnation:
@@ -489,322 +933,44 @@ class NativeChildRegistry:
             )
         else:
             try:
-                native_command = command
-                if "answer" in command.arguments:
-                    answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
-                    native_command = self._native_answer_command(answer)
-                    if (
-                        native_command.command_id != command.command_id
-                        or native_command.child != command.child
-                        or native_command.turn != command.turn
-                        or native_command.operation != command.operation
-                    ):
-                        raise ValueError("durable answer conflicts with command")
-                    previous = self._answers.get(answer.answer_id)
-                    if previous is not None and previous != answer:
-                        raise ValueError("answer id reused with different recorded answer")
-                    self._answers[answer.answer_id] = answer
-                expectation = None
-                if command.operation in (
-                    ChildOperation.start,
-                    ChildOperation.write_prompt,
-                    ChildOperation.steer,
-                ):
-                    from planner.conversation.admission.service import parse_expectation
-
-                    raw_expectation = command.arguments.get("admission_expectation")
-                    if raw_expectation is not None:
-                        try:
-                            expectation = parse_expectation(raw_expectation)
-                        except ValueError as malformed:
-                            raise AdmissionRefused("invalid admission expectation") from malformed
-                        if (
-                            expectation.executor_identity is None
-                            or expectation.executor_identity.executor_incarnation
-                            != self.incarnation
-                            or expectation.selection.destination is not TicketLocale.macos
-                        ):
-                            raise AdmissionRefused("destination executor identity changed")
-                        if expectation.child != command.child or expectation.turn != command.turn:
-                            raise AdmissionRefused("model verification command identity changed")
-                child = self.children.get(command.child.child_id)
-                if child is not None and command.operation == ChildOperation.start:
-                    raise BackendSpawnFailed("child identity already has a native start")
-                if child is None and command.operation == ChildOperation.start:
-                    if self.admission_stopped:
-                        raise _CommandAdmissionRefused("executor is quiescing")
-                    resolved = TypeAdapter(ResolvedConversationStart).validate_python(
-                        command.arguments["resolved_start"]
-                    )
-                    if resolved.conversation_id != command.child.conversation_id:
-                        raise ValueError("child conversation mismatch")
-                    environment = dict(
-                        resolved.role_materials.identity_environment_variables
-                        if resolved.role_materials
-                        else ()
-                    )
-                    ticket_id = environment.get("PLAN_TICKET_ID")
-                    if (
-                        ticket_id is not None
-                        and resolved.backend_key is not ConversationBackendKey.hermes
-                        and expectation is None
-                    ):
-                        raise AdmissionRefused(
-                            "model verification legacy_unscoped",
-                            reason="legacy_unscoped",
-                            corrective_action="classify_selection",
-                        )
-                    if expectation is not None and (
-                        expectation.conversation_id != resolved.conversation_id
-                        or expectation.selection.backend_key != resolved.backend_key
-                        or expectation.launch_token != resolved.model
-                        or expectation.reasoning_effort != resolved.reasoning_effort
-                        or expectation.workspace.workspace_folder != resolved.workspace_folder
-                        or expectation.workspace.workspace_path_policy
-                        != resolved.workspace_path_policy
-                        or expectation.workspace.workspace_home_relative
-                        != command.arguments.get("workspace_home_relative")
-                    ):
-                        raise AdmissionRefused("model verification start parameters changed")
-                    if ticket_id is not None and any(
-                        existing.ticket_id == ticket_id for existing in self.children.values()
-                    ):
-                        raise BackendSpawnFailed("Ticket already has a retained source child")
-                    try:
-                        snapshot = TypeAdapter(CanonicalSkillSnapshot).validate_python(
-                            command.arguments["canonical_skill_snapshot"]
-                        )
-                        validate_skill_snapshot(snapshot)
-                        if self.paths is None:
-                            raise ValueError("executor paths are required for canonical skills")
-                    except Exception as error:
-                        raise BackendSpawnFailed(
-                            f"Canonical skill bootstrap failed: {error}"
-                        ) from error
-                    capability = secrets.token_urlsafe(32)
-                    resolved = self._localize_start(
-                        resolved, command.child, capability, command.arguments
-                    )
-                    try:
-                        if resolved.backend_key is ConversationBackendKey.codex:
-                            native_home = codex_home(os.environ)
-                        elif resolved.backend_key is ConversationBackendKey.hermes:
-                            native_home = resolve_planner_home()
-                        else:
-                            configured_home = os.environ.get("CLAUDE_CONFIG_DIR", "")
-                            native_home = (
-                                Path(configured_home).expanduser()
-                                if configured_home
-                                else Path.home() / ".claude"
-                            )
-                        generation = install_native_skill_snapshot(
-                            snapshot, paths=self.paths, native_home=native_home
-                        )
-                        assert resolved.role_materials is not None
-                        identity = dict(resolved.role_materials.identity_environment_variables)
-                        identity[NATIVE_SKILLS_DIR_ENV] = str(generation / "skills")
-                        resolved = replace(
-                            resolved,
-                            role_materials=replace(
-                                resolved.role_materials,
-                                identity_environment_variables=tuple(identity.items()),
+                args = command.arguments
+                if isinstance(args, StartRun):
+                    result = await self._start_run(command, args)
+                else:
+                    child = self.children.get(command.child.child_id)
+                    if child is None or child.reference != command.child:
+                        return await self._remember_outcome(
+                            command,
+                            CommandOutcome(
+                                command.command_id,
+                                command.child,
+                                CommandDisposition.uncertain,
+                                {"reason": "child_gone"},
                             ),
                         )
-                    except Exception as error:
-                        raise BackendSpawnFailed(
-                            f"Canonical skill bootstrap failed: {error}"
-                        ) from error
-                    native_command = replace(
-                        command,
-                        arguments={**command.arguments, "resolved_start": encode_value(resolved)},
-                    )
-                    sink = JournalEventSink(self, command.child)
-                    self._invoking_commands.add(command.command_id)
-                    native = self.factory(resolved, capability, command.child)(
-                        resolved_start=resolved,
-                        event_sink=cast(BackendEventSink, sink),
-                        message_files=self.message_files,
-                    )
-                    identity = dict(
-                        resolved.role_materials.identity_environment_variables
-                        if resolved.role_materials
-                        else ()
-                    )
-                    child = _Child(
-                        command.child,
-                        capability,
-                        native,
-                        ticket_id=identity.get("PLAN_TICKET_ID"),
-                        launch_context=None if expectation is None else expectation.context,
-                        workspace_binding=None if expectation is None else expectation.workspace,
-                        localized_workspace=resolved.workspace_folder,
-                        model=resolved.model,
-                        reasoning_effort=resolved.reasoning_effort,
-                        backend_key=resolved.backend_key,
-                        resolved_model_id=None
-                        if expectation is None
-                        else expectation.resolved_model_id,
-                    )
-                    self.children[command.child.child_id] = child
-                if child is None or child.reference != command.child:
-                    outcome = CommandOutcome(
-                        command.command_id,
-                        command.child,
-                        CommandDisposition.uncertain,
-                        {"reason": "child_gone"},
-                    )
-                else:
                     async with child.lock:
-                        if (
-                            command.child.child_id in self._retired_children
-                            or command.child.child_id in self._retiring_children
-                        ):
-                            raise _CommandAdmissionRefused("source child identity is retiring")
-                        if command.operation in (ChildOperation.write_prompt, ChildOperation.steer):
-                            if self.admission_stopped:
-                                raise _CommandAdmissionRefused("executor is quiescing")
-                        if "answer" in command.arguments:
-                            ask = answer.ask
-                            if child.active_turn is not None and child.active_turn != ask.turn:
-                                raise _CommandAdmissionRefused("answer turn is no longer active")
-                            if ask.kind is AskKind.permission:
-                                if child.asks.get(ask.ask_id) != ask:
-                                    raise _CommandAdmissionRefused("permission callback is gone")
-                            else:
-                                pending = child.user_inputs.get(ask.ask_id)
-                                if pending is None or pending[0] != ask:
-                                    raise _CommandAdmissionRefused("user input callback is gone")
-                                normalized = ordered_user_input_answers(
-                                    pending[1].questions, answer.user_input_answers or ()
-                                )
-                                if normalized is None or normalized != answer.user_input_answers:
-                                    raise ValueError("recorded user input map is incomplete")
-                        if command.operation in (
-                            ChildOperation.start,
-                            ChildOperation.write_prompt,
-                            ChildOperation.steer,
-                        ) and (
-                            (
-                                child.ticket_id is not None
-                                and child.backend_key is not ConversationBackendKey.hermes
-                            )
-                            or expectation is not None
-                        ):
-                            from planner.conversation.admission.service import (
-                                admission_scope,
-                            )
-
-                            if expectation is None:
-                                raise AdmissionRefused(
-                                    "model verification legacy_unscoped",
-                                    reason="legacy_unscoped",
-                                    corrective_action="classify_selection",
-                                )
-                            if (
-                                expectation.selection.destination is not TicketLocale.macos
-                                or expectation.selection.backend_key != child.backend_key
-                                or expectation.executor_identity is None
-                                or expectation.executor_identity.executor_incarnation
-                                != self.incarnation
-                                or child.workspace_binding != expectation.workspace
-                                or child.localized_workspace is None
-                            ):
-                                raise AdmissionRefused("destination execution ownership changed")
-                            if command.operation in (
-                                ChildOperation.write_prompt,
-                                ChildOperation.steer,
-                            ) and (
-                                (
-                                    child.model
-                                    if command.arguments.get("model_change") is None
-                                    else command.arguments["model_change"]
-                                )
-                                != expectation.launch_token
-                                or (
-                                    child.reasoning_effort
-                                    if command.arguments.get("reasoning_effort_change") is None
-                                    and not command.arguments.get("reasoning_effort_is_set", False)
-                                    else command.arguments.get("reasoning_effort_change")
-                                )
-                                != expectation.reasoning_effort
-                            ):
-                                raise AdmissionRefused(
-                                    "model verification prompt parameters changed"
-                                )
-                            # These facts belong to the actual retained child. Catalog
-                            # configuration, versions and resolved targets grant no authority.
-                            native_context = LaunchContext(
-                                context_ref=f"child:{child.reference.child_id}",
-                                destination=TicketLocale.macos,
-                                backend_key=expectation.selection.backend_key,
-                                executor_identity=expectation.executor_identity,
-                                workspace=expectation.workspace,
-                                localized_workspace_folder=child.localized_workspace,
-                                executable_identity=None,
-                                executable_version=None,
-                                provider_scope=None,
-                                account_generation=None,
-                            )
-                            registry = self
-                            owned_child = child
-
-                            class NativeOwnership:
-                                def verify_context(self, expected: LaunchContext | None) -> bool:
-                                    return (
-                                        expected == native_context
-                                        and registry.children.get(owned_child.reference.child_id)
-                                        is owned_child
-                                        and owned_child.reference == command.child
-                                        and not registry.admission_stopped
-                                        and command.child.child_id
-                                        not in registry._retiring_children
-                                        and command.child.child_id not in registry._retired_children
-                                    )
-
-                                def verify_prepared_launch(
-                                    self, expected: LaunchContext, prepared: object
-                                ) -> bool:
-                                    return self.verify_context(expected)
-
-                            native_expectation = replace(
-                                expectation, context=native_context, evidence=None
-                            )
-                            with admission_scope(native_expectation, NativeOwnership()):
-                                result = await self._invoke_admitted(child, native_command)
-                                if command.operation == ChildOperation.write_prompt:
-                                    child.model = expectation.launch_token
-                                    child.reasoning_effort = expectation.reasoning_effort
-                                    child.resolved_model_id = expectation.resolved_model_id
-                        else:
-                            result = await self._invoke_admitted(child, native_command)
-                        if command.operation == ChildOperation.answer_permission_ask:
-                            applied_ask = child.asks.get(str(native_command.arguments["ask_id"]))
-                            if applied_ask is not None:
-                                application = AnswerApplication(
-                                    command.command_id, applied_ask, now_ms()
-                                )
-                                self._applications[command.command_id] = application
-                                result = {**result, "answer_application": encode_value(application)}
-                            child.asks.pop(str(native_command.arguments["ask_id"]), None)
-                        elif command.operation == ChildOperation.answer_user_input:
-                            pending = child.user_inputs.get(
-                                str(native_command.arguments["request_id"])
-                            )
-                            if pending is not None:
-                                application = AnswerApplication(
-                                    command.command_id, pending[0], now_ms()
-                                )
-                                self._applications[command.command_id] = application
-                                result = {**result, "answer_application": encode_value(application)}
-                            child.user_inputs.pop(str(native_command.arguments["request_id"]), None)
-                        outcome = CommandOutcome(
-                            command.command_id,
-                            command.child,
-                            CommandDisposition.uncertain
-                            if result.get("kind") == "steer_uncertain"
-                            else CommandDisposition.succeeded,
-                            result,
-                        )
+                        self._check_child_admission(child)
+                        match args:
+                            case WritePrompt():
+                                result = await self._write_prompt(child, command, args)
+                            case Steer():
+                                result = await self._steer(child, command, args)
+                            case CancelTurn():
+                                result = await self._cancel_turn(child, command)
+                            case AnswerPermission():
+                                result = await self._answer_permission(child, command, args)
+                            case AnswerUserInput():
+                                result = await self._answer_user_input(child, command, args)
+                            case _:
+                                raise ValueError("unsupported child command")
+                outcome = CommandOutcome(
+                    command.command_id,
+                    command.child,
+                    CommandDisposition.uncertain
+                    if result.get("kind") == "steer_uncertain"
+                    else CommandDisposition.succeeded,
+                    result,
+                )
             except BackendPromptRejected as error:
                 outcome = CommandOutcome(
                     command.command_id,
@@ -837,7 +1003,10 @@ class NativeChildRegistry:
                     (
                         kind
                         for kind in (
-                            BackendSpawnFailed, SessionLoadFailed, NeedsRebind, PromptWriteRefused
+                            BackendSpawnFailed,
+                            SessionLoadFailed,
+                            NeedsRebind,
+                            PromptWriteRefused,
                         )
                         if isinstance(error, kind)
                     ),
@@ -868,6 +1037,11 @@ class NativeChildRegistry:
                     CommandDisposition.uncertain,
                     {"error_type": type(error).__name__, "error_message": str(error)},
                 )
+        return await self._remember_outcome(command, outcome)
+
+    async def _remember_outcome(
+        self, command: ChildCommand, outcome: CommandOutcome
+    ) -> CommandOutcome:
         self.outcomes[command.command_id] = outcome
         await self._publish_required_output(command, outcome)
         return outcome
@@ -975,24 +1149,6 @@ class NativeChildRegistry:
             return
         await self._emit(reference.conversation_id, EnvelopeKind.backend_event, event, snapshots)
 
-    def _native_answer_command(self, answer: DurableAnswer) -> ChildCommand:
-        if answer.ask.kind == AskKind.permission:
-            if answer.option_id is None or answer.user_input_answers is not None:
-                raise ValueError("permission answer needs exactly its option")
-            operation = ChildOperation.answer_permission_ask
-            arguments: JsonObject = {"ask_id": answer.ask.ask_id, "option_id": answer.option_id}
-        else:
-            if answer.option_id is not None or answer.user_input_answers is None:
-                raise ValueError("user input answer needs exactly its complete map")
-            operation = ChildOperation.answer_user_input
-            arguments = {
-                "request_id": answer.ask.ask_id,
-                "answers": encode_value(answer.user_input_answers),
-            }
-        return ChildCommand(
-            answer.answer_id, answer.ask.child, operation, answer.ask.turn, arguments
-        )
-
     async def apply_answer(self, answer: DurableAnswer) -> AnswerApplication | None:
         return await self.source_work(answer.ask.child, lambda: self._apply_answer(answer))
 
@@ -1004,7 +1160,13 @@ class NativeChildRegistry:
             if answer.ask.kind is AskKind.user_input
             else ChildOperation.answer_permission_ask,
             answer.ask.turn,
-            {"answer": encode_value(answer)},
+            AnswerUserInput(
+                request_id=answer.ask.ask_id, answers=answer.user_input_answers or (), answer=answer
+            )
+            if answer.ask.kind is AskKind.user_input
+            else AnswerPermission(
+                ask_id=answer.ask.ask_id, option_id=answer.option_id or "", answer=answer
+            ),
         )
         previous = self._answers.get(answer.answer_id)
         if previous is not None and previous != answer:

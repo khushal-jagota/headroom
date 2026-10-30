@@ -26,6 +26,7 @@ from planner.executor.contracts import (
     ExecutorIdentity,
     OutboxEntry,
     ReceiptDisposition,
+    decode_command_arguments,
 )
 from planner.executor.mac import as_object
 from planner.executor.mac_outbox import MacOutbox
@@ -94,7 +95,13 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
         identity = replace(IDENTITY, executor_incarnation=registry.incarnation)
         remote = endpoint(tmp_db, identity=identity)
         remote.store.register_child(start.child, "ticket", t.id, 3)
-        stop = ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+        stop = ChildCommand(
+            "stop",
+            start.child,
+            ChildOperation.stop,
+            None,
+            decode_command_arguments(ChildOperation.stop, {}),
+        )
         assert (await registry.execute_command(stop)).disposition is CommandDisposition.succeeded
         (stopped,) = spool.pending()
         spool.acknowledge(await remote.accept_envelope(stopped, identity))

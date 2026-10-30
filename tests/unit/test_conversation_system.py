@@ -22,6 +22,7 @@ import pytest
 from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
 
 import planner.conversation.system as conversation_system
+from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
@@ -32,6 +33,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    EmissionCheck,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteRefused,
@@ -213,6 +215,8 @@ class _FakeBackendChild:
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         if self._backend.session_load_fails:
             raise SessionLoadFailed(self._backend.conversation_id)
@@ -245,6 +249,9 @@ class _FakeBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         # The label and the mode travel with the text as metadata for backends that have a
         # channel for it. This stand-in has none, so it takes them and lets them go.
@@ -301,6 +308,8 @@ class _FakeBackendChild:
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
+        emission_check: EmissionCheck | None = None,
+        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         del sender_content
         del sender_label
@@ -2290,12 +2299,12 @@ def test_cancelled_exchange_or_sqlite_call_finishes_one_owned_settlement(
         else:
             original = harness.store._append_delivered_prompt_sync
 
-            def blocked(*args):  # type: ignore[no-untyped-def]
+            def blocked(*args, **kwargs):  # type: ignore[no-untyped-def]
                 nonlocal calls
                 calls += 1
                 sqlite_entered.set()
                 assert sqlite_release.wait(3)
-                return original(*args)
+                return original(*args, **kwargs)
 
             monkeypatch.setattr(harness.store, "_append_delivered_prompt_sync", blocked)
         sending = asyncio.create_task(

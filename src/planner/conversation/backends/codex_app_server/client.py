@@ -43,7 +43,7 @@ from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     logins_hold_the_same_credential,
 )
-from planner.conversation.backends.contracts import AdmissionRefused, current_emission_check
+from planner.conversation.backends.contracts import AdmissionRefused, EmissionCheck
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 
@@ -195,10 +195,11 @@ class CodexAppServerClient:
         argv: Sequence[str],
         environment: Mapping[str, str],
         working_directory: Path,
+        emission_check: EmissionCheck | None = None,
     ) -> None:
         """Spawn the child and begin reading it. Raises ``CodexChildWouldNotStart``."""
         try:
-            check = current_emission_check()
+            check = emission_check
             if check is not None:
                 check()
             process = await asyncio.create_subprocess_exec(
@@ -306,13 +307,14 @@ class CodexAppServerClient:
         *,
         poison_wire_on_timeout: bool = True,
         timeout_seconds: float | None = None,
+        emission_check: EmissionCheck | None = None,
     ) -> Any:
         """Ask the child something and wait for its answer.
 
         Raises ``CodexWireFailed`` if the request did not get out or the child stopped
         answering, and ``CodexRequestRejected`` if the child answered with an error.
         """
-        answer = await self.begin_request(method, params)
+        answer = await self.begin_request(method, params, emission_check=emission_check)
         return await self.finish_request(
             method,
             answer,
@@ -321,7 +323,11 @@ class CodexAppServerClient:
         )
 
     async def begin_request(
-        self, method: str, params: Mapping[str, Any] | None = None
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        emission_check: EmissionCheck | None = None,
     ) -> asyncio.Future[dict[str, Any]]:
         """Put a request on the wire and hand back the answer that has not arrived yet.
 
@@ -336,7 +342,7 @@ class CodexAppServerClient:
         if params is not None:
             message["params"] = dict(params)
         try:
-            await self._write(message)
+            await self._write(message, emission_check=emission_check)
         except (CodexWireFailed, AdmissionRefused, asyncio.CancelledError):
             self._pending.pop(request_id, None)
             if not answer.done():
@@ -400,21 +406,10 @@ class CodexAppServerClient:
     async def respond_with_error(self, request_id: Any, *, code: int, message: str) -> None:
         await self._write({"id": request_id, "error": {"code": code, "message": message}})
 
-    async def _write(self, message: Mapping[str, Any]) -> None:
-        # Capture in the exact request task, not a long-lived reader's context.
-        check = (
-            current_emission_check()
-            if message.get("method")
-            in {
-                "turn/start",
-                "thread/start",
-                "thread/resume",
-                "review/start",
-                "thread/compact/start",
-                "thread/goal/set",
-            }
-            else None
-        )
+    async def _write(
+        self, message: Mapping[str, Any], *, emission_check: EmissionCheck | None = None
+    ) -> None:
+        check = emission_check
         line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
         async with self._write_lock:
             self._write_prepared_line(line, check)
