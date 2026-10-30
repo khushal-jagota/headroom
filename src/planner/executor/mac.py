@@ -65,12 +65,12 @@ from planner.executor.contracts import (
     ConnectionFailureOrigin,
     ConnectionPhase,
     ConnectionState,
+    ControlMessageReader,
+    ControlMessageWriter,
     EnvelopeKind,
     ExecutorHealth,
     ExecutorIdentity,
     FileTransfer,
-    FrameReader,
-    FrameWriter,
     InputTransferCancel,
     InputTransferCancelled,
     InputTransferFailed,
@@ -105,7 +105,6 @@ from planner.executor.wire import (
     ProtocolRefused,
     encode_frame,
     parse_identity,
-    read_frame,
     read_typed_frame,
 )
 from planner.tickets.contracts import TicketLocale
@@ -156,7 +155,7 @@ class MacExecutor:
         self._handshake_accepted = False
         self.state = ConnectionState.disconnected
         self.lost_at_ms: int | None = None
-        self._writer: FrameWriter | None = None
+        self._writer: ControlMessageWriter | None = None
         self._write_lock = asyncio.Lock()
         self._pending: dict[str, asyncio.Future[WireMessage]] = {}
         self._receipts: dict[str, asyncio.Future[AcceptanceReceipt]] = {}
@@ -174,7 +173,9 @@ class MacExecutor:
         self._transfer_tasks: set[asyncio.Task[None]] = set()
         self._quiesce_lock = asyncio.Lock()
         self._catalog_observer = catalog_observer
-        self._catalog_tasks: dict[str, tuple[CatalogRequest, FrameWriter, asyncio.Task[None]]] = {}
+        self._catalog_tasks: dict[
+            str, tuple[CatalogRequest, ControlMessageWriter, asyncio.Task[None]]
+        ] = {}
         self.registry = registry or NativeChildRegistry(
             paths=paths,
             incarnation=self.identity.executor_incarnation,
@@ -243,8 +244,7 @@ class MacExecutor:
             writer = self._writer
             if writer is None:
                 raise ConnectionError("executor link unavailable")
-            writer.write(encode_frame(message))
-            await writer.drain()
+            await writer.send(message)
 
     async def _request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
         request_id = uuid4().hex
@@ -256,8 +256,7 @@ class MacExecutor:
                 async with self._write_lock:
                     if writer is None or self._writer is not writer:
                         raise ConnectionError("executor link unavailable")
-                    writer.write(encode_frame(WireMessage(kind, request_id, payload)))
-                    await writer.drain()
+                    await writer.send(WireMessage(kind, request_id, payload))
                 response = await future
             if response.kind in (WireMessageKind.error, WireMessageKind.protocol_refused):
                 raise ValueError(str(response.payload))
@@ -271,9 +270,9 @@ class MacExecutor:
         finally:
             self._pending.pop(request_id, None)
 
-    async def _read_loop(self, reader: FrameReader) -> None:
+    async def _read_loop(self, reader: ControlMessageReader) -> None:
         while True:
-            message = await read_frame(reader)
+            message = await reader.receive()
             if message.kind in (WireMessageKind.catalog_request, WireMessageKind.catalog_cancel):
                 self._catalog_frame(message)
                 continue
@@ -431,7 +430,7 @@ class MacExecutor:
         message: WireMessage,
         request: CatalogRequest,
         identity: ExecutorIdentity,
-        writer: FrameWriter,
+        writer: ControlMessageWriter,
         deadline: float,
     ) -> None:
         observer = self._catalog_observer
@@ -492,16 +491,13 @@ class MacExecutor:
                         or owner.cancelling()
                     ):
                         return
-                    writer.write(
-                        encode_frame(
-                            WireMessage(
-                                WireMessageKind.catalog_response,
-                                message.request_id,
-                                as_object(CatalogResponse(request.backend_key, identity, result)),
-                            )
+                    await writer.send(
+                        WireMessage(
+                            WireMessageKind.catalog_response,
+                            message.request_id,
+                            as_object(CatalogResponse(request.backend_key, identity, result)),
                         )
                     )
-                    await writer.drain()
         except (ConnectionError, OSError, ValueError, TimeoutError):
             # A read-only failure does not disturb a shared execution connection.
             return
@@ -548,8 +544,7 @@ class MacExecutor:
                 if kind is WireMessageKind.file_accepted and not state.active():
                     return
                 try:
-                    writer.write(encode_frame(WireMessage(kind, message.request_id, payload)))
-                    await writer.drain()
+                    await writer.send(WireMessage(kind, message.request_id, payload))
                 except OSError as error:
                     writer.close()
                     raise ConnectionError("input control connection failed") from error
@@ -780,7 +775,7 @@ class MacExecutor:
         session_task: asyncio.Task[None] | None = None
         stop_task: asyncio.Task[bool] | None = None
         try:
-            async with client.websocket("/api/executor/connect", MAX_ENVELOPE_BYTES + 4) as peer:
+            async with client.websocket("/api/executor/connect", MAX_ENVELOPE_BYTES) as peer:
                 stream = ControlWebSocket(peer)
                 self._writer = stream
                 phase = ConnectionPhase.hello
@@ -1007,15 +1002,19 @@ class MacExecutor:
                     if child.ticket_id is not None:
                         envelope = await asyncio.to_thread(
                             self.spool.mint_ticket_envelope,
-                            paths=self.paths, ticket_id=child.ticket_id, child=child.reference,
-                            kind=EnvelopeKind.cli_write, payload=as_object(write),
+                            paths=self.paths,
+                            ticket_id=child.ticket_id,
+                            child=child.reference,
+                            kind=EnvelopeKind.cli_write,
+                            payload=as_object(write),
                             submission_id=request.request_id,
                         )
                     else:
                         envelope = await asyncio.to_thread(
                             self.spool.mint_envelope,
                             conversation_id=child.reference.conversation_id,
-                            kind=EnvelopeKind.cli_write, payload=as_object(write),
+                            kind=EnvelopeKind.cli_write,
+                            payload=as_object(write),
                             submission_id=request.request_id,
                         )
                     return JournalPublication(envelope, True)

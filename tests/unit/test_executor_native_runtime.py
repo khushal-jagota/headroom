@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import pytest
 from pydantic import TypeAdapter
+from tests.support.executor_control import MessageReader
 
 from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.admission.service import admission_scope
@@ -1848,7 +1849,7 @@ def test_controlled_stop_wakes_pending_handshake_without_peer_response(
 @pytest.mark.parametrize("case", ["valid", "no_handshake", "bad_payload", "stale_request"])
 def test_ready_ack_clears_loss_before_fulfilling_current_request(tmp_path: Path, case: str) -> None:
     from planner.executor.contracts import ConnectionState, WireMessage, WireMessageKind
-    from planner.executor.wire import ProtocolRefused, encode_frame
+    from planner.executor.wire import ProtocolRefused, encode_message
 
     async def run() -> None:
         executor = MacExecutor(
@@ -1870,9 +1871,9 @@ def test_ready_ack_clears_loss_before_fulfilling_current_request(tmp_path: Path,
 
         pending = ObservedFuture()
         executor._pending["current-request"] = pending
-        reader = asyncio.StreamReader()
+        reader = MessageReader()
         reader.feed_data(
-            encode_frame(
+            encode_message(
                 WireMessage(
                     WireMessageKind.reconciliation_ready,
                     "old-request" if case == "stale_request" else "current-request",
@@ -1886,7 +1887,7 @@ def test_ready_ack_clears_loss_before_fulfilling_current_request(tmp_path: Path,
                 with pytest.raises(ProtocolRefused, match="invalid reconciliation"):
                     await executor._read_loop(reader)
             else:
-                with pytest.raises(asyncio.IncompleteReadError):
+                with pytest.raises(ConnectionError):
                     await executor._read_loop(reader)
             if case == "valid":
                 assert observed == [(ConnectionState.ready, None)]
@@ -1921,7 +1922,7 @@ def test_current_loss_survives_failed_reconnect_and_clears_only_when_reconciled_
         await asyncio.wait_for(ready(), 2)
         assert executor.lost_at_ms is None
         peer.reader.feed_eof()
-        with pytest.raises(asyncio.IncompleteReadError):
+        with pytest.raises(ConnectionError):
             await task
         loss = executor.lost_at_ms
         assert loss is not None
@@ -2061,7 +2062,7 @@ def test_quiesce_counts_admitted_input_task_before_it_starts_and_refuses_new_inp
         FileTransfer,
         InputTransferRequest,
     )
-    from planner.executor.wire import ProtocolRefused, encode_frame
+    from planner.executor.wire import ProtocolRefused, encode_message
 
     async def run() -> None:
         executor = make_executor(tmp_path)
@@ -2082,9 +2083,9 @@ def test_quiesce_counts_admitted_input_task_before_it_starts_and_refuses_new_inp
                 "download",
                 FileManifest("publication", FileScope.conversation, "c_one", "file", "a" * 64, 1),
             )
-            reader = asyncio.StreamReader()
+            reader = MessageReader()
             reader.feed_data(
-                encode_frame(
+                encode_message(
                     WireMessage(
                         WireMessageKind.file_slot,
                         "late-input",
@@ -2198,7 +2199,7 @@ def test_input_capacity_refusal_replies_instead_of_abandoning_waiting_caller(
         InputTransferRequest,
     )
     from planner.executor.input_transfers import InputTransferDeadline
-    from planner.executor.wire import encode_frame
+    from planner.executor.wire import encode_message
 
     async def run() -> None:
         executor = make_executor(tmp_path)
@@ -2220,9 +2221,9 @@ def test_input_capacity_refusal_replies_instead_of_abandoning_waiting_caller(
             str(index): InputTransferDeadline(InputTransferRequest(str(index), slot))
             for index in range(4)
         }
-        reader = asyncio.StreamReader()
+        reader = MessageReader()
         reader.feed_data(
-            encode_frame(
+            encode_message(
                 WireMessage(
                     WireMessageKind.file_slot,
                     "caller",
@@ -2232,7 +2233,7 @@ def test_input_capacity_refusal_replies_instead_of_abandoning_waiting_caller(
         )
         reader.feed_eof()
         try:
-            with pytest.raises(asyncio.IncompleteReadError):
+            with pytest.raises(ConnectionError):
                 await executor._read_loop(reader)
             message = send.call_args.args[0]
             assert message.kind is WireMessageKind.input_failed and message.request_id == "caller"
@@ -2727,13 +2728,13 @@ def test_input_revocation_ack_precedes_disk_settlement_without_releasing_capacit
         InputTransferRequest,
     )
     from planner.executor.transfers import settled_io
-    from planner.executor.wire import encode_frame
+    from planner.executor.wire import encode_message
 
     async def run() -> None:
         executor = make_executor(tmp_path)
         executor._handshake_accepted = True
         writer = Mock()
-        writer.drain = AsyncMock()
+        writer.send = AsyncMock()
         executor._writer = writer
         entered, release = threading.Event(), threading.Event()
         temporary: Path | None = None
@@ -2757,14 +2758,14 @@ def test_input_revocation_ack_precedes_disk_settlement_without_releasing_capacit
 
         executor._app_client = cast(ExecutorAppClient, SimpleNamespace(download=download))
         monkeypatch.setattr(executor, "_send", send)
-        reader = asyncio.StreamReader()
+        reader = MessageReader()
         slot = FileTransfer(
             "a" * 32,
             "download",
             FileManifest("publication", FileScope.conversation, "c_one", "file", "a" * 64, 4),
         )
         reader.feed_data(
-            encode_frame(
+            encode_message(
                 WireMessage(
                     WireMessageKind.file_slot,
                     "blocked",
@@ -2776,7 +2777,7 @@ def test_input_revocation_ack_precedes_disk_settlement_without_releasing_capacit
         try:
             await asyncio.wait_for(asyncio.to_thread(entered.wait), 2)
             reader.feed_data(
-                encode_frame(
+                encode_message(
                     WireMessage(
                         WireMessageKind.input_cancel,
                         "blocked",
@@ -2788,7 +2789,7 @@ def test_input_revocation_ack_precedes_disk_settlement_without_releasing_capacit
                 while not any(frame.kind is WireMessageKind.input_cancelled for frame in received):
                     await asyncio.sleep(0)
             reader.feed_data(
-                encode_frame(
+                encode_message(
                     WireMessage(
                         WireMessageKind.input_cancel,
                         "blocked",
@@ -2816,7 +2817,7 @@ def test_input_revocation_ack_precedes_disk_settlement_without_releasing_capacit
                 while executor._input_transfers:
                     await asyncio.sleep(0)
             assert not temporary.exists() and executor._transfers == 0
-            assert not writer.write.called
+            assert not writer.send.called
         finally:
             release.set()
             reader.feed_eof()
@@ -2846,12 +2847,12 @@ def test_input_progress_socket_failure_closes_original_writer_only(
         executor._handshake_accepted = True
         original, replacement = Mock(), Mock()
 
-        async def fail_drain() -> None:
+        async def fail_drain(*_: object) -> None:
             executor._writer = replacement
             raise OSError("control socket failed")
 
-        original.drain = AsyncMock(side_effect=fail_drain)
-        replacement.drain = AsyncMock()
+        original.send = AsyncMock(side_effect=fail_drain)
+        replacement.send = AsyncMock()
         executor._writer = original
 
         async def download(slot: object, path: Path, progress: object) -> None:
@@ -2875,7 +2876,7 @@ def test_input_progress_socket_failure_closes_original_writer_only(
             )
             original.close.assert_called_once_with()
             replacement.close.assert_not_called()
-            replacement.write.assert_not_called()
+            replacement.send.assert_not_called()
             assert not executor._input_transfers and executor._transfers == 0
         finally:
             executor.spool.close()

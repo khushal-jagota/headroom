@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI, Request
+from tests.support.executor_control import MessageReader
 from tests.support.executor_turns import persist_pending_turn
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
@@ -37,7 +38,7 @@ from planner.executor.contracts import (
     WireMessageKind,
 )
 from planner.executor.remote import RemoteBackendChild
-from planner.executor.wire import encode_frame
+from planner.executor.wire import encode_message
 from planner.managers import data as managers
 from planner.projects import data as projects
 from planner.tickets import data, locale_configuration
@@ -54,13 +55,10 @@ def _draft_request() -> Request:
 class Writer:
     def __init__(self) -> None:
         self.closed = False
-        self.writes: list[bytes] = []
+        self.writes: list[WireMessage] = []
 
-    def write(self, data: bytes) -> None:
+    async def send(self, data: WireMessage) -> None:
         self.writes.append(data)
-
-    async def drain(self) -> None:
-        return None
 
     async def wait_closed(self) -> None:
         return None
@@ -105,15 +103,15 @@ def test_contact_is_receipt_not_handshake_and_retains_history_after_loss(
     monkeypatch.setattr(endpoint, "_handle", handle)
 
     async def run() -> None:
-        reader = asyncio.StreamReader()
-        reader.feed_data(encode_frame(_hello()))
+        reader = MessageReader()
+        reader.feed_data(encode_message(_hello()))
         task = asyncio.create_task(endpoint._session(reader, cast(Any, Writer())))
         while endpoint.writer is None:
             await asyncio.sleep(0)
         assert endpoint.observed_at_ms == endpoint.last_contact_at_ms == 100
         tick[0] = 200
         # A valid frame establishes contact before its domain handler executes.
-        reader.feed_data(encode_frame(WireMessage(WireMessageKind.error, "refusal", {})))
+        reader.feed_data(encode_message(WireMessage(WireMessageKind.error, "refusal", {})))
         await asyncio.wait_for(handled.wait(), 1)
         assert endpoint.observed_at_ms == 100
         tick[0] = 300
@@ -143,8 +141,8 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
             monkeypatch.setattr(endpoint, "_measure_clock", probe)
             tick = [100]
             monkeypatch.setattr(vps, "now_ms", lambda tick=tick: tick[0])
-            reader = asyncio.StreamReader()
-            reader.feed_data(encode_frame(_hello()))
+            reader = MessageReader()
+            reader.feed_data(encode_message(_hello()))
             writer = Writer()
             task = asyncio.create_task(endpoint._session(reader, cast(Any, writer)))
             while endpoint.writer is None:
@@ -155,7 +153,7 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
                 endpoint.identity = replace(
                     cast(ExecutorIdentity, endpoint.identity), connection_generation=2
                 )
-                reader.feed_data(encode_frame(WireMessage(WireMessageKind.error, "old", {})))
+                reader.feed_data(encode_message(WireMessage(WireMessageKind.error, "old", {})))
             else:
                 malformed = b'{"kind":"invented","request_id":"bad","payload":{}}'
                 reader.feed_data(struct.pack("!I", len(malformed)) + malformed)
@@ -349,8 +347,8 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
     monkeypatch.setattr(endpoint, "_handle", handle)
 
     async def run() -> None:
-        reader = asyncio.StreamReader()
-        reader.feed_data(encode_frame(_hello()))
+        reader = MessageReader()
+        reader.feed_data(encode_message(_hello()))
         task = asyncio.create_task(endpoint._session(reader, cast(Any, Writer())))
         while endpoint.writer is None:
             await asyncio.sleep(0)
@@ -378,7 +376,7 @@ def test_control_receipt_advances_contact_without_per_ask_liveness(
         response: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
         endpoint._responses[request_id] = response
         reader.feed_data(
-            encode_frame(WireMessage(WireMessageKind.transport_opened, request_id, {}))
+            encode_message(WireMessage(WireMessageKind.transport_opened, request_id, {}))
         )
         await asyncio.wait_for(received.wait(), 1)
         assert response.done()

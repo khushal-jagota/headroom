@@ -41,7 +41,7 @@ from planner.executor.outbox_storage import (
     write_file,
 )
 from planner.executor.preflight import _check_spool_directory, validate_database
-from planner.executor.wire import encode_frame
+from planner.executor.wire import encode_message
 
 
 def envelope_payload_digest(
@@ -269,7 +269,7 @@ class FilesystemSpool:
 
     def enqueue(self, envelope: QueuedEnvelope, snapshots: tuple[FileSnapshot, ...] = ()) -> None:
         with self._lock:
-            encode_frame(
+            encode_message(
                 WireMessage(
                     WireMessageKind.envelope,
                     "0" * 32,

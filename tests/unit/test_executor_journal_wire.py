@@ -13,13 +13,12 @@ from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,
     FileScope,
+    IpcResponse,
     ReceiptDisposition,
-    WireMessage,
-    WireMessageKind,
 )
 from planner.executor.files import snapshot_file
 from planner.executor.journal import FilesystemSpool
-from planner.executor.wire import ProtocolRefused, encode_frame, read_frame
+from planner.executor.wire import ProtocolRefused, encode_frame, read_typed_frame
 
 
 def test_journal_restarts_after_ack_without_reusing_sequence(tmp_path: Path) -> None:
@@ -110,13 +109,13 @@ def test_incomplete_entry_not_replayed_and_bad_receipt_keeps_entry(tmp_path: Pat
 def test_frame_roundtrip_and_oversize_before_body_read() -> None:
     async def run() -> None:
         reader = asyncio.StreamReader()
-        message = WireMessage(WireMessageKind.health, "request", {})
+        message = IpcResponse("request", {}, None)
         reader.feed_data(encode_frame(message))
-        assert await read_frame(reader) == message
+        assert await read_typed_frame(reader, IpcResponse) == message
         bad = asyncio.StreamReader()
         bad.feed_data(struct.pack("!I", 1024 * 1024 + 1))
         with pytest.raises(ProtocolRefused):
-            await read_frame(bad)
+            await read_typed_frame(bad, IpcResponse)
 
     asyncio.run(run())
 

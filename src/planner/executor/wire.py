@@ -1,4 +1,4 @@
-"""Bounded, typed frames shared by app WebSockets and owner-only local IPC."""
+"""Bounded control messages and length-prefixed owner-only local IPC."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from planner.executor.configuration import (
     SPOOL_FORMAT_VERSION,
 )
 from planner.executor.contracts import (
-    ByteWriter,
     ExecutorIdentity,
     FrameReader,
     WireMessage,
@@ -50,11 +49,11 @@ def validate_identity(identity: ExecutorIdentity) -> None:
         raise ProtocolRefused("invalid executor identity")
 
 
-def encode_frame(value: object) -> bytes:
+def _encode_payload(value: object) -> bytes:
     body = TypeAdapter(type(value)).dump_json(value)
     if not body or len(body) > MAX_ENVELOPE_BYTES:
         raise ProtocolRefused("frame exceeds envelope limit")
-    return struct.pack("!I", len(body)) + body
+    return body
 
 
 async def read_typed_frame[T](reader: FrameReader, value_type: type[T]) -> T:
@@ -65,13 +64,20 @@ async def read_typed_frame[T](reader: FrameReader, value_type: type[T]) -> T:
     return TypeAdapter(value_type).validate_json(await reader.readexactly(length), strict=True)
 
 
-async def read_frame(reader: FrameReader) -> WireMessage:
-    return await read_typed_frame(reader, WireMessage)
+def encode_message(message: WireMessage) -> bytes:
+    return _encode_payload(message)
 
 
-async def write_frame(writer: ByteWriter, value: object) -> None:
-    writer.write(encode_frame(value))
-    await writer.drain()
+def decode_message(body: bytes) -> WireMessage:
+    if not body or len(body) > MAX_ENVELOPE_BYTES:
+        raise ProtocolRefused("message exceeds envelope limit")
+    return TypeAdapter(WireMessage).validate_json(body, strict=True)
+
+
+def encode_frame(value: object) -> bytes:
+    """Local IPC has no message boundaries, so prefix its bounded payload."""
+    body = _encode_payload(value)
+    return struct.pack("!I", len(body)) + body
 
 
 def parse_identity(payload: object) -> ExecutorIdentity:

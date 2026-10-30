@@ -142,7 +142,7 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
             )
             await asyncio.wait_for(heartbeat, 1)
             assert endpoint.clock_sample is not None
-            assert writer.write.called
+            writer.send.assert_awaited()
             assert not release.is_set() and not accepting.done()
             accepting.cancel()
             await asyncio.sleep(0)

@@ -121,7 +121,7 @@ def test_each_native_start_reads_database_snapshot_and_replay_keeps_command(
     from planner.executor.contracts import JsonObject, WireMessage, WireMessageKind
     from planner.executor.remote import RemoteBackendChild
     from planner.executor.vps import ExecutorEndpoint
-    from planner.executor.wire import encode_frame
+    from planner.executor.wire import encode_message
     from planner.managed_skills import read_all_skill_sources, write_skill_source
     from planner.tickets import data
 
@@ -169,14 +169,14 @@ def test_each_native_start_reads_database_snapshot_and_replay_keeps_command(
             next(row.source_text for row in snapshot.sources if row.skill_name == "panels")
             == first_text
         )
-        frame = encode_frame(
+        frame = encode_message(
             WireMessage(
                 WireMessageKind.command,
                 first.command_id,
                 cast(JsonObject, TypeAdapter(ChildCommand).dump_python(first, mode="json")),
             )
         )
-        assert len(frame) - 4 < MAX_ENVELOPE_BYTES
+        assert len(frame) < MAX_ENVELOPE_BYTES
         assert len(snapshot.sources) == len(read_all_skill_sources(tmp_db))
         second_text = first_text + "Later canonical rows.\n"
         write_skill_source(tmp_db, "panels", second_text, now=3)

@@ -48,7 +48,7 @@ def run_application_process() -> None:
         server_config = uvicorn.Config(
             app,
             fd=int(listener_fd),
-            ws_max_size=MAX_ENVELOPE_BYTES + 4,
+            ws_max_size=MAX_ENVELOPE_BYTES,
             ws_max_queue=1,
             ws_per_message_deflate=False,
         )
@@ -57,7 +57,7 @@ def run_application_process() -> None:
             app,
             host=HOST,
             port=config.port,
-            ws_max_size=MAX_ENVELOPE_BYTES + 4,
+            ws_max_size=MAX_ENVELOPE_BYTES,
             ws_max_queue=1,
             ws_per_message_deflate=False,
         )

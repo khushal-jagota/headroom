@@ -396,6 +396,7 @@ and idle deadlines live in `src/planner/previews/configuration.py`.
 
 The native launcher requires the application revision, an HTTPS app origin, and a logical executor ID.
 The Mac uses one WebSocket for commands and receipts, and HTTP for files.
+Control messages are bounded JSON, one per binary WebSocket message. Only the local Unix-socket IPC adds a length prefix, because it has no message boundaries.
 No open browser, SSH login, relay process, or SFTP subsystem participates.
 
 ```sh

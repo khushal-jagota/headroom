@@ -11,6 +11,8 @@ from pathlib import Path
 from threading import Barrier
 from typing import TYPE_CHECKING, Any
 
+from tests.support.executor_control import MessageReader
+
 if TYPE_CHECKING:
     from planner.executor.vps import ExecutorEndpoint
 
@@ -479,15 +481,15 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
     from planner.executor.mac import as_object
     from planner.executor.transfers import GenerationTransfers
     from planner.executor.vps import ExecutorEndpoint
-    from planner.executor.wire import encode_frame
+    from planner.executor.wire import encode_message
 
     async def run() -> None:
         endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
         endpoint.store = store
         identity = replace(IDENTITY, executor_incarnation=str(uuid4()))
-        reader = asyncio.StreamReader()
+        reader = MessageReader()
         reader.feed_data(
-            encode_frame(
+            encode_message(
                 WireMessage(
                     WireMessageKind.hello,
                     "hello",
@@ -505,13 +507,13 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
         root = tempfile.TemporaryDirectory(dir=tmp_path)
         root_path = Path(root.name)
 
-        async def setup_generation() -> None:
+        async def setup_generation(*_: object) -> None:
             endpoint._transports[identity] = cast(GenerationTransfers, service)
             endpoint._transport_roots[identity] = root
             endpoint._upload_transfers[(identity, "publication")] = "token"
 
         writer = Mock()
-        writer.drain = AsyncMock(side_effect=setup_generation)
+        writer.send = AsyncMock(side_effect=setup_generation)
         monkeypatch.setattr(endpoint, "_measure_clock", AsyncMock())
         try:
             with pytest.raises(OSError, match="service cleanup failed"):
@@ -1187,7 +1189,7 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
         endpoint.identity = identity
         endpoint.ready = True
         endpoint.writer = Mock()
-        endpoint.writer.drain = AsyncMock()
+        endpoint.writer.send = AsyncMock()
         endpoint.store.begin_connection(identity, 1)
         monkeypatch.setattr(endpoint, "_send", AsyncMock())
         commands: list[ChildCommand] = []
@@ -1478,7 +1480,7 @@ def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
         release.set()
         await task
         writer.close.assert_not_called()
-        assert writer.write.call_count == 2
+        assert writer.send.call_count == 2
 
     asyncio.run(exercise())
 
@@ -1507,7 +1509,7 @@ def test_superseded_ingress_cannot_reach_handler_or_close_replacement(
         calls = 0
         frame = WireMessage(WireMessageKind.error, "superseded", {})
 
-        async def read(reader: Any) -> WireMessage:
+        async def read() -> WireMessage:
             nonlocal calls
             calls += 1
             if calls == 1:
@@ -1515,8 +1517,8 @@ def test_superseded_ingress_cannot_reach_handler_or_close_replacement(
             endpoint.writer = replacement
             return frame
 
-        monkeypatch.setattr(vps, "read_frame", read)
-        await endpoint._session(Mock(), original)
+        original.receive = AsyncMock(side_effect=read)
+        await endpoint._session(original, original)
         endpoint._handle.assert_not_called()
         replacement.close.assert_not_called()
         original.close.assert_called_once_with()
@@ -1601,11 +1603,10 @@ def historical_inventory_case(
 
 
 def captured_inventory_frames(writer: Any) -> list[WireMessage]:
-    from pydantic import TypeAdapter
 
     return [
-        TypeAdapter(WireMessage).validate_json(call.args[0][4:], strict=True)
-        for call in writer.write.call_args_list
+        call.args[0]
+        for call in writer.send.call_args_list
     ]
 
 
@@ -1831,11 +1832,11 @@ def test_historical_inventory_stops_stale_handlers_without_touching_replacement_
         else:
             if phase != "response":
                 await submit_inventory(endpoint, writer, identity, outcome)
-                writer.write.reset_mock()
+                writer.send.reset_mock()
             if phase in ("lock", "response"):
                 await endpoint._send_lock.acquire()
             else:
-                writer.drain.side_effect = pause
+                writer.send.side_effect = pause
             task = asyncio.create_task(
                 submit_inventory(
                     endpoint, writer, identity, *((outcome,) if phase == "response" else ())
@@ -1870,7 +1871,7 @@ def test_historical_inventory_stops_stale_handlers_without_touching_replacement_
         await task
         assert endpoint._retained_inventory == {marker.command_id: marker}
         assert endpoint._inventory == {CHILD.child_id: marker_child}
-        next_writer.write.assert_not_called()
+        next_writer.send.assert_not_called()
         frames = captured_inventory_frames(writer)
         assert len(frames) == (1 if phase == "drain" else 0)
         if frames:

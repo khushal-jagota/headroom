@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-import struct
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,10 +27,10 @@ from planner.executor.configuration import (
     TRANSFER_CHUNK_BYTES,
     WS_HEARTBEAT_SECONDS,
 )
-from planner.executor.contracts import ExecutorIdentity, FileTransfer, WebSocketPeer
+from planner.executor.contracts import ExecutorIdentity, FileTransfer, WebSocketPeer, WireMessage
 from planner.executor.files import regular_descriptor
 from planner.executor.transfers import settled_io
-from planner.executor.wire import ProtocolRefused
+from planner.executor.wire import ProtocolRefused, decode_message, encode_message
 
 
 def validate_server_url(value: str) -> str:
@@ -138,38 +137,22 @@ class ClientWebSocketPeer:
 
 
 class ControlWebSocket:
-    """One complete length-prefixed frame per binary message, with no input queue."""
+    """One bounded, validated control message per binary WebSocket message."""
 
     def __init__(self, peer: WebSocketPeer) -> None:
         self.peer = peer
-        self._incoming = b""
-        self._outgoing: bytes | None = None
         self._closing: asyncio.Task[None] | None = None
 
-    async def readexactly(self, n: int) -> bytes:
-        if not self._incoming:
-            frame = await self.peer.receive_bytes(MAX_ENVELOPE_BYTES + 4)
-            if not frame:
-                raise asyncio.IncompleteReadError(b"", n)
-            if len(frame) < 4 or struct.unpack("!I", frame[:4])[0] != len(frame) - 4:
-                raise ProtocolRefused("WebSocket message must contain exactly one frame")
-            if not 0 < len(frame) - 4 <= MAX_ENVELOPE_BYTES:
-                raise ProtocolRefused("invalid frame length")
-            self._incoming = frame
-        if n > len(self._incoming):
-            raise ProtocolRefused("frame boundary mismatch")
-        result, self._incoming = self._incoming[:n], self._incoming[n:]
-        return result
+    async def receive(self) -> WireMessage:
+        body = await self.peer.receive_bytes(MAX_ENVELOPE_BYTES)
+        if not body:
+            raise ConnectionError("executor WebSocket closed")
+        return decode_message(body)
 
-    def write(self, data: bytes) -> None:
-        if self.is_closing() or self._outgoing is not None:
-            raise ConnectionError("executor writer closed or concurrent write")
-        self._outgoing = data
-
-    async def drain(self) -> None:
-        data, self._outgoing = self._outgoing, None
-        if data is not None:
-            await self.peer.send_bytes(data)
+    async def send(self, message: WireMessage) -> None:
+        if self.is_closing():
+            raise ConnectionError("executor WebSocket closed")
+        await self.peer.send_bytes(encode_message(message))
 
     def is_closing(self) -> bool:
         return self._closing is not None or self.peer.closed

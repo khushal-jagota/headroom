@@ -32,7 +32,7 @@ from planner.executor.contracts import (
     WireMessageKind,
 )
 from planner.executor.skills import validate_skill_snapshot
-from planner.executor.wire import ProtocolRefused, encode_frame
+from planner.executor.wire import ProtocolRefused, encode_message
 
 type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
 type SendCommand = Callable[[ChildCommand], Awaitable[CommandOutcome]]
@@ -155,7 +155,7 @@ class RemoteBackendChild:
             await self.record_command(command)
         if operation is ChildOperation.start:
             try:
-                encode_frame(
+                encode_message(
                     WireMessage(
                         WireMessageKind.command,
                         command.command_id,

@@ -65,9 +65,9 @@ from planner.executor.contracts import (
     ChildReference,
     CommandDisposition,
     ConnectionState,
+    ControlMessageWriter,
     EnvelopeKind,
     ExecutorIdentity,
-    FrameWriter,
     IpcOperation,
     IpcRequest,
     JsonObject,
@@ -197,7 +197,7 @@ class CutReceiptEndpoint(ExecutorEndpoint):
         return await super()._accept_envelope(envelope, identity)
 
     async def _send_reconciliation(
-        self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
+        self, message: WireMessage, identity: ExecutorIdentity, writer: ControlMessageWriter
     ) -> bool:
         sent = await super()._send_reconciliation(message, identity, writer)
         if message.kind is WireMessageKind.file_slot and self.cut_input:
@@ -2493,7 +2493,6 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
     from planner.executor.app_transport import ControlWebSocket, ExecutorAppClient
     from planner.executor.codec import encode_value
     from planner.executor.contracts import ExecutorHealth, ExecutorIdentity
-    from planner.executor.wire import write_frame
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -2505,7 +2504,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
             client = ExecutorAppClient(
                 harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
             )
-            ws_context = client.websocket("/api/executor/connect", 1024 * 1024 + 4)
+            ws_context = client.websocket("/api/executor/connect", 1024 * 1024)
             peer = await ws_context.__aenter__()
             stream = ControlWebSocket(peer)
             old = ExecutorHealth(
@@ -2518,7 +2517,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
             )
             payload = encode_value(old)
             assert isinstance(payload, dict)
-            await write_frame(stream, WireMessage(WireMessageKind.hello, "old_protocol", payload))
+            await stream.send(WireMessage(WireMessageKind.hello, "old_protocol", payload))
             assert await asyncio.wait_for(peer.receive_bytes(1024), 1) == b""
             await ws_context.__aexit__(None, None, None)
             await client.close()
@@ -2629,12 +2628,10 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
 def test_input_receipt_must_validate_before_command_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
-    from pydantic import TypeAdapter
 
     from planner.conversation.message_content import MessageFile
     from planner.executor.codec import encode_value
     from planner.executor.contracts import ChildCommand, ChildOperation, RemoteInputTransferFailed
-    from planner.executor.wire import encode_frame
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -2644,11 +2641,10 @@ def test_input_receipt_must_validate_before_command_dispatch(
             rejected = asyncio.Event()
             commands = 0
             assert harness.mac._writer is not None
-            write = harness.mac._writer.write
+            send = harness.mac._writer.send
             emit_command = harness.endpoint._emit_command
 
-            def corrupt_ack(data: bytes) -> None:
-                message = TypeAdapter(WireMessage).validate_json(data[4:])
+            async def corrupt_ack(message: WireMessage) -> None:
                 if reject and message.kind is WireMessageKind.file_accepted:
                     payload = {} if invalid_ack == "empty" else dict(message.payload)
                     if invalid_ack == "mismatched":
@@ -2661,7 +2657,7 @@ def test_input_receipt_must_validate_before_command_dispatch(
                         payload,
                     )
                     rejected.set()
-                write(encode_frame(message))
+                await send(message)
 
             async def count_commands(command: ChildCommand) -> bool:
                 nonlocal commands
@@ -2670,7 +2666,7 @@ def test_input_receipt_must_validate_before_command_dispatch(
                     commands += 1
                 return emitted
 
-            monkeypatch.setattr(harness.mac._writer, "write", corrupt_ack)
+            monkeypatch.setattr(harness.mac._writer, "send", corrupt_ack)
             monkeypatch.setattr(harness.endpoint, "_emit_command", count_commands)
             contents = bytes(range(256)) * 3000
             kept = await harness.endpoint.runtime.message_files.keep(
