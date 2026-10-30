@@ -97,4 +97,3 @@ _SCROLL_ARM = """args=>{""" + _SCROLL_READ + """
     cleanup(){e.removeEventListener(args.kind==='wheel'?'wheel':'keydown',input,true);e.removeEventListener('scroll',scroll);e.removeEventListener('scrollend',end);}
   };
 }"""
-
