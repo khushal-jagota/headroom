@@ -320,9 +320,9 @@ async def send_message(
             async with conversation_start.conversation_link_lock(f"agent:{item.manager_agent_key}"):
                 current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
                 resolved = (
-                    conversation_start.manager_resolve(item)
+                    conversation_start.manager_resolve(conn, item)
                     if runs_under is NO_CONVERSATION_START_OVERRIDES
-                    else conversation_start.manager_resolve(item, runs_under)
+                    else conversation_start.manager_resolve(conn, item, runs_under)
                 )
                 delivered = await conversation_start.send_to_agent_conversation(
                     conversations,

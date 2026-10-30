@@ -390,6 +390,7 @@ class _Harness:
         self.store = ConversationStore(str(db_path), integer_now=lambda: int(self.clock.now))
         self.backends: dict[str, _FakeBackend] = {}
         self.spawned_conversation_ids: list[str] = []
+        self.resolved_starts: list[ResolvedConversationStart] = []
         self.live_tail = ConversationLiveTail()
         self.message_files = ConversationMessageFiles(str(db_path))
         self.system = SqliteProcessConversationSystem(
@@ -414,6 +415,7 @@ class _Harness:
     ) -> _FakeBackendChild:
         backend = self.backend(resolved_start.conversation_id)
         self.spawned_conversation_ids.append(resolved_start.conversation_id)
+        self.resolved_starts.append(resolved_start)
         if backend.spawn_fails:
             raise BackendSpawnFailed(resolved_start.conversation_id)
         return _FakeBackendChild(backend, event_sink)
@@ -653,6 +655,7 @@ async def _start(
     model: str = "a-model",
     reasoning_effort: str | None = None,
     role_materials: ConversationRoleMaterials | None = None,
+    workspace_folder: Path = Path("/tmp/workspace"),
 ) -> None:
     await harness.system.start_conversation(
         ConversationStartRequest(
@@ -661,7 +664,7 @@ async def _start(
             model=model,
             reasoning_effort=reasoning_effort,
             role_materials=role_materials,
-            workspace_folder=Path("/tmp/workspace"),
+            workspace_folder=workspace_folder,
         )
     )
 
@@ -1454,7 +1457,9 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
 
     async def exercise() -> None:
         qualified_model = "openai-codex:gpt-5.6-sol"
-        await _start(harness, "c", model=qualified_model)
+        original_workspace = tmp_path / "original-workspace"
+        original_workspace.mkdir()
+        await _start(harness, "c", model=qualified_model, workspace_folder=original_workspace)
         await harness.system.send(
             "c",
             text_message_content("before the restart"),
@@ -1484,15 +1489,21 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
                 assert reads == []
                 assert restarted.system._conversations == {}
 
-            fate = await restarted.system.send(
-                "c",
-                text_message_content("after the restart"),
-                sender_label="owner",
-            )
+            from planner.runtime.workspaces import register_workspace_root
+
+            changed_default = tmp_path / "changed-default"
+            changed_default.mkdir()
+            with register_workspace_root(str(restarted.db_path), changed_default):
+                fate = await restarted.system.send(
+                    "c",
+                    text_message_content("after the restart"),
+                    sender_label="owner",
+                )
 
             assert fate == PromptDeliveryStarted()
             assert restarted.backend("c").started_from_cursor == VENDOR_SESSION_CURSOR
             assert restarted.backend("c").model == qualified_model
+            assert restarted.resolved_starts[-1].workspace_folder == original_workspace
             assert await restarted.system.is_running("c") is True
             assert [str(event.kind) for event in await restarted.events("c")] == [
                 "prompt",

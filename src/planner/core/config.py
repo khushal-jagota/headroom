@@ -55,6 +55,7 @@ class Config:
     app_sha: str | None = None
     credential_key_path: str = "data/credential-secrets/key"
     measure_source_timeout_seconds: int = 30
+    workspace_root: Path | None = None
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -116,6 +117,26 @@ def _optional_str_value(
         return None
     stripped = str(value).strip()
     return stripped or None
+
+
+def _workspace_root_value(file_cfg: Mapping[str, object], env: Mapping[str, str]) -> Path | None:
+    value = env.get("PLAN_WORKSPACE_ROOT", file_cfg.get("workspace_root"))
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise PlannerError(ErrorCode.validation, f"invalid workspace_root: {value!r}")
+    try:
+        root = Path(value).expanduser()
+        if not root.is_absolute():
+            raise ValueError("the path must be absolute")
+        root = root.resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("the path must be an existing directory")
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise PlannerError(
+            ErrorCode.validation, f"invalid workspace_root {value!r}: {exc}"
+        ) from exc
+    return root
 
 
 def _int_value(
@@ -255,6 +276,7 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     )
     return Config(
         db_path=db_path,
+        workspace_root=_workspace_root_value(cfg, env),
         credential_key_path=credential_key_path,
         measure_source_timeout_seconds=_positive_int_value(
             cfg, env, "measure_source_timeout_seconds", "PLAN_MEASURE_SOURCE_TIMEOUT_SECONDS", 30

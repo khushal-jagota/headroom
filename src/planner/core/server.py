@@ -76,8 +76,10 @@ from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
+from planner.runtime.workspaces import register_workspace_root
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
 from planner.server_lifecycle.runtime import application_runtime
+from planner.skill_sources import provision_workspace_skills
 from planner.skill_versions import (
     reconcile_managed_skill_versions,
     reconcile_provisional_worker_step_bindings,
@@ -222,94 +224,101 @@ def create_app(
         remembered_codex_login_rejection = DurableCodexLoginRejection(
             config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
         )
-        async with application_runtime(
-            db_path=config.db_path,
-            db_busy_timeout_ms=config.db_busy_timeout_ms,
-            sse_heartbeat_ms=config.sse_heartbeat_ms,
-            backend_child_factories=(
-                backend_child_factories_for_test
-                if backend_child_factories_for_test is not None
-                else production_backend_child_factories(
-                    panels_server_url=f"http://{HOST}:{config.port}",
-                    remembered_codex_login_rejection=remembered_codex_login_rejection,
-                )
-            ),
-            remembered_codex_login_rejection=remembered_codex_login_rejection,
-            navigation_delivery=navigation_delivery,
-            shutdown_dependents=shutdown_dependents,
-        ) as conversation:
-            audit_conn = conn_factory()
-            try:
-                tickets_data.audit_ticket_registry_integrity(audit_conn)
-                reconcile_managed_skill_versions(audit_conn)
-                reconcile_provisional_worker_step_bindings(audit_conn)
-            finally:
-                audit_conn.close()
+        with register_workspace_root(config.db_path, config.workspace_root):
+            async with application_runtime(
+                db_path=config.db_path,
+                db_busy_timeout_ms=config.db_busy_timeout_ms,
+                sse_heartbeat_ms=config.sse_heartbeat_ms,
+                backend_child_factories=(
+                    backend_child_factories_for_test
+                    if backend_child_factories_for_test is not None
+                    else production_backend_child_factories(
+                        panels_server_url=f"http://{HOST}:{config.port}",
+                        remembered_codex_login_rejection=remembered_codex_login_rejection,
+                    )
+                ),
+                remembered_codex_login_rejection=remembered_codex_login_rejection,
+                navigation_delivery=navigation_delivery,
+                shutdown_dependents=shutdown_dependents,
+            ) as conversation:
+                if config.workspace_root is not None:
+                    provision_workspace_skills(
+                        config.workspace_root, Path(config.db_path).resolve().parent
+                    )
+                audit_conn = conn_factory()
+                try:
+                    tickets_data.audit_ticket_registry_integrity(audit_conn)
+                    reconcile_managed_skill_versions(audit_conn)
+                    reconcile_provisional_worker_step_bindings(audit_conn)
+                finally:
+                    audit_conn.close()
 
-            from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
-
-            recovery_task = asyncio.create_task(
-                run_automatic_recovery(conversation.system, conversation.store)
-            )
-            app.state.conversation = conversation
-            # A test that drives workers wants a conversation system it can hold still, so it
-            # passes one in. Nothing else does: production always runs the real one.
-            app.state.conversation_system = (
-                conversation.system
-                if conversation_system_for_test is None
-                else conversation_system_for_test
-            )
-            if not config.test_mode:
-                from planner.core.loops import prepare_background_loops
-
-                loops = prepare_background_loops(
-                    config,
-                    clock,
-                    conversation_system=app.state.conversation_system,
-                    asyncio_loop=asyncio.get_running_loop(),
+                from planner.conversation.deploy_interruptions.coordinator import (
+                    run_automatic_recovery,
                 )
 
-            elif source_runtime_for_test is not None:
-                # Explicit test-code composition exercises the real source clock,
-                # admission, and dispatcher without starting employee/model loops.
-                from planner.core.loops import BackgroundLoops
-                from planner.measure_sources.scheduling import SourceScheduleParticipant
-                from planner.scheduled_tickets.runtime import ScheduledTicketLoop
+                recovery_task = asyncio.create_task(
+                    run_automatic_recovery(conversation.system, conversation.store)
+                )
+                app.state.conversation = conversation
+                # A test that drives workers wants a conversation system it can hold still, so it
+                # passes one in. Nothing else does: production always runs the real one.
+                app.state.conversation_system = (
+                    conversation.system
+                    if conversation_system_for_test is None
+                    else conversation_system_for_test
+                )
+                if not config.test_mode:
+                    from planner.core.loops import prepare_background_loops
 
-                loops = BackgroundLoops(
-                    shutdown_grace_seconds=float(config.shutdown_grace_seconds),
-                    scheduled_ticket_loop=ScheduledTicketLoop(
-                        config.db_path,
+                    loops = prepare_background_loops(
+                        config,
                         clock,
-                        busy_timeout_ms=config.db_busy_timeout_ms,
-                        participants=(
-                            SourceScheduleParticipant(config, clock, source_runtime_for_test),
+                        conversation_system=app.state.conversation_system,
+                        asyncio_loop=asyncio.get_running_loop(),
+                    )
+
+                elif source_runtime_for_test is not None:
+                    # Explicit test-code composition exercises the real source clock,
+                    # admission, and dispatcher without starting employee/model loops.
+                    from planner.core.loops import BackgroundLoops
+                    from planner.measure_sources.scheduling import SourceScheduleParticipant
+                    from planner.scheduled_tickets.runtime import ScheduledTicketLoop
+
+                    loops = BackgroundLoops(
+                        shutdown_grace_seconds=float(config.shutdown_grace_seconds),
+                        scheduled_ticket_loop=ScheduledTicketLoop(
+                            config.db_path,
+                            clock,
+                            busy_timeout_ms=config.db_busy_timeout_ms,
+                            participants=(
+                                SourceScheduleParticipant(config, clock, source_runtime_for_test),
+                            ),
                         ),
-                    ),
+                    )
+
+                from planner.environments.vps_metrics.collectors import LinuxCollector
+                from planner.environments.vps_metrics.data import Store
+
+                metrics_config = load_metrics_config()
+                metrics_path = store_path(config.db_path)
+                metrics = MetricsRuntime(
+                    metrics_path,
+                    Store(metrics_path, metrics_config),
+                    None if config.test_mode else LinuxCollector(metrics_config),
+                    metrics_config,
                 )
-
-            from planner.environments.vps_metrics.collectors import LinuxCollector
-            from planner.environments.vps_metrics.data import Store
-
-            metrics_config = load_metrics_config()
-            metrics_path = store_path(config.db_path)
-            metrics = MetricsRuntime(
-                metrics_path,
-                Store(metrics_path, metrics_config),
-                None if config.test_mode else LinuxCollector(metrics_config),
-                metrics_config,
-            )
-            app.state.vps_metrics = metrics
-            metrics.start()
-            await navigation_delivery.start()
-            await scoped_navigation.start()
-            await conversation.system.start_idle_child_janitor()
-            lifecycle_observer = asyncio.create_task(
-                observe_path_changes(deployment_lifecycle_path, change_signal.emit)
-            )
-            if loops is not None:
-                loops.start(config.tick_seconds)
-            yield
+                app.state.vps_metrics = metrics
+                metrics.start()
+                await navigation_delivery.start()
+                await scoped_navigation.start()
+                await conversation.system.start_idle_child_janitor()
+                lifecycle_observer = asyncio.create_task(
+                    observe_path_changes(deployment_lifecycle_path, change_signal.emit)
+                )
+                if loops is not None:
+                    loops.start(config.tick_seconds)
+                yield
 
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)

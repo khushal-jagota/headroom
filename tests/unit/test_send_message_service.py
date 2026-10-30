@@ -218,7 +218,7 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
         lambda _conn, key: f"c_{key}",
     )
     monkeypatch.setattr(
-        conversation_start, "manager_resolve", lambda _item: object()
+        conversation_start, "manager_resolve", lambda _conn, _item: object()
     )
 
     async def send_to_agent(

@@ -19,6 +19,30 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## The workspace for an agent
+
+Each server can select a default workspace through `workspace_root` in its configuration
+or `PLAN_WORKSPACE_ROOT`. The environment value takes precedence. The path must name an
+existing absolute directory after `~` expansion. An absent value or YAML null keeps the
+usual default: `~/projects` when that directory exists, otherwise the application root.
+Invalid explicit values stop startup.
+
+An explicit conversation workspace takes precedence. A Worker's usable Project directory
+also takes precedence over the server default. Chief, goals, Managers, and Workers without
+a usable Project directory share the default for their server's database.
+
+A conversation keeps its original workspace through resume and server restart. A new
+configuration affects new conversations. Reset the agent's conversation to use the new
+workspace on its next message. The retained history and artifacts remain available.
+
+For an explicit workspace, startup exposes this database's managed skills through
+`.agents/skills`. Codex discovers those skills from its workspace. Existing backend skill
+homes keep their current behavior. See [deployment](deployment.md#an-isolated-server-with-an-explicit-workspace)
+for setup and path conflicts.
+
+Code paths: `core/config.py`, `runtime/workspaces.py`, `runtime/conversation_start.py`,
+`goals/conversation.py`, `skill_sources.py`, `core/server.py`.
+
 ## Diagnostic history expiry
 
 Diagnostic expiry remains an explicit offline operator action. Normal startup

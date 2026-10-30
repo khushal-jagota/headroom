@@ -47,7 +47,11 @@ def resolve_goal(
             reasoning_effort=goal.employee_launch_reasoning_effort,
         ),
         overrides=overrides,
-        workspace_folder=workspace_folder or conversation_start._default_workspace_folder(),
+        workspace_folder=(
+            conversation_start._default_workspace_folder(conn)
+            if workspace_folder is None
+            else workspace_folder
+        ),
     )
 
 

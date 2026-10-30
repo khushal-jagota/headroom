@@ -3,6 +3,7 @@
 # PLAN_FAKE_NOW) are environment-only and deliberately absent from this file.
 
 db_path: data/planning.db          # SQLite database location (§13)
+workspace_root: null              # optional existing absolute default workspace (PLAN_WORKSPACE_ROOT)
 port: 8767                         # server port; bind host is fixed at 127.0.0.1 (§2)
 tick_seconds: 60                   # background schedule/readiness poll interval
 dispatch_enabled: true             # single-owner schedule and readiness loop startup switch
