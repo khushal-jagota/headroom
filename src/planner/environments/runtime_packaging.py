@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from planner.environments.runtime_contracts import (
@@ -23,6 +24,7 @@ from planner.environments.runtime_contracts import (
     canonical_json_bytes,
     runtime_bytes_digest,
 )
+from planner.environments.runtime_elf import ElfObject, read_dynamic, resolve_provider
 
 
 def _run(*arguments: str) -> str:
@@ -35,17 +37,71 @@ def _elf(path: Path) -> bool:
 
 
 def _dynamic(path: Path) -> tuple[list[str], list[str], str | None, bool]:
-    output = _run("readelf", "-dW", str(path))
-    needed = re.findall(r"\(NEEDED\).*?\[(.*?)\]", output)
-    paths = re.findall(r"\((?:RPATH|RUNPATH)\).*?\[(.*?)\]", output)
-    header = _run("readelf", "-lW", str(path))
-    interpreter = re.search(r"Requesting program interpreter: (.*?)\]", header)
+    dynamic = read_dynamic(path)
+    paths = dynamic.runpath if dynamic.runpath is not None else dynamic.rpath
     return (
-        needed,
-        [part for entry in paths for part in entry.split(":") if part],
-        (interpreter.group(1) if interpreter else None),
-        "(RPATH)" in output and "(RUNPATH)" not in output,
+        list(dynamic.needed),
+        list(paths),
+        dynamic.interpreter,
+        bool(dynamic.rpath and dynamic.runpath is None),
     )
+
+
+def _tkinter_native(name: str) -> bool:
+    return re.fullmatch(r"_tkinter(?:\.cpython-[^.]+|\.abi3)?\.so", name) is not None
+
+
+def _exclude_tkinter(stdlib: Path, target_stdlib: Path) -> list[str]:
+    """Omit the unsupported Tk interface before native discovery, including stale copies."""
+    excluded = [
+        str(path.relative_to(stdlib)) for path in (stdlib / "tkinter").rglob("*") if path.is_file()
+    ]
+    excluded.extend(
+        str(path.relative_to(stdlib))
+        for path in (stdlib / "lib-dynload").glob("*")
+        if _tkinter_native(path.name)
+    )
+    package = target_stdlib / "tkinter"
+    if package.is_symlink():
+        package.unlink()
+    elif package.exists():
+        shutil.rmtree(package)
+    for path in (target_stdlib / "lib-dynload").glob("*"):
+        if _tkinter_native(path.name):
+            path.unlink()
+    return sorted(excluded)
+
+
+def _elf_executable(header: str, interpreter: str | None) -> bool:
+    return bool(
+        interpreter
+        or re.search(r"Type:\s+EXEC\b|DYN \(Position-Independent Executable file\)", header)
+    )
+
+
+def _assert_no_tkinter_payload(app_root: Path) -> None:
+    for path in app_root.rglob("*"):
+        if not (path.is_file() or path.is_symlink()):
+            continue
+        if _tkinter_native(path.name) or re.fullmatch(
+            r"lib(?:tcl|tk)[^/]*\.so(?:\.\d+)*", path.name
+        ):
+            raise RuntimeContractError(f"excluded Tcl/Tk native file in payload: {path}")
+
+
+def _stdlib_ignore(stdlib: Path) -> Callable[[str, list[str]], set[str]]:
+    ordinary = shutil.ignore_patterns("site-packages", "dist-packages", "__pycache__")
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        ignored = ordinary(directory, names)
+        relative = Path(directory).relative_to(stdlib)
+        if relative == Path(".") and "tkinter" in names:
+            ignored.add("tkinter")
+        if relative == Path("lib-dynload"):
+            ignored.update(name for name in names if _tkinter_native(name))
+        return ignored
+
+    return ignore
 
 
 def _relative_paths(paths: list[str], path: Path, library_root: Path) -> list[str]:
@@ -224,12 +280,13 @@ def complete_private_runtime(app_root: Path) -> RuntimeContract:
         raise RuntimeContractError("archive packaging requires CPython 3.12")
     stdlib = Path(config["stdlib"])
     target_stdlib = prefix / "lib/python3.12"
+    excluded_stdlib_files = _exclude_tkinter(stdlib, target_stdlib)
     shutil.copytree(
         stdlib,
         target_stdlib,
         dirs_exist_ok=True,
         symlinks=False,
-        ignore=shutil.ignore_patterns("site-packages", "dist-packages", "__pycache__"),
+        ignore=_stdlib_ignore(stdlib),
     )
     library_root = prefix / "lib"
     library_root.mkdir(parents=True, exist_ok=True)
@@ -258,22 +315,68 @@ def complete_private_runtime(app_root: Path) -> RuntimeContract:
         if path.is_file() and _elf(path):
             origins[str(path.relative_to(app_root))] = config["executable"]
     _rewrite_console_scripts(prefix)
+    _assert_no_tkinter_payload(app_root)
     cache = _host_cache()
-    pending = [
-        path
-        for path in app_root.rglob("*")
-        if path.is_file() and not path.is_symlink() and _elf(path)
-    ]
-    visited: set[Path] = set()
-    inventory: list[dict[str, object]] = []
-    while pending:
-        path = pending.pop()
-        if path in visited:
+    # Snapshot all source metadata before any patchelf call. Source paths also
+    # own ORIGIN expansions after their bytes move into the archive.
+    source_objects: dict[Path, ElfObject] = {}
+
+    def source_object(source: Path) -> ElfObject:
+        source = source.resolve()
+        if source not in source_objects:
+            source_objects[source] = ElfObject(source, read_dynamic(source))
+        return source_objects[source]
+
+    executable_object = source_object(Path(config["executable"]))
+    python_ancestors: tuple[ElfObject, ...] = (executable_object,)
+    for name in executable_object.dynamic.needed:
+        if re.fullmatch(r"libpython3\.12\.so(?:\.\d+)*", name):
+            python_ancestors = (
+                source_object(resolve_provider(name, executable_object, (), cache)),
+                executable_object,
+            )
+    pending: list[tuple[Path, ElfObject, tuple[ElfObject, ...]]] = []
+    orphan_objects: list[tuple[Path, ElfObject, tuple[ElfObject, ...]]] = []
+    for path in sorted(app_root.rglob("*")):
+        if not path.is_file() or path.is_symlink() or not _elf(path):
             continue
-        visited.add(path)
         relative = str(path.relative_to(app_root))
-        source = Path(origins.get(relative, str(path)))
-        needed, paths, interpreter, preserve_rpath = _dynamic(path)
+        obj = source_object(Path(origins.get(relative, str(path))))
+        header = _run("readelf", "-hW", str(path))
+        executable = _elf_executable(header, obj.dynamic.interpreter)
+        python_extension = path.is_relative_to(target_stdlib) and not executable
+        context_ancestors = python_ancestors if python_extension else ()
+        # Discover real load chains before inspecting unreferenced libraries.
+        # A dependency library is not an independently loaded entrypoint.
+        if (
+            executable
+            or path.suffix == ".node"
+            or (python_extension and re.search(r"\.(?:cpython-312-[^.]+|abi3)\.so$", path.name))
+        ):
+            pending.append((path, obj, context_ancestors))
+        else:
+            orphan_objects.append((path, obj, context_ancestors))
+    visited: set[tuple[Path, tuple[Path, ...]]] = set()
+    inventory: list[dict[str, object]] = []
+    recorded_providers: dict[Path, dict[str, str]] = {}
+    rewrites: dict[Path, tuple[list[str], bool]] = {}
+    while pending or orphan_objects:
+        if not pending:
+            orphan = orphan_objects.pop()
+            if orphan[0] in recorded_providers:
+                continue
+            pending.append(orphan)
+        path, obj, ancestors = pending.pop()
+        context = (path, tuple(owner.path for owner in ancestors))
+        if context in visited:
+            continue
+        visited.add(context)
+        relative = str(path.relative_to(app_root))
+        dynamic = obj.dynamic
+        needed = list(dynamic.needed)
+        paths = list(dynamic.runpath if dynamic.runpath is not None else dynamic.rpath)
+        interpreter = dynamic.interpreter
+        preserve_rpath = bool(dynamic.rpath and dynamic.runpath is None)
         header = _run("readelf", "-hW", str(path))
         if "Advanced Micro Devices X86-64" not in header:
             raise RuntimeContractError(f"unknown ELF architecture: {relative}")
@@ -289,7 +392,13 @@ def complete_private_runtime(app_root: Path) -> RuntimeContract:
                 if name in GLIBC_LIBRARIES:
                     providers[name] = "host:" + name
                     continue
-                provider = _provider(name, source, paths, cache)
+                if re.match(r"lib(?:tcl|tk)(?:[0-9.-])", name):
+                    raise RuntimeContractError(
+                        f"retained native dependency requires excluded Tcl/Tk: {relative}: {name}"
+                    )
+                provider_source = resolve_provider(name, obj, ancestors, cache)
+                provider_object = source_object(provider_source)
+                provider = provider_source
                 try:
                     provider.relative_to(app_root)
                 except ValueError:
@@ -304,23 +413,23 @@ def complete_private_runtime(app_root: Path) -> RuntimeContract:
                     if not destination.exists():
                         shutil.copy2(provider, destination)
                         origins[str(destination.relative_to(app_root))] = str(provider)
-                        pending.append(destination)
                     provider = destination
                 providers[name] = str(provider.relative_to(app_root))
+                if provider_object.path not in (obj.path, *(owner.path for owner in ancestors)):
+                    pending.append((provider, provider_object, (obj, *ancestors)))
             requires_private_search = any(name not in GLIBC_LIBRARIES for name in needed)
             has_builder_search = any(
                 not entry.startswith(("$ORIGIN", "${ORIGIN}")) for entry in paths
             )
-            # Avoid rewriting glibc-only standalone programs. Some carry
-            # embedded application payloads beyond their ordinary ELF sections.
             if requires_private_search or has_builder_search:
-                _run(
-                    "patchelf",
-                    *(["--force-rpath"] if preserve_rpath else []),
-                    "--set-rpath",
-                    ":".join(_relative_paths(paths, path, library_root)),
-                    str(path),
+                rewrites[path] = (paths, preserve_rpath)
+        if path in recorded_providers:
+            if recorded_providers[path] != providers:
+                raise RuntimeContractError(
+                    f"conflicting loader contexts for native file: {relative}"
                 )
+            continue
+        recorded_providers[path] = providers
         versions = sorted(
             set(re.findall(r"\bGLIBC_(\d+\.\d+)\b", _run("readelf", "-VW", str(path))))
         )
@@ -341,6 +450,16 @@ def complete_private_runtime(app_root: Path) -> RuntimeContract:
                 sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
             )
         )
+    # Rewrite only after source discovery finishes, so processing order cannot
+    # replace original search rules with an already modified ancestor's tags.
+    for path, (paths, preserve_rpath) in rewrites.items():
+        _run(
+            "patchelf",
+            *(["--force-rpath"] if preserve_rpath else []),
+            "--set-rpath",
+            ":".join(_relative_paths(paths, path, library_root)),
+            str(path),
+        )
     for path in app_root.rglob("*"):
         if path.is_file() and not path.is_symlink():
             with path.open("rb") as stream:
@@ -355,6 +474,7 @@ def complete_private_runtime(app_root: Path) -> RuntimeContract:
                         sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
                     )
                 )
+    _assert_no_tkinter_payload(app_root)
     # Re-resolve from the final files with no host cache. This catches bad
     # relative paths and ensures every non-glibc edge stays within the archive.
     for item in inventory:
@@ -370,7 +490,10 @@ def complete_private_runtime(app_root: Path) -> RuntimeContract:
                 provider = _provider(name, path, paths, {})
                 if not provider.is_relative_to(app_root):
                     raise RuntimeContractError(f"native dependency escapes archive: {path}: {name}")
+                if provider != (app_root / recorded_providers[path][name]).resolve():
+                    raise RuntimeContractError(f"final native provider changed: {path}: {name}")
         item["loader_paths"] = paths
+        item["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     for relative, copied_file in copied_python_files.items():
         copied_file["payload_sha256"] = hashlib.sha256(
             (app_root / relative).read_bytes()
@@ -400,6 +523,10 @@ def complete_private_runtime(app_root: Path) -> RuntimeContract:
             native_files=sorted(inventory, key=lambda item: str(item["path"])),
             dynamic_load_policy=(
                 "ctypes, ICU, OpenSSL and native package operations require target execution proof"
+            ),
+            standard_library_exclusions=dict(
+                policy="tkinter package and CPython 3.12 _tkinter native extension are unsupported",
+                files=excluded_stdlib_files,
             ),
             execution_exclusions=[
                 "Windows assets",
