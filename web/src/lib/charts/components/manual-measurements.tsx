@@ -8,7 +8,7 @@ import { LineChart } from './line-chart-integrated';
 import { motionTokens } from '../lib/motion-tokens';
 import { SupportingMetric } from './supporting-metric';
 import { Range } from '../GoalChart';
-import { chartData, readChartPreference, selectedTarget, coverageLabel } from '../presentation';
+import { chartData, readChartPreference, selectedTarget, coverageLabel, readingSuffix } from '../presentation';
 import './manual-measurements.css';
 
 const blue = 'var(--accent-bright)', green = 'var(--accent-done)', red = 'var(--accent-error)';
@@ -23,13 +23,13 @@ const arcFor = (fraction: number) => {
 
 type InlineControl = { prepare(): Promise<boolean>; focus(): void };
 type InlineProps = {
-  value: number | undefined; state: ManualMeasureState | null; label: string; unit?: string; decimals?: number;
+  value: number | undefined; state: ManualMeasureState | null; label: string; suffix?: string; decimals?: number;
   onSave(value: number, basis: ManualMeasureState): Promise<ManualMeasureState>; onCancel(): Promise<ManualMeasureState | null>; pending: boolean; blocked: boolean; cumulative: boolean;
   focusToken?: number; center?: boolean; control: React.Ref<InlineControl>; recovery?: RequestReceipt<ManualWriteCommand>; onEdit(): void;
 };
 
 /** Native input stays over the exact approved rolling counter. Drafts never become accepted values. */
-function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onCancel, pending, blocked, cumulative, focusToken = 0, center = false, control, recovery, onEdit }: InlineProps) {
+function InlineValue({ value, state, label, suffix = '', decimals = 0, onSave, onCancel, pending, blocked, cumulative, focusToken = 0, center = false, control, recovery, onEdit }: InlineProps) {
   const format = (number: number | undefined) => number == null ? '' : String(number);
   const recovered = recovery?.command.operation === 'replace' ? recovery : undefined;
   const recoveredValue = recovery?.command.operation === 'replace' ? String(recovery.command.value) : format(value);
@@ -94,7 +94,7 @@ function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onC
           if (event.key === 'Enter') { event.preventDefault(); void commit(true).then(ok => { if (ok) input.current?.blur(); }).catch(cause => fail(manualErrorMessage(cause), true)); }
           else if (event.key === 'Escape') { event.preventDefault(); if (pending) return; cancel.current = true; void onCancel().then(next => { setText(format(next ? manualAcceptedValue(next, cumulative) : accepted.current.value)); basis.current = next ?? accepted.current.state; fail(''); input.current?.blur(); }).catch(cause => fail(manualErrorMessage(cause), true)); }
         }} />
-    </span>{unit && <span className="unit">{unit}</span>}</div>
+    </span>{suffix && <span className="unit">{suffix}</span>}</div>
     {error && <span id={id} className="error" role="alert">{error}{saveFailed && <button type="button" className="manual-retry" onClick={() => void commit(true)}>Retry</button>}</span>}
   </div>;
 }
@@ -225,17 +225,17 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   const maximum = Math.max(target ?? 0, 0, ...readings.map(item => item ?? 0)), span = maximum - minimum || 1;
   const selected = selectedDate ?? today, title = block.title ?? 'Reading';
   const numberText = (number: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 20 }).format(number);
-  const unit = block.unit ?? block.format?.suffix?.trim() ?? '';
+  const suffix = readingSuffix(block);
   const inline = <InlineValue control={control} value={current} state={state} onSave={replacement} cumulative={cumulative} onCancel={async () => {
     if (retryRequest.current) { const next = await refresh(); session.discard(); retryRequest.current = null; setError(''); return next; }
     return stateRef.current;
   }} recovery={recovery} onEdit={() => { if (session.current?.status === 'failed') { session.discard(); retryRequest.current = null; setError(''); } }} pending={pending} blocked={!!retryRequest.current && retryRequest.current.operation === 'increment'}
-    label={cumulative ? title : `${title} for ${selected ? dateLabel(selected) : 'selected date'}`} unit={reading ? unit : ''} decimals={block.format?.decimals ?? 0} center={cumulative} focusToken={focusToken} />;
+    label={cumulative ? title : `${title} for ${selected ? dateLabel(selected) : 'selected date'}`} suffix={reading ? suffix : ''} decimals={block.format?.decimals ?? 0} center={cumulative} focusToken={focusToken} />;
   const adds = <div className="add-buttons">{block.manual!.increments?.map((amount, index) => <button type="button" key={`${index}:${amount}`} disabled={!state} aria-busy={pending || undefined} onClick={() => void increment(amount)}>{amount > 0 ? '+' : ''}{amount}</button>)}</div>;
   const acceptedObservation = cumulative ? state?.latest_observation : state?.observation;
   const coverage = coverageLabel(acceptedObservation?.coverage_status ?? 'not_applicable');
-  const comparison = current !== undefined && coverage ? `${coverage}${target === undefined ? '' : ` · ${coverage === 'Partial reading' ? 'Partial difference' : 'Difference (coverage unavailable)'}: ${numberText(current - target)}${unit}`}` : current === undefined ? 'No reading' : target === undefined ? '' : reading
-    ? current >= target ? `${numberText(target)}${unit ? ` ${unit}` : ''} target reached` : `${(target - current).toFixed(block.format?.decimals ?? 0)}${unit ? ` ${unit}` : ''} to a ${numberText(target)}${unit ? ` ${unit}` : ''} ${(block.series?.[0]?.name ?? 'Reading').toLowerCase()}`
+  const comparison = current !== undefined && coverage ? `${coverage}${target === undefined ? '' : ` · ${coverage === 'Partial reading' ? 'Partial difference' : 'Difference (coverage unavailable)'}: ${numberText(current - target)}${suffix}`}` : current === undefined ? 'No reading' : target === undefined ? '' : reading
+    ? current >= target ? `${numberText(target)}${suffix} target reached` : `${(target - current).toFixed(block.format?.decimals ?? 0)}${suffix} to a ${numberText(target)}${suffix} ${(block.series?.[0]?.name ?? 'Reading').toLowerCase()}`
     : current < target ? `${numberText(target - current)} to daily target` : current === target ? 'Daily target reached' : `${numberText(current - target)} above daily target`;
   const range = block.ranges?.length ? <div className="chart-range-footer"><Range block={block} value={preferences.range} id={preferenceKey} onChange={range => { void runAction(async () => {
     if (!await control.current?.prepare() || retryRequest.current) return;
@@ -256,8 +256,8 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
     </svg><div className="radial-center">{inline}<span className="denominator">of {numberText(target)}</span></div></div><div className="radial-footer"><span className="completion" style={{ color: coverage ? 'var(--text-muted)' : green }} role="status">{coverage ? comparison : current === target ? 'Target reached' : current !== undefined && current > target ? `${numberText(current - target)} beyond target` : ''}</span>{adds}</div></> : <>
       <div className="reading-row">{inline}{!reading && adds}</div><p className="comparison" style={{ color: current === undefined ? 'var(--text-faintest)' : coverage ? 'var(--text-muted)' : current >= target ? green : reading ? 'var(--text-faint)' : red }}>{comparison}</p>
       {reading ? <div className="reading-chart"><LineChart data={dates.map((date, index) => ({ key: date, label: dateLabel(date), axisLabel: dateLabel(date), values: { actual: readings[index], target } }))}
-        series={[{ key: 'actual', label: block.series?.[0]?.name ?? 'Reading', color: blue, area: true }, ...(target === undefined ? [] : [{ key: 'target', label: `${numberText(target)}${unit ? ` ${unit}` : ''} target`, color: 'var(--text-faintest)', dashed: true, area: false }])]}
-        label={title} height={196} domain={[minimum, maximum]} formatValue={value => `${value.toFixed(block.format?.decimals ?? 0)}${unit ? ` ${unit}` : ''}`} onSelect={index => void select(dates[index], true)} /></div>
+        series={[{ key: 'actual', label: block.series?.[0]?.name ?? 'Reading', color: blue, area: true }, ...(target === undefined ? [] : [{ key: 'target', label: `${numberText(target)}${suffix} target`, color: 'var(--text-faintest)', dashed: true, area: false }])]}
+        label={title} height={196} domain={[minimum, maximum]} formatValue={value => `${value.toFixed(block.format?.decimals ?? 0)}${suffix}`} onSelect={index => void select(dates[index], true)} /></div>
         : <div className="bar-chart" data-maximum={maximum}><div className="bar-grid" aria-hidden="true">
           {(maximum - target) / span > .09 && <span style={{ bottom: '100%' }}>{formatCompactNumber(maximum)}</span>}
           <span className="target" style={{ bottom: (target - minimum) / span * 100 + '%' }}>{(target - minimum) / span > .08 ? formatCompactNumber(target) : ''}</span><span style={{ bottom: -minimum / span * 100 + '%' }}>0</span>
@@ -275,6 +275,6 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
     {error && retryRequest.current?.operation !== 'replace' && <div className="manual-write-error error" role="alert">{error}<button type="button" disabled={pending} onClick={() => { const retry = retryRequest.current; if (retry && !(isManualWriteConflict(session.current?.error))) void send(retry).catch(() => {}); else void refresh().then(() => { session.discard(); setError(''); }).catch(cause => setError(manualErrorMessage(cause))); }}>Retry</button></div>}
   </article>;
   return <section ref={host} onFocusCapture={() => { focusInside.current = true; }} onBlurCapture={event => { if (event.relatedTarget && !host.current?.contains(event.relatedTarget as Node)) focusInside.current = false; }}>
-    {foldable ? <SupportingMetric title={title} reading={current === undefined ? '—' : <AnimatedCounter value={current} decimals={block.format?.decimals ?? 0} suffix={unit} />} status={comparison} open={preferences.expanded} onToggle={() => { void runAction(async () => { if (preferences.expanded && !await control.current?.prepare()) return; preference({ expanded: !preferences.expanded }); }); }}>{card}</SupportingMetric> : card}
+    {foldable ? <SupportingMetric title={title} reading={current === undefined ? '—' : <AnimatedCounter value={current} decimals={block.format?.decimals ?? 0} suffix={suffix} />} status={comparison} open={preferences.expanded} onToggle={() => { void runAction(async () => { if (preferences.expanded && !await control.current?.prepare()) return; preference({ expanded: !preferences.expanded }); }); }}>{card}</SupportingMetric> : card}
   </section>;
 }
