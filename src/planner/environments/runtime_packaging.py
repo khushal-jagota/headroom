@@ -48,7 +48,7 @@ def _dynamic(path: Path) -> tuple[list[str], list[str], str | None, bool]:
 
 
 def _tkinter_native(name: str) -> bool:
-    return re.fullmatch(r"_tkinter(?:\.cpython-312-[^.]+|\.abi3)?\.so", name) is not None
+    return re.fullmatch(r"_tkinter(?:\.cpython-[^.]+|\.abi3)?\.so", name) is not None
 
 
 def _exclude_tkinter(stdlib: Path, target_stdlib: Path) -> list[str]:

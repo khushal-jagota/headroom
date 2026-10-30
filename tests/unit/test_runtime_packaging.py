@@ -151,10 +151,12 @@ def test_tk_omission_removes_stale_payload_and_retains_required_extensions(tmp_p
         "tkinter/__init__.py",
         "tkinter/ttk.py",
         "lib-dynload/_tkinter.cpython-312-x86_64-linux-gnu.so",
+        "lib-dynload/_tkinter.cpython-313-x86_64-linux-gnu.so",
     )
     retained = (
         "lib-dynload/_ssl.cpython-312-x86_64-linux-gnu.so",
         "lib-dynload/_tkinter_extra.cpython-312-x86_64-linux-gnu.so",
+        "lib-dynload/_tkinter_extra.cpython-313-x86_64-linux-gnu.so",
         "turtle.py",
         "idlelib/__init__.py",
         "os.py",
@@ -174,10 +176,19 @@ def test_tk_omission_removes_stale_payload_and_retains_required_extensions(tmp_p
     assert all((source / relative).is_file() for relative in (*excluded, *retained))
 
 
-def test_physical_tk_library_refuses_even_without_any_dependency_edge(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "relative",
+    (
+        "runtime/unused/libtcl8.6.so.0",
+        "lib/python3.13/lib-dynload/_tkinter.cpython-313-x86_64-linux-gnu.so",
+    ),
+)
+def test_physical_tk_library_refuses_even_without_any_dependency_edge(
+    tmp_path: Path, relative: str
+) -> None:
     from planner.environments.runtime_packaging import _assert_no_tkinter_payload
 
-    library = tmp_path / "runtime/unused/libtcl8.6.so.0"
+    library = tmp_path / relative
     library.parent.mkdir(parents=True)
     library.write_bytes(b"stale unreferenced library")
     with pytest.raises(RuntimeContractError, match="excluded Tcl/Tk native file"):
