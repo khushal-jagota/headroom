@@ -185,7 +185,7 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
 
     async def permission(
         self: _FakeBackendChild, ask_id: str, option_id: str, **kwargs: object
-    ) -> None:
+    ) -> AnswerFate:
         nonlocal counts
         counts += 1
         return await original_permission(self, ask_id, option_id)
@@ -195,7 +195,7 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
         request_id: str,
         answers: tuple[UserInputAnswer, ...],
         **kwargs: object,
-    ) -> None:
+    ) -> AnswerFate:
         nonlocal counts
         counts += 1
         return await original_input(self, request_id, answers)

@@ -299,16 +299,24 @@ class ExecutorHarness:
 
     async def wait_input_reachable(self) -> None:
         await eventually(
-            lambda: bool(
-                self.system._conversations["c_scripted"].running_turn.pending_user_input_questions
+            lambda: (
+                self.system._conversations["c_scripted"].running_turn is not None
+                and bool(
+                    self.system._conversations[
+                        "c_scripted"
+                    ].running_turn.pending_user_input_questions
+                )
             ),
             "input did not reach conversation",
         )
 
     async def wait_ask_reachable(self) -> None:
         await eventually(
-            lambda: bool(
-                self.system._conversations["c_scripted"].running_turn.pending_permission_ask_ids
+            lambda: (
+                self.system._conversations["c_scripted"].running_turn is not None
+                and bool(
+                    self.system._conversations["c_scripted"].running_turn.pending_permission_ask_ids
+                )
             ),
             "ask did not reach conversation",
         )
@@ -2831,7 +2839,7 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
             calls = 0
 
             async def pause_emission(
-                conversation_id: str, emit: Callable[[], Coroutine[Any, Any, None]]
+                token: TurnToken, emit: Callable[[], Coroutine[Any, Any, None]]
             ) -> None:
                 nonlocal calls
                 calls += 1
@@ -2843,7 +2851,7 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
                     replay_entered.set()
                     await replay_release.wait()
                 try:
-                    await emit_original(conversation_id, emit)
+                    await emit_original(token, emit)
                 finally:
                     if first:
                         first_returned.set()

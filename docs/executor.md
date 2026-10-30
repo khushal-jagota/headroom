@@ -53,10 +53,10 @@ modules.
 
 ## VPS module responsibilities
 
-`vps_runs.py` owns retained Mac runs, command results, reconnection, stop proof,
-and saved answers. Its `MacRuns` object is the Mac backend factory; only Ticket
-Workers can use it. `vps_remote_child.py` implements the conversation's backend
-child interface and keeps the existing admission checks at command emission.
+`vps_runs.py` owns retained Mac runs, command results, reconnection, and stop proof.
+Its `MacRuns` object is the Mac backend factory; only Ticket Workers can use it.
+`vps_remote_child.py` implements the conversation's backend child interface, holds
+saved answers in memory, and keeps the admission checks at command emission.
 
 `vps_inbox.py` owns receipt order, duplicate replies, file reception, and applying
 recorded events through the conversation's shared `take_backend_event` entry point.

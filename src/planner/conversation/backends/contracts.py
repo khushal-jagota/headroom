@@ -572,8 +572,10 @@ class BackendChild(Protocol):
     ) -> AnswerFate:
         """Give the backend the option a person chose for one of its asks.
 
-        Raises ``PermissionAnswerWriteFailed`` if it did not reach the backend, in which
-        case the answer has not landed and the ask is still waiting.
+        Return applied only after callback acceptance, saved when this process holds
+        delivery for the original callback, or refused without consuming the request.
+        The answer ID and turn token bind saved delivery to the conversation attempt.
+        Raises ``PermissionAnswerWriteFailed`` when the backend could not take it.
         """
 
     async def answer_user_input(
@@ -586,7 +588,8 @@ class BackendChild(Protocol):
     ) -> AnswerFate:
         """Give the backend every answer for one pending question request.
 
-        Raises ``UserInputAnswerWriteFailed`` when the answer map did not land.
+        Use the same applied/saved/refused distinction and identity as permission
+        answers. Raises ``UserInputAnswerWriteFailed`` when the backend could not take it.
         """
 
     async def stop(self) -> None:
