@@ -429,7 +429,12 @@ def run(browser, urls):
     expect(status).to_contain_text("Update applies when this message is safe")
     card = status.bounding_box()
     assert card and abs(entering[-1]["height"] - (card["height"] + 8)) < 1.5, (card, entering[-1])
-    assert all(abs(current["height"] - previous["height"]) < 8
+    # rAF samples span different time intervals across displays. Match the
+    # neighboring continuity proof's per-16ms bound, with one pixel for rounded
+    # geometry and integer elapsed timestamps; a one-frame intrinsic-size snap
+    # still exceeds this limit.
+    assert all(abs(current["height"] - previous["height"])
+               < 8 * max(1, (current["ms"] - previous["ms"]) / 16) + 1
                for previous, current in zip(entering, entering[1:], strict=False)), entering
     assert abs(entering[-1]["height"] - entering[-3]["height"]) < 1, entering[-4:]
     assert entering[-1]["heightEffects"] == 0, entering[-4:]

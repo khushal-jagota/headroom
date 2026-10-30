@@ -706,7 +706,7 @@ def _run(browser, urls):
         # All original candidates disappear again, and the saved position now exceeds
         # the shortened transcript's range. The native clamp reaches the newest line.
         before = newest_reading(page)["scrollTop"]
-        page.evaluate("window.__replaceAllScrollRows(20)")
+        page.evaluate("window.__replaceAllScrollRows(2)")
         settled(page)
         limit = page.locator(THREAD).evaluate("thread => thread.scrollHeight-thread.clientHeight")
         actual = newest_reading(page)["scrollTop"]
@@ -833,7 +833,14 @@ def _run(browser, urls):
         assert page.evaluate("window.__raceImage.getBoundingClientRect().height") == 180
 
     def descendant_keyboard_case(page, url):
-        for key in ["PageDown", "Home", "End", "Control+Home", "Control+End"]:
+        import sys
+
+        # macOS uses plain Home/End for document edges; Control+Home/End is
+        # a Windows/Linux native shortcut and does not scroll Chromium on Mac.
+        keys = ["PageDown", "Home", "End"]
+        if sys.platform != "darwin":
+            keys += ["Control+Home", "Control+End"]
+        for key in keys:
             prepare_scroll_case(page, url, "plain", "scrollback")
             install_controlled_image(page)
             page.evaluate("""() => {
@@ -925,7 +932,7 @@ def _run(browser, urls):
         }""")
         settled(page)
         before = newest_reading(page)["scrollTop"]
-        page.keyboard.press("Control+End")
+        page.keyboard.press("Meta+ArrowDown" if sys.platform == "darwin" else "Control+End")
         settled(page)
         assert page.evaluate(
             "window.__nestedEditor.selectionStart === window.__nestedEditor.value.length && window.__nestedEditor.scrollTop > 0"
@@ -3205,11 +3212,15 @@ def _position_commit(browser, url):
         moving=[b for a,b in zip(frames,frames[1:],strict=False) if b['top']-a['top']>.5]
         # Linear per-line motion exposes its duration as line height / screen speed.
         # This measures the written pixels, rather than a duration constant or call.
-        import statistics
         line_height=page.locator('[data-conversation-content]').evaluate('node=>parseFloat(getComputedStyle(node.lastElementChild).lineHeight)')
-        speeds=[(b['top']-a['top'])/(b['ms']-a['ms']) for a,b in zip(frames,frames[1:],strict=False)
-          if b['top']-a['top']>1 and 8 < b['ms']-a['ms'] < 30]
-        observed_line_ms=line_height/statistics.median(speeds)
+        # scrollTop is rounded to pixels. Filtering out one-pixel frames biases
+        # instantaneous speed upward on 120 Hz displays. Measure the whole moving
+        # interval so those frames and their elapsed time receive equal credit.
+        intervals=[(a,b) for a,b in zip(frames,frames[1:],strict=False) if b['top']>a['top']]
+        assert intervals, frames
+        start, end = intervals[0][0], intervals[-1][1]
+        speed=(end['top']-start['top'])/(end['ms']-start['ms'])
+        observed_line_ms=line_height/speed
         assert 100 <= observed_line_ms <= 145, {'lineHeight':line_height,'observedLineMs':observed_line_ms,'frames':frames}
         proof['streaming']={'frames':frames,'events':page.evaluate('window.__presentationEvents')}
         assert len(moving)>3 and moving[-1]['ms']>300,proof['streaming']

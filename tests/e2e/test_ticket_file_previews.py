@@ -32,9 +32,14 @@ def _prove_dock_artifact_retention(page: Page, label: str, evidence: str | None)
     frame = artifact.frame_locator("iframe[data-file-preview-html]")
     pane = page.locator("[data-conversation-pane]")
     draft = pane.locator("[data-conversation-input]")
+    settled_dock = page.locator(
+        '[data-conversation-dock-state="rest"]:not([data-conversation-dock-transition])'
+    ).filter(has=pane)
     if pane.get_attribute("data-conversation-state") == "opened":
         page.locator("[data-conversation-collapse]").click(timeout=WAIT_MS)
     expect(pane).to_have_attribute("data-conversation-state", "rest", timeout=WAIT_MS)
+    # The state changes before the dock motion releases the retained reader height.
+    expect(settled_dock).to_have_count(1, timeout=WAIT_MS)
     draft.fill("Keep this draft through full conversation")
     expect(pane).to_have_attribute("data-conversation-state", "rest")
     frame.locator("[data-retained-form]").fill("Keep this artifact value")
@@ -66,6 +71,7 @@ def _prove_dock_artifact_retention(page: Page, label: str, evidence: str | None)
         page.screenshot(path=str(Path(evidence) / f"{label}-full.png"), full_page=True)
     page.locator("[data-conversation-collapse]").click(timeout=WAIT_MS)
     expect(pane).to_have_attribute("data-conversation-state", "rest", timeout=WAIT_MS)
+    expect(settled_dock).to_have_count(1, timeout=WAIT_MS)
     expect(draft).to_have_value("Keep this draft through full conversation")
     assert iframe.evaluate("node => node === window.__retainedArtifactFrame")
     assert iframe.get_attribute("src") == source
