@@ -48,12 +48,17 @@
   try{await session.run({completed},()=>editor.write({completed}));}
   catch(error){if(!session.current)binarySubmissionError=error;}
  }
- let left=$state(0),top=$state(0);
+ let left=$state(0),top=$state(0),availableBottom=$state<number|null>(null);
  $effect(()=>{
   if(!element||!target||!rail)return;
   const panel=element,anchor=target,currentRail=rail;
   const place=()=>{
-   const position=goalPreviewPosition(anchor.getBoundingClientRect(),currentRail.getBoundingClientRect().right,panel.offsetWidth,panel.offsetHeight,window.innerWidth,window.innerHeight);
+   const railRect=currentRail.getBoundingClientRect();
+   // The compact rail ends above the persistent destination bar.
+   const bottom=Math.min(window.innerHeight,railRect.bottom);
+   availableBottom=bottom;
+   const height=Math.min(panel.offsetHeight,Math.max(0,bottom-GOAL_PREVIEW_GUTTER*2));
+   const position=goalPreviewPosition(anchor.getBoundingClientRect(),railRect.right,panel.offsetWidth,height,window.innerWidth,bottom);
    left=position.left;top=position.top;
   };
   const observer=new ResizeObserver(place);
@@ -64,7 +69,7 @@
 </script>
 <!-- The panel follows its row in DOM order, so native Tab reaches its controls. -->
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (The section only stops propagation after native control handlers. It performs no click action.) -->
-<section bind:this={element} data-goal-preview={goalId} data-goal-preview-panel id={`goal-preview-${goalId}`} class="goal-preview" class:instant style:left={`${left}px`} style:top={`${top}px`} style:--preview-width={`${GOAL_PREVIEW_WIDTH}px`} style:--preview-gutters={`${GOAL_PREVIEW_GUTTER*2}px`} aria-label={`Goal preview: ${goal?.title??'Goal'}`} onclick={event=>event.stopPropagation()} onpointerenter={onKeepOpen} onpointerleave={event=>{if(event.pointerType!=='touch'&&anchor)onLeave(anchor);}} onfocusin={onKeepOpen} onfocusout={event=>{if(event.relatedTarget&&!element?.contains(event.relatedTarget as Node)&&event.relatedTarget!==anchor&&anchor)onLeave(anchor);}}>
+<section bind:this={element} data-goal-preview={goalId} data-goal-preview-panel id={`goal-preview-${goalId}`} class="goal-preview" class:instant style:left={`${left}px`} style:top={`${top}px`} style:--preview-width={`${GOAL_PREVIEW_WIDTH}px`} style:--preview-gutters={`${GOAL_PREVIEW_GUTTER*2}px`} style:--preview-bottom={availableBottom===null?'100dvh':`${availableBottom}px`} aria-label={`Goal preview: ${goal?.title??'Goal'}`} onclick={event=>event.stopPropagation()} onpointerenter={onKeepOpen} onpointerleave={event=>{if(event.pointerType!=='touch'&&anchor)onLeave(anchor);}} onfocusin={onKeepOpen} onfocusout={event=>{if(event.relatedTarget&&!element?.contains(event.relatedTarget as Node)&&event.relatedTarget!==anchor&&anchor)onLeave(anchor);}}>
  {#if goal}
   <header class="preview-header"><div class="preview-date">{#if project}<span class="preview-project">{project.name}</span><span aria-hidden="true">·</span>{/if}<span class:attention={goal.status==='attention'}>{goal.deadline?`By ${goalDateText(goal.deadline)}`:'No deadline'}</span></div><h1>{goal.title}</h1></header>
   {#if checklist}<PageChecklist block={checklist}/>
@@ -78,6 +83,6 @@
  {:else if detail.error}<div class="preview-error"><ErrorLine error={detail.error}/></div>{:else}<p class="preview-loading">Loading goal…</p>{/if}
 </section>
 <style>
- .goal-preview{position:fixed;z-index:40;width:min(var(--preview-width),calc(100vw - var(--preview-gutters)));max-height:calc(100dvh - var(--preview-gutters));overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;border:var(--border-hairline) solid var(--border-color);border-radius:var(--radius-lg);background:var(--surface-1);box-shadow:var(--shadow-float);font-size:var(--type-sm);pointer-events:auto;animation:goal-preview-in var(--motion-base) var(--motion-ease)}
+ .goal-preview{position:fixed;z-index:40;width:min(var(--preview-width),calc(100vw - var(--preview-gutters)));max-height:calc(var(--preview-bottom) - var(--preview-gutters));overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;border:var(--border-hairline) solid var(--border-color);border-radius:var(--radius-lg);background:var(--surface-1);box-shadow:var(--shadow-float);font-size:var(--type-sm);pointer-events:auto;animation:goal-preview-in var(--motion-base) var(--motion-ease)}
  .goal-preview.instant{animation:none}.preview-header{position:relative;background:var(--surface-2);padding:var(--space-4) var(--space-4) var(--space-5)}.preview-date{display:flex;align-items:center;flex-wrap:wrap;gap:9px;font-size:12px;line-height:1.4;color:var(--text-faint)}.preview-project{color:var(--text-muted)}.attention{color:var(--accent-attention)}h1{margin:var(--space-2) 0 0;font-size:var(--type-lg);line-height:1.35;font-weight:600;letter-spacing:var(--tracking-title);color:var(--text-strong);overflow-wrap:anywhere}.primary-chart{padding:24px 20px}.panel-actions{display:flex;justify-content:flex-end;margin-top:20px}.completion-action{border:1px solid var(--border-color);border-radius:var(--radius-md);background:none;padding:8px 14px;color:var(--text-muted);font:inherit;font-size:13px;cursor:pointer}.completion-action:hover{color:var(--text-strong)}.preview-error,.preview-loading{padding:var(--space-4)}.preview-error button{font:inherit;color:var(--text-muted);background:none;border:var(--border-hairline) solid var(--border-color);border-radius:var(--radius-sm);padding:var(--space-1) var(--space-2);margin-right:var(--space-2);cursor:pointer}@keyframes goal-preview-in{from{opacity:0;transform:translateX(calc(0px - var(--space-1)))}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.goal-preview{animation:none}}
 </style>

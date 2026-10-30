@@ -173,7 +173,6 @@
   let goalHoverElement = $state<HTMLElement | null>(null);
   let hoverIntentTarget: HTMLElement | null = null;
   let restoringGoalFocus = false;
-  let goalPointerMode = false;
   const goalPreviewInput = createGoalRailPreviewInput(() => hoverIntentTarget);
   let rawHoverWorker = $derived.by(() => {
     const ticket = allCards.find((card) => card.id === hoverWorkerId)
@@ -235,28 +234,32 @@
   }
   function hoverGoal(target: HTMLElement, goalId: string, immediate: boolean): void {
     if (restoringGoalFocus) return;
-    if (target === document.activeElement && target.matches(':focus-visible')) goalPointerMode = false;
     enterHover({target,title:'',kicker:'',goalId},immediate);
   }
   $effect(() => { address.selection; untrack(() => { if (hoverGoalId) dismissHover(); }); });
   function scrollHover(event: Event): void {
     if (!hoverGoalId) { hover.leave(); return; }
     if (goalHoverElement?.contains(event.target as Node)) return;
-    if (!goalPointerMode && (hoverTarget === document.activeElement || goalHoverElement?.contains(document.activeElement))) {
-      hover.keepOpen(); return;
-    }
-    dismissHover();
+    // Layout and query refreshes can move outer scroll positions. Explicit user
+    // input below owns dismissal; the panel's scroll observer owns repositioning.
+    hover.keepOpen();
   }
 
   onMount(() => {
     railWidth = readRailWidth(preferenceStorage());
     const outside = (event: PointerEvent) => {
-      goalPointerMode = true; goalPreviewInput.clearTouch();
+      goalPreviewInput.clearTouch();
       if (hoverGoalId && !goalHoverElement?.contains(event.target as Node) && !hoverTarget?.contains(event.target as Node)) dismissHover();
     };
-    const wheel = (event: WheelEvent) => { goalPointerMode = true; if (hoverGoalId && !goalHoverElement?.contains(event.target as Node)) dismissHover(); };
+    const wheel = (event: WheelEvent) => { if (hoverGoalId && !goalHoverElement?.contains(event.target as Node)) dismissHover(); };
     const key = (event: KeyboardEvent) => {
-      goalPointerMode = false; goalPreviewInput.clearTouch();
+      goalPreviewInput.clearTouch();
+      const source=event.target;
+      if (hoverGoalId && !event.defaultPrevented && !event.altKey && !event.ctrlKey && !event.metaKey
+        && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','PageUp','PageDown','Home','End',' '].includes(event.key)
+        && source instanceof HTMLElement && !goalHoverElement?.contains(source) && !hoverTarget?.contains(source)
+        && !source.closest('input,textarea,select,[contenteditable="true"]')
+        && !(event.key === ' ' && source.closest('button,summary,a'))) dismissHover();
       if (event.key !== 'Escape' || !hoverVisible || !hoverGoalId || event.defaultPrevented) return;
       event.preventDefault();
       const anchor = hoverTarget;
