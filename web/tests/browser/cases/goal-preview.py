@@ -170,7 +170,7 @@ class GoalFixture:
                         "query_start_at": None,
                         "query_end_at": None,
                         "limitation": None,
-                        "coverage_status": "not_applicable",
+                        "coverage_status": self.coverage.get((identity, date), "not_applicable"),
                         "coverage_reasons": [],
                     }
                 )
@@ -625,10 +625,12 @@ def agent_chart_fixture():
     # They do not change the retained primary definition or any persisted data.
     goal["page"]["blocks"] = [
         {**goal["primary_chart"], "id": "supporting-events", "placement": "supporting",
-         "title": "Supporting captured events"},
+         "title": "Supporting captured events", "measure_id": "comparison-events",
+         "target": 1, "direction": "atmost", "target_label": "limit"},
         {"type": "chart", "kind": "gauge", "id": "gauge-events",
          "placement": "supporting", "title": "Captured event gauge",
-         "measure_id": "measure_q2v1r9mf", "unit": "events", "format": {"decimals": 0}},
+         "measure_id": "comparison-events", "unit": "events", "format": {"decimals": 0},
+         "target": 1, "direction": "atmost", "target_label": "limit"},
     ]
     limitation = (
         "Captured events only; provider ingestion completeness is not established. "
@@ -651,7 +653,11 @@ def agent_chart_fixture():
             ] if partial else []),
         })
     fixture.reading_overrides[goal["id"]] = {
-        "goal_id": goal["id"], "values": values, "charts": {}, "sources": [],
+        "goal_id": goal["id"], "values": values + [
+            {**value, "measure_id": "comparison-events",
+             "coverage_status": "unknown" if value["date"] == "2026-10-29" else "partial"}
+            for value in values
+        ], "charts": {}, "sources": [],
         "status_date": TODAY, "next_refresh_at": int(time.time()) + 86400,
     }
     return fixture
@@ -757,12 +763,41 @@ def agent_unit_spacing(browser, url):
                 expect(summary).to_have_attribute("aria-expanded", "false")
             else:
                 rendered_counter(supporting.locator(".metric-value > span"), 0)
+            # Source uncertainty stays factual while the observed values compare.
+            if phone:
+                summary.tap()
+            comparison = supporting.locator(".comparison")
+            expect(comparison).to_have_text("1 captured exception events under limit")
+            expect(comparison).to_have_css("color", resolved_chart_color(page, "--accent-done"))
+            expect(supporting.locator(".observation-details")).to_contain_text(
+                "Source coverage for 2026-10-29: unknown."
+            )
+            support_plot = supporting.get_by_role("slider")
+            support_plot.focus()
+            support_plot.press("End")
+            for _ in range(4):
+                support_plot.press("ArrowLeft")
+            expect(comparison).to_have_text("1 captured exception events over limit")
+            expect(comparison).to_have_css("color", resolved_chart_color(page, "--accent-error"))
+            expect(supporting.locator(".observation-details")).to_contain_text(
+                "Source coverage for 2026-10-25: partial."
+            )
+            expect(supporting.locator(".observation-details")).to_contain_text(
+                "Captured events only; provider ingestion completeness is not established."
+            )
+            support_plot.press("Escape")
+            if phone:
+                summary.tap()
             gauge = page.locator('[data-chart-id="gauge-events"]')
             if phone:
                 gauge.get_by_role("button", name=re.compile("Captured event gauge")).tap()
             meter = gauge.get_by_role("meter")
             meter.scroll_into_view_if_needed()
-            expect(meter).to_have_attribute("aria-valuetext", "0 events")
+            expect(meter).to_have_attribute("aria-valuetext", "0 events, Within limit, 1 limit")
+            expect(gauge.locator("figure")).to_have_class(re.compile(r".*success.*"))
+            expect(gauge.locator(".observation-details")).to_contain_text(
+                "Source coverage for 2026-10-29: unknown."
+            )
             unit = gauge.locator('figure [aria-hidden="true"] span').filter(
                 has_text=re.compile(r"^ events$")
             )
@@ -782,6 +817,14 @@ def agent_unit_spacing(browser, url):
             json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
         )
     print(f"goal chart unit spacing desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
+
+
+def resolved_chart_color(page, token):
+    return page.evaluate("""token => {
+        const probe = document.createElement('span');
+        probe.style.color = `var(${token})`; document.body.append(probe);
+        const color = getComputedStyle(probe).color; probe.remove(); return color;
+    }""", token)
 
 
 def manual_unit_spacing(browser, url):
@@ -808,8 +851,13 @@ def manual_unit_spacing(browser, url):
             fixture.goals[model]["primary_chart"].update(
                 unit="minutes", format={"decimals": 2 if model == "individual_readings" else 0}
             )
-            fixture.observations[model] = {TODAY: 12 if model == "daily_quota" else 12.25,
-                                           YESTERDAY: 22.5}
+            fixture.observations[model] = {
+                TODAY: 12 if model == "daily_quota" else 12.25,
+                YESTERDAY: 22 if model == "daily_quota" else 22.5,
+                "2026-10-28": 20, "2026-10-26": 0,
+            }
+        fixture.goals["daily_quota"]["primary_chart"]["direction"] = "atmost"
+        fixture.coverage[("daily_quota", YESTERDAY)] = "partial"
         fixture.coverage[("daily_quota", TODAY)] = "unknown"
         fixture.coverage[("cumulative_target", TODAY)] = "partial"
         primary = fixture.goals["individual_readings"]["primary_chart"]
@@ -825,19 +873,55 @@ def manual_unit_spacing(browser, url):
         page.route("**/api/**", fixture.respond)
         renders = {}
         try:
-            for model, expected in (
-                ("daily_quota", "Coverage unavailable · "
-                 "Difference (coverage unavailable): -8 minutes"),
-                ("cumulative_target", "Partial reading · Partial difference: -7.75 minutes"),
-                ("individual_readings", "7.75 minutes to a 20 minutes reading"),
-            ):
+            for model in ("daily_quota", "cumulative_target", "individual_readings"):
                 page.goto(url + f"#/workspace/goal/{model}", wait_until="domcontentloaded")
                 chart = page.locator(f'[data-chart-id="{model}"]')
-                comparison = chart.locator(
-                    ".completion" if model == "cumulative_target" else ".comparison"
+                value = chart.get_by_role("textbox")
+                expect(value).to_have_attribute(
+                    "data-reading", "12" if model == "daily_quota" else "12.25"
                 )
-                expect(comparison).to_have_text(expected)
-                assert expected in chart.aria_snapshot()
+                expect(chart.locator(".comparison")).to_have_count(0)
+                expect(chart.locator(".card-heading")).to_have_text(fixture.goals[model]["title"])
+                assert "Coverage unavailable" not in chart.aria_snapshot()
+                if model == "cumulative_target":
+                    expect(chart.locator(".completion")).to_have_text("")
+                    expect(chart.locator(".radial-fill")).to_have_css(
+                        "stroke", resolved_chart_color(page, "--accent-error")
+                    )
+                elif model == "daily_quota":
+                    today = chart.get_by_role("button", name=re.compile("^30 Oct,"))
+                    yesterday = chart.get_by_role("button", name=re.compile("^29 Oct,"))
+                    for day, token in (("30", "--accent-done"), ("29", "--accent-error"),
+                                       ("28", "--accent-done"), ("26", "--accent-done"),
+                                       ("27", "--text-faintest")):
+                        bar = chart.get_by_role(
+                            "button", name=re.compile(f"^{day} Oct,")
+                        ).locator(".bar")
+                        expect(bar).to_have_css(
+                            "background-color", resolved_chart_color(page, token)
+                        )
+                    # Inspection exposes a dated value but does not move the edit context.
+                    if not phone:
+                        yesterday.hover()
+                        expect(value).to_have_attribute("data-reading", "12")
+                        expect(today).to_have_attribute("aria-pressed", "true")
+                    yesterday.focus()
+                    expect(value).to_have_attribute("data-reading", "12")
+                    expect(yesterday).to_have_attribute("aria-pressed", "false")
+                    actual_tip = chart.locator('[data-tooltip-series="actual"] > span').last
+                    target_tip = chart.locator('[data-tooltip-series="target"] > span').last
+                    expect(actual_tip).to_have_text("22 minutes")
+                    expect(target_tip).to_have_text("20 minutes")
+                    missing = chart.get_by_role("button", name=re.compile("^27 Oct, no reading"))
+                    missing.focus()
+                    expect(actual_tip).to_have_text("No reading")
+                    expect(value).to_have_attribute("data-reading", "12")
+                    (yesterday.tap if phone else yesterday.click)()
+                    expect(value).to_have_attribute("data-reading", "22")
+                    expect(value).to_have_attribute("aria-label", "Daily Quota for 29 Oct")
+                    expect(yesterday).to_have_attribute("aria-pressed", "true")
+                    if output:
+                        chart.screenshot(path=str(output / f"{mode}-bar-inspection.png"))
                 renders[model] = {"text": chart.inner_text(), "aria": chart.aria_snapshot()}
                 if output:
                     chart.screenshot(path=str(output / f"{mode}-{model}.png"))
@@ -853,6 +937,7 @@ def manual_unit_spacing(browser, url):
                 counter = supporting.locator(".support-reading > span")
                 expect(counter.locator(":scope > span").first).to_have_text("12.25 minutes")
                 assert "12.25 minutes" in summary.aria_snapshot()
+                expect(summary.locator(".support-status")).to_have_text("")
                 visual_suffix = counter.locator(':scope > [aria-hidden="true"] > span').last
                 expect(visual_suffix).to_have_text(" minutes", use_inner_text=False)
                 renders["summary_separator"] = rendered_separator(visual_suffix)
@@ -860,10 +945,10 @@ def manual_unit_spacing(browser, url):
                 if output:
                     supporting.screenshot(path=str(output / "phone-collapsed-summary.png"))
             else:
-                for identity, expected in (("literal-suffix", "7.75h to a 20h reading"),
-                                           ("empty-suffix", "7.75 to a 20 reading")):
+                for identity in ("literal-suffix", "empty-suffix"):
                     probe = page.locator(f'[data-chart-id="{identity}"]')
-                    expect(probe.locator(".comparison")).to_have_text(expected)
+                    expect(probe.get_by_role("textbox")).to_have_attribute("data-reading", "12.25")
+                    expect(probe.locator(".comparison")).to_have_count(0)
                     expect(probe.locator(".number-row > .unit")).to_have_count(
                         1 if identity == "literal-suffix" else 0
                     )
@@ -885,10 +970,14 @@ def manual_unit_spacing(browser, url):
                 plot.press("End")
                 plot.press("ArrowLeft")
             expect(plot).to_have_attribute(
-                "aria-valuetext", "29 Oct: Reading 22.50 minutes, 20 minutes target 20.00 minutes"
+                "aria-valuetext", "29 Oct: Reading 22.50 minutes, Target 20.00 minutes"
             )
             expect(chart.locator('[data-tooltip-series="actual"] > span').last).to_have_text(
                 "22.50 minutes"
+            )
+            expect(chart.get_by_role("textbox")).to_have_attribute("data-reading", "12.25")
+            expect(chart.locator('[data-dot="actual"]')).to_have_css(
+                "fill", resolved_chart_color(page, "--accent-done")
             )
             renders["inspection"] = {"text": chart.inner_text(), "aria": chart.aria_snapshot()}
             if output:
@@ -899,7 +988,33 @@ def manual_unit_spacing(browser, url):
             else:
                 plot.press("Enter")
                 expect(chart.get_by_role("textbox")).to_have_attribute("data-reading", "22.5")
-                expect(chart.locator(".comparison")).to_have_text("20 minutes target reached")
+                expect(chart.get_by_role("textbox")).to_have_attribute(
+                    "aria-label", "Individual Readings for 29 Oct"
+                )
+                expect(chart.locator(".comparison")).to_have_count(0)
+                # The configured atleast direction includes equality. A missing point stays a gap.
+                plot.press("Home")
+                plot.press("ArrowRight")
+                plot.press("ArrowRight")
+                expect(plot).to_have_attribute(
+                    "aria-valuetext", "26 Oct: Reading 0.00 minutes, Target 20.00 minutes"
+                )
+                expect(chart.locator('[data-dot="actual"]')).to_have_css(
+                    "fill", resolved_chart_color(page, "--accent-error")
+                )
+                plot.press("ArrowRight")
+                expect(plot).to_have_attribute(
+                    "aria-valuetext", "27 Oct: Reading No reading, Target 20.00 minutes"
+                )
+                expect(chart.locator('[data-dot="actual"]')).to_have_css("display", "none")
+                expect(chart.get_by_role("textbox")).to_have_attribute("data-reading", "22.5")
+                plot.press("ArrowRight")
+                expect(plot).to_have_attribute(
+                    "aria-valuetext", "28 Oct: Reading 20.00 minutes, Target 20.00 minutes"
+                )
+                expect(chart.locator('[data-dot="actual"]')).to_have_css(
+                    "fill", resolved_chart_color(page, "--accent-done")
+                )
             assert fixture.writes == [], fixture.writes
             assert errors == [], errors
             receipts.append({"mode": mode, "renders": renders, "errors": errors})

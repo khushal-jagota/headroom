@@ -532,8 +532,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert api.get(server, f"/api/measure-source-runs/{first_run}")["run"]["status"] == "succeeded"
     collect(52)
     expect(reading).to_have_attribute("data-current", "52", timeout=WAIT_MS)
-    # The existing mounted host must invalidate cached animation state when only
-    # coverage changes. SSR and pure comparison tests cannot retain a filled gauge.
+    # A same-value source correction must refresh its factual details without
+    # suppressing the mounted gauge's meaningful comparison or animated state.
     gauge_card = page.locator('[data-chart-id="coverage-gauge"]')
     gauge = gauge_card.locator("figure[aria-label]")
     gauge.scroll_into_view_if_needed(timeout=WAIT_MS)
@@ -544,17 +544,23 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     # Wait for the actual animated count to settle before a same-value correction.
     expect(gauge.locator('span[class*="status"]')).to_have_text("On target", timeout=WAIT_MS)
     collect(52, "The retained query covers only part of this reading.")
-    expect(gauge_card.locator(".comparison")).to_contain_text("Partial reading", timeout=WAIT_MS)
-    expect(gauge).to_have_class(re.compile(r".*neutral.*"), timeout=WAIT_MS)
-    expect(gauge.locator('[role="meter"]')).not_to_have_attribute(
+    details = gauge_card.locator(".observation-details")
+    details.locator("summary").click(timeout=WAIT_MS)
+    expect(details).to_contain_text(
+        "The retained query covers only part of this reading.", timeout=WAIT_MS
+    )
+    expect(gauge_card.locator(".comparison")).to_have_count(0)
+    expect(gauge).to_have_class(re.compile(r".*success.*"), timeout=WAIT_MS)
+    expect(gauge.locator('[role="meter"]')).to_have_attribute(
         "aria-valuetext", re.compile("On target"), timeout=WAIT_MS
     )
-    expect(gauge.locator('span[class*="status"]')).to_have_count(0, timeout=WAIT_MS)
+    expect(gauge.locator('span[class*="status"]')).to_have_text("On target", timeout=WAIT_MS)
     retained = api.get(server, path + "/readings")["values"]
     assert any(
         item["measure_id"] == measure["id"]
         and item["value"] == 52
         and item["coverage_status"] == "partial"
+        and item["limitation"] == "The retained query covers only part of this reading."
         for item in retained
     )
 
@@ -562,18 +568,19 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     # count uses a prior date, while a reading accepts the daily control unchanged.
     cumulative = page.locator('[data-chart-id="manual-period-cumulative"]')
     expect(cumulative.get_by_role("meter")).to_have_attribute(
-        "aria-valuetext", "12 of 12, Coverage unavailable", timeout=WAIT_MS
+        "aria-valuetext", "12 of 12, target reached", timeout=WAIT_MS
     )
     expect(cumulative.locator(".completion")).to_have_text(
-        "Coverage unavailable · Difference (coverage unavailable): 0", timeout=WAIT_MS
+        "Target reached", timeout=WAIT_MS
     )
     expect(cumulative.locator(".radial-fill")).to_have_attribute(
-        "stroke", "var(--text-muted)", timeout=WAIT_MS
+        "stroke", "var(--accent-done)", timeout=WAIT_MS
     )
     snapshot = page.locator('[data-chart-id="manual-snapshot-daily"]')
-    expect(snapshot.locator(".comparison")).to_have_text("Daily target reached", timeout=WAIT_MS)
-    assert (
-        snapshot.locator(".comparison").evaluate("node => node.style.color") == "var(--accent-done)"
+    expect(snapshot.locator(".comparison")).to_have_count(0)
+    expect(snapshot.locator(".card-heading > :not(h3)")).to_have_count(0)
+    expect(snapshot.locator(".bar-pick").last.locator(".bar")).to_have_attribute(
+        "style", re.compile(r"background-color: var\(--accent-done\)"), timeout=WAIT_MS
     )
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"
 
@@ -678,7 +685,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     manual_preview = page.locator(f'[data-goal-preview="{manual_goal["id"]}"]')
     value = manual_preview.get_by_role("textbox")
     expect(value).to_have_value("12", timeout=WAIT_MS)
-    value.fill("17", timeout=WAIT_MS)
+    selected_state = api.get(server, f"/api/measures/{manual_snapshot['id']}/manual-state")
+    value.fill("7", timeout=WAIT_MS)
     with page.expect_response(
         lambda response: (
             response.url.endswith(f"/api/measures/{manual_snapshot['id']}/manual-writes")
@@ -689,23 +697,78 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         # Replacing the preview must commit the native valid draft before unmount.
         rail_binary.hover(timeout=WAIT_MS)
     assert preview_manual.value.ok
+    write_body = preview_manual.value.request.post_data_json
+    assert isinstance(write_body, dict) and write_body["date"] == selected_state["date"]
     expect(manual_preview).to_have_count(0, timeout=WAIT_MS)
     state = api.get(server, f"/api/measures/{manual_snapshot['id']}/manual-state")
-    assert state["observation"]["value"] == 17
-    expect(snapshot.get_by_role("textbox")).to_have_attribute("data-reading", "17", timeout=WAIT_MS)
-    expect(rail_manual.locator("small")).to_contain_text("On target", timeout=WAIT_MS)
+    assert state["observation"]["value"] == 7
+    expect(snapshot.get_by_role("textbox")).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
+    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
+    expect(rail_manual.locator("[data-tone]")).to_have_attribute(
+        "data-tone", "bad", timeout=WAIT_MS
+    )
     rail_manual.hover(timeout=WAIT_MS)
-    expect(value).to_have_attribute("data-reading", "17", timeout=WAIT_MS)
+    expect(value).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
     rail_manual.click(timeout=WAIT_MS)
     manual_page = page.locator('[data-goal-page] [data-chart-id="preview-manual"]')
     expect(manual_page.get_by_role("textbox")).to_have_attribute(
-        "data-reading", "17", timeout=WAIT_MS
+        "data-reading", "7", timeout=WAIT_MS
     )
+    expect(manual_page.locator(".comparison")).to_have_count(0)
+    expect(manual_page.locator(".card-heading > :not(h3)")).to_have_count(0)
+    selected_bar = manual_page.locator(".bar-pick").last
+    expect(selected_bar).to_have_attribute("aria-pressed", "true", timeout=WAIT_MS)
+    expect(selected_bar.locator(".bar")).to_have_attribute(
+        "style", re.compile(r"background-color: var\(--accent-error\)"), timeout=WAIT_MS
+    )
+    date_label = str(selected_bar.get_attribute("aria-label")).split(",", 1)[0]
+    selected_bar.hover(timeout=WAIT_MS)
+    inspection = manual_page.locator("[data-chart-tooltip]")
+    expect(inspection.locator("p").first).to_have_text(date_label, timeout=WAIT_MS)
+    expect(inspection.locator('[data-tooltip-series="actual"]')).to_have_text(
+        "Published guides7", timeout=WAIT_MS
+    )
+    expect(inspection.locator('[data-tooltip-series="target"]')).to_have_text(
+        "Target12", timeout=WAIT_MS
+    )
+    # Hover inspection of another date does not replace the selected edit context.
+    manual_page.locator(".bar-pick").first.hover(timeout=WAIT_MS)
+    expect(inspection.locator('[data-tooltip-series="actual"]')).to_contain_text(
+        "No reading", timeout=WAIT_MS
+    )
+    expect(selected_bar).to_have_attribute("aria-pressed", "true", timeout=WAIT_MS)
+    expect(manual_page.get_by_role("textbox")).to_have_attribute(
+        "aria-label", f"Published guides for {date_label}", timeout=WAIT_MS
+    )
+    expect(manual_page.get_by_role("textbox")).to_have_attribute("data-reading", "7")
     page.reload()
     expect(manual_page.get_by_role("textbox")).to_have_attribute(
-        "data-reading", "17", timeout=WAIT_MS
+        "data-reading", "7", timeout=WAIT_MS
     )
-    expect(rail_manual.locator("small")).to_contain_text("On target", timeout=WAIT_MS)
+    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
+    expect(selected_bar.locator(".bar")).to_have_attribute(
+        "style", re.compile(r"background-color: var\(--accent-error\)"), timeout=WAIT_MS
+    )
+    if evidence := os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"):
+        folder = Path(evidence) / "manual-target-progress"
+        folder.mkdir(parents=True, exist_ok=True)
+        original_viewport = page.viewport_size
+        for mode, width, height in (
+            ("desktop", 1440, 1000),
+            ("phone", 390, 844),
+        ):
+            page.set_viewport_size({"width": width, "height": height})
+            selected_bar.click(timeout=WAIT_MS)
+            expect(inspection.locator('[data-tooltip-series="actual"]')).to_have_text(
+                "Published guides7", timeout=WAIT_MS
+            )
+            manual_page.screenshot(
+                path=str(folder / f"manual-target-{mode}.png"),
+                animations="disabled",
+                timeout=WAIT_MS,
+            )
+        if original_viewport:
+            page.set_viewport_size(original_viewport)
     rail_checklist.click(timeout=WAIT_MS)
     expect(primary.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
@@ -768,13 +831,13 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"
 
 
-def test_goal_files_open_from_catalog_and_historical_conversation(
+def test_goal_files_open_from_authored_page_and_historical_conversation(
     signal_server: ServerHandle,
     api: ApiHelper,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
 ) -> None:
-    """Connect goal catalog and Markdown links to served bytes in the workspace frame.
+    """Connect authored page and conversation links to served bytes in the workspace frame.
 
     The existing server and browser fixtures prove this connection without another host.
     Pure address tests cannot prove the mounted goal page intercepts both link sources.
@@ -791,12 +854,22 @@ def test_goal_files_open_from_catalog_and_historical_conversation(
     api.direct_put(
         server, file_path, {"content": "# Durable field guide\n\nSaved supporting material."}
     )
+    document = goal["page"]
+    document["blocks"].append(
+        {"type": "text", "id": "guide-link", "text": f"[Field guide]({file_path})"}
+    )
+    api.direct_patch(
+        server, goal_path, {"expected_revision": goal["revision"], "page": document}
+    )
     page = open_page(
         context_factory(), server, f"#/workspace/goal/{goal['id']}", "[data-goal-page]"
     )
-    page.locator("[data-artifacts-band] summary").click(timeout=WAIT_MS)
-    page.locator('[data-artifact-folder="artifacts"]').click(timeout=WAIT_MS)
-    page.locator('[data-artifact-chip="artifacts/field guide.md"]').click(timeout=WAIT_MS)
+    expect(page.locator("[data-artifacts-band]")).to_have_count(0)
+    preview = page.locator('[data-block="text"] [data-file-preview]')
+    expect(preview).to_have_count(1, timeout=WAIT_MS)
+    preview.get_by_role("link", name="Open field guide.md", exact=True).filter(
+        visible=True
+    ).first.click(timeout=WAIT_MS)
     artifact = page.locator("[data-ticket-artifact]")
     expect(artifact.get_by_role("heading", name="Durable field guide")).to_be_visible(
         timeout=WAIT_MS
