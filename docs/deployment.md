@@ -257,9 +257,13 @@ to restart, restore, or admit work.
 
 The local commit records application health. Skill reconciliation and published-route
 HTTP/2 follow that commit. Workflow success requires those post-health steps.
-An always-run finalizer records success or failure with the actual serving SHA.
-It preserves a proved rollback. If finalization itself fails, the saved evidence
-remains authoritative and the workflow reports failure.
+An always-run finalizer uses the exact deployment attempt and explicit workflow check
+outcomes. It preserves observed health and recovery failures and the installed SHA.
+It reports confirmed cancellation before installation neutrally. Missing evidence stays
+uncertain. A stale finalizer cannot overwrite a replacement attempt.
+It preserves a proved rollback. If report access fails, the saved evidence
+remains authoritative and the report states uncertainty. Reporting failures do not
+change update behavior.
 
 The application observes the lifecycle file through the existing change signal.
 Fresh success produces a brief deployment confirmation. A changed app SHA offers

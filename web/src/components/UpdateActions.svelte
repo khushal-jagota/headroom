@@ -11,7 +11,7 @@
   const request = $derived(status.request);
   const active = $derived(activeUpdateRequest(request));
   const hasContent = $derived(active || confirming !== null ||
-    (status.configured && usableUpdate(status.available, now)) || request?.state === "failed" || error !== null);
+    (status.configured && usableUpdate(status.available, now)) || ["failed", "cancelled"].includes(request?.state ?? "") || error !== null);
 
   async function submit(release: PublishedUpdate, mode: UpdateMode, confirmed = false): Promise<void> {
     if (submitting) return;
@@ -51,6 +51,7 @@
 
 {#if hasContent}
 <div class="update-actions" data-update-activity={status.activity}>
+  {#if !active && request?.state === "cancelled"}<span>Update canceled before installation. The previous version stayed active.</span>{/if}
   {#if !active && request?.state === "failed"}<span role="alert">Update failed</span>{/if}
   {#if active && request}
     <span>{request.state === "applying" ? "Update in progress" : request.mode === "idle" && request.state === "pending" ? "Update waits for idle" : "Update queued"}</span>
