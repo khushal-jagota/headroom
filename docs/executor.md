@@ -59,7 +59,11 @@ Workers can use it. `vps_remote_child.py` implements the conversation's backend
 child interface and keeps the existing admission checks at command emission.
 
 `vps_inbox.py` owns receipt order, duplicate replies, file reception, and applying
-recorded events. `vps_agent_writes.py` handles agent writes through the canonical
+recorded events through the conversation's shared `take_backend_event` entry point.
+The conversation owns the write transaction. The inbox joins it through `in_commit`
+to check replay and order and write the receipt. A stale event receives an accepted
+receipt with `applied: false`; it changes no conversation rows or live output.
+`vps_agent_writes.py` handles agent writes through the canonical
 writers. Before sending an agent-authored message, it saves `dispatching` in the
 inbox position. A repeat returns uncertainty without sending again. A recorded
 conversation outcome and its receipt commit together. Queued messages keep their
@@ -70,7 +74,7 @@ There is no separate native-message ledger.
 relays and generation-scoped file slots. `app_transport.py` exposes the app routes.
 `catalog_relay.py` owns the read-only catalog relay. Run control and inbox saving
 do not own sockets. These VPS modules import no Mac implementation modules.
-Conversation event and answer callbacks remain until the conversation refactor.
+Answer application still has its own conversation callback, using the same commit hook.
 
 The conversation talks to children through the backend contract. Withdrawing a
 delivery reports whether the provider can be proved never to have received it.

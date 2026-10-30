@@ -15,21 +15,30 @@ from typing import Any, cast
 import pytest
 from tests.unit.test_conversation_api import _Harness, _start
 
+from planner.conversation.backend_event_contracts import (
+    AcceptedEvent,
+    CommitParticipant,
+    EventTaken,
+)
 from planner.conversation.backends.contracts import BackendPermissionAsk, BackendUserInputRequest
 from planner.conversation.contracts import SignalBatch
 from planner.conversation.events import PermissionAskOption, UserInputAnswer, UserInputQuestion
 from planner.conversation.lifecycle import LifecycleStatus, LifecycleTransition
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
+from planner.conversation.system import SqliteProcessConversationSystem
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
+    AcceptanceReceipt,
     AnswerApplication,
     BackendEvent,
     BackendEventMethod,
     EnvelopeKind,
     JsonObject,
     QueuedEnvelope,
+    as_object,
+    decode_event_arguments,
     encode_value,
     envelope_payload_digest,
 )
@@ -56,6 +65,23 @@ def _envelope(sequence: int, kind: EnvelopeKind, value: object) -> QueuedEnvelop
             kind=kind,
         ),
     )
+
+
+async def _take_event(
+    system: SqliteProcessConversationSystem,
+    event: BackendEvent,
+    envelope: QueuedEnvelope,
+    in_commit: CommitParticipant,
+) -> AcceptanceReceipt:
+    result = await system.take_backend_event(
+        event.turn,
+        decode_event_arguments(event),
+        in_commit=in_commit,
+        conversation_id=event.child.conversation_id,
+    )
+    from pydantic import TypeAdapter
+
+    return TypeAdapter(AcceptanceReceipt).validate_python(result.result)
 
 
 @pytest.mark.parametrize("kind", list(AskKind))
@@ -118,19 +144,22 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
             )
             envelope = _envelope(1, EnvelopeKind.backend_event, event)
 
-            def accept(row: QueuedEnvelope, writer: Any, **publication: Any) -> Any:
+            def accept(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
                 def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
                     conn = connection
-                    result = writer(conn, envelope)
+                    result = take()
                     if kind is AskKind.permission:
                         store.runs.publish_ask_in_transaction(conn, ask, ("allow",), 101)
                     else:
                         store.runs.publish_user_input_request_in_transaction(
                             conn, ask, questions, 101
                         )
-                    return cast(JsonObject, result)
+                    return result
 
-                return store.accept(row, effect, 101, identity=identity, **publication)
+                receipt, taken = store.accept_in_transaction(
+                    connection, envelope, effect, 101, identity=identity
+                )
+                return AcceptedEvent(as_object(receipt), taken)
 
             def fail(conn: sqlite3.Connection, candidate: LifecycleTransition) -> None:
                 assert conn.in_transaction
@@ -138,9 +167,7 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
                 raise RuntimeError("mixed participant refused")
 
             harness.store._transaction_participant = fail
-            pending = asyncio.create_task(
-                harness.system.receive_remote_backend_event(event, envelope, accept)
-            )
+            pending = asyncio.create_task(_take_event(harness.system, event, envelope, accept))
             for _ in range(500):
                 if harness.store.recording_failures("c"):
                     break
@@ -153,10 +180,7 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
             harness.store._transaction_participant = None
             harness.store.resume_recording("c")
             receipt = await asyncio.wait_for(pending, 5)
-            assert (
-                await harness.system.receive_remote_backend_event(event, envelope, accept)
-                == receipt
-            )
+            assert await _take_event(harness.system, event, envelope, accept) == receipt
             public_id = f"{token.turn_number}:{kind.value}:{ask.ask_id}"
             facts = await harness.store.lifecycle_facts("c")
             assert any(
@@ -189,8 +213,17 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
             application = AnswerApplication(choice.answer_id, ask, 104)
             applied_envelope = _envelope(2, EnvelopeKind.answer_application, application)
 
-            def accept_application(row: QueuedEnvelope, writer: Any, **publication: Any) -> Any:
-                return store.accept(row, writer, 105, identity=identity, **publication)
+            def accept_application(
+                connection: sqlite3.Connection, take: EventTaken
+            ) -> AcceptedEvent:
+                receipt, taken = store.accept_in_transaction(
+                    connection,
+                    applied_envelope,
+                    lambda connection, envelope: take(),
+                    105,
+                    identity=identity,
+                )
+                return AcceptedEvent(as_object(receipt), taken)
 
             # Reconnect the same process with a fresh generation before native evidence arrives.
             identity = ExecutorIdentity(
@@ -199,7 +232,6 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
             store.runs.begin_connection(identity, 104)
             applied = await harness.system.receive_remote_answer_application(
                 application,
-                applied_envelope,
                 accept_application,
                 store.runs.record_application_in_transaction,
                 store.runs.public_request_id(application.ask),
@@ -207,7 +239,6 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
             assert (
                 await harness.system.receive_remote_answer_application(
                     application,
-                    applied_envelope,
                     accept_application,
                     store.runs.record_application_in_transaction,
                     store.runs.public_request_id(application.ask),

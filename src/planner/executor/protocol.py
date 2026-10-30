@@ -7,7 +7,6 @@ import json
 import sqlite3
 import struct
 from collections.abc import Callable, Coroutine
-from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -19,6 +18,7 @@ if TYPE_CHECKING:
 from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
 from planner.conversation.admission.contracts import AdmissionExpectation
+from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
 from planner.conversation.backends.contracts import (
     AgentMessageCompletedArguments,
     AgentMessageDeltaArguments,
@@ -623,21 +623,6 @@ class TransactionalWriter(Protocol):
         ...
 
 
-class ExecutorEffectAcceptor(Protocol):
-    def __call__(
-        self,
-        row: QueuedEnvelope,
-        write: TransactionalWriter,
-        /,
-        *,
-        transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
-        | None = None,
-        before_commit: Callable[[sqlite3.Connection], None] | None = None,
-        before_outcome_commit: Callable[[sqlite3.Connection, AcceptanceReceipt, bool], None]
-        | None = None,
-    ) -> AcceptanceReceipt: ...
-
-
 class WireMessageKind(StrEnum):
     hello = "hello"
     hello_accepted = "hello_accepted"
@@ -949,18 +934,19 @@ class MacRunConversations(Protocol):
 
 
 class MacInboxConversations(Protocol):
-    async def receive_remote_backend_event(
+    async def take_backend_event(
         self,
-        event: BackendEvent,
-        envelope: QueuedEnvelope,
-        acceptor: ExecutorEffectAcceptor,
-    ) -> AcceptanceReceipt: ...
+        turn: TurnToken | None,
+        arguments: DecodedBackendEventArguments,
+        *,
+        in_commit: CommitParticipant,
+        conversation_id: str | None = None,
+    ) -> AcceptedEvent: ...
 
     async def receive_remote_answer_application(
         self,
         application: AnswerApplication,
-        envelope: QueuedEnvelope,
-        acceptor: ExecutorEffectAcceptor,
+        in_commit: CommitParticipant,
         record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
         public_request_id: str | None,
     ) -> AcceptanceReceipt: ...

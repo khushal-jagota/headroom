@@ -1297,7 +1297,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                 raise AssertionError("duplicate submission invoked backend event writer")
 
             monkeypatch.setattr(
-                harness.endpoint.conversations, "receive_remote_backend_event", duplicate_effect
+                harness.endpoint.conversations, "take_backend_event", duplicate_effect
             )
             assert (
                 await harness.endpoint.inbox.accept(pending[0], harness.mac.identity)
