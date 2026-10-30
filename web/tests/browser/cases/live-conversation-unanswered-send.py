@@ -387,8 +387,8 @@ def run_scope(browser, urls):
         page.wait_for_function("number => window.__sends?.length === number", arg=number)
         page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
         sent = page.evaluate('window.__sends.at(-1)')
-        assert sent['model_change'] == model
-        assert 'reasoning_effort_change' in sent and sent['reasoning_effort_change'] == (effort or None)
+        assert sent['model'] == model
+        assert 'reasoning_effort' in sent and sent['reasoning_effort'] == (effort or None)
         assert page.evaluate('window.__catalogReads') == 1
     page.evaluate("window.__scopeWorkspace('/second-project')")
     page.wait_for_function('window.__catalogReads === 2')

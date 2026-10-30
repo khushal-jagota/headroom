@@ -36,7 +36,7 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
   async function sendMessage(body: any): Promise<any> {
     (window as any).__sends = [...((window as any).__sends ?? []), body];
     if (scopeProof) {
-      startValues = {...startValues, model:body.model_change ?? startValues.model, reasoning_effort:body.reasoning_effort_change};
+      startValues = {...startValues, model:body.model ?? startValues.model, reasoning_effort:body.reasoning_effort};
       scopedConversationId = "conversation-one";
       return {conversation_id:"conversation-one",fate:"started"};
     }
