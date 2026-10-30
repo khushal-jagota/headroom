@@ -24,6 +24,7 @@ def history(tmp_path: Path) -> tuple[Path, str, Path]:
     for path in (
         "tests/unit/test_feedback.py", "tests/unit/test_authority_matrix.py",
         "tests/integration/test_adapter.py", "tests/e2e/test_feedback.py",
+        "tests/containment/test_contained_pytest.py",
         "web/tests/feedback.test.ts", "web/tests/feedback.test.mjs",
         "src/planner/feedback/api.py", "docs/guide.md",
         "tests/support/conversation_codex_scripted_app_server.py",
@@ -97,6 +98,12 @@ def test_absent_baseline_and_missing_historical_mapping_broaden(
     helper = "tests/support/conversation_codex_scripted_app_server.py"
     assert helper not in selected["unit"]
     assert helper in selected["ruff_paths"]
+    # Opt-in probes must not become required publication tests or disappear from lint.
+    probe = "tests/containment/test_contained_pytest.py"
+    assert selected["integration"] == ["tests/integration/test_adapter.py"]
+    assert probe not in selected["unit"] + selected["integration"] + selected["e2e"]
+    assert probe in selected["ruff_paths"]
+    assert selected["mypy"]
     selected = release(history, {"tests/unit/test_feedback.py": None,
                                  "src/planner/feedback/api.py": "changed"})
     assert selected["broad"]

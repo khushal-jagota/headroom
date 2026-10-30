@@ -38,6 +38,7 @@ from planner.executor.cli import executor_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.maintenance.cli import maintenance as maintenance_group
 from planner.message_delivery.contracts import MessageDeliveryMode
+from planner.previews.cli import preview as preview_group
 from planner.tickets.contracts import TicketLocale
 from planner.worker_settings.contracts import SkillPatch
 from planner.worker_types.contracts import BRIEF_FIELD_ID
@@ -447,6 +448,7 @@ def main() -> None:
 main.add_command(executor_group)
 main.add_command(environment_group)
 main.add_command(maintenance_group)
+main.add_command(preview_group)
 environment_group.hidden = True
 
 

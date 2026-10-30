@@ -6,14 +6,14 @@ Regenerate with:
 The pin these models were generated under:
 
     bundle                 turn
-    codex binary version   codex-cli 0.163.0
-    upstream openai/codex  rust-v0.163.0 = 83086188ae0614bd882818ff1aa23f3194962012
+    codex binary version   codex-cli 0.166.0
+    upstream openai/codex  rust-v0.166.0 = 6ff1e1ca3b30fc8b914720681fcf5fe62e95f856
     schema obtained by     codex app-server generate-json-schema --out <dir>
     from the dump's        codex_app_server_protocol.schemas.json
-    dump digest (sha256)   5bc6033305d9eb75a5ddd8488968445256c0ca4481ac2daf55d4ea46712b703f
+    dump digest (sha256)   fbb89dbb6e314880223a84e24d8f0052f7cac429b41ed240c87d28fdf9ac7879
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) a31f600ea8d79ae2fb3cc781355010de4de849cb0ed972f0334a73847a7997c4
-    definitions generated  187
+    subset digest (sha256) 75b06e5882b59b0c6cac15cb1bd513a5e1805d74f9c7b8efd2f68011add2bc1b
+    definitions generated  188
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -105,6 +105,10 @@ class ApiKeyAccount(BaseModel):
 class AmazonBedrockAccount(BaseModel):
     type: Annotated[Literal["amazonBedrock"], Field(title="AmazonBedrockAccountType")]
     usesCodexManagedCredentials: bool | None = False
+
+
+class GcpAccount(BaseModel):
+    type: Annotated[Literal["gcp"], Field(title="GcpAccountType")]
 
 
 class AgentMessageDeltaNotification(BaseModel):
@@ -330,6 +334,11 @@ class UsageLimitExceededImageGenerationFailure(BaseModel):
 
 class ImageGenerationFailure(RootModel[UsageLimitExceededImageGenerationFailure]):
     root: UsageLimitExceededImageGenerationFailure
+
+
+class ImageGenerationInputImage(BaseModel):
+    path: str
+    sha256: str
 
 
 class InstalledApp(BaseModel):
@@ -626,18 +635,24 @@ class ThreadGoalGetParams(BaseModel):
 
 
 class HookPromptThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     fragments: list[HookPromptFragment]
     id: str
     type: Annotated[Literal["hookPrompt"], Field(title="HookPromptThreadItemType")]
 
 
 class PlanThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     id: str
     text: str
     type: Annotated[Literal["plan"], Field(title="PlanThreadItemType")]
 
 
 class ReasoningThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     content: list[str] | None = []
     id: str
     summary: list[str] | None = []
@@ -645,6 +660,8 @@ class ReasoningThreadItem(BaseModel):
 
 
 class McpToolCallThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     appContext: McpToolCallAppContext | None = None
     arguments: Any
     durationMs: int | None = None
@@ -662,6 +679,8 @@ class McpToolCallThreadItem(BaseModel):
 
 
 class DynamicToolCallThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     arguments: Any
     contentItems: (
         list[
@@ -681,6 +700,8 @@ class DynamicToolCallThreadItem(BaseModel):
 
 
 class SubAgentActivityThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     agentPath: str
     agentThreadId: str
     id: str
@@ -691,41 +712,70 @@ class SubAgentActivityThreadItem(BaseModel):
 
 
 class ImageViewThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     id: str
     path: str
     type: Annotated[Literal["imageView"], Field(title="ImageViewThreadItemType")]
 
 
 class SleepThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     durationMs: Annotated[int, Field(ge=0)]
     id: str
     type: Annotated[Literal["sleep"], Field(title="SleepThreadItemType")]
 
 
-class ImageGenerationThreadItem(BaseModel):
+class FileIdThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     failure: ImageGenerationFailure | None = None
+    generationId: str | None = None
     id: str
-    result: str
+    inputImages: list[ImageGenerationInputImage] | None = None
     revisedPrompt: str | None = None
     savedPath: str | None = None
     status: str
     transparentBackground: bool | None = None
     type: Annotated[Literal["imageGeneration"], Field(title="ImageGenerationThreadItemType")]
+    fileId: str
+
+
+class ResultThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
+    failure: ImageGenerationFailure | None = None
+    generationId: str | None = None
+    id: str
+    inputImages: list[ImageGenerationInputImage] | None = None
+    revisedPrompt: str | None = None
+    savedPath: str | None = None
+    status: str
+    transparentBackground: bool | None = None
+    type: Annotated[Literal["imageGeneration"], Field(title="ImageGenerationThreadItemType")]
+    result: str
 
 
 class EnteredReviewModeThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     id: str
     review: str
     type: Annotated[Literal["enteredReviewMode"], Field(title="EnteredReviewModeThreadItemType")]
 
 
 class ExitedReviewModeThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     id: str
     review: str
     type: Annotated[Literal["exitedReviewMode"], Field(title="ExitedReviewModeThreadItemType")]
 
 
 class ContextCompactionThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     id: str
     type: Annotated[Literal["contextCompaction"], Field(title="ContextCompactionThreadItemType")]
 
@@ -905,9 +955,12 @@ class ChatgptAccount(BaseModel):
         "edu",
         "edu_plus",
         "edu_pro",
+        "sci",
+        "sci_plus",
         "unknown",
     ]
     type: Annotated[Literal["chatgpt"], Field(title="ChatgptAccountType")]
+    workspaceName: str | None = None
 
 
 class AppMetadata(BaseModel):
@@ -986,7 +1039,7 @@ class FileIdFunctionCallOutputContentItem(BaseModel):
 
 
 class GetAccountResponse(BaseModel):
-    account: ApiKeyAccount | ChatgptAccount | AmazonBedrockAccount | None = None
+    account: ApiKeyAccount | ChatgptAccount | AmazonBedrockAccount | GcpAccount | None = None
     requiresOpenaiAuth: bool
 
 
@@ -1040,7 +1093,7 @@ class PluginSharePrincipal(BaseModel):
 
 
 class ReviewStartParams(BaseModel):
-    delivery: Literal["inline", "detached"] | None = None
+    delivery: Literal["inline"] | None = None
     target: (
         UncommittedChangesReviewTarget
         | BaseBranchReviewTarget
@@ -1126,6 +1179,8 @@ class ThreadGoalSetResponse(BaseModel):
 
 
 class UserMessageThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     clientId: str | None = None
     content: list[
         TextUserInput
@@ -1142,6 +1197,8 @@ class UserMessageThreadItem(BaseModel):
 
 
 class AgentMessageThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     delivery: Literal["async"] | None = None
     id: str
     memoryCitation: MemoryCitation | None = None
@@ -1152,6 +1209,8 @@ class AgentMessageThreadItem(BaseModel):
 
 
 class CommandExecutionThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     aggregatedOutput: str | None = None
     command: str
     commandActions: list[
@@ -1172,6 +1231,8 @@ class CommandExecutionThreadItem(BaseModel):
 
 
 class FileChangeThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     changes: list[FileUpdateChange]
     id: str
     status: Literal["inProgress", "completed", "failed", "declined"]
@@ -1179,6 +1240,8 @@ class FileChangeThreadItem(BaseModel):
 
 
 class CollabAgentToolCallThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     agentsStates: dict[str, CollabAgentState]
     id: str
     model: str | None = None
@@ -1204,6 +1267,8 @@ class CollabAgentToolCallThreadItem(BaseModel):
 
 
 class WebSearchThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     action: (
         SearchWebSearchAction
         | OpenPageWebSearchAction
@@ -1265,6 +1330,8 @@ class TurnError(BaseModel):
             "rateLimitExceeded",
             "flexUnavailable",
             "serverOverloaded",
+            "modelNotFound",
+            "policyCapacityUnavailable",
             "cyberPolicy",
             "misalignmentPolicyViolation",
             "tooManyDenials",
@@ -1437,6 +1504,8 @@ class SubAgentSessionSource(BaseModel):
 
 
 class FunctionCallOutputThreadItem(BaseModel):
+    completedAtMs: int | None = None
+    startedAtMs: int | None = None
     id: str
     name: str
     namespace: str | None = None
@@ -1474,10 +1543,11 @@ class Turn(BaseModel):
         | WebSearchThreadItem
         | ImageViewThreadItem
         | SleepThreadItem
-        | ImageGenerationThreadItem
         | EnteredReviewModeThreadItem
         | ExitedReviewModeThreadItem
         | ContextCompactionThreadItem
+        | FileIdThreadItem
+        | ResultThreadItem
     ]
     itemsView: Literal["notLoaded"] | Literal["summary"] | Literal["full"] | None = "full"
     rootTurnId: str | None = None
@@ -1533,10 +1603,11 @@ class ItemCompletedNotification(BaseModel):
         | WebSearchThreadItem
         | ImageViewThreadItem
         | SleepThreadItem
-        | ImageGenerationThreadItem
         | EnteredReviewModeThreadItem
         | ExitedReviewModeThreadItem
         | ContextCompactionThreadItem
+        | FileIdThreadItem
+        | ResultThreadItem
     )
     threadId: str
     turnId: str
@@ -1559,10 +1630,11 @@ class ItemStartedNotification(BaseModel):
         | WebSearchThreadItem
         | ImageViewThreadItem
         | SleepThreadItem
-        | ImageGenerationThreadItem
         | EnteredReviewModeThreadItem
         | ExitedReviewModeThreadItem
         | ContextCompactionThreadItem
+        | FileIdThreadItem
+        | ResultThreadItem
     )
     startedAtMs: int
     threadId: str

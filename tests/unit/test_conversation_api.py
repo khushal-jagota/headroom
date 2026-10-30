@@ -1910,3 +1910,70 @@ def test_video_malformed_companion_does_not_pin_and_first_refusal_allows_retry(
             )
 
     _run(exercise)
+
+
+def test_explicit_usage_refresh_preserves_observation_after_all_failure_outcomes(
+    harness: _Harness,
+) -> None:
+    from datetime import UTC, datetime
+
+    from planner.conversation.backend_state import BackendStateStore
+    from planner.conversation.backend_usage import (
+        BackendUsageOutcome,
+        BackendUsageResult,
+        BackendUsageWindow,
+        BackendUsageWindowKind,
+    )
+    from planner.conversation.usage.api import router as usage_router
+
+    observed = datetime(2026, 10, 27, 6, tzinfo=UTC)
+    reset = datetime(2026, 10, 28, 6, tzinfo=UTC)
+    state = BackendStateStore(str(harness.db_path))
+
+    class Adapter:
+        outcome = BackendUsageOutcome.succeeded
+
+        async def refresh(self) -> BackendUsageResult:
+            return BackendUsageResult(
+                backend_key=ConversationBackendKey.claude,
+                outcome=self.outcome,
+                observed_at=observed if self.outcome is BackendUsageOutcome.succeeded else None,
+                windows=(BackendUsageWindow(BackendUsageWindowKind.five_hour, 35.5, reset),)
+                if self.outcome is BackendUsageOutcome.succeeded else (),
+            )
+
+    adapter = Adapter()
+    harness.app.state.conversation = replace(
+        harness.runtime,
+        backend_state=state,
+        backend_usage=BackendUsageService({ConversationBackendKey.claude: adapter}),
+    )
+    harness.app.include_router(usage_router, prefix=CONVERSATION_PREFIX)
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            response = await client.post(f"{CONVERSATION_PREFIX}/backends/refresh")
+            assert response.status_code == 200
+            saved = state.read_usage(ConversationBackendKey.claude)
+            assert saved is not None
+            assert saved.observed_at == observed
+            assert saved.windows[0].used_percent == 35.5
+            initial = (await client.get(f"{CONVERSATION_PREFIX}/usage/limits")).json()
+            for outcome in (
+                BackendUsageOutcome.failed,
+                BackendUsageOutcome.unauthenticated,
+                BackendUsageOutcome.unavailable,
+            ):
+                adapter.outcome = outcome
+                response = await client.post(f"{CONVERSATION_PREFIX}/backends/refresh")
+                assert response.status_code == 200
+                result = next(
+                    row for row in response.json()["usage_outcomes"]
+                    if row["backend_key"] == "claude"
+                )
+                assert result["outcome"] == str(outcome)
+                assert result["detail"] is None
+                assert state.read_usage(ConversationBackendKey.claude) == saved
+                assert (await client.get(f"{CONVERSATION_PREFIX}/usage/limits")).json() == initial
+
+    _run(exercise)

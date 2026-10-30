@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
+from tests.unit.test_deployment import _app
+from tests.unit.test_deployment import synthetic_runtime_admission as synthetic_runtime_admission
 
-from planner.environments.app import digest_app_artifact, digest_app_source
 from planner.environments.deployment import DeploymentResult, deploy_app
 from planner.environments.executor_launch_contracts import (
     ExecutorLaunchConfigurationError,
@@ -163,54 +163,6 @@ def test_invalid_prior_refuses_before_service_disruption(tmp_path: Path, unsafe:
     assert service.stops == []
     assert service.seen == []
 
-
-def _app(
-    root: Path,
-    sha: str,
-    marker: str,
-    *,
-    include_cli: bool = True,
-) -> Path:
-    root.mkdir(parents=True)
-    (root / marker).write_text(marker, encoding="utf-8")
-    python = root / ".venv" / "bin" / "python"
-    python.parent.mkdir(parents=True)
-    planner_file = root / "src" / "planner" / "__init__.py"
-    planner_file.parent.mkdir(parents=True)
-    planner_file.write_text("", encoding="utf-8")
-    python.write_text(
-        "#!/bin/sh\n"
-        'root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)\n'
-        'printf "%s\\n" "$root/src/planner/__init__.py"\n',
-        encoding="utf-8",
-    )
-    python.chmod(0o755)
-    launcher = root / "bin" / "panels-launcher"
-    launcher.parent.mkdir()
-    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
-    launcher.chmod(0o755)
-    if include_cli:
-        cli = root / "bin" / "panels"
-        cli.write_text("#!/bin/sh\n", encoding="utf-8")
-        cli.chmod(0o755)
-    (root / "web" / "dist").mkdir(parents=True)
-    (root / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
-    (root / "agent_backends" / "node_modules").mkdir(parents=True)
-    (root / "agent_backends" / "node_modules" / ".package-lock.json").write_text(
-        "{}\n", encoding="utf-8"
-    )
-    (root / "manifest.json").write_text(
-        json.dumps(
-            {
-                "format": "panels-app-v1",
-                "app_sha": sha,
-                "source_digest": digest_app_source(root),
-                "artifact_digest": digest_app_artifact(root),
-            }
-        ),
-        encoding="utf-8",
-    )
-    return root
 
 
 @pytest.mark.parametrize("explicit", [False, True])

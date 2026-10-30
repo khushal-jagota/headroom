@@ -190,7 +190,7 @@ the VPS child assignment, not headers supplied by a Mac process. Unsupported
 commands fail explicitly. This boundary does not grant a Worker owner authority.
 
 An accepted message uses the same memory-only held line as a VPS-sent message.
-The [conversation system](conversation-system.md#processes-honestly) owns its queue
+The [conversation system](conversations.md) owns its queue
 policy and restart outcomes. The native operation retains submission identity,
 original sender and recipient, and delivery outcome, without saving held content.
 The current inbox receipt remains immutable; the operation result records
@@ -471,16 +471,15 @@ as part of installation.
 
 ## Browser previews
 
-VPS application previews use `/dev/tickets/<ticket-id>/<port>/` and connect to VPS
-loopback. The server reads the Ticket's current locale before each request.
-For a Mac Ticket, the link shows "Previews are unavailable for Mac runs." with a
-503 response. It does not connect to the Mac or fall back to a VPS application on
-the same port, whether or not the Mac executor is connected.
+VPS application previews use staging's generation registry and the commands
+`panels preview prepare`, `register`, `show`, and `stop`. The returned link is
+`/dev/tickets/<ticket-id>/<generation>/`. The application serves that prefix itself;
+Headroom does not rewrite its paths. See [Previews](previews.md) for registration,
+trusted ingress, process identity, transport limits, and expiry.
 
-The VPS proxy preserves the requested port in `Host` and preview-local redirects.
-It strips Panels credentials and hop-by-hop headers before the application receives
-a request. Hosted access passes through the existing trusted ingress. HTTP connect
-and idle deadlines live in `src/planner/previews/configuration.py`.
+All preview commands refuse for a Ticket set to run on the Mac. Existing generation
+links also check the Ticket's current locale before connecting. They never forward
+to the Mac or fall back to a VPS application. No Mac preview forwarding exists.
 
 ## App service prerequisites and boundaries
 

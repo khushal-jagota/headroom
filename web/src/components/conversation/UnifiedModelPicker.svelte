@@ -8,9 +8,11 @@
   } from "../../lib/conversation/modelPicker";
   import { effortOptionsFor } from "../../lib/conversation/composer";
   import {
-    backendRefreshControl
+    backendRefreshControl,
+    backendUsageOutcomeLabel,
+    refreshBackendSnapshots
   } from "../../lib/conversation/backendRefresh";
-  import { readBackends, type BackendModel, type BackendSnapshot, type ConversationBackendKey } from "../../lib/conversation/wire";
+  import { type BackendModel, type BackendSnapshot, type ConversationBackendKey } from "../../lib/conversation/wire";
   import BackendMark from "./BackendMark.svelte";
   import ListboxPicker, {
     type ListboxPickerController,
@@ -176,12 +178,19 @@
     refreshing = true;
     feedback = null;
     try {
-      if (onRetry) await onRetry();
-      else {
-        snapshots = await readBackends(true);
+      if (onRetry) {
+        await onRetry();
+      } else {
+        const result = await refreshBackendSnapshots();
+        if (result.snapshots !== null) snapshots = result.snapshots;
+        feedback = result.error ?? (result.outcomes
+          .filter(outcome => outcome.outcome !== "succeeded")
+          .map(outcome => `${outcome.backend_key}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
+          .join(" · ") || null);
       }
-    } catch (error) { feedback = error instanceof Error ? error.message : "The read failed. Check again."; }
-    finally { refreshing = false; }
+    } catch (error) {
+      feedback = error instanceof Error ? error.message : "The read failed. Check again.";
+    } finally { refreshing = false; }
     await tick();
     picker.focusList();
   }

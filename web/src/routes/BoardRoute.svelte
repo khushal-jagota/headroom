@@ -330,8 +330,7 @@
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
-
-          <ResourceState shape="block" layout="fill" error={navigation.state.error} loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
+          <ResourceState shape="block" layout="fill" loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
             <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:renderedRailWindow('rail_parents'),pageRestoration:{coordinator:scrollCoordinator,priority:'parent',publicationId:presentation.scrollPublication?.publicationId ?? null,members:rail.items.map(item=>item.id)},activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={() => hover.leave()}>
             <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} navigationWindow={renderedRailWindow('rail_tickets',{kind:'chief',id:'chief'})} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => hover.enter({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
@@ -375,7 +374,7 @@
           {#if externalPane}
             {@render externalPane()}
           {:else if opening.chiefMarked}
-            <ChiefConversation showRequestErrorLine={false} requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket} />
+            <ChiefConversation requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket} />
           {:else if opening.markedUtility !== null && selectedPaneModule && placement}
           <!-- The pane owns the scroll for a utility screen. These screens are written as
                pages that let the document scroll, so without this they have no scroller of
@@ -416,7 +415,6 @@
             {#key opening.markedTicketId}
               {#await import("./TicketRoute.svelte") then view}
 <view.default
-                navigationErrorHandledByParent
                 id={opening.markedTicketId}
                 requestedConversationId={address.selectedConversationId ?? null}
                 openFile={address.openFile}
@@ -430,7 +428,6 @@
             {#key opening.openManagerId}
               {#await import("../components/ManagerWorkspace.svelte") then view}
 <view.default
-                navigationErrorHandledByParent
                 itemId={opening.openManagerId}
                 requestedConversationId={address.selectedConversationId ?? null}
                 workspaceName="Workspace"
@@ -459,8 +456,6 @@
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={currentHoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} recap={hoverRecap} rail={railElement} recapTarget={hoverRecapTarget} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
-  .board-workspace-wrap { display:flex; flex-direction:column; }
-  .board-workspace-shell { flex:1; height:auto; }
   /* The pane's own scroller for a utility screen. It is here, scoped to this component,
      rather than in the shared stylesheet, so no skeleton rule can take it away. */
   .board-workspace-utility { flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; }
@@ -470,13 +465,14 @@
      mounted in, beside a text-only status node. */
   .board-workspace-utility > :global(div) { flex:1 0 auto; min-height:0; }
   .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); }
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); border-right:0; }
   .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
   .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
   .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
-  .rail-grip::after { content:""; position:absolute; inset:0 4px; background:transparent; transition:background var(--motion-fast) var(--motion-ease); }
-  .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { background:var(--accent-bright); }
+  .rail-grip::after { content:""; position:absolute; top:50%; left:50%; width:var(--space-1); height:var(--space-6); transform:translate(-50%,-50%) scaleY(var(--rail-grip-rest-scale)); border-radius:var(--radius-pill); background:var(--border-color); opacity:0; pointer-events:none; transition:opacity var(--motion-base) var(--motion-ease),background var(--motion-base) var(--motion-ease),transform var(--motion-enter) var(--motion-ease); }
+  .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { opacity:1; transform:translate(-50%,-50%) scaleY(1); }
+  .resizing .rail-grip::after { background:var(--text-strong); }
   .resizing { user-select:none; cursor:col-resize; }
   .settled { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); }
   .settled-head { flex:none; display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) 0; border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
@@ -495,6 +491,9 @@
   .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
   button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+  @media(prefers-reduced-motion:reduce) {
+    .rail-grip::after { transition:none; }
+  }
   @media(max-width:720px) {
     .approved-rail-shell { grid-template-columns:1fr; }
     .rail-grip { display:none; }

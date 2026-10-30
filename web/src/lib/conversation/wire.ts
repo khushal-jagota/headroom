@@ -1,5 +1,7 @@
 import type { SelectionKind, CanonicalModelValidation, BackendScopeRequest } from "./modelResolutionWire";
 export type { CanonicalModelValidation, ModelSelection, BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
+
+import { mutationHeaders } from "../releaseMonitor";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
@@ -549,6 +551,9 @@ export class ConversationWireError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  if (init?.method && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase())) {
+    init = { ...init, headers: await mutationHeaders(init.headers) };
+  }
   let response: Response;
   try {
     response = await fetch(`${CONVERSATION_BASE}${path}`, init);

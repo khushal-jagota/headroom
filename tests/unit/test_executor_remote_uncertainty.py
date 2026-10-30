@@ -94,6 +94,11 @@ def test_unknown_prompt_is_durable_and_quarantined_across_vps_restart(
         assert restored._conversations["c_unknown"].child_is_quarantined
         assert restored._conversations["c_unknown"].reserved_turn is None
         assert not await restored.is_running("c_unknown")
+        assert restored.workspace_activity() == "busy"
+        assert not await restored.run_with_workspace_admission(
+            lambda: pytest.fail("uncertain Mac delivery cannot admit an idle update"),
+            require_idle=True,
+        )
         assert [command.operation for command in commands] == [
             ChildOperation.start,
             ChildOperation.write_prompt,
@@ -105,6 +110,9 @@ def test_unknown_prompt_is_durable_and_quarantined_across_vps_restart(
             )
         ]
         assert kinds == ["prompt_delivery_uncertain"]
+        assert await restored.run_with_workspace_admission(lambda: None, require_idle=False)
+        with pytest.raises(RuntimeError, match="Workspace admission is closed"):
+            await restored.send("c_unknown", text_message_content("Blocked"), sender_label="Test")
         await restored.shutdown()
 
     asyncio.run(run())

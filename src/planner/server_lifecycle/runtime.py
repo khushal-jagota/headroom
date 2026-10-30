@@ -31,6 +31,7 @@ async def application_runtime(
     remembered_codex_login_rejection: CodexLoginRejectionMemory | None,
     navigation_delivery: DeliveryRuntime,
     shutdown_dependents: Callable[[], Awaitable[None]],
+    defer_view_cleanup: bool = False,
 ) -> AsyncIterator[ConversationRuntime]:
     """Enter phases synchronously, then yield one fully installed runtime.
 
@@ -51,6 +52,7 @@ async def application_runtime(
             remembered_codex_login_rejection=remembered_codex_login_rejection,
             cleanup=cleanup,
             signal_composition=composition,
+            defer_view_cleanup=defer_view_cleanup,
         )
         try:
             composition.initialize()

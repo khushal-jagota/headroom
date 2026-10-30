@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
+from typing import Literal
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
@@ -40,6 +41,7 @@ from planner.conversation.in_memory_conversation_system import (
 )
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.model_resolution.contracts import SelectionKind
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal
 from planner.core.errors import PlannerError
 from planner.projects.data import create_project, update_project
@@ -108,6 +110,18 @@ class _LinkWatchingConversationSystem:
         self._ticket_id = ticket_id
         self.start_requests: list[ConversationStartRequest] = []
         self.link_when_the_conversation_existed: str | None = "not observed"
+
+    @property
+    def workspace_admission(self) -> WorkspaceAdmission:
+        return self._system.workspace_admission
+
+    def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
+        return self._system.workspace_activity()
+
+    async def run_with_workspace_admission(
+        self, operation: Callable[[], None], *, require_idle: bool,
+    ) -> bool:
+        return await self._system.run_with_workspace_admission(operation, require_idle=require_idle)
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         return await self._system.run_if_idle(conversation_id, operation)
