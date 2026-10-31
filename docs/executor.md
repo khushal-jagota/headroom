@@ -568,7 +568,8 @@ File bytes use `link_files.py`, with bounded HTTP streaming and length and hash
 checks. Reservations belong to one connection generation. The domain code still
 checks which child may send or receive each file, and installs files before accepting
 dependent work. `protocol.py` holds the shared message shapes and codecs; execution
-identity types remain in their separate leaf file. The Link does not own children,
+identity types, turn tokens, and Ticket locales live in `execution_identity.py`,
+which imports neither conversation nor Ticket code. The Link does not own children,
 commands, the outbox, or database writes.
 
 Connection diagnostics omit credentials, addresses, paths, exception messages, and remote payloads.

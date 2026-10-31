@@ -9,16 +9,12 @@ from typing import Final, Literal, Required, TypedDict
 
 from planner.conversation.contracts import ConversationSignal
 from planner.core.contracts import JsonDict, Principal
+from planner.execution_identity import TicketLocale as TicketLocale
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
 # `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
 # single enforcement source the write paths pass to admission.validate_title.
 TITLE_MAX_CHARS: Final = 200
-
-
-class TicketLocale(StrEnum):
-    vps = "vps"
-    macos = "macos"
 
 
 @dataclass(frozen=True, slots=True)
