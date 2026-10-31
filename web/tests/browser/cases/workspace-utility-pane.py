@@ -1545,6 +1545,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
+            "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "Owner updates", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
             "/api/worker-types?supported=true": {"worker_types": []},
