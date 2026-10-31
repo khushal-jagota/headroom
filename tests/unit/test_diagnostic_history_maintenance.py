@@ -539,11 +539,6 @@ def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
         assert {
             row[0] for row in upgraded.execute("SELECT version_num FROM alembic_version")
         } == {schema_revision}
-        if schema_revision == "executor_default_workspace":
-            upgraded.execute(
-                "UPDATE conversations SET workspace_path_policy='executor_default'"
-            )
-            upgraded.commit()
 
     def candidates() -> set[tuple[str, int]]:
         report = read_report(archive, as_of_unix=AS_OF)
