@@ -12,7 +12,7 @@ Stage ownership is a second, quieter choice, declared by the Worker type. A work
 
 ## How a filing is decided
 
-Only that Ticket’s Worker may file. Khushal, Chief, and Managers do not propose on a Ticket’s behalf. Proposing is the Ticket speaking about its own work.
+Only that Ticket’s Worker may file. Khushal, Chief, and Managers do not propose on a Ticket’s behalf. Proposing is the Ticket speaking about its own work. The body is prose, or a page the holder can scan. See [Proposal pages](proposal-pages.md).
 
 The resolver looks at the stage, the ceiling, and the holder, then does one of two things in the same transaction as the write:
 
@@ -41,4 +41,4 @@ The accent on Approve is the visual meaning of the gate. See [Design](design.md)
 
 Routing and the accept, reject, and user-completion decisions live in `src/planner/tickets/logic/proposal_routing.py` and `src/planner/tickets/logic/resolution.py`. The writers that apply them live in `src/planner/tickets/data.py`. The cards are `web/src/components/WorkerProposalCard.svelte` and `web/src/components/ReviewProposalCard.svelte`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-10-31._

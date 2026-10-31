@@ -11,6 +11,7 @@ from planner.core.contracts import (
     Principal,
     principal_legacy_actor,
 )
+from planner.page_kit.logic.validate import prepare_stored_text
 from planner.tickets.contracts import (
     NextCeiling,
     PendingTicketProposal,
@@ -74,7 +75,7 @@ def decide_file_proposal(
 
     Stage ownership governs collaboration and automatic openers, not proposal parking.
     """
-    admission.validate_body(body, "proposal body")
+    body = prepare_stored_text(body, "proposal body")
     field = worker_type_definition.gating_field(ticket.stage)
     if field is None:
         raise PlannerError(ErrorCode.validation, "ticket stage has no proposal field")
@@ -123,7 +124,7 @@ def decide_accept(
     approval: TicketFieldApproval,
 ) -> Decision:
     if edited_body is not None:
-        admission.validate_body(edited_body, "edit-accept text")
+        edited_body = prepare_stored_text(edited_body, "edit-accept text")
     proposal = _pending(ticket, field, worker_type_definition)
     target = worker_type_definition.advance_target(ticket.stage)
     if target is None:
@@ -163,7 +164,7 @@ def decide_complete_user_owned_gate(
     same consequence an approval has, reached the only other way a Stage can be filled.
     Correcting an already-settled value is the ordinary edit, on the ordinary path.
     """
-    admission.validate_body(new_body, "field value")
+    new_body = prepare_stored_text(new_body, "field value")
     if worker_type_definition.is_terminal(ticket.stage):
         raise PlannerError(
             ErrorCode.validation, "terminal tickets have no gate to complete", {"field": field}
@@ -223,7 +224,7 @@ def decide_edit_settled_field(
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     """Correct a value the Ticket has already passed. It changes nothing else."""
-    admission.validate_body(new_body, "field value")
+    new_body = prepare_stored_text(new_body, "field value")
     if (
         fields_codec.field_value(
             ticket.field_values, field, worker_type_definition=worker_type_definition

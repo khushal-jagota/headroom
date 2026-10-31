@@ -4,7 +4,7 @@ Goals live under Chief. Each goal has its own agent and conversation. Chief keep
 
 The goal page is a dashboard for the user. Steps use checklists and measurements use charts. Text adds useful context without repetition of visible state. Intake records and work artifacts appear only when they help the user. This guidance requires no fixed template or automatic content removal. Useful authored context and artifact previews retain their behavior.
 
-A goal stores its Project, title, why it matters, deadline, active state, primary chart, and flexible page document. It also stores its binary checked input and completion display. The page uses the shared page-kit format. Text, checklists, tables, layouts, and supporting charts can appear in that document. Blocks and checklist items keep stable IDs when their order or words change.
+A goal stores its Project, title, why it matters, deadline, active state, primary chart, and flexible page document. It also stores its binary checked input and completion display. The page uses the shared page-kit format. Text, checklists, tables, layouts, and supporting charts can appear in that document. Blocks and checklist items keep stable IDs when their order or words change. A Ticket proposal can carry the same kind of document. See [Proposal pages](proposal-pages.md).
 
 Checklists belong to the page. Their checked state does not create a measurement. Numeric charts can reference existing measures or bind a retained dataset. Targets, reference paths, units, and number formats describe the chart. They do not create observations. The goal reader preserves signed values, fractions, missing dates, source health, and observation provenance.
 

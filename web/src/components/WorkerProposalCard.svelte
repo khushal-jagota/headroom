@@ -4,7 +4,9 @@
   import InlineEdit from "./InlineEdit.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
+  import { readStoredPage } from "../lib/pageKit";
   import type { PendingTicketProposal, Principal } from "../lib/types";
+  import PageProposalBody from "./pageKit/PageProposalBody.svelte";
 
   let { proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, contextRow }: {
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
@@ -29,6 +31,7 @@
   let newStage = $derived(advanceTargetFor(lifecycle, stage, ""));
   let nextCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
   let finalApproval = $derived(newStage !== null && lifecycle.stageIsTerminal[newStage] === true);
+  let showPage = $derived(readStoredPage(draft).intent !== "prose");
   let identity = $derived([proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, finalApproval, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
   $effect(() => {
     if (identity === lastKey) return;
@@ -71,9 +74,13 @@
 <section inert={disabled || busy || resolved} class="worker-proposal" data-approval-block data-mode="pending" data-field={proposal.field}>
   <h2>{fieldLabelFor(lifecycle, proposal.field)} <span class="who">— for
     <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}</button> to approve</span></h2>
-  <div class="proposal-prose">
-    <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; }} onCancel={() => proposal.body} />
-  </div>
+  {#if showPage}
+    <PageProposalBody body={draft} storedBody={proposal.body} editable onSave={async (raw) => { draft = raw; }} />
+  {:else}
+    <div class="proposal-prose">
+      <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; }} onCancel={() => proposal.body} />
+    </div>
+  {/if}
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="actions">
     <button type="button" class="primary" data-accept aria-haspopup={finalApproval ? undefined : "listbox"} aria-expanded={finalApproval ? undefined : scopePicker?.expanded ?? false} aria-controls={finalApproval ? undefined : scopePicker?.controls}
@@ -101,6 +108,14 @@
 <style>
   .worker-proposal { padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
   h2 { margin:var(--space-2) 0 0; letter-spacing:-.006em; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
+  .worker-proposal:has(:global([data-page-document])) h2 {
+    margin: 0;
+    font-size: var(--type-sm);
+    font-weight: 500;
+    line-height: 1.4;
+    letter-spacing: 0;
+    color: var(--text-muted);
+  }
   .who { font-weight:400; color:var(--text-faint); }
   .proposal-prose { line-height:1.6; margin-top:var(--space-4); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:15px; line-height:1.6; }

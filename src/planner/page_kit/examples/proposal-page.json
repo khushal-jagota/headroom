@@ -1,0 +1,221 @@
+{
+  "kind": "headroom.page",
+  "version": 1,
+  "title": "Ship proposal pages",
+  "summary": "A structured plan the holder can read beside the approval, without opening the worker transcript.",
+  "blocks": [
+    {
+      "type": "status",
+      "label": "Ready for the holder",
+      "tone": "attention",
+      "id": "block-1"
+    },
+    {
+      "type": "metrics",
+      "items": [
+        {
+          "label": "Stages",
+          "value": "4",
+          "hint": "Brief through consequences",
+          "change": "+1",
+          "tone": "good"
+        },
+        {
+          "label": "Open questions",
+          "value": "1",
+          "hint": "One choice left"
+        },
+        {
+          "label": "Blockers",
+          "value": "0",
+          "hint": "Clear to approve"
+        }
+      ],
+      "id": "block-2"
+    },
+    {
+      "type": "section",
+      "title": "At a glance",
+      "summary": "Where this proposal stands.",
+      "blocks": [
+        {
+          "type": "properties",
+          "items": [
+            {
+              "label": "Stage",
+              "value": "Awaiting approval"
+            },
+            {
+              "label": "Owner",
+              "value": "The holder"
+            },
+            {
+              "label": "Open choice",
+              "value": "Goals not mounted"
+            },
+            {
+              "label": "Blockers",
+              "value": "None"
+            }
+          ],
+          "id": "block-4"
+        }
+      ],
+      "id": "block-3"
+    },
+    {
+      "type": "section",
+      "title": "What changes",
+      "summary": "A worker files a page when the proposal is a plan rather than a note.",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "The page is the proposal. Approving it stores the same document on the field, so the Ticket keeps showing it.",
+          "id": "block-6"
+        },
+        {
+          "type": "checklist",
+          "title": "What the page keeps",
+          "items": [
+            {
+              "label": "The kit vocabulary is closed",
+              "state": "done",
+              "detail": "A page that leaves the kit is refused, and the error names the path.",
+              "id": "item-1"
+            },
+            {
+              "label": "Reader toggles stay on this screen",
+              "state": "open",
+              "detail": "Switching Risks and Evidence does not change the stored page.",
+              "action": "Keep it here",
+              "id": "item-2"
+            },
+            {
+              "label": "Goals can reuse the kit later",
+              "state": "open",
+              "detail": "The renderer takes a document and nothing about a ticket.",
+              "id": "item-3"
+            },
+            {
+              "label": "Prose proposals stay prose",
+              "state": "open",
+              "id": "item-4"
+            }
+          ],
+          "id": "block-7"
+        }
+      ],
+      "id": "block-5"
+    },
+    {
+      "type": "section",
+      "title": "Readiness",
+      "summary": "One choice is still open. Evidence lists where the page shows.",
+      "views": [
+        {
+          "id": "risks",
+          "label": "Risks",
+          "blocks": [
+            {
+              "type": "callout",
+              "tone": "attention",
+              "title": "One open choice",
+              "text": "Goals are not mounted yet. The kit takes a document and nothing ticket-specific, so a later Goal page can render the same way.",
+              "id": "block-9"
+            }
+          ]
+        },
+        {
+          "id": "evidence",
+          "label": "Evidence",
+          "blocks": [
+            {
+              "type": "table",
+              "caption": "Where it shows",
+              "columns": [
+                "Surface",
+                "What the reader gets"
+              ],
+              "rows": [
+                [
+                  "Ticket proposal",
+                  "The page, with Approve"
+                ],
+                [
+                  "Review",
+                  "The same page"
+                ],
+                [
+                  "Settled field",
+                  "The approved page"
+                ]
+              ],
+              "id": "block-10"
+            }
+          ]
+        }
+      ],
+      "id": "block-8"
+    },
+    {
+      "type": "section",
+      "title": "Surfaces",
+      "blocks": [
+        {
+          "type": "rows",
+          "items": [
+            {
+              "title": "Ticket proposal",
+              "detail": "The page, with Approve",
+              "status": "Now",
+              "tone": "attention"
+            },
+            {
+              "title": "Review",
+              "detail": "The same page",
+              "status": "Same",
+              "tone": "neutral"
+            },
+            {
+              "title": "Settled field",
+              "detail": "The approved page",
+              "meta": "After approval",
+              "status": "Kept",
+              "tone": "good"
+            }
+          ],
+          "id": "block-12"
+        }
+      ],
+      "id": "block-11"
+    },
+    {
+      "type": "section",
+      "title": "Left in place",
+      "blocks": [
+        {
+          "type": "grid",
+          "columns": 2,
+          "blocks": [
+            {
+              "type": "callout",
+              "tone": "good",
+              "title": "Kept",
+              "text": "Prose proposals stay prose.",
+              "id": "block-15"
+            },
+            {
+              "type": "callout",
+              "tone": "neutral",
+              "title": "Left alone",
+              "text": "Ticket files and HTML artifacts are a different surface.",
+              "id": "block-16"
+            }
+          ],
+          "id": "block-14"
+        }
+      ],
+      "id": "block-13"
+    }
+  ]
+}
