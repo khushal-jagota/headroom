@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from planner.environments.mac_app.configuration import BUNDLE_ID
+from planner.environments.mac_app.configuration import BUNDLE_ID, validate_identity
 from planner.executor.configuration import (
     LAUNCH_AGENT_RESTART_THROTTLE_SECONDS,
     validate_executor_launch,
@@ -29,13 +29,19 @@ class ServiceConfiguration:
     executor_root: Path | None = None
     backend_path: str | None = None
 
+    source_path: Path | None = None
+    venv_path: Path | None = None
+    app_path: Path | None = None
+    job_label: str = "com.panels.executor"
+    bundle_id: str = BUNDLE_ID
+
     @property
     def source(self) -> Path:
-        return self.home / "Deployments/PanelsExecutor/source"
+        return self.source_path or self.home / "Deployments/PanelsExecutor/source"
 
     @property
     def venv(self) -> Path:
-        return self.home / "Deployments/PanelsExecutor/venv"
+        return self.venv_path or self.home / "Deployments/PanelsExecutor/venv"
 
 
 def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
@@ -43,9 +49,17 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
         configuration.executor_root
         or configuration.home / "Library/Application Support/Panels/executor"
     )
-    if not configuration.home.is_absolute() or not executor_root.is_absolute():
+    app = configuration.app_path or configuration.home / "Applications/Panels.app"
+    paths = (configuration.home, executor_root, configuration.source, configuration.venv, app)
+    if any(not path.is_absolute() or "\0" in str(path) for path in paths):
         raise MacExecutorConfigurationError("Mac executor service paths must be absolute")
+    if configuration.venv_path is not None and os.pathsep in str(configuration.venv_path):
+        raise MacExecutorConfigurationError("environment path cannot contain the PATH separator")
+    if app.suffix != ".app":
+        raise MacExecutorConfigurationError("app path must name an .app bundle")
     try:
+        validate_identity(configuration.job_label)
+        validate_identity(configuration.bundle_id)
         validate_executor_launch(
             configuration.executor_id,
             configuration.application_revision,
@@ -70,10 +84,10 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
         raise MacExecutorConfigurationError("backend PATH requires absolute directories")
     return plistlib.dumps(
         {
-            "Label": "com.panels.executor",
-            "AssociatedBundleIdentifiers": [BUNDLE_ID],
+            "Label": configuration.job_label,
+            "AssociatedBundleIdentifiers": [configuration.bundle_id],
             "ProgramArguments": [
-                str(configuration.home / "Applications/Panels.app/Contents/MacOS/Panels"),
+                str(app / "Contents/MacOS/Panels"),
                 "executor",
                 "run",
                 "--application-revision",
@@ -106,6 +120,11 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, required=True)
+    parser.add_argument("--source", dest="source_path", type=Path)
+    parser.add_argument("--venv", dest="venv_path", type=Path)
+    parser.add_argument("--app", dest="app_path", type=Path)
+    parser.add_argument("--job-label", default="com.panels.executor")
+    parser.add_argument("--bundle-id", default=BUNDLE_ID)
     parser.add_argument("--executor-root", type=Path)
     parser.add_argument("--application-revision", required=True)
     parser.add_argument("--executor-id", required=True)

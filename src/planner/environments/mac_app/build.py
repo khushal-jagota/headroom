@@ -14,14 +14,16 @@ from planner.environments.mac_app.configuration import (
     BUNDLE_ID,
     DISPLAY_NAME,
     MINIMUM_MACOS,
+    validate_identity,
 )
 
 
-def bundle_metadata(revision: str) -> dict[str, object]:
+def bundle_metadata(revision: str, bundle_id: str = BUNDLE_ID) -> dict[str, object]:
+    validate_identity(bundle_id)
     if not revision or any(ord(char) < 32 for char in revision):
         raise ValueError("an explicit application revision is required")
     return {
-        "CFBundleIdentifier": BUNDLE_ID,
+        "CFBundleIdentifier": bundle_id,
         "CFBundleName": DISPLAY_NAME,
         "CFBundleDisplayName": DISPLAY_NAME,
         "CFBundleExecutable": DISPLAY_NAME,
@@ -41,18 +43,34 @@ def runtime_definition(python: Path) -> str:
     return '#define PANELS_PYTHON "' + encoded + '"\n'
 
 
-def build_app(home: Path, output: Path, revision: str) -> None:
+def build_app(
+    home: Path,
+    output: Path,
+    revision: str,
+    *,
+    python: Path | None = None,
+    installed_app: Path | None = None,
+    bundle_id: str = BUNDLE_ID,
+) -> None:
     if platform.system() != "Darwin" or platform.machine() != ARCHITECTURE:
         raise ValueError("build requires the authorized native arm64 Mac")
     if not home.is_absolute() or not output.is_absolute() or output.suffix != ".app":
         raise ValueError("home and candidate app must be absolute paths")
     installed = home / "Applications/Panels.app"
-    if output.resolve() == installed.resolve() or installed.resolve() in output.resolve().parents:
+    python = python or home / "Deployments/PanelsExecutor/venv/bin/python"
+    protected = (installed, installed_app or installed)
+    if any(not path.is_absolute() or "\0" in str(path) for path in (*protected, python)):
+        raise ValueError("installed app and Python paths must be absolute")
+    if any(path.suffix != ".app" for path in protected):
+        raise ValueError("installed app path must name an .app bundle")
+    if any(
+        output.resolve() == path.resolve() or path.resolve() in output.resolve().parents
+        for path in protected
+    ):
         raise ValueError("build outside the installed app")
-    metadata = bundle_metadata(revision)
-    python = home / "Deployments/PanelsExecutor/venv/bin/python"
+    metadata = bundle_metadata(revision, bundle_id)
     if not python.is_file():
-        raise ValueError("the fixed native Python environment does not exist")
+        raise ValueError("the selected native Python environment does not exist")
     # Exclusive creation prevents replacement of an existing candidate or installation.
     output.mkdir()
     contents = output / "Contents"

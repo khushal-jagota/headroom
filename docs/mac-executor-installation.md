@@ -20,19 +20,53 @@ Retain the old app, permanent runtimes, repair evidence, and pending bytes.
 Record prior dependency inputs and source before each later update.
 Use an operator-selected evidence directory outside the replaceable source and environment.
 
-The fixed paths are:
+The unchanged default paths and identities are:
 
 ```sh
 INSTALL_ROOT="$HOME/Deployments/PanelsExecutor"
 SOURCE="$INSTALL_ROOT/source"
 VENV="$INSTALL_ROOT/venv"
 EXECUTOR_ROOT="$HOME/Library/Application Support/Panels/executor"
-PLIST="$HOME/Library/LaunchAgents/com.panels.executor.plist"
-SERVICE="gui/$(id -u)/com.panels.executor"
+APP="$HOME/Applications/Panels.app"
+JOB_LABEL="com.panels.executor"
+BUNDLE_ID="com.panels.executor.app"
+PLIST="$HOME/Library/LaunchAgents/$JOB_LABEL.plist"
+SERVICE="gui/$(id -u)/$JOB_LABEL"
 ```
 
 If the installed executor uses an explicit different persistent root, preserve that root in every command and plist.
 Never substitute a new empty root to bypass existing work or incompatible evidence.
+
+A separate installation can select explicit source, environment, app, job label, and bundle identity inputs.
+The following production layout is a proposal for later authorized native review:
+
+```sh
+INSTALL_ROOT="$HOME/Deployments/PanelsExecutorProduction"
+SOURCE="$INSTALL_ROOT/source"
+VENV="$INSTALL_ROOT/venv"
+EXECUTOR_ROOT="$HOME/Library/Application Support/Panels/production-executor"
+APP="$HOME/Applications/Panels Production.app"
+JOB_LABEL="com.panels.executor.production"
+BUNDLE_ID="com.panels.executor.production.app"
+PLIST="$HOME/Library/LaunchAgents/$JOB_LABEL.plist"
+SERVICE="gui/$(id -u)/$JOB_LABEL"
+```
+
+Select one complete layout before the commands below. Preserve each installed environment at its own final path.
+Use the same selected paths and identities for build, verification, and LaunchAgent generation.
+Keep the real account HOME. Do not substitute HOME, redirect provider homes, use symlink workarounds, or edit the plist manually.
+The selected state root controls the workspace, spool, artifacts, skills, socket, and logs.
+No current Mac observation establishes that the proposed production destinations are absent or available.
+Native inspection under separate authority must establish a genuine fresh installation before any production write.
+The production installation attempt remains unused. These examples grant no installation, adoption, retry, or recovery authority.
+Never copy the isolated journal into the production root or perform service actions against the isolated job.
+
+Separate installations still share the account's provider homes and credentials.
+Canonical skill publication updates links in those homes, but its lock covers only one executor root.
+Two installations can therefore contend for account skill links even with separate immutable snapshots.
+This configuration does not establish safe concurrent skill publication or full account isolation.
+Native coexistence approval requires a separate review of these shared account resources.
+Do not infer production permission grants from the isolated app's grants.
 
 Set operator-reviewed values for these inputs:
 
@@ -231,7 +265,7 @@ Keep those historical procedures intact.
 ## Install at the final paths
 
 Proceed only after successful exit and job removal, or after an established genuine fresh-install determination.
-Create the fixed source checkout once:
+Create the selected source checkout once:
 
 ```sh
 mkdir -p "$INSTALL_ROOT"
@@ -316,24 +350,27 @@ A later distribution channel or certificate change needs a separate decision.
 After the current runbook's source and environment preparation, choose an absent candidate path outside the installed app:
 
 ```sh
-APP="$HOME/Applications/Panels.app"
 CANDIDATE_APP="$EVIDENCE/Panels.app"
 LOCAL_IDENTITY="A374793985387F82D90D9EAFED73D60D907C26DC"
 "$VENV/bin/python" -I -B -m planner.environments.mac_app build \
-  --home "$HOME" --output "$CANDIDATE_APP" --revision "$CANDIDATE_SHA"
+  --home "$HOME" --output "$CANDIDATE_APP" --revision "$CANDIDATE_SHA" \
+  --python "$VENV/bin/python" --installed-app "$APP" --bundle-id "$BUNDLE_ID"
 /usr/bin/codesign --force --sign "$LOCAL_IDENTITY" "$CANDIDATE_APP"
 "$VENV/bin/python" -I -B -m planner.environments.mac_app verify \
-  --app "$CANDIDATE_APP" --identity "$LOCAL_IDENTITY" > "$EVIDENCE/candidate-signature.txt"
+  --app "$CANDIDATE_APP" --identity "$LOCAL_IDENTITY" \
+  --bundle-id "$BUNDLE_ID" --python "$VENV/bin/python" > "$EVIDENCE/candidate-signature.txt"
 ```
 
-The build needs native arm64 macOS, Xcode Command Line Tools, and the existing fixed Python environment.
-It creates a new candidate and refuses replacement of the installed app. A failed build leaves its partial candidate for inspection.
+The build needs native arm64 macOS, Xcode Command Line Tools, and the selected Python environment at its final path.
+It creates a new candidate and refuses replacement of the selected installed app or the default installed app.
+A failed build leaves its partial candidate for inspection.
 The compiler can apply an ad hoc signature. That signature is not accepted for installation.
 The explicit development signature replaces it. There is no ad hoc fallback.
 If signing requests keychain interaction, stop and return the decision to the owner. Do not change keychain policy.
 
-The bundle identifier is `com.panels.executor.app`. The native executable and display name are `Panels`.
-The C executable invokes the fixed environment with `-I -B -m planner.executor.entrypoint`.
+The default bundle identifier is `com.panels.executor.app`. The explicit `--bundle-id` selects another identity.
+The native executable and display name remain `Panels`.
+The C executable invokes the selected environment with `-I -B -m planner.executor.entrypoint`.
 It forwards arguments without a shell and preserves the process identity and exit status through `execve`.
 The app contains no copied Python runtime or provider dependencies.
 Do not re-sign those external dependencies or infer attribution from their ancestry alone.
@@ -343,12 +380,15 @@ For an update, preserve the old signed app before replacement. Verify both signa
 ```sh
 "$VENV/bin/python" -I -B -m planner.environments.mac_app verify \
   --app "$CANDIDATE_APP" --previous "$APP" --identity "$LOCAL_IDENTITY" \
+  --bundle-id "$BUNDLE_ID" --python "$VENV/bin/python" \
   > "$EVIDENCE/update-signature-compatibility.txt"
 ```
 
 A missing or invalid previous signature stops an update. The first transition from the Python console has no previous signed app.
 That first transition does not establish transfer of existing Python consent.
 Never invent a compatible requirement or weaken the signature check to continue.
+Use `--previous` only for an update of the same installation, not for a new production identity.
+The verifier checks the selected bundle identity and, with `--python`, the embedded interpreter bytes.
 
 Only after identity-bound graceful exit, preserved state, and an authorized installation window, install the verified app at `$APP`.
 Retain the previous app outside that destination with `ditto` before replacement.
@@ -365,6 +405,8 @@ Render with the explicit app origin and logical executor ID:
 ```sh
 "$VENV/bin/python" -m planner.environments.mac_executor \
   --home "$HOME" \
+  --source "$SOURCE" --venv "$VENV" --app "$APP" \
+  --job-label "$JOB_LABEL" --bundle-id "$BUNDLE_ID" \
   --executor-root "$EXECUTOR_ROOT" \
   --application-revision "$CANDIDATE_SHA" \
   --backend-path "$BACKEND_PATH" \
@@ -374,16 +416,17 @@ plutil -lint "$EVIDENCE/candidate.plist"
 ```
 
 Check the rendered arguments and environment before installation.
-The program is `$VENV/bin/panels executor run`. This runbook uses the reviewed SHA
+The program is `$APP/Contents/MacOS/Panels executor run`. This runbook uses the reviewed SHA
 as its diagnostic revision label; the executor accepts other nonempty labels too.
 Protocol and outbox versions decide compatibility, not that label.
 The environment includes the owner's HOME, persistent root, and PATH with `venv/bin` first.
 `PLAN_CLAUDE_EXECUTABLE` names the absolute
 `source/agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe` executable.
 Check that this executable and the reviewed provider commands exist.
+Check that the job label, app path, associated bundle identity, and embedded Python all match the selected installation.
 The noneditable Python installation cannot discover that source path itself.
 
-One `com.panels.executor` GUI job uses RunAtLoad and `KeepAlive={SuccessfulExit:false}`.
+The selected GUI job uses RunAtLoad and `KeepAlive={SuccessfulExit:false}`.
 Abnormal exit requests restart. Successful maintenance exit stays stopped absent another demand.
 The job retains a throttle and separate stdout/stderr files beneath the persistent `logs` directory.
 No daemon or extra demand trigger supplies reboot or pre-unlock operation.

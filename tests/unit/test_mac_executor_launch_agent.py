@@ -114,3 +114,54 @@ _VALID_CONFIGURATION = ServiceConfiguration(
 def test_agent_refuses_invalid_explicit_inputs(configuration: ServiceConfiguration) -> None:
     with pytest.raises(MacExecutorConfigurationError):
         render_launch_agent(configuration)
+
+
+def test_production_layout_keeps_account_home_and_separates_job_resources(tmp_path: Path) -> None:
+    from planner.executor.configuration import ExecutorPaths
+
+    root = tmp_path / "Production State"
+    configuration = replace(
+        _VALID_CONFIGURATION,
+        home=tmp_path,
+        source_path=tmp_path / "Production/source",
+        venv_path=tmp_path / "Production/venv",
+        app_path=tmp_path / "Applications/Panels Production.app",
+        executor_root=root,
+        job_label="com.panels.executor.production",
+        bundle_id="com.panels.executor.production.app",
+    )
+    plist = plistlib.loads(render_launch_agent(configuration))
+    assert plist["Label"] == "com.panels.executor.production"
+    assert plist["AssociatedBundleIdentifiers"] == ["com.panels.executor.production.app"]
+    assert plist["ProgramArguments"][0] == str(
+        tmp_path / "Applications/Panels Production.app/Contents/MacOS/Panels"
+    )
+    env = plist["EnvironmentVariables"]
+    assert env["HOME"] == str(tmp_path)
+    assert env["PATH"].split(":")[0] == str(tmp_path / "Production/venv/bin")
+    assert env["PLAN_CLAUDE_EXECUTABLE"] == str(
+        tmp_path
+        / "Production/source/agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+    )
+    assert env["PLAN_EXECUTOR_ROOT"] == str(root)
+    paths = ExecutorPaths(root)
+    assert paths.ipc_socket.is_relative_to(root)
+    assert plist["StandardOutPath"] == str(root / "logs/launch-agent.stdout.log")
+    assert plist["StandardErrorPath"] == str(root / "logs/launch-agent.stderr.log")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"source_path": Path("relative")},
+        {"venv_path": Path("relative")},
+        {"venv_path": Path("/ambiguous:venv")},
+        {"app_path": Path("relative.app")},
+        {"app_path": Path("/not-a-bundle")},
+        {"bundle_id": "bad identity"},
+        {"job_label": "bad/label"},
+    ],
+)
+def test_agent_rejects_invalid_installation_inputs(changes: dict[str, object]) -> None:
+    with pytest.raises(MacExecutorConfigurationError):
+        render_launch_agent(replace(_VALID_CONFIGURATION, **changes))  # type: ignore[arg-type]
