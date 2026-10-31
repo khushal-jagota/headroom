@@ -209,6 +209,8 @@ def create_app(
         video_cleanup_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
+        executor_endpoint = None
+
         release_task: asyncio.Task[None] | None = None
 
         async def shutdown_dependents() -> None:
@@ -245,6 +247,8 @@ def create_app(
             app.state.vps_metrics = None
             if loops is not None:
                 await attempt(_stop_runtime_with_deadline(loops, deadline))
+            if executor_endpoint is not None:
+                await attempt(executor_endpoint.close())
             if lifecycle_observer is not None:
                 await attempt(cancel_task(lifecycle_observer))
             if failures:
@@ -255,19 +259,30 @@ def create_app(
         remembered_codex_login_rejection = DurableCodexLoginRejection(
             config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
         )
+        backend_factories = (
+            backend_child_factories_for_test
+            if backend_child_factories_for_test is not None
+            else production_backend_child_factories(
+                panels_server_url=f"http://{HOST}:{config.port}",
+                remembered_codex_login_rejection=remembered_codex_login_rejection,
+            )
+        )
+        if config.executor_id is not None:
+            from planner.executor.routing import LocaleBackendChildFactory
+            from planner.executor.vps_transport import VpsExecutor
+
+            executor_endpoint = VpsExecutor(config.db_path, clock, machine_id=config.executor_id)
+            backend_factories = {
+                key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
+                for key, local in backend_factories.items()
+            }
+        app.state.executor_endpoint = executor_endpoint
         with register_workspace_root(config.db_path, config.workspace_root):
             async with application_runtime(
                 db_path=config.db_path,
                 db_busy_timeout_ms=config.db_busy_timeout_ms,
                 sse_heartbeat_ms=config.sse_heartbeat_ms,
-                backend_child_factories=(
-                    backend_child_factories_for_test
-                    if backend_child_factories_for_test is not None
-                    else production_backend_child_factories(
-                        panels_server_url=f"http://{HOST}:{config.port}",
-                        remembered_codex_login_rejection=remembered_codex_login_rejection,
-                    )
-                ),
+                backend_child_factories=backend_factories,
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
                 navigation_delivery=navigation_delivery,
                 shutdown_dependents=shutdown_dependents,
@@ -275,12 +290,21 @@ def create_app(
             ) as conversation:
                 audit_conn = conn_factory()
                 try:
+                    from planner.executor.store import ExecutorStore
+
+                    ExecutorStore.interrupt_after_restart(audit_conn)
+                    audit_conn.commit()
                     tickets_data.audit_ticket_registry_integrity(audit_conn)
                     reconcile_managed_skill_versions(audit_conn)
                     reconcile_provisional_worker_step_bindings(audit_conn)
                 finally:
                     audit_conn.close()
 
+                if executor_endpoint is not None:
+                    executor_endpoint.configure(conversation.system, app)
+                conversation.system.configure_machine_catalog(
+                    None if executor_endpoint is None else executor_endpoint.catalog
+                )
                 app.state.conversation_system = (
                     conversation.system
                     if conversation_system_for_test is None
@@ -449,6 +473,10 @@ def create_app(
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
+    from planner.executor.app_transport import build_executor_router
+
+    app.include_router(build_executor_router())
+    app.state.executor_id = config.executor_id
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
@@ -561,6 +589,17 @@ def create_app(
             "test_mode": config.test_mode,
             "app_sha": config.app_sha,
         }
+
+    @app.get("/api/executor/health")
+    async def executor_health() -> dict[str, object]:
+        endpoint = getattr(app.state, "executor_endpoint", None)
+        if endpoint is None:
+            return {
+                "mode": "local",
+                "last_contact_at_ms": None,
+                "connection_state": "disconnected",
+            }
+        return {"mode": "remote", **endpoint.health()}
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:

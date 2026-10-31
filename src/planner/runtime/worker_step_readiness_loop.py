@@ -34,6 +34,7 @@ from planner.conversation.contracts import (
     PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
+    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
@@ -141,14 +142,16 @@ async def _admitted_start_ready_worker_step(
     Every check happens before anything is sent: an occupied worker is skipped outright,
     and the claim re-runs the readiness decision under the write lock. Once the send
     reports started, queued, or injected, the delivery cannot be taken back. The claim is
-    given back only when the send was refused, or when a failure occurred before a fate.
+    given back for other refusals, or when a failure occurred before a fate.
+    A definite backend start failure stays errored for explicit recovery.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
     """
+    conn = connect_database()
     link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
-    await link_lock.acquire()
-    conn: sqlite3.Connection | None = None
+    link_acquired = False
     try:
-        conn = connect_database()
+        await link_lock.acquire()
+        link_acquired = True
         ticket = tickets_data.read_ticket(conn, ticket_id)
         conversation_id = ticket.conversation_id
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
@@ -156,6 +159,13 @@ async def _admitted_start_ready_worker_step(
             # only for a collision that slipped between this check and the send.
             return WorkerStepStartResult(started=False)
 
+        worker_type_definition = worker_type_registry.require(ticket.worker_type)
+        if not worker_step_readiness.is_ready_for_worker_step(
+            conn,
+            ticket,
+            worker_type_definition=worker_type_definition,
+        ):
+            return WorkerStepStartResult(started=False)
         claimed = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
@@ -226,6 +236,7 @@ async def _admitted_start_ready_worker_step(
                 mode=PromptDeliveryMode.queue,
                 sender_message_id=sender_message_id,
                 worker_type_registry=worker_type_registry,
+                retain_backend_start_failure=not paired_opener,
                 now=now(),
             )
             conversation_id = delivered.conversation_id
@@ -241,7 +252,7 @@ async def _admitted_start_ready_worker_step(
             return WorkerStepStartResult(started=False)
 
         if isinstance(fate, PromptDeliveryRefused):
-            # The refusal is on the record before the claim is given back, so a release
+            # The refusal is on the record before the claim changes, so a release
             # that itself fails cannot swallow the one line that says why nothing ran.
             _log.error(
                 "worker step send was refused (ticket=%s conversation=%s reason=%s)",
@@ -250,7 +261,19 @@ async def _admitted_start_ready_worker_step(
                 fate.refusal_reason.value,
             )
             remove_tentative_bindings()
-            give_the_claim_back()
+            if (
+                not paired_opener
+                and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
+            ):
+                tickets_data.mark_worker_step_claim_errored(
+                    conn,
+                    ticket_id,
+                    expected_claim=taken_claim,
+                    expected_claim_revision=taken_claim_revision,
+                    now=now(),
+                )
+            else:
+                give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliverySuppressed):
@@ -304,7 +327,8 @@ async def _admitted_start_ready_worker_step(
                 )
         return WorkerStepStartResult.from_delivery_fate(fate)
     finally:
-        link_lock.release()
+        if link_acquired:
+            link_lock.release()
         if conn is not None:
             conn.close()
 
@@ -344,8 +368,8 @@ async def _admitted_tell_a_worker_it_lost_its_memory(
     for one, and most of these never get another. Nothing is claimed and nothing is
     released here: the claim is already out, and this only speaks into the step.
 
-    The notice answers its own boundary, because it is sent under a worker-step sender
-    message id. A second pass over the same boundary therefore finds it answered.
+    A delivered notice answers its boundary. An uncertain notice prevents another
+    automatic attempt, while a definite refusal or send exception can retry.
     """
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
         conn = connect_database()
@@ -354,9 +378,7 @@ async def _admitted_tell_a_worker_it_lost_its_memory(
             conversation_id = ticket.conversation_id
             if conversation_id is None:
                 return False
-            if not worker_memory.conversation_holds_an_unanswered_memory_loss(
-                conn, conversation_id
-            ):
+            if not worker_memory.ticket_needs_memory_notice(conn, ticket_id):
                 # Something answered the boundary between the scan and here. That is the
                 # normal end of a race, not a failure.
                 return False
@@ -367,6 +389,9 @@ async def _admitted_tell_a_worker_it_lost_its_memory(
                 # message writes no row to find. Every poll would send another one.
                 return False
             try:
+                # Admission or the boundary may change while held prompts are read.
+                if not worker_memory.ticket_needs_memory_notice(conn, ticket_id):
+                    return False
                 delivered = await conversation_start.send_to_ticket_conversation(
                     conversation_system,
                     conn,

@@ -37,6 +37,7 @@ from planner.core.authctx import normalize_manager_identity
 from planner.credentials.cli import credential as credential_group
 from planner.datasets.cli import dataset as dataset_group
 from planner.environments.cli import environment as environment_group
+from planner.executor.cli import executor_group
 from planner.goals.cli import goal as goal_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.maintenance.cli import maintenance as maintenance_group
@@ -285,6 +286,7 @@ def _ticket_record(
         "project_id",
         "manager_id",
         "ceiling",
+        "ceiling_holder",
     )
     header = {key: data[key] for key in header_keys if key in data}
     manifest = _worker_type(str(data["worker_type"]), True)
@@ -449,6 +451,7 @@ def main() -> None:
     """Operate the local planner server."""
 
 
+main.add_command(executor_group)
 main.add_command(environment_group)
 main.add_command(maintenance_group)
 main.add_command(credential_group)
@@ -1833,21 +1836,6 @@ def ticket_history(
     http.emit(data, as_json, f"{tid} {len(data['events'])} history events")
 
 
-@ticket.command("move")
-@click.argument("ticket_id")
-@click.option("--locale", type=click.Choice(_LOCALES), required=True)
-@json_option
-def ticket_move(ticket_id: str, locale: str, as_json: bool) -> None:
-    """Move an idle Ticket to another execution machine."""
-    data = http.send(
-        "POST",
-        f"/api/tickets/{ticket_id}/move",
-        as_json=as_json,
-        json_body={"locale": locale},
-    )
-    http.emit(data, as_json, f"{ticket_id} locale set to {locale}")
-
-
 @ticket.command("restart-worker")
 @click.argument("ticket_id")
 @click.option("--backend", default=None, help="Registered employee backend to restart on.")
@@ -2635,67 +2623,6 @@ _set_public_command_help()
 # Keep the existing Item alias and its conversation identities.
 main.add_command(manager, "manager")
 main.add_command(manager, "orchestrator")
-
-
-@main.group("model-corrections", hidden=True)
-def model_corrections() -> None:
-    """Preview and correct saved models without a message or restart."""
-
-
-@model_corrections.command("preview")
-@click.option("--ticket", "ticket_ids", multiple=True)
-@click.option(
-    "--manager",
-    "--sprint-item",
-    "--orchestrator",
-    "manager_ids",
-    cls=CompatibilityOption,
-    multiple=True,
-)
-@click.option("--chief", is_flag=True)
-@click.option("--worker-default", "worker_types", multiple=True)
-@json_option
-def model_corrections_preview(
-    ticket_ids: tuple[str, ...],
-    manager_ids: tuple[str, ...],
-    chief: bool,
-    worker_types: tuple[str, ...],
-    as_json: bool,
-) -> None:
-    targets = [
-        {"kind": kind, "id": identifier}
-        for kind, identifiers in (
-            ("ticket", ticket_ids),
-            ("manager", manager_ids),
-            ("worker-default", worker_types),
-        )
-        for identifier in identifiers
-    ]
-    if chief:
-        targets.append({"kind": "chief", "id": "chief"})
-    if not targets:
-        http.fail_validation("select at least one correction target", as_json)
-    result = http.send(
-        "POST",
-        "/api/conversation/model-corrections/preview",
-        as_json=as_json,
-        json_body={"targets": targets},
-    )
-    http.emit(result, as_json, json.dumps(result, indent=2))
-
-
-@model_corrections.command("apply")
-@json_option
-def model_corrections_apply(as_json: bool) -> None:
-    """Read the complete preview JSON from stdin and compare before each write."""
-    try:
-        preview = json.load(sys.stdin)
-    except ValueError:
-        http.fail_validation("stdin must contain the complete preview JSON", as_json)
-    result = http.send(
-        "POST", "/api/conversation/model-corrections/apply", as_json=as_json, json_body=preview
-    )
-    http.emit(result, as_json, json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

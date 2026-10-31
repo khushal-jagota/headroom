@@ -260,4 +260,4 @@ def _normalize_folder_path(folder_path: str | Path | None | object) -> Path | No
         ) from None
     if not path.is_absolute():
         raise PlannerError(ErrorCode.validation, "folder_path must be absolute or start with ~", {})
-    return path.resolve(strict=False)
+    return path

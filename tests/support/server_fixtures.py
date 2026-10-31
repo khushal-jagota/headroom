@@ -14,7 +14,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.server import (
     BOOT_BUDGET_S,
     FAKE_NOW,
@@ -98,7 +97,7 @@ def _start_server(
     with synthetic_home_environment(homes):
         with closing(connect(str(db_path))) as bootstrap:
             create_schema(bootstrap)
-            seed_test_model_catalogue(bootstrap)
+
         if seed_db is not None:
             seed_db(db_path)
 

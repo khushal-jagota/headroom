@@ -1,0 +1,208 @@
+"""Real Claude cleanup failures must survive executor and canonical retirement gates."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import replace
+from pathlib import Path
+from sqlite3 import Connection
+from typing import cast
+
+import pytest
+from claude_agent_sdk import ClaudeAgentOptions
+from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
+from tests.unit.test_executor_native_runtime import (
+    canonical_snapshot,
+)
+from tests.unit.test_executor_retired_journal import IDENTITY as SOURCE_IDENTITY
+from tests.unit.test_executor_retired_journal import endpoint
+
+from planner.conversation.backends.claude_agent_sdk import (
+    ClaudeAgentSdkBackendChild,
+    ClaudeAgentSdkBackendChildFactory,
+    ClaudeAgentSdkChildLaunch,
+)
+from planner.conversation.backends.contracts import BackendChildFactory
+from planner.conversation.contracts import (
+    ConversationBackendKey,
+    ConversationRoleMaterials,
+    ConversationStartRequest,
+    ResolvedConversationStart,
+)
+from planner.conversation.message_content import text_message_content
+from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.storage import ConversationStore
+from planner.conversation.system import SqliteProcessConversationSystem
+from planner.core.contracts import OWNER_PRINCIPAL
+from planner.executor.configuration import ExecutorPaths
+from planner.executor.mac_connection import MacConnection
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_runner import MacRunner
+from planner.executor.protocol import (
+    ChildCommand,
+    ChildOperation,
+    CommandDisposition,
+    CommandOutcome,
+    ReceiptDisposition,
+)
+from planner.runtime import conversation_start
+from planner.tickets import data as tickets
+from planner.tickets.contracts import TicketLocale
+
+
+def claude_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[MacRunner, list[_ScriptedClaudeSdkClient]]:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
+    clients: list[_ScriptedClaudeSdkClient] = []
+
+    def client(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
+        scripted = _ScriptedClaudeSdkClient(options)
+        clients.append(scripted)
+        return scripted
+
+    def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+        return ClaudeAgentSdkBackendChildFactory(
+            ClaudeAgentSdkChildLaunch(claude_executable=Path("/unused/claude")),
+            client_factory=client,
+        )
+
+    return MacRunner(
+        incarnation=IDENTITY.executor_incarnation,
+        connection=MacConnection(IDENTITY),
+        outbox=MacOutbox(tmp_path / "spool"),
+        factory=factory,
+        paths=ExecutorPaths(tmp_path / "executor"),
+        message_files=ConversationMessageFiles(tmp_path / "unused.db"),
+    ), clients
+
+
+IDENTITY = replace(SOURCE_IDENTITY, executor_incarnation="11111111-1111-4111-8111-111111111111")
+
+
+async def disconnect_failure() -> None:
+    raise RuntimeError("disconnect failed before native termination")
+
+
+@pytest.mark.parametrize("fails", [True, False])
+def test_claude_stop_result_controls_canonical_retirement(
+    tmp_db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fails: bool
+) -> None:
+    """Gap: scripted native stop hid Claude's swallowed disconnect failures."""
+
+    async def run() -> None:
+        remote = endpoint(tmp_db)
+        remote.runs.identity = IDENTITY
+        remote.runs.store.begin_connection(IDENTITY)
+        remote.runs.store.mark_ready(IDENTITY)
+        registry, clients = claude_registry(tmp_path, monkeypatch)
+        monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda conn: tmp_path)
+        ticket = tickets.create_ticket(
+            tmp_db,
+            title="Claude cleanup",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+            worker_type="coding",
+            employee_backend="claude",
+            employee_launch_model="test",
+            locale=TicketLocale.macos,
+        )
+
+        commands: list[ChildCommand] = []
+
+        async def send(command: ChildCommand) -> CommandOutcome:
+            commands.append(command)
+            outcome = await registry.run(command)
+            for envelope in cast(MacOutbox, registry.outbox).pending():
+                receipt = await remote.inbox.accept(envelope, IDENTITY)
+                assert receipt.disposition is ReceiptDisposition.accepted
+                cast(MacOutbox, registry.outbox).acknowledge(receipt)
+            return outcome
+
+        remote.runs.send_command = send  # type: ignore[method-assign]
+        remote.runs._read_skill_snapshot = lambda start: canonical_snapshot()  # type: ignore[method-assign]
+        system = SqliteProcessConversationSystem(
+            store=ConversationStore(remote.db_path),
+            backend_child_factories=dict.fromkeys(ConversationBackendKey, remote.runs),
+            message_files=ConversationMessageFiles(remote.db_path),
+        )
+        system.configure_machine_catalog(remote.catalog)
+        remote.bind_conversations(system)
+        native: ClaudeAgentSdkBackendChild | None = None
+        original_disconnect = None
+        try:
+            await system.start_conversation(
+                ConversationStartRequest(
+                    "c_cleanup",
+                    "test",
+                    backend_key=ConversationBackendKey.claude,
+                    workspace_folder=tmp_path,
+                    role_materials=ConversationRoleMaterials(
+                        "worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket.id))
+                    ),
+                )
+            )
+            tickets.write_ticket_conversation_start(
+                tmp_db,
+                ticket.id,
+                conversation_id="c_cleanup",
+                backend="claude",
+                model="test",
+                reasoning_effort=None,
+                now=2,
+            )
+            await system.send("c_cleanup", text_message_content("hello"), sender_label="Owner")
+            state = system._conversations["c_cleanup"]
+            reference = state.retained_child_reference
+            assert reference is not None
+            child = registry._children[reference.child_id]
+            native = cast(ClaudeAgentSdkBackendChild, child.native)
+            client = clients[0]
+            original_disconnect = client.disconnect
+            if fails:
+                monkeypatch.setattr(client, "disconnect", disconnect_failure)
+            await system.kill("c_cleanup")
+            assert state.retirement_task is not None
+            assert await state.retirement_task is (not fails)
+            stop = next(command for command in commands if command.operation is ChildOperation.stop)
+            first = registry._commands[stop.command_id].outcome
+            assert first is not None
+            assert first.disposition is (
+                CommandDisposition.uncertain if fails else CommandDisposition.succeeded
+            )
+            retained = remote.runs.store.retained_runs()
+            assert len(retained) == 1 and retained[0].retirement_confirmed is (not fails)
+            if fails:
+                assert registry._children[reference.child_id] is child
+                assert child.native is native and native._client is client
+                assert state.child_is_quarantined and state.retained_child_reference == reference
+                assert remote.runs.store.child_assignment(reference) == ("ticket", ticket.id)
+                with pytest.raises(PermissionError):
+                    registry.authenticate(reference.child_id, child.capability)
+                before = list(client.prompts), list(client.streamed_messages)
+                await system.send(
+                    "c_cleanup", text_message_content("blocked"), sender_label="Owner"
+                )
+                assert (client.prompts, client.streamed_messages) == before
+                assert len(clients) == 1
+                # A later positive cleanup never rewrites the first failed command.
+                monkeypatch.setattr(client, "disconnect", original_disconnect)
+                fresh = replace(stop, command_id="explicit-cleanup-proof")
+                assert (await send(fresh)).disposition is CommandDisposition.succeeded
+                assert await registry.run(stop) == first
+                assert registry.ask((stop.command_id,))[0].outcome == first
+            else:
+                assert client.disconnected and native._client is None
+                assert reference.child_id not in registry._children
+                assert remote.runs.store.child_assignment(reference) is None
+                assert not state.child_is_quarantined and state.retained_child_reference is None
+        finally:
+            if clients and original_disconnect is not None:
+                monkeypatch.setattr(clients[0], "disconnect", original_disconnect)
+            await system.shutdown()
+            if native is not None:
+                await native.stop()
+            cast(MacOutbox, registry.outbox).close()
+
+    asyncio.run(run())

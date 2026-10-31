@@ -32,6 +32,7 @@
     listLabel = label,
     kind = "compact",
     chevron = "typed",
+    scrollPanel = false,
     hideTrigger = false,
     below = false,
     align = "left",
@@ -63,7 +64,8 @@
     /** How the trigger's chevron is drawn. A typed caret is sized by the font rather
      *  than by its box, so it reads small beside stroked icons. The conversation's
      *  composer asks for the drawn one; every other caller keeps what it had. */
-    chevron?: "typed" | "drawn";
+    chevron?: "typed" | "drawn" | "none";
+    scrollPanel?: boolean;
     hideTrigger?: boolean;
     below?: boolean;
     align?: "left" | "right";
@@ -100,6 +102,7 @@
   let trigger = $state<HTMLButtonElement | null>(null);
   let list = $state<HTMLDivElement | null>(null);
   let panelElement = $state<HTMLDivElement | null>(null);
+  let panelBounds = $state<{left: number; top: number; height: number} | null>(null);
   let typeahead = "";
   let typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
   let returnFocusWhenEnabled = false;
@@ -209,7 +212,17 @@
     anchorPositionReady = anchorOffset === null;
     activate(itemOffset+Math.max(0, items.findIndex((item) => item.value === selectedValue)));
     open = true;
+    panelBounds = null;
     await tick();
+    if (scrollPanel && panelElement && trigger) {
+      const triggerRect = trigger.getBoundingClientRect();
+      const panelRect = panelElement.getBoundingClientRect();
+      const dock = trigger.closest("[data-conversation-pane]")?.getBoundingClientRect();
+      const bottom = Math.min(window.innerHeight, dock?.bottom ?? window.innerHeight) - 8;
+      const top = below ? triggerRect.bottom + 4 : Math.max(8, triggerRect.top - panelRect.height - 4);
+      panelBounds = {left: Math.max(8, Math.min(panelRect.left, window.innerWidth - panelRect.width - 8)), top, height: Math.max(48, (below ? bottom : triggerRect.top - 4) - top)};
+      await tick();
+    }
     // An alternate entry point can sit near the viewport edge. Bound the same
     // panel using its rendered width; its draft, keyboard flow and focus stay here.
     if (anchorOffset && panelElement && root) {
@@ -303,6 +316,11 @@
 
   function onPanelKeydown(event: KeyboardEvent): void {
     const target = event.target;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
     if (!(target instanceof HTMLButtonElement) || !target.hasAttribute("data-listbox-picker-action")) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -336,7 +354,7 @@
   }
 </script>
 
-<div class="listbox-picker" bind:this={root} tabindex="-1" {...attributes}>
+<div class="listbox-picker" class:scroll-panel={scrollPanel} bind:this={root} tabindex="-1" {...attributes}>
   {#if !hideTrigger}
   <button
     type="button"
@@ -357,7 +375,7 @@
       <svg class="listbox-picker-chevron-drawn" viewBox="0 0 24 24" aria-hidden="true">
         {#if open}<path d="M6 15l6-6 6 6" />{:else}<path d="M6 9l6 6 6-6" />{/if}
       </svg>
-    {:else}
+    {:else if chevron === "typed"}
       <span class="listbox-picker-chevron" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
     {/if}
   </button>
@@ -371,9 +389,12 @@
       class:compact={kind === "compact"}
       class:below
       class:right={align === "right"}
-      style:left={anchorOffset ? `${anchorOffset.left}px` : undefined}
-      style:top={anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
-      style:bottom={anchorOffset ? "auto" : undefined}
+      class:scroll-panel={scrollPanel}
+      style:position={panelBounds ? "fixed" : undefined}
+      style:max-height={panelBounds ? `${panelBounds.height}px` : undefined}
+      style:left={panelBounds ? `${panelBounds.left}px` : anchorOffset ? `${anchorOffset.left}px` : undefined}
+      style:top={panelBounds ? `${panelBounds.top}px` : anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
+      style:bottom={panelBounds || anchorOffset ? "auto" : undefined}
       aria-busy={panelBusy}
       role="presentation"
       onkeydown={onPanelKeydown}
@@ -431,6 +452,8 @@
 
 <style>
   .listbox-picker { position: relative; display: inline-flex; min-width: 0; }
+  .listbox-picker.scroll-panel { max-width: 100%; }
+  .listbox-picker.scroll-panel .listbox-picker-trigger { min-height: 24px; }
   .listbox-picker-trigger {
     display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%;
     background: transparent; border: var(--border-hairline) solid transparent;
@@ -467,6 +490,7 @@
   }
   .listbox-picker-panel.below { top: calc(100% + var(--space-1)); bottom: auto; }
   .listbox-picker-panel.right { right: 0; left: auto; }
+  .listbox-picker-panel.scroll-panel { overflow-y: auto; overscroll-behavior: contain; }
   .listbox-picker-list { min-width: 0; padding-block: var(--space-1); outline: none; }
   .compact > .listbox-picker-list { padding-block: 0; }
   .listbox-picker-option {

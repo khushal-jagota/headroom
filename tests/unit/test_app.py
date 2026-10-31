@@ -71,8 +71,8 @@ def test_exported_cli_is_relocatable_and_preserves_caller_context(
     python.parent.mkdir(parents=True)
     python.write_text(
         "#!/bin/sh\n"
-        "printf '%s\\n' \"$PLAN_APP_ROOT\" \"$PLAN_APP_SHA\" \"$PLAN_SERVER_URL\" "
-        "\"$PLAN_TICKET_ID\" \"$PLAN_ACTOR\" \"$PYTHONPATH\" \"$@\"\n"
+        'printf \'%s\\n\' "$PLAN_APP_ROOT" "$PLAN_APP_SHA" "$PLAN_SERVER_URL" '
+        '"$PLAN_TICKET_ID" "$PLAN_ACTOR" "$PYTHONPATH" "$@"\n'
         "exit 23\n",
         encoding="utf-8",
     )

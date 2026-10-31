@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 from tests.support.server import ServerHandle
 
 APP = """
@@ -56,6 +57,7 @@ def _json(client: httpx.Client, method: str, url: str, **kwargs: Any) -> dict[st
     return response.json()  # type: ignore[no-any-return]
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Real preview registration needs Linux /proc")
 def test_saturation_preserves_ticket_reads_writes_and_recovers_capacity(
     tmp_path: Path,
     server_factory: Callable[..., ServerHandle],

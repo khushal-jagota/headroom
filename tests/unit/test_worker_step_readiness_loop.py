@@ -25,6 +25,7 @@ from planner.conversation.contracts import (
     ConversationStartRequest,
     ConversationSystem,
     HeldPrompt,
+    NativeMessageOperation,
     PromptDeliveryFate,
     PromptDeliveryMode,
     PromptDeliveryUncertain,
@@ -58,6 +59,13 @@ TODAY_DAY_ID = "day_2026-07-06"
 # --- the world under test ------------------------------------------------------
 
 
+class _RetirementDelegate:
+    _retirement_source: InMemoryConversationSystem
+
+    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
+        return await self._retirement_source.retirement_is_confirmed(conversation_id)
+
+
 class _World:
     """One temporary database, one conversation system, one clock."""
 
@@ -89,6 +97,8 @@ class _World:
                 principal=OWNER_PRINCIPAL,
                 now=0,
                 title_max_chars=200,
+                employee_backend="codex",
+                employee_launch_model="gpt-6.1-sol",
             )
             ticket = tickets_data.accept_proposal(
                 conn,
@@ -133,6 +143,10 @@ class _World:
                     last_worker_step_sequence,
                     '{"sender_message_id": "worker_step_message_earlier"}',
                 ),
+            )
+            conn.execute(
+                "INSERT INTO conversation_events VALUES (?, ?, 'context_compacted', '{}', 0)",
+                (conversation_id, compacted_through + 1),
             )
 
     def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
@@ -184,13 +198,14 @@ class _World:
         )
 
 
-class _MutateOnKillConversationSystem:
+class _MutateOnKillConversationSystem(_RetirementDelegate):
     def __init__(
         self,
         base: InMemoryConversationSystem,
         mutate: Callable[[], None],
     ) -> None:
         self.base = base
+        self._retirement_source = base
         self.mutate = mutate
 
     async def is_running(self, conversation_id: str) -> bool:
@@ -201,9 +216,10 @@ class _MutateOnKillConversationSystem:
         await self.base.kill(conversation_id)
 
 
-class _PauseKillConversationSystem:
+class _PauseKillConversationSystem(_RetirementDelegate):
     def __init__(self, base: InMemoryConversationSystem) -> None:
         self.base = base
+        self._retirement_source = base
         self.kill_started = asyncio.Event()
         self.release_kill = asyncio.Event()
 
@@ -337,7 +353,6 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                 conn,
                 OWNER_PRINCIPAL,
                 ticket_id,
-                write_employee_configuration=None,
                 start_worker_step=lambda: start_ready_worker_step(
                     ticket_id,
                     connect_database=world.connect,
@@ -362,7 +377,6 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                 conn,
                 OWNER_PRINCIPAL,
                 ticket_id,
-                write_employee_configuration=None,
                 start_worker_step=lambda: start_ready_worker_step(
                     ticket_id,
                     connect_database=world.connect,
@@ -413,7 +427,6 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
                     conn,
                     OWNER_PRINCIPAL,
                     ticket_id,
-                    write_employee_configuration=None,
                     start_worker_step=unexpected_start,
                     now=world.clock.now_unix,
                 )
@@ -474,7 +487,6 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
                     conn,
                     OWNER_PRINCIPAL,
                     ticket_id,
-                    write_employee_configuration=None,
                     start_worker_step=unexpected_start,
                     now=world.clock.now_unix,
                 )
@@ -509,7 +521,6 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
                     restart_conn,
                     OWNER_PRINCIPAL,
                     ticket_id,
-                    write_employee_configuration=None,
                     start_worker_step=unexpected_restart_start,
                     now=world.clock.now_unix,
                 )
@@ -620,11 +631,12 @@ def test_an_old_uncertain_delivery_cannot_error_a_newer_claim(world: _World) -> 
     assert ticket.worker_step_claim_revision == newer_claim.worker_step_claim_revision
 
 
-class _UncertainConversationSystem:
+class _UncertainConversationSystem(_RetirementDelegate):
     """Report an ambiguous send without admitting the worker-step opener."""
 
     def __init__(self, system: InMemoryConversationSystem) -> None:
         self._system = system
+        self._retirement_source = system
 
     async def is_running(self, conversation_id: str) -> bool:
         return await self._system.is_running(conversation_id)
@@ -641,9 +653,11 @@ class _UncertainConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         return PromptDeliveryUncertain()
 
@@ -754,11 +768,12 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     assert {row["binding_status"] for row in world.skill_bindings()} == {"provisional"}
 
 
-class _QueueingConversationSystem:
+class _QueueingConversationSystem(_RetirementDelegate):
     """Idle when asked, busy by the time the send arrives."""
 
     def __init__(self, system: InMemoryConversationSystem, conversation_id: str) -> None:
         self._system = system
+        self._retirement_source = system
         self._conversation_id = conversation_id
 
     async def is_running(self, conversation_id: str) -> bool:
@@ -776,15 +791,18 @@ class _QueueingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         if not await self._system.is_running(self._conversation_id):
             await self._system.send(
                 self._conversation_id,
                 text_message_content("collision"),
                 sender_label="browser",
+                recording_receipt=recording_receipt,
             )
         return await self._system.send(
             conversation_id,
@@ -793,9 +811,11 @@ class _QueueingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            reasoning_effort_is_set=reasoning_effort_is_set,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             owner_read_through_sequence=owner_read_through_sequence,
+            recording_receipt=recording_receipt,
         )
 
     async def interrupt(self, conversation_id: str) -> None:
@@ -852,20 +872,21 @@ def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _Wo
         "conv-busy", last_worker_step_sequence=4, compacted_through=9
     )
 
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
-    try:
-        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
-        assert _waited_for(lambda: len(world.held_prompts("conv-busy")) == 1)
-        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
-        # The second pass finds its own notice waiting and sends nothing.
-        sleep(0.2)
-    finally:
-        readiness_loop.stop()
-        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
-        thread.join(5)
-        asyncio_loop.close()
+    async def exercise() -> None:
+        for expected in (True, False):
+            assert (
+                await tell_a_worker_it_lost_its_memory(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=world.conversations,
+                    worker_type_registry=configured_worker_type_registry(),
+                    now=world.clock.now_unix,
+                )
+                is expected
+            )
+            assert len(await world.conversations.held_prompts("conv-busy")) == 1
 
-    assert len(world.held_prompts("conv-busy")) == 1
+    asyncio.run(exercise())
 
 
 # --- the polling loop ----------------------------------------------------------
@@ -1003,3 +1024,132 @@ def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: s
         assert not started.started
         assert ticket.worker_step_claim is WorkerStepClaim.none
         assert ticket.conversation_id is None
+
+
+def test_definite_start_failure_stays_failed_until_one_explicit_retry(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Real conversation persistence is required: the in-memory fake cannot prove
+    # that native detail survives cleanup and remains in the linked transcript.
+    from tests.unit.test_conversation_system import _Harness, _run
+
+    from planner.conversation.events import PromptDeliveryRefusedEventPayload
+
+    ticket_id = world.ready_ticket()
+    ids = iter(("native-refusal-detail", "retry-refusal-detail", "retry-success"))
+    monkeypatch.setattr("planner.runtime.conversation_start.new_conversation_id", lambda: next(ids))
+    harness = _Harness(Path(world.db_path))
+    harness.backend("native-refusal-detail").spawn_fails = True
+    harness.backend("retry-refusal-detail").spawn_fails = True
+
+    async def start() -> WorkerStepStartResult:
+        return await start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=harness.system,
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
+
+    async def retry() -> dict[str, object]:
+        with closing(world.connect()) as conn:
+            return await worker_restart.restart_worker(
+                harness.system,
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                write_employee_configuration=None,
+                start_worker_step=start,
+                now=world.clock.now_unix,
+            )
+
+    async def exercise() -> None:
+        try:
+            assert (await start()).delivery_fate == "refused"
+            failed = world.ticket(ticket_id)
+            assert failed.ticket_status is TicketStatus.errored
+            assert failed.conversation_id == "native-refusal-detail"
+            assert world.skill_bindings() == []
+            rows = await harness.events(failed.conversation_id)
+            refusals = [
+                r.payload for r in rows if isinstance(r.payload, PromptDeliveryRefusedEventPayload)
+            ]
+            assert len(refusals) == 1
+            assert refusals[0].refusal_detail == "native-refusal-detail"
+            for _ in range(3):
+                assert not (await start()).started
+                assert world.ticket(ticket_id) == failed
+            assert harness.spawned_conversation_ids == ["native-refusal-detail"]
+            assert (await retry())["delivery_fate"] == "refused"
+            failed_retry = world.ticket(ticket_id)
+            assert failed_retry.ticket_status is TicketStatus.errored
+            assert failed_retry.conversation_id == "retry-refusal-detail"
+            assert not (await start()).started
+            assert world.ticket(ticket_id) == failed_retry
+            assert harness.spawned_conversation_ids == [
+                "native-refusal-detail",
+                "retry-refusal-detail",
+            ]
+            assert (await retry())["started"] is True
+            assert world.ticket(ticket_id).conversation_id == "retry-success"
+            assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
+            # Explicit recovery does not delete the original refusal history.
+            assert await harness.events("native-refusal-detail") == rows
+            assert harness.spawned_conversation_ids == [
+                "native-refusal-detail",
+                "retry-refusal-detail",
+                "retry-success",
+            ]
+        finally:
+            await harness.system.shutdown()
+
+    _run(exercise)
+
+
+def test_definite_start_failure_cannot_erase_a_newer_claim(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = world.ready_ticket(conversation_id="start-failed")
+    world.start_conversation("start-failed")
+    world.conversations.arm_backend_start_failure("start-failed")
+    mark_errored = tickets_data.mark_worker_step_claim_errored
+    newer: list[Ticket] = []
+
+    def race(
+        conn: sqlite3.Connection,
+        ticket_id: str,
+        *,
+        expected_claim: WorkerStepClaim,
+        expected_claim_revision: int,
+        now: int,
+        notify_manager: bool = True,
+    ) -> bool:
+        previous = world.ticket(ticket_id)
+        assert tickets_data.release_worker_step_claim(
+            conn,
+            ticket_id,
+            expected_claim=previous.worker_step_claim,
+            expected_claim_revision=previous.worker_step_claim_revision,
+            now=1,
+        )
+        taken = tickets_data.claim_ticket_for_worker_step(
+            conn,
+            ticket_id,
+            readiness_check=worker_step_readiness.is_ready_for_worker_step,
+            now=1,
+        )
+        assert taken is not None
+        newer.append(taken)
+        return mark_errored(
+            conn,
+            ticket_id,
+            expected_claim=expected_claim,
+            expected_claim_revision=expected_claim_revision,
+            now=now,
+            notify_manager=notify_manager,
+        )
+
+    monkeypatch.setattr(tickets_data, "mark_worker_step_claim_errored", race)
+    assert world.start_step(ticket_id).delivery_fate == "refused"
+    assert world.ticket(ticket_id) == newer[0]
+    assert newer[0].worker_step_claim is WorkerStepClaim.out

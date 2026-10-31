@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
+import pytest
 from tests.support.server_fixtures import _start_server, _stop_server
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin", reason="Owned child environment proof needs Linux /proc"
+)
 def test_server_parent_setup_and_scrubbed_child_share_private_homes(tmp_path: Path) -> None:
     keys = {"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "PLAN_HERMES_HOME", "HERMES_HOME"}
     original = {key: os.environ.get(key) for key in keys}

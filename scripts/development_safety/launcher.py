@@ -96,6 +96,10 @@ def node_environment(tree: Path, package: Path, env: Mapping[str, str]) -> None:
                     f"Unsupported npm environment key: {name}",
                 )
     # npm reads user, global, and project configuration before dependency resolution.
+    npm_distribution_configs = {
+        npm_prefix / "etc/npmrc",
+        *((Path(selected_npm).resolve().parents[1] / "npmrc",) if selected_npm else ()),
+    }
     configs = {
         Path.home() / ".npmrc",
         Path("/etc/npmrc"),
@@ -104,8 +108,7 @@ def node_environment(tree: Path, package: Path, env: Mapping[str, str]) -> None:
         tree / ".npmrc",
         package / ".npmrc",
         package / "etc/npmrc",
-        npm_prefix / "etc/npmrc",
-        *((Path(selected_npm).resolve().parents[1] / "npmrc",) if selected_npm else ()),
+        *npm_distribution_configs,
     }
     check_paths(list(configs), environment=env)
     for config in configs:
@@ -121,6 +124,13 @@ def node_environment(tree: Path, package: Path, env: Mapping[str, str]) -> None:
                 continue
             key, separator, _ = line.partition("=")
             key = key.strip().lower()
+            if (
+                sys.platform == "darwin"
+                and separator
+                and key == "prefix"
+                and config in npm_distribution_configs
+            ):
+                continue
             if not separator or (key not in NPM_CONFIG and not key.endswith(":_authtoken")):
                 refuse(config, "unsupported npm configuration", f"Unsupported config key: {key}")
 

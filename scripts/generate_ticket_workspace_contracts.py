@@ -8,7 +8,7 @@ import enum
 import json
 import types
 from pathlib import Path
-from typing import Union, get_args, get_origin, get_type_hints, is_typeddict
+from typing import NotRequired, Union, get_args, get_origin, get_type_hints, is_typeddict
 
 from planner.tickets.workspace import contracts
 
@@ -17,16 +17,19 @@ def generate() -> str:
     declarations: dict[str, str] = {}
 
     def describe(value: object) -> str:
-        if is_typeddict(value) or dataclasses.is_dataclass(value):
-            name = value.__name__
+        if isinstance(value, type) and (is_typeddict(value) or dataclasses.is_dataclass(value)):
+            name = str(value.__name__)
             if name not in declarations:
                 declarations[name] = ""
-                fields = get_type_hints(value)
-                declarations[name] = (
-                    f"export interface {name} {{\n"
-                    + "".join(f"  {field}: {describe(kind)};\n" for field, kind in fields.items())
-                    + "}\n"
-                )
+                fields = get_type_hints(value, include_extras=True)
+                field_lines = []
+                for field, kind in fields.items():
+                    optional = get_origin(kind) is NotRequired
+                    field_type = get_args(kind)[0] if optional else kind
+                    field_lines.append(
+                        f"  {field}{'?' if optional else ''}: {describe(field_type)};\n"
+                    )
+                declarations[name] = f"export interface {name} {{\n" + "".join(field_lines) + "}\n"
             return name
         if isinstance(value, type) and issubclass(value, enum.Enum):
             return " | ".join(json.dumps(entry.value) for entry in value)
@@ -37,6 +40,7 @@ def generate() -> str:
             return f"Record<{describe(args[0])}, {describe(args[1])}>"
         if origin in (types.UnionType, Union):
             return " | ".join(describe(arg) for arg in args)
+        assert isinstance(value, type)
         return {str: "string", int: "number", bool: "boolean", type(None): "null"}[value]
 
     for value in vars(contracts).values():

@@ -154,6 +154,18 @@ def test_host_refusal_precedes_payload_and_probe_failures_close(
     monkeypatch.setattr(
         platform, "libc_ver", lambda: ("glibc", "2.1" if failure == "libc" else "2.41")
     )
+    assert manifest.runtime_contract is not None
+    cpuinfo = "flags: " + " ".join(manifest.runtime_contract.cpu_features)
+    read_text = Path.read_text
+
+    def synthetic_cpuinfo(path: Path, *args: object, **kwargs: object) -> str:
+        if path == Path("/proc/cpuinfo"):
+            return cpuinfo
+        return read_text(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", synthetic_cpuinfo)
+    monkeypatch.setattr(ctypes, "CDLL", lambda name: None)
+    monkeypatch.setattr(shutil, "which", lambda *args, **kwargs: "/synthetic/tool")
 
     def run(command: list[str], **kwargs: object) -> str:
         commands.append(command)

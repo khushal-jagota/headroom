@@ -329,23 +329,3 @@ def set_manager_settled(
             (int(settled), clock.now_unix(), item_id),
         )
     return _load_manager(conn, item_id)
-
-
-def correct_manager_model(
-    conn: sqlite3.Connection,
-    item_id: str,
-    *,
-    backend: str,
-    old_model: str,
-    reasoning_effort: str | None,
-    new_model: str,
-    now: int,
-) -> bool:
-    """Correct only a model after the service authorizes and resolves its variant."""
-    updated = conn.execute(
-        "UPDATE managers SET manager_model=?, updated_at=? "
-        "WHERE id=? AND manager_backend=? AND manager_model=? "
-        "AND manager_reasoning_effort IS ?",
-        (new_model, now, item_id, backend, old_model, reasoning_effort),
-    )
-    return updated.rowcount == 1

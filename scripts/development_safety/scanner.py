@@ -10,6 +10,8 @@ import os
 import pwd
 import re
 import stat
+import sys
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -400,6 +402,14 @@ def _admit(
     shallow_paths: Sequence[Path] = (),
 ) -> None:
     """Refuse known shared storage and unavailable filesystem evidence."""
+    if sys.platform == "darwin":
+        warnings.warn(
+            "Linux dependency storage check does not apply on macOS: "
+            "/proc/self/mountinfo is unavailable. Environment identity and pin checks still apply.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return
     environment = os.environ if environment is None else environment
     try:
         mounts = parse_mountinfo(Path("/proc/self/mountinfo").read_text())

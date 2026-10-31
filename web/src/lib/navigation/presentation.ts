@@ -77,7 +77,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const owner=row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner';
     const parked=row.ticket_status==='awaiting_approval';
     const parent=row.manager_kind==='chief' ? null : row.manager_id;
-    return [{id:record.id,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,worker_type:row.worker_type,
+    return [{id:record.id,locale:row.locale === "macos" ? "macos" as const : "vps" as const,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,worker_type:row.worker_type,
       ticket_status:row.ticket_status,is_backlogged:row.is_backlogged,blocked:row.blocked,
       activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
@@ -99,7 +99,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(raw.manager_id!==null && !parent) continue;
     const projectId=raw.manager_id===null ? raw.project_id : parent!.value.project_id;
     if(projectId!==null && !rawProjectsById.has(projectId)) continue;
-    ticketMastheadsById.set(ticket.id,{id:ticket.id,title:raw.title,worker_type:raw.worker_type,
+    ticketMastheadsById.set(ticket.id,{id:ticket.id,locale:ticket.locale ?? "vps",title:raw.title,worker_type:raw.worker_type,
       project:projectId===null ? null : rawProjectsById.get(projectId)!.value.name,
       conversation_id:raw.conversation_id,conversation_signal:signal(raw.conversation_id===null ? undefined : view.conversations.get(raw.conversation_id))});
   }
@@ -259,6 +259,7 @@ export function navigationConversationSignal(view:EffectiveNavigationView | null
 
 /** Masthead facts never become an actionable TicketDetail. */
 export type NavigationTicketMasthead = {
+  readonly locale:import("../ticketMachines").TicketLocale;
   readonly id:string;
   readonly title:string;
   readonly worker_type:string;

@@ -10,10 +10,12 @@ export type ComposerRunSelection = Readonly<{
   pickedBackend: ConversationBackendKey | null;
   pickedModel: string | null;
   pickedReasoningEffort: string | null;
+  effortIsSet?: boolean;
 }>;
 
 export type ComposerRunControlsInput = Readonly<{
   selection: ComposerRunSelection;
+  readError?: string | null;
   backendKey: ConversationBackendKey | null;
   conversationExists: boolean;
   running: boolean;
@@ -39,6 +41,7 @@ export type ComposerRunControlsView = Readonly<{
   carriedRunValues: RunValues;
   disabled: boolean;
   picker: ModelPickerView;
+  readError?: string | null;
   pickerSource: Readonly<{
     backends: readonly BackendSnapshot[];
     models: readonly BackendModel[];

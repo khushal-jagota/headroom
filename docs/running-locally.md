@@ -18,7 +18,7 @@ Install and authenticate the backend you mean to use. Codex needs the `codex` ex
 
 Choose the Worker, model, and reasoning before approving a new Ticket’s kickoff when the Brief controls are still on screen. Provider limits still apply. Ticket gates still do not sandbox the machine.
 
-A worktree that will run tests or a second server follows the setup in [`AGENTS.md`](../AGENTS.md): its own `.venv`, its own `PLAN_*` paths, and guarded `scripts/dev` commands so a dependency tree cannot alias the deployed application. Those guards are part of [Deployment](deployment.md).
+A worktree that will run tests or a second server follows the setup in [`AGENTS.md`](../AGENTS.md): its own `.venv`, its own `PLAN_*` paths, and guarded `scripts/dev` commands so a dependency tree cannot alias the deployed application. Those guards are part of [Deployment](deployment.md). The dependency storage check uses Linux mount evidence and reports that it does not apply on macOS. Environment identity and dependency pin checks still run there. On macOS, the selected npm distribution may declare its built-in or global `prefix`; project and user lookup redirects remain refused.
 
 ## Where it shows up
 

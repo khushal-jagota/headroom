@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 from pathlib import Path
 
+import pytest
 from tests.support.lifecycle_startup import assert_lifecycle_startup
 
 from planner.environments.app import build_exported_app
 from planner.environments.deployment_gate import smoke_candidate
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="VPS archive packaging requires Linux ELF tools and CPython 3.12",
+)
 def test_installed_candidate_bootstraps_with_clean_state(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[2]
     sha = subprocess.check_output(

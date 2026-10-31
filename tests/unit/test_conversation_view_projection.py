@@ -101,7 +101,10 @@ def legacy_row(row: dict[str, Any]) -> dict[str, Any]:
         "key": row["key"],
         "sequence": row["source_sequence"],
         "createdAt": row["created_at"],
-        **{names.get(key, key): value for key, value in body.items()},
+        **{
+            names.get(key, key): value
+            for key, value in body.items()
+        },
     }
     if result["kind"] == "prompt_refused":
         result["sentence"] = result.pop("refusal_detail")

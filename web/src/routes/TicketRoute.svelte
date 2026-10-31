@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick, untrack } from "svelte";
+  import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
+  import MachineIdentity from "../components/machines/MachineIdentity.svelte";
+  import { machineName } from "../lib/ticketMachines";
+  import { onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
@@ -26,8 +29,6 @@
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
-    readBackends,
-    type BackendSnapshot,
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
@@ -178,7 +179,6 @@
   const emptyTicketFieldText = "Not written yet.";
 
   let headerError = $state<unknown>(null);
-  let conversationBackends = $state<readonly BackendSnapshot[]>([]);
 
   /** How far open this page's conversation is.
    *
@@ -227,18 +227,6 @@
     }
     return draft;
   }
-
-  onMount(() => {
-    // What the conversation's model and effort pickers offer. Read once on arrival rather
-    // than through the query catalogue: it is a fact about the machine's agents, and
-    // nothing a person does to this Ticket changes it.
-    void readBackends()
-      .then((snapshots) => (conversationBackends = snapshots))
-      .catch(() => {
-        // The pickers fall back to showing the value already in force, which is the same
-        // thing they show before the catalog has arrived. Nothing here is worth a banner.
-      });
-  });
 
   /** Start this Ticket's conversation, so the first message has somewhere to go.
    *
@@ -451,11 +439,13 @@
       <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
       <main class="ticket-doc">
-        <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id}>
+        <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <div class="worker-eyebrow" data-ticket-identity>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
+            <span aria-hidden="true">·</span>
+            <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title" data-feedback-page-title>
@@ -464,7 +454,7 @@
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               />
-              <ConversationSignalMark signal={masthead.conversation_signal} conversationId={masthead.conversation_id} />
+              <MachineActivityMark locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} />
             </div>
             <RecapSlot>
             {#snippet children()}
@@ -516,9 +506,12 @@
         <div bind:this={sectionElement} use:sectionObservationEvents class="ticket-col" data-ticket-section={section.record.id} data-section-stage={section.record.value.stage}>
           {#snippet kickoffContextRow()}
             {#if detail.employee_configuration_editable}
-              <WorkerConfigurationSetup ticketId={stableId} employeeBackend={detail.employee_backend}
+              {#key JSON.stringify([stableId, detail.locale, conversationStartValues.data?.workspace_folder, conversationStartValues.data?.workspace_path_policy])}
+              <WorkerConfigurationSetup destination={detail.locale} ticketId={stableId} employeeBackend={detail.employee_backend}
                 employeeLaunchModel={detail.employee_launch_model} employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
+                workspace={conversationStartValues.data}
                 onSave={saveEmployeeConfiguration} />
+              {/key}
             {/if}
           {/snippet}
           {#if section}
@@ -599,7 +592,7 @@
         data-conversation-layer-host
       >
         <div class="conversation-column">
-          <LiveConversation
+          <LiveConversation locale={masthead.locale}
             bind:conversationState
             conversationId={shownConversationId}
             bind:selectedPastConversationId
@@ -608,7 +601,6 @@
             uploadOwner={{kind:"ticket",id:detail.id}}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
-            bind:backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"
             sendMessage={sendToTicketWorker}
@@ -623,7 +615,7 @@
 
 <style>
   .ticket-col { padding-top:0; }
-  .ticket-doc { scrollbar-gutter:auto; }
+  .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:48px; }
   .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .ticket-title-row { display:block; margin-top:var(--space-3); }

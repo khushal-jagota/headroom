@@ -53,6 +53,7 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=5)
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Real preview registration needs Linux /proc")
 def test_real_vite_applications_share_only_their_generation(
     browser: Browser,
     server_factory: Callable[..., ServerHandle],

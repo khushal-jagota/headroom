@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,8 @@ from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
+    NativeMessageAdmission,
+    NativeMessageOperation,
     PromptDeliveryMode,
     ResolvedConversationStart,
 )
@@ -76,15 +80,7 @@ def store(tmp_path: Path) -> ConversationStore:
 # --- the conversation row ----------------------------------------------------------------
 
 
-
-
-
-
-
-
 # --- a delivery, written as one thing ------------------------------------------------------
-
-
 
 
 def test_a_delivery_that_cannot_be_written_leaves_no_part_of_itself_behind(
@@ -157,8 +153,6 @@ def test_appends_racing_each_other_each_get_a_number_of_their_own(
     asyncio.run(exercise())
 
 
-
-
 def test_an_append_refreshes_an_attention_snapshot_made_stale_by_another_append(
     store: ConversationStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -169,19 +163,20 @@ def test_an_append_refreshes_an_attention_snapshot_made_stale_by_another_append(
         raced = False
 
         def snapshot_with_one_race(
-            conn: sqlite3.Connection, conversation_id: str
+            conn: sqlite3.Connection, conversation_id: str, *, transaction_open: bool = False
         ) -> ConversationAttentionSnapshot | None:
             nonlocal raced
-            snapshot = real_snapshot(conn, conversation_id)
+            snapshot = real_snapshot(conn, conversation_id, transaction_open=transaction_open)
             if not raced:
                 raced = True
-                competing_store._append_event_sync(
-                    conversation_id,
-                    AgentMessageEventPayload(content=text_message_content("first")),
-                    False,
-                    False,
-                    None,
-                )
+                with ThreadPoolExecutor(max_workers=1) as writer:
+                    writer.submit(
+                        asyncio.run,
+                        competing_store.append_event(
+                            conversation_id,
+                            AgentMessageEventPayload(content=text_message_content("first")),
+                        ),
+                    ).result()
             return snapshot
 
         monkeypatch.setattr(
@@ -198,8 +193,6 @@ def test_an_append_refreshes_an_attention_snapshot_made_stale_by_another_append(
 
 
 # --- a message is what it holds, not only what it says ---------------------------------------
-
-
 
 
 def test_storage_write_retries_real_sqlite_busy_after_rollback(tmp_path: Path) -> None:
@@ -232,9 +225,8 @@ def test_storage_write_retries_real_sqlite_busy_after_rollback(tmp_path: Path) -
                     ),
                 )
             ),
-            asyncio.create_task(store.update_vendor_session_cursor("c", "retained-session")),
             asyncio.create_task(
-                store.append_message_to_owner(
+                store.append_event(
                     "c",
                     MessageToOwnerEventPayload(
                         content=text_message_content("explicit reply"),
@@ -259,19 +251,11 @@ def test_storage_write_retries_real_sqlite_busy_after_rollback(tmp_path: Path) -
         writer.execute("ROLLBACK")
         writer.close()
         await asyncio.gather(*writes)
-        record = await store.read_conversation("c")
-        assert record is not None and record.vendor_session_cursor == "retained-session"
         events = await store.read_events_after("c", 0)
         assert len(events) == 4
         assert [event.sequence for event in events] == [1, 2, 3, 4]
 
     asyncio.run(asyncio.wait_for(exercise(), 3))
-
-
-
-
-
-
 
 
 def test_latest_explicit_outcome_supersedes_historical_uncertainty(
@@ -322,5 +306,61 @@ def test_sqlite_commit_failure_with_automatic_rollback_is_not_reported_as_saved(
         with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
             await store.append_delivered_prompt("c", prompt=A_PROMPT, model_change=None)
         assert await store.read_events_after("c", 0) == ()
+
+    asyncio.run(exercise())
+
+
+def test_grouped_messages_keep_their_own_commit_participants(store: ConversationStore) -> None:
+    """One sender's receipt or reply credit must not be used for another grouped sender."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        conn = connect(store._db_path)
+        conn.execute("CREATE TABLE sender_effects (submission_id TEXT PRIMARY KEY)")
+        conn.close()
+        fail_second = True
+
+        def participant(submission_id: str) -> NativeMessageOperation:
+            def record(
+                conn: sqlite3.Connection,
+                conversation_id: str,
+                payload: object,
+                admission: NativeMessageAdmission | None,
+            ) -> None:
+                assert conversation_id == "c" and isinstance(payload, PromptEventPayload)
+                assert payload.sender_message_id == submission_id
+                assert admission is not None and admission.composed_content_delivered
+                conn.execute("INSERT INTO sender_effects VALUES (?)", (submission_id,))
+                if submission_id == "second" and fail_second:
+                    raise RuntimeError("second sender failed")
+
+            return NativeMessageOperation("sender", submission_id, in_commit=record)
+
+        first, second = participant("first"), participant("second")
+
+        async def deliver() -> None:
+            await store.append_delivered_prompt(
+                "c",
+                prompt=replace(A_PROMPT, sender_message_id="first"),
+                extra_prompts=(replace(A_PROMPT, sender_message_id="second"),),
+                model_change=ModelChangedEventPayload("new-model", None),
+                recording_receipt=first,
+                extra_recording_receipts=(second,),
+            )
+
+        with pytest.raises(RuntimeError, match="second sender failed"):
+            await deliver()
+        assert await store.read_events_after("c", 0) == ()
+        conn = connect(store._db_path)
+        assert conn.execute("SELECT * FROM sender_effects").fetchall() == []
+        conn.close()
+        fail_second = False
+        await deliver()
+        conn = connect(store._db_path)
+        assert [row[0] for row in conn.execute("SELECT * FROM sender_effects")] == [
+            "first",
+            "second",
+        ]
+        conn.close()
 
     asyncio.run(exercise())

@@ -77,8 +77,7 @@ async def reopen_feedback(feedback_id: str, conn: DbConn, clk: Clk, ctx: Ctx) ->
     return views.note_json(actions.reopen_feedback(conn, feedback_id, now=clk.now_unix()))
 
 
-@router.post("/feedback/use")
-async def use_feedback(raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx) -> JsonDict:
+def write_use_feedback(raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx) -> JsonDict:
     _reject_unknown(raw, frozenset({"feedback_ids", "ticket_id"}))
     feedback_ids = body_str_list(raw, "feedback_ids")
     ticket_id = body_str(raw, "ticket_id")
@@ -90,3 +89,8 @@ async def use_feedback(raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx) ->
         admit=lambda: require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id)),
     )
     return {"notes": [views.note_json(note) for note in notes]}
+
+
+@router.post("/feedback/use")
+async def use_feedback(raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx) -> JsonDict:
+    return write_use_feedback(raw, conn, clk, ctx)

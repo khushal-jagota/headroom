@@ -16,6 +16,12 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     String.raw`<script lang="ts">
   import { tick, flushSync } from "svelte";
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
+  import { installMachineEvidenceFixture } from "../tests/support/machineEvidenceFixture";
+  import WorkerRow from "../src/components/WorkerRow.svelte";
+  import { queryClient } from "../src/lib/queryClient";
+  const machinesOnly=new URLSearchParams(location.search).has('machines');
+  if(machinesOnly)installMachineEvidenceFixture();
+
   import {installConversationViewReaderFixture} from "../tests/support/conversationViewReaderFixture";
   import {ConversationViewReader} from "../src/lib/conversation/view/reader.svelte";
   const intentOnly=new URLSearchParams(window.location.search).has("intent");
@@ -349,6 +355,21 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       description: "Stop the worker", argument_hint: null }
   ];
   let conversationState = $state<ConversationState>("rest");
+  let fixtureConversationId = $state("browser-fixture");
+  let scrollSnapshotNumber = 0;
+  // These synthetic conversations intentionally share text and a Ticket-owned file.
+  // Select a coherent snapshot through ordinary Pane inputs, preserving scoped keys.
+  (window as any).__selectEquivalentScrollConversation = () => {
+    const snapshot = {
+      id: "browser-fixture-scroll-" + ++scrollSnapshotNumber,
+      rows: rows.map(row => ({...row}))
+    };
+    flushSync(() => {
+      fixtureConversationId = snapshot.id;
+      rows = snapshot.rows;
+    });
+    return snapshot.id;
+  };
   let lens = $state<"focus" | "full">("focus");
 
   async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
@@ -734,7 +755,15 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 </script>
 
-{#if managerLayoutOnly}
+{#if machinesOnly}
+  <QueryClientProvider client={queryClient}>
+    <div style="height:750px;display:flex;flex-direction:column;max-width:700px;margin:auto">
+      <WorkerRow title="Mac Worker" locale="macos" signal={{working:true,message_for_owner:false}} conversationId="machine-conversation" />
+      <WorkerRow title="VPS Worker" locale="vps" signal={{working:true,message_for_owner:false}} conversationId="vps-conversation" />
+      <LiveConversation locale="macos" conversationId="machine-conversation" persistenceKey="machine-evidence" label="Worker" conversationState="opened" sendMessage={async()=>({conversation_id:'machine-conversation',fate:'started'})}/>
+    </div>
+  </QueryClientProvider>
+{:else if managerLayoutOnly}
 <QueryClientProvider client={catalogClient}>
   <main class="manager-column" style="max-width:768px;margin:auto;padding:0 32px" data-layout-proof>
     <ManagerHeader recap={layoutRecap} onSaveRecap={async(value)=>{layoutRecap=value;}}>
@@ -813,7 +842,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       <ConversationPane
         bind:conversationState
         bind:lens
-        conversationId="browser-fixture"
+        conversationId={fixtureConversationId}
         conversationExists
         {rows}
         {visibleRows}
@@ -829,7 +858,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         backendKey="claude"
         current={{ model: "opus", reasoningEffort: "high" }}
         models={[
-          { model_id: "opus", display_name: "Opus", enabled: true },
+          { model_id: "opus", display_name: "Opus", enabled: true, reasoning_effort_options: ["high"] },
           { model_id: "sonnet", display_name: "Sonnet", enabled: true,
             reasoning_effort_options: [] }
         ]}

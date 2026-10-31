@@ -143,9 +143,7 @@ def _claude_launch(panels_server_url: str) -> ClaudeAgentSdkChildLaunch:
     override = os.environ.get(CLAUDE_EXECUTABLE_OVERRIDE)
     return ClaudeAgentSdkChildLaunch(
         claude_executable=(
-            Path(override).expanduser()
-            if override is not None
-            else PANELS_OWNED_CLAUDE_EXECUTABLE
+            Path(override).expanduser() if override is not None else PANELS_OWNED_CLAUDE_EXECUTABLE
         ),
         environment_overrides=(("PLAN_SERVER_URL", panels_server_url),),
     )

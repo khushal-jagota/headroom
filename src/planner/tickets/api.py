@@ -35,14 +35,10 @@ from planner.conversation.api import (
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import (
     ConversationSystem,
+    WorkspacePathPolicy,
     require_conversation_backend_key,
 )
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.contracts import (
-    CurrentModelResolver,
-    ModelResolutionUnavailable,
-)
-from planner.conversation.model_resolution.service import resolve_cached_model
 from planner.conversation.storage import ConversationStore
 from planner.conversation.video_uploads.contracts import UploadDestination
 from planner.core import authority
@@ -133,14 +129,6 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
-def get_model_resolver(request: Request) -> CurrentModelResolver:
-    runtime = getattr(request.app.state, "conversation", None)
-    resolver = getattr(runtime, "model_resolution", None)
-    if resolver is None:
-        raise PlannerError(ErrorCode.gateway_offline, "the model resolver is unavailable", {})
-    return cast(CurrentModelResolver, resolver)
-
-
 def get_conversation_system(request: Request) -> ConversationSystem:
     return cast(ConversationSystem, request.app.state.conversation_system)
 
@@ -174,7 +162,6 @@ DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
-ModelResolver = Annotated[CurrentModelResolver, Depends(get_model_resolver)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
 MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
@@ -349,7 +336,7 @@ def _marshal_settled_field_values(
     return values
 
 
-def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
+def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicketBody:
     raw = normalize_assignment(raw)
     obsolete = set(raw) & {"sprint_id", "manager_id", "sprint_item_id", "day", "day_id"}
     if obsolete:
@@ -361,8 +348,8 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
-        title=body_str(raw, "title"),
-        brief=body_str(raw, "brief"),
+        title="" if draft else body_str(raw, "title"),
+        brief="" if draft else body_str(raw, "brief"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
@@ -485,72 +472,14 @@ def _parse_next_ceiling(
 # --- ticket routes -------------------------------------------------------------
 
 
-async def warm_ticket_creation_model(
-    conn: sqlite3.Connection,
-    resolver: CurrentModelResolver,
-    *,
-    worker_type: str,
-    employee_backend: str | None = None,
-    employee_launch_model: str | None = None,
-    employee_launch_reasoning_effort: str | None = None,
-    model_source_is_historical: bool = False,
-) -> None:
-    """Resolve outside the creation transaction so cold catalogues can be awaited."""
-    launch_configuration = tickets_data.requested_ticket_launch_configuration(
-        worker_type,
-        employee_backend=employee_backend,
-        employee_launch_model=employee_launch_model,
-        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
-    )
-    assert launch_configuration.employee_launch_model is not None
-    backend_key = require_conversation_backend_key(launch_configuration.employee_backend)
-    if employee_launch_model and not model_source_is_historical:
-        require_enabled_model(conn, backend_key, employee_launch_model)
-    try:
-        resolve_cached_model(
-            conn,
-            backend_key,
-            launch_configuration.employee_launch_model,
-            launch_configuration.employee_launch_reasoning_effort,
-        )
-    except ModelResolutionUnavailable as error:
-        if error.variant is None and employee_launch_reasoning_effort is None:
-            # There is no known family to probe. Creation retains the opaque value.
-            return
-    try:
-        await resolver.resolve(
-            backend_key,
-            launch_configuration.employee_launch_model,
-            launch_configuration.employee_launch_reasoning_effort,
-        )
-    except ModelResolutionUnavailable as error:
-        if employee_launch_reasoning_effort is not None:
-            raise PlannerError(
-                ErrorCode.validation,
-                "cannot validate explicit reasoning effort without a model catalogue",
-            ) from error
-        # The synchronous creation boundary reports and retains the unresolved choice.
-        pass
-
-
-@router.post("/tickets")
-async def create_ticket(
+def write_create_ticket(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
-    cfg: Cfg,
     clk: Clk,
-    model_resolver: ModelResolver,
 ) -> JsonDict:
+    """Apply creation through the same writer inside HTTP or executor transactions."""
     body = _marshal_create_ticket(raw)
-    await warm_ticket_creation_model(
-        conn,
-        model_resolver,
-        worker_type=body["worker_type"],
-        employee_backend=body.get("employee_backend"),
-        employee_launch_model=body.get("employee_launch_model"),
-        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
-    )
     now = clk.now_unix()
     manager = (
         _parse_manager(body["manager"])
@@ -578,11 +507,24 @@ async def create_ticket(
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
+        reasoning_effort_is_set="employee_launch_reasoning_effort" in body,
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
         stated_ceiling=body["ceiling"],
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
     return tickets_views.ticket_creation_json(conn, ticket, now)
+
+
+@router.post("/tickets")
+async def create_ticket(
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    request: Request,
+) -> JsonDict:
+    return write_create_ticket(raw, conn, ctx, clk)
 
 
 @router.get("/tickets")
@@ -755,9 +697,6 @@ class ResolvedEmployeeConfiguration:
     employee_backend: str
     employee_launch_model: str
     employee_launch_reasoning_effort: str | None
-    advertised_models: frozenset[str] | None
-    reasoning_supported: bool | None
-    advertised_reasoning_efforts: frozenset[str] | None
 
 
 async def resolve_employee_configuration(
@@ -769,21 +708,16 @@ async def resolve_employee_configuration(
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
 ) -> ResolvedEmployeeConfiguration:
-    """Resolve an owner's enabled choice to the current member of its variant."""
-    expected = tickets_data.employee_launch_configuration(tickets_data.read_ticket(conn, ticket_id))
+    """Keep exact submitted values and refuse disabled models."""
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    expected = tickets_data.employee_launch_configuration(ticket)
     registered_backend = require_conversation_backend_key(employee_backend)
     require_enabled_model(conn, registered_backend, employee_launch_model)
-    resolved = await get_model_resolver(request).resolve(
-        registered_backend, employee_launch_model, employee_launch_reasoning_effort
-    )
     return ResolvedEmployeeConfiguration(
         expected=expected,
-        employee_backend=registered_backend,
-        employee_launch_model=resolved.model,
-        employee_launch_reasoning_effort=resolved.reasoning_effort,
-        advertised_models=frozenset({resolved.model}),
-        reasoning_supported=bool(resolved.supported_reasoning_efforts),
-        advertised_reasoning_efforts=frozenset(resolved.supported_reasoning_efforts),
+        employee_backend=registered_backend.value,
+        employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
     )
 
 
@@ -802,9 +736,6 @@ def write_resolved_employee_configuration(
         employee_backend=resolved.employee_backend,
         employee_launch_model=resolved.employee_launch_model,
         employee_launch_reasoning_effort=resolved.employee_launch_reasoning_effort,
-        advertised_models=resolved.advertised_models,
-        reasoning_supported=resolved.reasoning_supported,
-        advertised_reasoning_efforts=resolved.advertised_reasoning_efforts,
         now=now,
     )
 
@@ -903,8 +834,8 @@ async def restart_ticket_worker(
 
     The configuration is resolved before the restart, so a backend or model this Ticket
     cannot launch on is a plain refusal rather than a killed conversation. Position is
-    proved before even that: resolving asks the backends what they offer, and no caller
-    reaches a question about a Ticket it does not stand above.
+    proved before even that: no caller can configure or restart a Ticket it does
+    not stand above.
     """
     require_above(conn, ctx.principal, authority.ticket(ticket_id))
     backend = body_opt_str(raw, "employee_backend")
@@ -926,10 +857,8 @@ async def restart_ticket_worker(
             employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
         )
 
-        def write_the_resolved_configuration(open_conn: sqlite3.Connection, now: int) -> None:
+        def write_configuration(open_conn: sqlite3.Connection, now: int) -> None:
             write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
-
-        write_configuration = write_the_resolved_configuration
 
     async def start_worker_step() -> WorkerStepStartResult:
         return await start_ready_worker_step(
@@ -985,15 +914,14 @@ async def delete_ticket(
     }
 
 
-@router.patch("/tickets/{ticket_id}")
-async def patch_ticket(
+def write_patch_ticket(
     ticket_id: str,
     body: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
-    cfg: Cfg,
     clk: Clk,
-    conversations: Conversations,
+    *,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
 ) -> JsonDict:
     body = normalize_assignment(body)
     recognized = (
@@ -1051,8 +979,25 @@ async def patch_ticket(
         now=now,
         review_transfer_notices=notices,
     )
-    await notify_review_transfers(conversations, conn, notices, now=now)
+    if review_transfer_notices is not None:
+        review_transfer_notices.extend(notices)
     return tickets_views.ticket_json(ticket, now)
+
+
+@router.patch("/tickets/{ticket_id}")
+async def patch_ticket(
+    ticket_id: str,
+    body: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    notices: list[ReviewTransferNotice] = []
+    result = write_patch_ticket(ticket_id, body, conn, ctx, clk, review_transfer_notices=notices)
+    await notify_review_transfers(conversations, conn, notices, now=clk.now_unix())
+    return result
 
 
 @router.post("/tickets/{ticket_id}/propose")
@@ -1140,6 +1085,7 @@ def _what_this_message_runs_under(body: OwnerSendBody) -> ConversationStartOverr
         ),
         model=body.model,
         reasoning_effort=body.reasoning_effort,
+        reasoning_effort_is_set="reasoning_effort" in body.model_fields_set,
     )
 
 
@@ -1158,18 +1104,17 @@ def _delivered_message_json(
 
 
 def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict:
-    """What a start resolved to, as far as anybody looking at it can choose.
-
-    The backend, the model and the reasoning effort, under the names a started
-    conversation reports them under — so a panel reads the same three fields whether it is
-    asking what a conversation runs on or what one would. The rest of a resolved start is
-    nobody's choice: the role an agent is told to be, the folder it runs in and what it
-    may reach are the same however the person answers, so nothing shows them.
-    """
+    """Expose choices and their canonical workspace for advisory-view invalidation."""
     return {
         "backend_key": values.backend_key.value,
         "model": values.model,
         "reasoning_effort": values.reasoning_effort,
+        "workspace_folder": (
+            None
+            if values.workspace_path_policy == WorkspacePathPolicy.executor_default
+            else str(values.workspace_folder)
+        ),
+        "workspace_path_policy": values.workspace_path_policy.value,
     }
 
 
@@ -1513,31 +1458,3 @@ async def resume_ticket(
         expected_record_sha256=_record_precondition(body),
     )
     return _ticket_detail(conn, ticket_id, clk.now_unix())
-
-
-@router.post("/tickets/{ticket_id}/move")
-async def move_ticket_locale(
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    from planner.tickets.locale_move import move_ticket_locale as move
-    from planner.tickets.logic.locale import require_ticket_locale
-
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    if "locale" not in raw or set(raw) - {"locale", "expected_record_sha256"}:
-        raise PlannerError(ErrorCode.validation, "move requires a locale", {})
-    now = clk.now_unix()
-    ticket = await move(
-        conversations,
-        conn,
-        ticket_id,
-        locale=require_ticket_locale(raw["locale"]),
-        principal=ctx.principal,
-        now=now,
-        expected_record_sha256=_record_precondition(raw),
-    )
-    return tickets_views.ticket_json(ticket, now)

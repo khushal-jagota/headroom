@@ -4,11 +4,26 @@ A conversation is one agent, working in one folder, and the permanent notebook o
 
 The conversation id belongs to its caller. A Ticket stores its own. Chief stores its own. A Manager stores its own. The backend process’s session id is internal. It can be rebound without anything outside the conversation system noticing, and it is never the identity a screen or a command uses.
 
+Panels supplies `disableAllHooks: true` for fresh and resumed Claude conversation starts.
+Ordinary configured hooks do not run, so these sessions lose their injected context and
+side effects, including events beyond SessionStart and applicable statusLine behavior.
+Managed-policy hooks remain protected. Internal callbacks can remain.
+Ordinary settings, credentials, permissions, and configuration sources retain their existing behavior.
+Claude use outside Panels retains its normal configuration. This option carries no universal speed guarantee.
+
 ## Why the notebook exists
 
 Only text that was sent into the agent is context the model can use on a later turn. The notebook is the append-only record of finished facts: a delivered prompt, a completed agent message, a tool call, a permission ask and its answer, a model change, a turn ending, an addressed message to the owner, a refusal, a discard. A row is written once.
 
-Live streaming text is shown while a turn runs and is not stored as notebook prose. Private reasoning is dropped. An open pane receives that live tail directly, so a running turn does not have to announce every token through the global change signal. Rows other screens depend on — delivered and refused prompts, asks, turn endings, model changes, messages to the owner — still announce themselves in the ordinary way.
+Single rows, turn endings and initial cancellation records use the same append path.
+It commits the whole batch together with activity, compaction, owner read position,
+attention and any failure wake. The failure wake uses the last row's error text.
+Mac receipts join this same append inside their receipt transaction. A replay or
+refusal does not apply the live conversation change.
+The store calls this shared entry point `commit_backend_event`; local backend
+facts and Mac receipts use it alike.
+
+Live streaming text is shown while a turn runs and is not stored as notebook prose. A reserved turn stays hidden until its prompt is recorded and it becomes the running turn. Private reasoning is dropped. An open pane receives that live tail directly, so a running turn does not have to announce every token through the global change signal. Rows other screens depend on — delivered and refused prompts, asks, turn endings, model changes, messages to the owner — still announce themselves in the ordinary way.
 
 A message to the owner is a notebook row for Khushal. It does not invoke the backend. Editing a Ticket field, parking a proposal, or updating a recap in the database does not inform the Worker. Those become agent context only when a later prompt carries them.
 
@@ -22,11 +37,50 @@ Each real agent identity has one canonical home and one credential: the user’s
 
 Model and reasoning changes ride the next message that is actually delivered. Browsing the picker does nothing until then. Codex and Hermes apply the change in place. Claude restarts the session and carries memory across. The backend is fixed once the conversation exists.
 
+The model picker shows full model names. For Claude and Codex, the highest numbered
+version of each variant appears in the list. The picker hides older versions.
+A saved older model keeps its accurate label and reasoning controls.
+The catalog and saved choice stay intact. Hermes shows one flat list and has no
+reasoning step. An empty Hermes list is a valid answer.
+
+Choosing a model with no reasoning options finishes the choice immediately.
+Otherwise the picker asks for one of that model's reasoning options. There is no
+custom model box or “Provider default” reasoning row. An unavailable or empty list
+says so plainly, and Refresh tries the read again.
+
+A Ticket's setup row and conversation composer share one model-list query for its
+machine and workspace. Refresh updates both. A failed refresh keeps the previous
+list and shows the error. Setup and launch-default screens use the same editor,
+which remembers each backend's choice while the screen stays open and restores
+the previous choice if a save fails.
+
 ## How a send tells the truth
 
 Send Message is the door for a person, Chief, a Manager, or a Worker addressing someone. It resolves the recipient’s current conversation, creating the link on first use, and records who sent it.
 
-The fate is about delivery, not about whether the model agreed.
+Panels keeps the admitted message together as it moves through sending, steering,
+waiting and recording. Its content, sender identity, address, requested model change
+and `recording_receipt` stay with it. That receipt keeps reply credit and its
+transaction participant with the message until the notebook append.
+The owner's read position is captured once when
+the message enters the conversation; waiting does not mark later agent messages read.
+Several held messages can share a backend write while each keeps its own notebook row.
+
+The fate is about delivery, not about whether the model agreed. A provider that explicitly rejects a prompt produces a visible refusal with its reason. Provider-reported model names and extra provider receipt fields are not stored in the notebook. Delivery acceptance, refusal and uncertainty still are.
+
+Model lists come from the machine that runs the Ticket, including Hermes. The Mac's
+last answer stays available when it is offline; [Executor](executor.md) explains
+when it is refreshed. Claude's list comes from its CLI startup handshake, with no
+prompt or turn. Picking a Claude model saves the resolved, pinned ID, such as
+`claude-opus-5-5`, while showing the CLI's display name. Model metadata includes its
+family and numeric version, including Fable and Terra. Older models remain in the
+catalog, but the normal picker hides them.
+
+A Ticket saves its backend, exact model name and effort. Newer models do not change a saved choice. A Ticket with no saved model starts from its Worker type's defaults. New shipped defaults use `gpt-6.1-sol`, `gpt-6-astra` or `claude-opus-5-5`; existing saved Tickets keep their models.
+
+Panels refuses disabled models when creating a Ticket, saving its configuration or dispatching a message. A disabled model blocks the next automatic Worker step before a claim is taken. It does not send a Manager wake. A dispatched refusal remains a row in the notebook with its reason. Adapters send the exact model and effort directly, and the provider can still refuse them. Disabling a model after dispatch can still allow that turn.
+
+A held message with no explicit change uses the conversation's model and effort when it is sent. An explicit change rides that message. After delivery, Panels remembers the choice for the Ticket's next start. That save follows the prompt's commit, so a crash between them can leave the old choice saved.
 
 | Fate | Meaning |
 | --- | --- |
@@ -46,17 +100,37 @@ A busy agent is not a refusal. The composer’s mode decides what busy means:
 
 Attachments, a model change, a steer the backend refused, and a Codex slash command that needs its own turn join the queue with a visible reason. When the agent frees, several queued messages may be combined into one backend prompt, with each sender named, unless a message carries a model change. That one starts its own turn. The notebook still records each sender’s content.
 
+Kill writes down each held message as discarded before ending the running turn. It
+uses the same cancellation and interruption path as Interrupt, then retires the
+current child. Cancellation leaves the conversation lock free for final backend
+receipts. Messages arriving during cancellation run after ending and retirement.
+The turn gets one ending,
+even if the backend reports its own ending during cancellation. Remote retirement
+keeps its quarantine fence until the exact child's stop is confirmed.
+
+Local writes finish before Kill disposes of their turn, including on a VPS with a
+Mac connected. A local child that finishes starting while Kill disposes of its
+delivery is stopped rather than left running.
+
+If cancellation or a stale queued notice starts a Mac stop, later messages stay
+queued until that stop is confirmed. Send now and promotion of a held message
+follow the same rule. A lost Mac link can delay that conversation's retirement or
+automatic compaction, but the idle sweep keeps stopping idle local children and
+starting due compactions elsewhere. Pending work still makes the workspace busy.
+
 Empty content is rejected before a fate exists.
 
 ## Permissions, voice, video, and a deploy
 
 Permission asks are always shown and always wait. Headroom does not auto-approve and does not remember a grant. An answer lands only on an ask that is still pending on the live turn. Claude and Codex can also ask structured questions. Hermes stays on the permission flow. Production runs use full tool access. The asks still appear, because the agent decided to ask.
 
+Permission choices and structured question answers follow the same rules. Once an answer is on its way, a second answer cannot take its place. If the backend refuses it while the turn is still live, the request waits for another answer. A choice saved for an offline Mac stays in the notebook even if the turn ends before delivery finishes. Only a separate acknowledgment proves it reached the original callback. See [saved answers](executor.md#a-lost-connection-supplies-no-answer).
+
 Voice input never sends audio into the conversation. The mic captures a clip, Groq transcribes it when `PLAN_GROQ_API_KEY` is set, and the text drops into the draft. That key is separate from any agent subscription.
 
 One video, MP4, MOV, or WebM, up to 250 MiB, can be attached. The upload can finish before Send. Headroom validates it with ffprobe, holds it under a disk budget, and expires an unused upload after a day. The agent receives a link or a path. Headroom does not transcode it and does not promise the model understands it.
 
-A deploy can kill a running session. After the new runtime is admitted, eligible conversations receive one recovery prompt through the ordinary send path. Nothing is replayed. A queued recovery does not count as resumed. Only a started turn whose prompt actually contains the notice does. See [Deployment](deployment.md).
+A deploy can kill a running session. After the new runtime is admitted, eligible conversations receive one recovery prompt through the ordinary send path. Nothing is replayed. A queued recovery does not count as resumed. Only a started turn whose prompt actually contains the notice does. If its write may have crossed the wire but the acknowledgment is lost, the notebook records one uncertain row with the recovery reference. Recovery becomes unable to resume; the reservation and child remain fenced, and Panels does not retry. See [Deployment](deployment.md).
 
 ## Conversations share one contract
 
@@ -75,6 +149,18 @@ Unread dots and working marks are per conversation. A child Ticket’s dot is no
 
 Gated Ticket text changes only through [proposals](proposals.md). Review and notifications read attention derived from proposals, messages, asks, and failures. A recap request is a real prompt, and the recap field updates when the agent follows it. Artifacts are files. The conversation can discuss them. A file written only on disk does not by itself refresh every screen. Usage rows in the notebook feed cost lines. They are not the provider’s bill. Allowance is a separate read, described in [Usage](usage.md).
 
+Backends report one typed fact at a time through `report(turn, event)`. Stored
+facts enter one queue per conversation and keep their reporting order. Message
+deltas, thinking pulses and tool progress go to the live tail without storage.
+The plain event rules predict transcript rows and turn changes; those changes
+become visible only after the write commits. Late facts and repeated endings keep
+the same turn checks as ordinary output.
+
+Finished backend prose is not an addressed notebook message. Locally it needs no
+write. On the Mac it still marks a file capture point and keeps an ordered receipt,
+so files can arrive even when the completed prose adds no transcript row. See the
+[executor](executor.md#the-outbox-keeps-authored-work-until-confirmation).
+
 A failed turn on a Ticket, when the ceiling holder is an agent, records a wake for that holder. When the holder is Khushal, the failure reaches him through attention and notifications instead of a wake.
 
 ## Where it shows up
@@ -92,8 +178,19 @@ usual default: `~/projects` when that directory exists, otherwise the applicatio
 Invalid explicit values stop startup.
 
 An explicit conversation workspace takes precedence. A Worker's usable Project directory
-also takes precedence over the server default. Chief, goals, Managers, and Workers without
-a usable Project directory share the default for their server's database.
+also takes precedence over the server default. Chief, goals, Managers, and VPS Workers
+without a usable Project directory share the default for their server's database.
+
+A Mac Worker without an explicit workspace or Project folder uses the persistent
+Panels workspace under the native executor data root. The default path is
+`~/Library/Application Support/Panels/executor/workspace`. `PLAN_EXECUTOR_ROOT`
+changes the data root and therefore this workspace. Native admission creates only
+this application-owned default directory. Explicit paths retain strict validation.
+
+The `executor_default` workspace policy selects this native-owned directory.
+Its stored `/` placeholder is not a working directory. Public views omit that path
+and display “Panels workspace (Mac).” Native admission replaces it with the real
+path before any provider starts.
 
 A conversation keeps its original workspace through resume and server restart. A new
 configuration affects new conversations. Reset the agent's conversation to use the new
@@ -125,4 +222,10 @@ New starts and lazy resumes add the reserved conversation identity to their exis
 
 The contract is `src/planner/conversation/contracts.py`. The system and the three adapters live under `src/planner/conversation/`. Send Message is `src/planner/message_delivery/`. The pane is `web/src/components/conversation/`.
 
-_Last verified: 2026-10-30._
+Shared turn tokens and Ticket locales are defined in `src/planner/execution_identity.py`.
+The backend and Ticket contracts still export those same types. The conversation
+package exports its in-memory stand-in directly, without a lazy import.
+
+_Last verified: 2026-10-31._
+
+An automatic Worker attempt that receives `backend_did_not_start` retains the failed conversation for explicit recovery. Its refused-prompt row includes the native exception detail. Ordinary first-send cleanup for other refusals stays unchanged.
