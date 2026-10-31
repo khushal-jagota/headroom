@@ -2284,6 +2284,8 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
 def test_stop_waits_for_queued_receipt_after_direct_result_and_reconnect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from planner.executor.protocol import ChildOperation
+
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         stopping: asyncio.Task[None] | None = None
@@ -2294,11 +2296,29 @@ def test_stop_waits_for_queued_receipt_after_direct_result_and_reconnect(
 
         async def observe(message: WireMessage) -> None:
             await send(message)
-            if message.kind is WireMessageKind.command_outcome:
-                direct_result.set()
+            if (
+                message.kind is WireMessageKind.command_outcome
+                and message.request_id is not None
+            ):
+                pending = harness.endpoint.runs.pending_commands.get(message.request_id)
+                if pending is not None and pending.command.operation is ChildOperation.stop:
+                    direct_result.set()
 
         monkeypatch.setattr(writer, "send", observe)
         try:
+            # Prove the idle child's StopRun receipt across the replacement connection.
+            assert harness.native.sink is not None and harness.native.turn is not None
+            await harness.native.sink.report(
+                harness.native.turn,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
+            )
+            await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
+            assert not await harness.system.is_running("c_scripted")
+            await eventually(lambda: not harness.mac.outbox.pending(), "initial events did not drain")
             async with paused_outbox(harness.mac.outbox):
                 stopping = asyncio.create_task(harness.system.kill("c_scripted"))
                 await asyncio.wait_for(direct_result.wait(), 5)
