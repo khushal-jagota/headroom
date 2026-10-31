@@ -156,7 +156,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         commands: list[tuple[ChildCommand, CommandOutcome]] = []
         control = ScriptedAcpAgentControl(str(tmp_path / "agent.sock"))
 
-        def make_client(options: Any, *, emission_check: Any = None) -> _ScriptedClaudeSdkClient:
+        def make_client(options: Any) -> _ScriptedClaudeSdkClient:
             client = _ScriptedClaudeSdkClient(
                 options, handshake={"commands": [{"name": "inspect", "description": "Inspect"}]}
             )

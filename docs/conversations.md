@@ -28,7 +28,7 @@ Send Message is the door for a person, Chief, a Manager, or a Worker addressing 
 
 The fate is about delivery, not about whether the model agreed. A provider that explicitly rejects a prompt produces a visible refusal with its reason. Provider-reported model names and extra provider receipt fields are not stored in the notebook. Delivery acceptance, refusal and uncertainty still are.
 
-A saved model choice keeps its exact name and effort. Panels checks explicit model disables before sending. The provider can still refuse the prompt. Launch validation stores the choice, result, reason, action and launch token; it carries no catalog evidence or alias history. The composer shows the refusal without a separate validation panel.
+A saved model choice keeps its exact name and effort. Panels checks explicit model disables before sending. The provider can still refuse the prompt. Launch validation stores the choice, result, reason, action and launch token; it carries no catalog evidence or alias history. The composer shows the refusal without a separate validation panel. The disabled-model check happens at dispatch. Adapters send the chosen model and effort directly, and the provider decides whether to accept them. Disabling a model after dispatch can still allow that turn.
 
 | Fate | Meaning |
 | --- | --- |

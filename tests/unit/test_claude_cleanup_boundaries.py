@@ -23,7 +23,7 @@ from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChildFactory,
     ClaudeAgentSdkChildLaunch,
 )
-from planner.conversation.backends.contracts import BackendChildFactory, EmissionCheck
+from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -62,9 +62,7 @@ def claude_registry(
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
     clients: list[_ScriptedClaudeSdkClient] = []
 
-    def client(
-        options: ClaudeAgentOptions, *, emission_check: EmissionCheck | None = None
-    ) -> _ScriptedClaudeSdkClient:
+    def client(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
         scripted = _ScriptedClaudeSdkClient(options)
         clients.append(scripted)
         return scripted
