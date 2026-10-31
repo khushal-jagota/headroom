@@ -1,14 +1,21 @@
 """Closed field omission must preserve control admission and exact field revisions."""
 
 import json
+import sqlite3
+from collections.abc import Iterator
 from sqlite3 import Connection
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.errors import PlannerError
+from planner.core.server import handle_planner_error
 from planner.tickets import data, views
+from planner.tickets.api import db_conn
+from planner.tickets.workspace.api import router
 from planner.tickets.workspace.resource_versions import TicketWorkspaceResources
 from planner.tickets.workspace.views import workspace_field, workspace_ticket
 
@@ -48,6 +55,43 @@ def test_selected_ticket_preserves_controls_without_closed_bodies(tmp_db: Connec
     assert compact["field_summaries"]["plan"]["byte_count"] == len(values["plan"].encode())
     assert workspace_field(tmp_db, ticket.id, "plan")["value"] == values["plan"]
     assert len(json.dumps(compact)) < 5000
+
+    database_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    stored_before = tmp_db.execute(
+        "SELECT field_values FROM tickets WHERE id=?", (ticket.id,)
+    ).fetchone()[0]
+
+    def field_connection() -> Iterator[Connection]:
+        # The in-process route uses the same fixture database through a read-only
+        # connection that can cross TestClient's worker threads.
+        connection = sqlite3.connect(
+            f"file:{database_path}?mode=ro", uri=True, check_same_thread=False
+        )
+        connection.row_factory = sqlite3.Row
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    app.add_exception_handler(PlannerError, handle_planner_error)
+    app.dependency_overrides[db_conn] = field_connection
+    with TestClient(app) as client:
+        response = client.get(f"/api/tickets/{ticket.id}/workspace/fields/plan")
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "ticket_id": ticket.id,
+            "field": "plan",
+            "revision": compact["field_summaries"]["plan"]["revision"],
+            "value": values["plan"],
+        }
+        unknown = client.get(f"/api/tickets/{ticket.id}/workspace/fields/never_stored")
+        assert unknown.status_code == 404, unknown.text
+        assert unknown.json()["error"]["message"] == "Ticket field not found"
+    assert tmp_db.execute(
+        "SELECT field_values FROM tickets WHERE id=?", (ticket.id,)
+    ).fetchone()[0] == stored_before
 
 
 def test_field_revision_changes_only_with_its_body_and_rolls_back(tmp_db: Connection) -> None:
