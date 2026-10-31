@@ -72,6 +72,8 @@ Active goals appear inside the full Chief card, before its Worker groups. Each r
 
 Main goal displays and active goal cards show the normal interactive checklist at every width. Sidebar previews show the small interactive checklist. Both sizes retain checkboxes, item details, actions, and completed items.
 
+The primary display resolver in `web/src/lib/goals/primaryDisplay.ts` owns this selection rule across goal views and filters. The context factory in `web/src/lib/goals/pageContext.ts` supplies live accepted values and checklist sessions while each host retains its controls and write capabilities.
+
 Other saved-page checklists use the small presentation. When the goal content is 640 pixels wide or less, their compact summary opens the small interactive checklist. This mobile summary does not replace the main checklist or sidebar preview. Nested sections, views, and grids preserve this presentation context. Generic pages and component samples use the normal presentation unless their host selects another size.
 
 The whole checklist header toggles expansion in open, closed, and complete states. Its ring, title, count, whitespace, and chevron share one target. Keyboard and touch use the same control.
@@ -204,4 +206,4 @@ Explicit date requests override the display interval and can extend beyond the d
 
 Code paths: `src/planner/goals/`, `src/planner/measures/logic/`, and `web/src/lib/charts/`.
 
-_Last verified: October 30, 2026._
+_Last verified: October 31, 2026._
