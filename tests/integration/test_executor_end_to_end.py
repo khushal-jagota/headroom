@@ -2322,7 +2322,9 @@ def test_stop_waits_for_queued_receipt_after_direct_result_and_reconnect(
                 "initial runtime turn did not settle",
             )
             assert not await harness.system.is_running("c_scripted")
-            await eventually(lambda: not harness.mac.outbox.pending(), "initial events did not drain")
+            await eventually(
+                lambda: not harness.mac.outbox.pending(), "initial events did not drain"
+            )
             async with paused_outbox(harness.mac.outbox):
                 stopping = asyncio.create_task(harness.system.kill("c_scripted"))
                 await asyncio.wait_for(direct_result.wait(), 5)
@@ -2525,10 +2527,11 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             starts = harness.native.start_count
             prompts = harness.native.prompt_count
             source.block = True
-            monkeypatch.setattr(catalog_relay, "CATALOG_TIMEOUT_SECONDS", 0.05)
-            retained = await harness.endpoint.catalog.snapshot(
-                ConversationBackendKey.codex, refresh=True
-            )
+            with monkeypatch.context() as timeout_patch:
+                timeout_patch.setattr(catalog_relay, "CATALOG_TIMEOUT_SECONDS", 0.05)
+                retained = await harness.endpoint.catalog.snapshot(
+                    ConversationBackendKey.codex, refresh=True
+                )
             assert retained == first
             assert harness.endpoint.runs.link is writer and harness.endpoint.runs.ready
             assert harness.native.start_count == starts
