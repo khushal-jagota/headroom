@@ -142,7 +142,10 @@ PY
 
 Use the actual deployed package interpreter and working directory for that VPS layout.
 Record its exact app revision alongside the constants.
-`GET /api/executor/health` reports the connected Mac identity, not independent VPS compatibility.
+`GET /api/executor/health` reports the connected Mac identity, connection state
+and last contact. A `ready` state means reconciliation has finished. It does not
+report the Mac process ID or independent VPS compatibility; use installed Mac
+health for process evidence.
 If either host's version evidence is absent or incompatible, defer installation.
 The handshake remains the final protocol guard.
 

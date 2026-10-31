@@ -286,16 +286,13 @@ def test_duplicate_hello_preserves_active_file_reservations(
                 hashlib.sha256(b"").hexdigest(),
                 0,
             )
-            descriptor, kind = await harness.endpoint._file(
-                WireMessage(
-                    WireMessageKind.put_file,
-                    "reservation",
-                    as_object(FileUploadRequest(manifest, child.reference)),
-                ),
-                identity,
+            response = await harness.mac.connection.link.request(
+                WireMessageKind.put_file,
+                as_object(FileUploadRequest(manifest, child.reference)),
+                request_id="reservation",
             )
-            assert kind is WireMessageKind.file_transfer
-            slot = TypeAdapter(FileTransfer).validate_python(descriptor)
+            assert response.kind is WireMessageKind.file_transfer
+            slot = TypeAdapter(FileTransfer).validate_python(response.payload)
             payload = encode_value(harness.mac.connection.health())
             assert isinstance(payload, dict)
             async with harness.proxy.session_factory() as session:

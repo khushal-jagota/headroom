@@ -218,19 +218,21 @@ class CutReceiptEndpoint(VpsExecutor):
         self.input_cut_count = 0
         self.cut_prompt_frame = False
 
-    async def _handle_message(
-        self, message: WireMessage, identity: ExecutorIdentity, writer: Link
-    ) -> None:
-        if self.cut_user_input_application and message.kind is WireMessageKind.envelope:
-            envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
-            if envelope.kind is EnvelopeKind.answer_application:
-                ask = envelope.payload.get("ask")
-                if isinstance(ask, dict) and ask.get("kind") == "user_input":
-                    self.cut_user_input_application = False
-                    self.cut_submission = envelope.submission_id
-        await super()._handle_message(message, identity, writer)
-
     async def session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
+        original_receive = reader.receive
+
+        async def receive() -> WireMessage:
+            message = await original_receive()
+            if self.cut_user_input_application and message.kind is WireMessageKind.envelope:
+                envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
+                if envelope.kind is EnvelopeKind.answer_application:
+                    ask = envelope.payload.get("ask")
+                    if isinstance(ask, dict) and ask.get("kind") == "user_input":
+                        self.cut_user_input_application = False
+                        self.cut_submission = envelope.submission_id
+            return message
+
+        reader.receive = receive  # type: ignore[method-assign]
         original = writer.send
 
         async def send(message: WireMessage) -> None:
@@ -2289,14 +2291,16 @@ def test_stop_waits_for_queued_receipt_after_direct_result_and_reconnect(
         harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         stopping: asyncio.Task[None] | None = None
         direct_result = asyncio.Event()
-        handle = harness.endpoint._handle_message
+        assert harness.mac.connection.link is not None
+        writer = harness.mac.connection.link._writer
+        send = writer.send
 
-        async def observe(message: WireMessage, identity: ExecutorIdentity, writer: Link) -> None:
-            await handle(message, identity, writer)
+        async def observe(message: WireMessage) -> None:
+            await send(message)
             if message.kind is WireMessageKind.command_outcome:
                 direct_result.set()
 
-        monkeypatch.setattr(harness.endpoint, "_handle_message", observe)
+        monkeypatch.setattr(writer, "send", observe)
         try:
             async with paused_outbox(harness.mac.outbox):
                 stopping = asyncio.create_task(harness.system.kill("c_scripted"))

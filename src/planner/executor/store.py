@@ -311,7 +311,3 @@ class ExecutorStore(VpsDatabase):
                 "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
                 (now_ms, child.executor_incarnation, child.child_id, child.conversation_id),
             )
-
-    def verify_connection(self, identity: ExecutorIdentity) -> None:
-        with self._transaction() as connection:
-            self._connected(connection, identity)

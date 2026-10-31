@@ -43,7 +43,7 @@ export function installMachineEvidenceFixture(): void {
       return Response.json({id:'mac-worker',title:'Mac Worker',locale:'macos',record_sha256:'a'.repeat(64)});
     }
     if(url.pathname==='/api/tickets/mac-worker/move')return Response.json({error:{code:'conflict',message:'Source state unknown.'}},{status:409});
-    if(url.pathname==='/api/executor/health')return Response.json({mode:'remote',identity:connected?{executor_incarnation:child.executor_incarnation,connection_generation:1}:null,connection_state:connected?'ready':'disconnected',reconciliation_ready:connected,last_contact_at_ms:1,last_contact_source:'vps_received_valid_executor_frame'});
+    if(url.pathname==='/api/executor/health')return Response.json({mode:'remote',identity:connected?{executor_incarnation:child.executor_incarnation,connection_generation:1}:null,connection_state:connected?'ready':'disconnected',last_contact_at_ms:1});
     if(url.pathname==='/api/conversation/backends')return Response.json({backends:[]});
     if(url.pathname.includes('/composer-catalog'))return Response.json({entries:[]});
     if(url.pathname.includes('/conversations/machine-conversation')){

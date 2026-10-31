@@ -315,8 +315,9 @@ A file linked by an accepted agent write is therefore durable on the VPS first,
 without separate link parsing. Pending items retain their exact original bytes.
 Uploads use the queued item's file references to find those bytes, without reading
 the outbox database again.
-If an upload descriptor is malformed or its upload is refused, the Mac replies
-with an error for that request. The VPS records a refused receipt for the item.
+If an upload descriptor is malformed or its upload is refused, the Mac sends a
+`refuse_envelope` request for that reservation. The VPS inbox checks the child and
+Ticket authority, releases the reservation, and records a refused receipt for the item.
 The queue advances and the shared connection stays open for other conversations.
 
 A file still waiting for confirmation stays attached to later items that refer
@@ -674,12 +675,15 @@ See [runtime environments](environments.md) and [VPS deployment](deployment.md) 
 
 ## Machine display reads
 
-`GET /api/executor/health` includes `last_contact_at_ms` and
-`last_contact_source: "vps_received_valid_executor_frame"`. This time is the VPS
+`GET /api/executor/health` returns the mode, current connection identity,
+connection state, and `last_contact_at_ms`. The ready state means reconciliation
+has finished. The last-contact time is the VPS
 receipt time of a strictly decoded frame on the current established executor
 session. A validated initial handshake supplies the first observation. Later
 frames advance it before domain dispatch, including operations that receive a
-refusal. An old writer or generation cannot advance it. The database keeps the
+refusal. An old writer or generation cannot advance it. Message handling and file admission
+check the current connection in memory; receipt transactions also check the saved
+generation before committing a write. The database keeps the
 connection identity, generation and state; it stores no observation or loss time.
 
 Contact proves receipt only. It proves neither current activity nor answer
