@@ -67,7 +67,6 @@
   } = $props();
 
   let showing = $state<"models" | "efforts">("models");
-  let olderExpanded = $state(false);
   let pendingModel = $state<string | null>(null);
   let feedback = $state<string | null>(null);
   let refreshing = $state(false);
@@ -84,13 +83,7 @@
   let effortRows = $derived(activeBackendKey === "hermes" ? [] :
     effortOptionsFor(models, pendingModel ?? displayed.model ?? "", backendEffortOptions)
       .map((effort) => ({ value: effort, name: effort })));
-  const olderRow = "\0older-models";
-  let modelRows = $derived([
-    ...view.models,
-    ...(view.olderModels.length ? [{value: olderRow, name: `Older models (${view.olderModels.length})`}] : []),
-    ...(olderExpanded ? view.olderModels : [])
-  ]);
-  let rows = $derived((showing === "models" ? modelRows : effortRows) as readonly ListboxPickerItem[]);
+  let rows = $derived((showing === "models" ? view.models : effortRows) as readonly ListboxPickerItem[]);
   let chosenValue = $derived(showing === "models" ? displayed.model : currentEffort ?? "");
   let triggerFace = $derived(view.face);
   let foot = $derived(feedback ?? readError ?? (showing === "models" ? view.emptyReason : null));
@@ -117,16 +110,11 @@
     showing = "models";
     pendingModel = null;
     feedback = null;
-    olderExpanded = view.olderModels.some(row => row.value === displayed.model);
   }
 
   function take(choice: ModelPickerChoice): void {
     if (disabled) return;
     if (showing === "models") {
-      if (choice.value === olderRow) {
-        olderExpanded = !olderExpanded;
-        return;
-      }
       const efforts = activeBackendKey === "hermes" ? [] : effortOptionsFor(models, choice.value, backendEffortOptions);
       if (!efforts.length) {
         finish(choice.value, null);
@@ -154,7 +142,6 @@
       return;
     }
     feedback = null;
-    olderExpanded = false;
     showing = "models";
     pendingModel = null;
     if (key !== activeBackendKey) onChooseBackend(key, {model: null, reasoningEffort: null});
@@ -217,8 +204,7 @@
   triggerAttributes={{ "data-conversation-picker-trigger": "" }}
   panelAttributes={{ "data-conversation-picker-panel": "" }}
   optionAttributes={(choice, active, selected) => ({
-    "data-conversation-picker-choice": choice.value === olderRow ? undefined : choice.value,
-    "aria-expanded": choice.value === olderRow ? String(olderExpanded) : undefined,
+    "data-conversation-picker-choice": choice.value,
     "data-conversation-picker-active": active ? "true" : undefined,
     "data-conversation-picker-chosen": selected ? "true" : undefined
   })}
@@ -301,8 +287,7 @@
     </PickerRail>
   {/snippet}
   {#snippet optionContent(choice, selected)}
-    <span class="model-picker-choice-name">{#if choice.value === olderRow}<span aria-hidden="true">{olderExpanded ? "▾" : "▸"} </span>{/if}{choice.name}
-    </span>
+    <span class="model-picker-choice-name">{choice.name}</span>
     {#if showUsage && showing === "models" && hasModelUsage(choice.value)}
       <UsageRings
         windows={snapshotFor(view.backendKey ?? "claude")?.cached_usage?.windows ?? []}

@@ -365,19 +365,16 @@ def run(browser, urls):
         assert picker.get_by_role("option", name="Opus 5", exact=True).count() == 0
         assert picker.get_by_role("textbox").count() == 0
         assert picker.get_by_role("option", name="Provider default", exact=True).count() == 0
-        older = picker.get_by_role("option", name="Older models (1)", exact=False)
-        older.click()
-        expect(older).to_have_attribute("aria-expanded", "true")
-        assert picker.get_by_role("option", name="Opus 5", exact=True).is_visible()
+        assert picker.get_by_role("option", name="Older models", exact=False).count() == 0
         panel = picker.locator("[data-conversation-picker-panel]")
         bounds = panel.bounding_box()
         assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width
         assert bounds["y"] >= 0 and bounds["y"] + bounds["height"] <= 720
         if output:
             page.screenshot(path=str(Path(output) / f"canonical-picker-{width}.png"))
-        picker.get_by_role("option", name="Opus 5", exact=True).click()
+        picker.get_by_role("option", name="Opus 5.5", exact=True).click()
         picker.get_by_role("option", name="high", exact=True).click()
-        assert page.evaluate("window.__pickerChoices") == [{"model": "claude-opus-5", "effort": "high"}]
+        assert page.evaluate("window.__pickerChoices") == [{"model": "claude-opus-5-5", "effort": "high"}]
         assert trigger.evaluate("e => e === document.activeElement")
         trigger.press("ArrowDown")
         picker.locator("[data-conversation-picker-refresh]").click()
@@ -385,7 +382,7 @@ def run(browser, urls):
         assert picker.get_by_role("listbox").evaluate("e => e === document.activeElement")
         picker.get_by_role("listbox").press("Escape")
         assert trigger.evaluate("e => e === document.activeElement")
-        # Models with no efforts finish immediately, and saved old choices open in place.
+        # Models with no efforts finish immediately. Saved older choices keep their label and efforts.
         trigger.click()
         picker.get_by_role("option", name="Sonnet 5.5", exact=True).click()
         assert page.evaluate("window.__pickerChoices.at(-1)") == {"model":"claude-sonnet-5-5", "effort":None}
@@ -393,8 +390,13 @@ def run(browser, urls):
         page.evaluate("window.__pickerOld()")
         expect(trigger).to_have_text("Opus 5 high")
         trigger.click()
-        expect(picker.get_by_role("option", name="Older models (1)", exact=False)).to_have_attribute("aria-expanded", "true")
-        expect(picker.get_by_role("option", name="Opus 5", exact=True)).to_have_attribute("aria-selected", "true")
+        assert picker.get_by_role("option", name="Older models", exact=False).count() == 0
+        assert picker.get_by_role("option", name="Opus 5", exact=True).count() == 0
+        if output:
+            page.screenshot(path=str(Path(output) / f"saved-older-picker-{width}.png"))
+        picker.locator("[data-conversation-picker-reasoning]").click()
+        expect(picker.get_by_role("option", name="high", exact=True)).to_have_attribute("aria-selected", "true")
+        assert page.evaluate("window.__pickerChoices.at(-1)") == {"model":"claude-sonnet-5-5", "effort":None}
         picker.get_by_role("listbox").press("Escape")
         page.evaluate("window.__pickerHermes()")
         expect(trigger).to_have_text("Hermes model")

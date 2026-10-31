@@ -38,10 +38,10 @@ Each real agent identity has one canonical home and one credential: the user’s
 Model and reasoning changes ride the next message that is actually delivered. Browsing the picker does nothing until then. Codex and Hermes apply the change in place. Claude restarts the session and carries memory across. The backend is fixed once the conversation exists.
 
 The model picker shows full model names. For Claude and Codex, the highest numbered
-version of each variant appears first. Other enabled models sit under one
-“Older models (N)” row, which opens in place. It opens automatically when the saved
-model is older; the saved choice stays exactly as it was. Hermes shows one flat
-list and has no reasoning step. An empty Hermes list is a valid answer.
+version of each variant appears in the list. The picker hides older versions.
+A saved older model keeps its accurate label and reasoning controls.
+The catalog and saved choice stay intact. Hermes shows one flat list and has no
+reasoning step. An empty Hermes list is a valid answer.
 
 Choosing a model with no reasoning options finishes the choice immediately.
 Otherwise the picker asks for one of that model's reasoning options. There is no
@@ -74,7 +74,7 @@ when it is refreshed. Claude's list comes from its CLI startup handshake, with n
 prompt or turn. Picking a Claude model saves the resolved, pinned ID, such as
 `claude-opus-5-5`, while showing the CLI's display name. Model metadata includes its
 family and numeric version, including Fable and Terra. Older models remain in the
-list.
+catalog, but the normal picker hides them.
 
 A Ticket saves its backend, exact model name and effort. Newer models do not change a saved choice. A Ticket with no saved model starts from its Worker type's defaults. New shipped defaults use `gpt-6.1-sol`, `gpt-6-astra` or `claude-opus-5-5`; existing saved Tickets keep their models.
 
