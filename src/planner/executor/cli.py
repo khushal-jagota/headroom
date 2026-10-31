@@ -9,7 +9,7 @@ import click
 
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.configuration import executor_paths
+from planner.executor.configuration import executor_paths, validate_executor_launch
 from planner.executor.ipc_client import request
 from planner.executor.protocol import IpcOperation, QuiesceRequest, type_adapter
 
@@ -24,18 +24,11 @@ def executor_group() -> None:
 @click.option("--application-revision", required=True)
 @click.option("--panels-server-url", required=True)
 def run(executor_id: str, application_revision: str, panels_server_url: str) -> None:
-    from planner.environments.mac_executor.contracts import (
-        ExecutorLaunchOptions,
-        MacExecutorConfigurationError,
-    )
-    from planner.environments.mac_executor.launch_agent import validate_executor_launch
     from planner.executor.mac_service import MacService
 
     try:
-        validate_executor_launch(
-            ExecutorLaunchOptions(executor_id, application_revision, panels_server_url),
-        )
-    except MacExecutorConfigurationError as error:
+        validate_executor_launch(executor_id, application_revision, panels_server_url)
+    except ValueError as error:
         raise click.ClickException(str(error)) from error
     asyncio.run(
         MacService(

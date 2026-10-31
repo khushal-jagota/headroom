@@ -472,6 +472,9 @@ Missing or incompatible evidence defers the operation. The handshake remains the
 
 The outbox checks SQLite `user_version` on open and refuses incompatible formats.
 The [Mac operator runbook](mac-executor-installation.md) supplies the concrete checks.
+`python -m planner.environments.mac_executor` prints the GUI LaunchAgent plist from
+explicit inputs. It shares the executor connection's HTTPS origin validation and
+performs no installation or service actions.
 No automatic two-host update or general migration mechanism exists.
 
 ## Fresh installation and retained journals

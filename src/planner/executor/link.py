@@ -8,7 +8,6 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, cast
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 import aiohttp
@@ -26,6 +25,7 @@ from planner.executor.configuration import (
     MAX_TRANSFERS,
     REQUEST_TIMEOUT_SECONDS,
     WS_HEARTBEAT_SECONDS,
+    validate_server_url,
 )
 from planner.executor.protocol import (
     ControlMessageReader,
@@ -40,28 +40,6 @@ from planner.executor.protocol import (
     encode_value,
     type_adapter,
 )
-
-
-def validate_server_url(value: str) -> str:
-    if any(character.isspace() or ord(character) < 32 for character in value):
-        raise ValueError("executor server URL contains whitespace or control characters")
-    parsed = urlsplit(value)
-    try:
-        port = parsed.port
-    except ValueError as error:
-        raise ValueError("executor server URL has invalid port") from error
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-        or (port is not None and port < 1)
-    ):
-        raise ValueError("executor server URL must be an HTTPS origin")
-    return value.rstrip("/")
 
 
 class ServerWebSocketPeer:
