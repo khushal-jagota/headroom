@@ -276,9 +276,9 @@ def create_app(
         ) as conversation:
             audit_conn = conn_factory()
             try:
-                from planner.executor.vps_runs import MacRuns
+                from planner.executor.store import ExecutorStore
 
-                MacRuns.interrupt_after_restart(audit_conn)
+                ExecutorStore.interrupt_after_restart(audit_conn)
                 audit_conn.commit()
                 tickets_data.audit_ticket_registry_integrity(audit_conn)
                 reconcile_managed_skill_versions(audit_conn)

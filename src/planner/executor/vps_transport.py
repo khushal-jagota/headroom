@@ -276,7 +276,7 @@ class VpsExecutor:
                 outcome = type_adapter(CommandOutcome).validate_python(message.payload)
                 if message.request_id != outcome.command_id:
                     raise ValueError("command result ID conflicts with reply")
-                await self.runs._resolve_command(outcome)
+                self.runs._resolve_command(outcome)
                 return
             elif message.kind is WireMessageKind.read_request:
                 read = type_adapter(LiveReadRequest).validate_python(message.payload)
@@ -384,9 +384,9 @@ class VpsExecutor:
             return as_object(slot), WireMessageKind.file_transfer
         request = type_adapter(FileDownloadRequest).validate_python(message.payload)
         pending = self.runs.pending_commands.get(request.command_id)
-        if pending is None or pending[1].done():
+        if pending is None or pending.future.done():
             raise ValueError("input command is no longer pending")
-        command = pending[0]
+        command = pending.command
         if command.child.executor_incarnation != identity.executor_incarnation:
             raise ValueError("input command belongs to another executor")
         args = command.arguments

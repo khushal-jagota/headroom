@@ -18,10 +18,6 @@ from planner.executor.protocol import (
     ChildOperation,
     CommandOutcome,
     ConnectionState,
-    EnvelopeKind,
-    QueuedEnvelope,
-    envelope_child,
-    type_adapter,
 )
 
 
@@ -56,6 +52,22 @@ class VpsDatabase:
 
 
 class ExecutorStore(VpsDatabase):
+    @staticmethod
+    def interrupt_after_restart(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            "UPDATE executor_connections SET connection_state='disconnected' WHERE active=1"
+        )
+        conn.execute("UPDATE mac_runs SET stop_state='stopping' WHERE stop_state='open'")
+
+    @staticmethod
+    def status(conn: sqlite3.Connection) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (row[0], row[1])
+            for row in conn.execute(
+                "SELECT identity_json,connection_state FROM executor_connections WHERE active=1"
+            )
+        )
+
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         connection = connect(self.db_path)
         try:
@@ -281,14 +293,8 @@ class ExecutorStore(VpsDatabase):
                 "AND executor_incarnation=? AND child_id=?",
                 (child.conversation_id, child.executor_incarnation, child.child_id),
             ).fetchone()
-            current = connection.execute(
-                "SELECT executor_incarnation FROM executor_connections WHERE active=1"
-            ).fetchone()
-            if row is None or (
-                row[0] == "unproved"
-                and (current is None or current[0] == child.executor_incarnation)
-            ):
-                raise ValueError("Mac run termination remains unproved")
+            if row is None:
+                raise ValueError("Mac run does not match this child")
             connection.execute(
                 "UPDATE mac_runs SET stop_state='closed' WHERE conversation_id=? "
                 "AND executor_incarnation=? AND child_id=?",
@@ -303,32 +309,3 @@ class ExecutorStore(VpsDatabase):
     def verify_connection(self, identity: ExecutorIdentity) -> None:
         with self._transaction() as connection:
             self._connected(connection, identity)
-
-    @staticmethod
-    def _mark_refused_cleanup_evidence(
-        connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
-    ) -> None:
-        # A refused domain command is an ordinary answer. Only a required native
-        # publication can invalidate evidence that cleanup waits for.
-        if envelope.kind in (EnvelopeKind.backend_event, EnvelopeKind.child_stopped):
-            child_payload = envelope.payload.get("child")
-        elif envelope.kind is EnvelopeKind.answer_application:
-            child_payload = envelope_child(envelope.payload, ask_only=True)
-        else:
-            return
-        # A malformed publication still needs a refusal receipt. Its child alone
-        # is enough to fence cleanup, even when the rest cannot be decoded.
-        try:
-            child = type_adapter(ChildReference).validate_python(child_payload)
-        except ValueError:
-            return
-        if (
-            child.executor_incarnation != identity.executor_incarnation
-            or child.conversation_id != envelope.conversation_id
-        ):
-            return
-        connection.execute(
-            "UPDATE mac_runs SET stop_state='unproved' WHERE conversation_id=? "
-            "AND executor_incarnation=? AND child_id=? AND stop_state!='closed'",
-            (child.conversation_id, child.executor_incarnation, child.child_id),
-        )
