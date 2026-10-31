@@ -9,7 +9,6 @@ from sqlite3 import Connection
 from typing import Never
 
 import pytest
-from tests.support.model_catalogue import seed_test_model_catalogue
 
 from planner.conversation.backends.contracts import BackendEventSink
 from planner.conversation.contracts import ConversationBackendKey, ResolvedConversationStart
@@ -30,7 +29,7 @@ def tmp_db(tmp_path: Path) -> Iterator[Connection]:
     """A fresh schema on a temp SQLite file."""
     conn = connect(str(tmp_path / "planning-test.db"))
     create_schema(conn)
-    seed_test_model_catalogue(conn)
+
     yield conn
     conn.close()
 

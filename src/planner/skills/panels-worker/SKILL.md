@@ -82,7 +82,7 @@ Store them in the live managed tree at `/home/vps/Deployments/Panels/current/dat
 
 ### Preview servers you leave running
 
-When a Ticket's work is a running preview server, record it as an ordinary Markdown link to `/dev/tickets/<ticket-id>/<port>/`, for example `[take one](/dev/tickets/t_t8bu42wk/8791/)`. Panels serves that address and the user can open it. Never record `http://127.0.0.1:<port>/` or `http://localhost:<port>/`: that address is true only on this machine, and the user browses from another device. A recorded link goes out of date when the port dies, like any other stored value.
+For VPS Tickets only, when the work is a running preview server, record it as an ordinary Markdown link to `/dev/tickets/<ticket-id>/<port>/`, for example `[take one](/dev/tickets/t_t8bu42wk/8791/)`. Panels serves that address and the user can open it. Never record `http://127.0.0.1:<port>/` or `http://localhost:<port>/`: that address is true only on this machine, and the user browses from another device. A recorded link goes out of date when the port dies, like any other stored value. Application previews are unavailable for Mac runs.
 
 
 ### The server is not yours

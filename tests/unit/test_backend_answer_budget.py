@@ -36,7 +36,6 @@ from planner.conversation.contracts import ConversationBackendKey as Backend
 from planner.conversation.snapshot import BackendModel
 
 DOORS = (
-    "planner.conversation.model_resolution.data",
     "planner.conversation.backend_state",
 )
 """The modules that open a connection to answer about a backend."""
@@ -91,17 +90,17 @@ class Connections:
 def answer(tmp_path: Path, models: int) -> Connections:
     """Answer one backend card the way the endpoint does, and report what it cost."""
     catalogue = catalogue_of(models)
-    service, path = setup(tmp_path, catalogue)
+    service, _, path = setup(tmp_path)
     state = BackendStateStore(str(path))
     snapshot = asyncio.run(
         catalogue.snapshot(Backend.codex, refresh=True, discover_update_advisory=False)
     )
-    # The first answer is the one that populates the durable resolutions, so the cost
-    # being counted is the second: a warm card, which is every card after boot.
-    _snapshot_json(service.decorate_snapshot(snapshot), state)
+    # The unscoped backend card describes source rows and never adopts scoped
+    # verification evidence. Count its repeated read, without execution authority.
+    _snapshot_json(snapshot, state)
 
     with Connections() as counted:
-        payload = _snapshot_json(service.decorate_snapshot(snapshot), state)
+        payload = _snapshot_json(snapshot, state)
     assert len(payload["available_models"]) == models
     return counted
 

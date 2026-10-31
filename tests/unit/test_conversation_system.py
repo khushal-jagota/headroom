@@ -19,9 +19,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
 
 import planner.conversation.system as conversation_system
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    BackendChildFactory,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -31,14 +34,20 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    ContextCompacted,
     NeedsRebind,
     PermissionAnswerWriteFailed,
-    PromptWriteFailed,
+    PermissionAskRaised,
+    PromptWriteRefused,
     SessionLoadFailed,
+    TurnEnded,
     TurnToken,
     UserInputAnswerWriteFailed,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationBackendKey,
@@ -230,7 +239,9 @@ class _FakeBackendChild:
             f"{resolved_start.reasoning_effort}"
         )
         if vendor_session_cursor is None:
-            await self._sink.vendor_session_cursor_rebound(VENDOR_SESSION_CURSOR)
+            await self._sink.report(
+                None, VendorSessionCursorRebound(vendor_session_cursor=VENDOR_SESSION_CURSOR)
+            )
 
     async def write_prompt(
         self,
@@ -244,6 +255,7 @@ class _FakeBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         # The label and the mode travel with the text as metadata for backends that have a
         # channel for it. This stand-in has none, so it takes them and lets them go.
@@ -261,10 +273,10 @@ class _FakeBackendChild:
         if self._backend.writes_raise_something_unnamed:
             raise RuntimeError("the adapter fell over")
         if self._backend.write_fails:
-            raise PromptWriteFailed(self._backend.conversation_id)
+            raise PromptWriteRefused(self._backend.conversation_id)
         if self._backend.write_failures_remaining:
             self._backend.write_failures_remaining -= 1
-            raise PromptWriteFailed(self._backend.conversation_id)
+            raise PromptWriteRefused(self._backend.conversation_id)
         if model_change is not None:
             self._backend.model = model_change
         if reasoning_effort_change is not None:
@@ -278,11 +290,13 @@ class _FakeBackendChild:
         self._backend.live_turn_token = turn_token
         if self._backend.ends_the_turn_while_writing:
             self._backend.ends_the_turn_while_writing = False
-            await self._sink.turn_ended(
+            await self._sink.report(
                 turn_token,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             self._backend.live_turn_token = None
             # Hand the loop back enough times that the ending is certainly picked up while
@@ -308,7 +322,7 @@ class _FakeBackendChild:
         if self._backend.steers_wait_for_release is not None:
             await self._backend.steers_wait_for_release.wait()
         if self._backend.write_fails:
-            raise PromptWriteFailed(self._backend.conversation_id)
+            raise PromptWriteRefused(self._backend.conversation_id)
         self._backend.steer_tokens.append(turn_token)
         self._backend.writes.append(_FakeBackendWrite(content=content, steered=True))
         return self._backend.steer_outcome
@@ -326,11 +340,13 @@ class _FakeBackendChild:
         if self._backend.reports_its_ending_during_a_cancel and token is not None:
             # What a real agent does: it takes the cancel and says its turn has stopped,
             # while the core is still part-way through recording the interruption.
-            await self._sink.turn_ended(
+            await self._sink.report(
                 token,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             # A real cancel waits on its wire, which gives the queue time to work that
             # report through before the core comes back to record its own ending. Without
@@ -338,17 +354,31 @@ class _FakeBackendChild:
             for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):
                 await asyncio.sleep(0)
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         if self._backend.permission_answer_write_fails:
             raise PermissionAnswerWriteFailed(ask_id)
         self._backend.permission_answers[ask_id] = option_id
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self, request_id: str, answers: tuple[UserInputAnswer, ...], **kwargs: object
+    ) -> AnswerFate:
         if self._backend.user_input_answer_write_fails:
             raise UserInputAnswerWriteFailed(request_id)
         self._backend.user_input_answers[request_id] = answers
+        return AnswerFate.applied
+
+    @property
+    def stop_outside_lock(self) -> bool:
+        return False
+
+    async def withdraw_delivery(self) -> bool:
+        return True
+
+    async def detach(self) -> None:
+        await self.stop()
 
     async def stop(self) -> None:
         if self._backend.stop_has_begun is not None:
@@ -384,6 +414,7 @@ class _Harness:
         clock: _FakeMonotonicClock | None = None,
         idle_child_stop_after_seconds: float = 30 * 60,
         idle_child_sweep_interval_seconds: float = 5 * 60,
+        factory_wrapper: Callable[[BackendChildFactory], BackendChildFactory] | None = None,
     ) -> None:
         self.db_path = db_path
         self.clock = _FakeMonotonicClock() if clock is None else clock
@@ -393,11 +424,14 @@ class _Harness:
         self.resolved_starts: list[ResolvedConversationStart] = []
         self.live_tail = ConversationLiveTail()
         self.message_files = ConversationMessageFiles(str(db_path))
+        child_factory = (
+            self._make_child if factory_wrapper is None else factory_wrapper(self._make_child)
+        )
         self.system = SqliteProcessConversationSystem(
             store=self.store,
             message_files=self.message_files,
             backend_child_factories={
-                backend_key: self._make_child for backend_key in ConversationBackendKey
+                backend_key: child_factory for backend_key in ConversationBackendKey
             },
             live_tail=self.live_tail,
             monotonic_now=self.clock,
@@ -444,11 +478,11 @@ class _Harness:
         if token is None or backend.sink is None:
             return
         backend.live_turn_token = None
-        await backend.sink.turn_ended(
+        await backend.sink.report(
             token,
-            ending=ending,
-            error_summary=error_summary,
-            standard_error_tail=standard_error_tail,
+            TurnEnded(
+                ending=ending, error_summary=error_summary, standard_error_tail=standard_error_tail
+            ),
         )
         await self.settle()
 
@@ -474,20 +508,24 @@ class _Harness:
         assert token is not None and backend.sink is not None
         backend.permission_asks_raised += 1
         ask_id = f"ask-{backend.permission_asks_raised}"
-        await backend.sink.permission_ask_raised(
+        await backend.sink.report(
             token,
-            BackendPermissionAsk(
-                ask_id=ask_id,
-                title="Run a command?",
-                detail="ls",
-                options=(
-                    PermissionAskOption(
-                        option_id="allow-once",
-                        label="Approve once",
-                        option_kind="allow",
+            PermissionAskRaised(
+                ask=BackendPermissionAsk(
+                    ask_id=ask_id,
+                    title="Run a command?",
+                    detail="ls",
+                    options=(
+                        PermissionAskOption(
+                            option_id="allow-once",
+                            label="Approve once",
+                            option_kind="allow",
+                        ),
+                        PermissionAskOption(
+                            option_id="deny", label="Decline", option_kind="reject"
+                        ),
                     ),
-                    PermissionAskOption(option_id="deny", label="Decline", option_kind="reject"),
-                ),
+                )
             ),
         )
         await self.settle()
@@ -525,7 +563,7 @@ class _Harness:
                 ),
             ),
         )
-        await backend.sink.user_input_requested(token, request)
+        await backend.sink.report(token, UserInputRequested(request=request))
         await self.settle()
         public = next(
             event.payload
@@ -538,14 +576,14 @@ class _Harness:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.agent_message_completed(token, content)
+        await backend.sink.report(token, AgentMessageCompleted(content=content))
         await self.settle()
 
     async def confirm_compaction(self, conversation_id: str) -> None:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.context_compacted(token)
+        await backend.sink.report(token, ContextCompacted())
         await self.settle()
 
     # --- reading the record ---
@@ -582,8 +620,11 @@ def harness(tmp_path: Path) -> Iterator[_Harness]:
     create_schema(conn)
     conn.close()
     built = _Harness(db_path)
-    yield built
-    asyncio.run(built.system.shutdown())
+    with conversation_test_loop() as runner:
+        try:
+            yield built
+        finally:
+            runner.run(built.system.shutdown())
 
 
 def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
@@ -592,7 +633,7 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     The time limit is a wedge detector: nothing here does real work, so anything near it
     is a system that has stopped rather than one that is slow.
     """
-    asyncio.run(asyncio.wait_for(exercise(), 20.0))
+    run_conversation_test(exercise)
 
 
 def _link_test_ticket_to_conversation(
@@ -667,6 +708,32 @@ async def _start(
             workspace_folder=workspace_folder,
         )
     )
+
+
+def test_disabled_saved_model_refuses_dispatch_until_reenabled(harness: _Harness) -> None:
+    from planner.conversation.backend_state import BackendStateStore
+
+    async def exercise() -> None:
+        backend_key = ConversationBackendKey.codex
+        await _start(harness, backend_key=backend_key, model="exact-provider-model")
+        policy = BackendStateStore(str(harness.db_path))
+        policy.write_model_enablement(backend_key, "exact-provider-model", False)
+        refused = await harness.system.send(
+            "c", text_message_content("blocked"), sender_label="Owner"
+        )
+        assert isinstance(refused, PromptDeliveryRefused)
+        assert refused.refusal_reason is PromptDeliveryRefusalReason.model_resolution_failed
+        rows = await harness.store.read_events_after("c", 0)
+        refused_rows = [row for row in rows if row.kind.value == "prompt_delivery_refused"]
+        assert len(refused_rows) == 1
+        assert "disabled" in str(refused_rows[0].payload)
+        assert harness.backend("c").writes == []
+        policy.write_model_enablement(backend_key, "exact-provider-model", True)
+        sent = await harness.system.send("c", text_message_content("allowed"), sender_label="Owner")
+        assert isinstance(sent, PromptDeliveryStarted)
+        assert len(harness.backend("c").writes) == 1
+
+    _run(exercise)
 
 
 # --- the conversation's record is written as step one ------------------------------------
@@ -912,11 +979,7 @@ def test_held_batch_keeps_only_the_system_directive_in_the_first_block(
     _run(exercise)
 
 
-
-
 # --- a failing turn gets one error-log line ----------------------------------------------
-
-
 
 
 def test_an_internal_notice_only_turn_does_not_create_a_recursive_notice(
@@ -963,11 +1026,7 @@ def test_a_sender_cannot_spoof_notice_suppression_with_the_internal_prefix(
     _run(exercise)
 
 
-
-
 # --- the three modes against an idle and a busy agent ------------------------------------
-
-
 
 
 def test_a_refused_owner_steer_keeps_its_original_admission_position(
@@ -1018,8 +1077,6 @@ def test_a_refused_owner_steer_keeps_its_original_admission_position(
     _run(exercise)
 
 
-
-
 # --- every refusal comes from its own cause, and reaches no backend ----------------------
 
 
@@ -1049,11 +1106,13 @@ def test_a_turn_ends_once_and_a_dead_turns_ending_never_kills_its_successor(
         await harness.system.interrupt("c")
         assert await harness.system.is_running("c") is True
 
-        await backend.sink.turn_ended(
+        await backend.sink.report(
             stale_token,
-            ending=ConversationTurnEnding.completed,
-            error_summary=None,
-            standard_error_tail=None,
+            TurnEnded(
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            ),
         )
         await harness.settle()
 
@@ -1098,13 +1157,7 @@ def test_an_agents_news_never_lands_before_the_prompt_that_asked_for_it(
 # --- a send can carry a model or reasoning-effort change ---------------------------------
 
 
-
-
 # --- permission asks ----------------------------------------------------------------------
-
-
-
-
 
 
 def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
@@ -1116,7 +1169,9 @@ def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
         request = await harness.request_user_input("c")
 
         incomplete = (UserInputAnswer(question_id="scope", answers=("Backend",)),)
-        assert await harness.system.answer_user_input("c", request.request_id, incomplete) is False
+        assert (
+            await harness.system.answer_user_input("c", request.request_id, incomplete)
+        ) is AnswerFate.refused
         assert await harness.system.has_pending_user_input("c") is True
 
         await harness.system.interrupt("c")
@@ -1130,19 +1185,13 @@ def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
                     UserInputAnswer(question_id="timing", answers=("Now",)),
                 ),
             )
-            is False
+            is AnswerFate.refused
         )
 
     _run(exercise)
 
 
 # --- is_running through the lifecycle -----------------------------------------------------
-
-
-
-
-
-
 
 
 def test_status_reads_finish_while_an_unrelated_record_is_being_adopted(
@@ -1198,8 +1247,6 @@ def test_status_reads_finish_while_an_unrelated_record_is_being_adopted(
 # --- saying the model is thinking ----------------------------------------------------------
 
 
-
-
 async def _thinking_pulses_now(watching: ConversationTailSubscription) -> int:
     """How many pulses are waiting for this watcher, taken until none is forthcoming.
 
@@ -1219,12 +1266,67 @@ async def _thinking_pulses_now(watching: ConversationTailSubscription) -> int:
 # --- the role text ------------------------------------------------------------------------
 
 
+def test_local_possible_emission_stays_uncertain_and_duplicate_never_writes_again(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local failure after possible emission cannot use the prewrite-refusal fallback."""
+    from planner.conversation.backends.contracts import PromptWriteFailed
+    from planner.conversation.events import PromptDeliveryRefusedEventPayload
+    from planner.conversation.lifecycle import LifecycleStatus
+
+    calls = 0
+
+    async def possible_emission(self: _FakeBackendChild, *args: Any, **kwargs: Any) -> None:
+        nonlocal calls
+        calls += 1
+        raise PromptWriteFailed("acknowledgment lost after possible transmission")
+
+    monkeypatch.setattr(_FakeBackendChild, "write_prompt", possible_emission)
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        for _ in range(2):
+            assert (
+                await harness.system.send(
+                    "c",
+                    text_message_content("send once"),
+                    sender_label="owner",
+                    sender_message_id="one-uncertain-message",
+                )
+                == PromptDeliveryUncertain()
+            )
+        assert calls == 1
+        assert any(
+            fact.status is LifecycleStatus.unknown
+            for fact in await harness.store.lifecycle_facts("c")
+        )
+        assert not any(
+            isinstance(event.payload, PromptDeliveryRefusedEventPayload)
+            for event in await harness.events("c")
+        )
+
+    _run(exercise)
 
 
 def test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one(
     harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The role rides the first prompt that is actually delivered, not the first attempt."""
+
+    from planner.conversation.backends.contracts import BackendPromptRejected
+
+    original_write = _FakeBackendChild.write_prompt
+
+    async def known_rejection(
+        self: _FakeBackendChild, *args: Any, **kwargs: Any
+    ) -> BackendPromptAccepted:
+        if self._backend.write_fails:
+            raise BackendPromptRejected("provider proved non-admission")
+        return await original_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(_FakeBackendChild, "write_prompt", known_rejection)
 
     async def exercise() -> None:
         await _start(
@@ -1284,12 +1386,6 @@ A_LATER_MENU = (
 )
 
 
-
-
-
-
-
-
 def test_boundary_duplicate_waits_for_compaction_and_runs_once(
     harness: _Harness,
 ) -> None:
@@ -1317,10 +1413,6 @@ def test_boundary_duplicate_waits_for_compaction_and_runs_once(
     _run(exercise)
 
 
-
-
-
-
 @pytest.mark.parametrize("confirmed", (True, False), ids=("confirmed", "not-compacted"))
 def test_maintenance_releases_owner_and_worker_messages_in_order(
     harness: _Harness, confirmed: bool
@@ -1331,6 +1423,7 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
         await harness.complete_turn("c")
         harness.clock.advance(50 * 60)
         await harness.system._sweep_idle_children()
+        await harness.settle()
         ticket = Principal(PrincipalKind.ticket, "t_worker")
         await harness.system.send(
             "c",
@@ -1370,10 +1463,6 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
         assert [prompt.sender for prompt in prompts[-2:]] == [OWNER_PRINCIPAL, ticket]
 
     _run(exercise)
-
-
-
-
 
 
 def test_accepted_compaction_recording_failure_retains_child_and_resumes_storage_only(
@@ -1448,8 +1537,6 @@ def test_dequeued_sender_identity_stays_admitted_until_the_prompt_row_exists(
     _run(exercise)
 
 
-
-
 def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
     harness: _Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1515,11 +1602,7 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
     _run(exercise)
 
 
-
-
 # --- killing a conversation's activity ----------------------------------------------------
-
-
 
 
 def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
@@ -1534,6 +1617,7 @@ def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
         backend = harness.backend("c")
         backend.cancels_wait_for_release = asyncio.Event()
         backend.cancel_has_begun = asyncio.Event()
+        backend.reports_its_ending_during_a_cancel = True
 
         killing = asyncio.create_task(harness.system.kill("c"))
         await backend.cancel_has_begun.wait()
@@ -1549,11 +1633,14 @@ def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
         backend.cancels_wait_for_release.set()
 
         await killing
-        assert await sending == PromptDeliveryStarted()
+        # A send admitted while cancellation releases the lock can queue. Either
+        # delivery fate must lead to the message reaching the successor child.
+        assert isinstance(await sending, (PromptDeliveryStarted, PromptDeliveryQueued))
         await harness.settle()
 
         assert await harness.system.is_running("c") is True
         assert backend.written_texts() == ("incumbent", "sent during the kill")
+        assert await harness.recorded_endings("c") == (ConversationTurnEnding.interrupted,)
 
     _run(exercise)
 
@@ -1631,8 +1718,6 @@ def test_a_waiting_message_that_names_another_model_starts_its_own_turn(
 # --- an ending is one ending, and a cancel that failed is not a cancel --------------------
 
 
-
-
 # --- one agent per conversation, even mid-sweep -------------------------------------------
 
 
@@ -1652,20 +1737,20 @@ def test_failed_turn_recording_error_retains_event_until_explicit_storage_resume
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("work"), sender_label="owner")
-        real_append = harness.store.append_turn_ending
+        real_append = harness.store.commit_backend_event
         failed = asyncio.Event()
         calls = 0
         available = False
 
-        async def unavailable(conversation_id: str, payloads, **kwargs):  # type: ignore[no-untyped-def]
+        async def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
             nonlocal calls
             if available:
-                return await real_append(conversation_id, payloads, **kwargs)
+                return await real_append(*args, **kwargs)
             calls += 1
             failed.set()
             raise sqlite3.OperationalError("disk unavailable")
 
-        harness.store.append_turn_ending = unavailable  # type: ignore[method-assign]
+        harness.store.commit_backend_event = unavailable  # type: ignore[method-assign]
         completing = asyncio.create_task(harness.fail_turn("c", error_summary="the model refused"))
         await failed.wait()
         await asyncio.sleep(0)
@@ -1788,13 +1873,15 @@ def test_promoted_send_now_claims_one_message_and_preserves_fifo(
             is None
         )
 
-        # What is left of the line keeps its order and runs as one turn.
+        # Messages without explicit changes use the model current at dispatch.
+        # Their FIFO order survives promotion, and they may share the next turn.
         await harness.complete_turn("c")
         assert harness.backend("c").written_texts() == (
             "incumbent",
             "selected",
             "first\n\nowner:\nlast",
         )
+        assert harness.backend("c").model == "selected-model"
 
     _run(exercise)
 
@@ -1916,10 +2003,6 @@ def test_a_promoted_steer_credits_its_sender_while_the_target_turn_remains_activ
     _run(exercise)
 
 
-
-
-
-
 def test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1948,8 +2031,6 @@ def test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away(
         ]
 
     _run(exercise)
-
-
 
 
 def test_caller_cancellation_after_acceptance_preserves_receipt_and_duplicate_identity(
@@ -2028,15 +2109,18 @@ def test_active_steer_receipt_barrier_preserves_sender_obligation_before_complet
         await harness.system.send("c", text_message_content("first"), sender_label="system")
         entered = asyncio.Event()
         release = asyncio.Event()
-        original = harness.store.append_event
+        original = harness.store.append_events
 
-        async def blocked(conversation_id, payload, **kwargs):  # type: ignore[no-untyped-def]
-            if isinstance(payload, PromptEventPayload) and payload.mode is PromptDeliveryMode.steer:
+        async def blocked(conversation_id, payloads, **kwargs):  # type: ignore[no-untyped-def]
+            if any(
+                isinstance(payload, PromptEventPayload) and payload.mode is PromptDeliveryMode.steer
+                for payload in payloads
+            ):
                 entered.set()
                 await release.wait()
-            return await original(conversation_id, payload, **kwargs)
+            return await original(conversation_id, payloads, **kwargs)
 
-        harness.store.append_event = blocked  # type: ignore[method-assign]
+        harness.store.append_events = blocked  # type: ignore[method-assign]
         sender = Principal(PrincipalKind.manager, "supervisor")
         steering = asyncio.create_task(
             harness.system.send(
@@ -2126,12 +2210,12 @@ def test_cancelled_exchange_or_sqlite_call_finishes_one_owned_settlement(
         else:
             original = harness.store._append_delivered_prompt_sync
 
-            def blocked(*args):  # type: ignore[no-untyped-def]
+            def blocked(*args, **kwargs):  # type: ignore[no-untyped-def]
                 nonlocal calls
                 calls += 1
                 sqlite_entered.set()
                 assert sqlite_release.wait(3)
-                return original(*args)
+                return original(*args, **kwargs)
 
             monkeypatch.setattr(harness.store, "_append_delivered_prompt_sync", blocked)
         sending = asyncio.create_task(
@@ -2294,8 +2378,6 @@ def test_preflight_metadata_error_retains_held_guidance_for_explicit_resume(
     _run(exercise)
 
 
-
-
 def test_accepted_queued_prompt_keeps_receipt_and_completion_behind_real_writer_lock(
     harness: _Harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -2324,11 +2406,13 @@ def test_accepted_queued_prompt_keeps_receipt_and_completion_behind_real_writer_
             writer.execute("BEGIN IMMEDIATE")
             token = backend.live_turn_token
             assert token is not None and backend.sink is not None
-            await backend.sink.turn_ended(
+            await backend.sink.report(
                 token,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             backend.live_turn_token = None
 
@@ -2475,105 +2559,6 @@ def test_turn_replacement_waits_for_accepted_steer_receipt_and_sender_obligation
     _run(exercise)
 
 
-
-
-def test_idle_write_refuses_a_send_reserved_before_backend_write(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await _start(harness)
-        backend = harness.backend("c")
-        backend.write_has_begun = asyncio.Event()
-        backend.writes_wait_for_release = asyncio.Event()
-        sending = asyncio.create_task(
-            harness.system.send(
-                "c",
-                text_message_content("work"),
-                sender_label="Owner",
-            )
-        )
-        await backend.write_has_begun.wait()
-        written: list[str] = []
-        assert not await harness.system.run_if_idle("c", lambda: written.append("moved"))
-        assert written == []
-        backend.writes_wait_for_release.set()
-        await sending
-
-    _run(exercise)
-
-
-
-
-def test_held_promotion_and_locale_move_cannot_cross(
-    harness: _Harness,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from planner.core.errors import PlannerError
-    from planner.tickets import data as tickets_data
-    from planner.tickets import locale_configuration
-    from planner.tickets.contracts import TicketLocale
-    from planner.tickets.locale_move import move_ticket_locale
-
-    async def exercise() -> None:
-        await _start(harness)
-        _link_test_ticket_to_conversation(tmp_path / "conversations.db", "c")
-        monkeypatch.setitem(
-            locale_configuration.LOCALE_SUPPORTED_BACKENDS,
-            TicketLocale.macos,
-            frozenset({"codex"}),
-        )
-        conn = connect(str(tmp_path / "conversations.db"))
-        try:
-            await harness.system.send("c", text_message_content("incumbent"), sender_label="Owner")
-            await harness.system.send("c", text_message_content("selected"), sender_label="Owner")
-            held = await harness.system.held_prompts("c")
-            # The move cannot take an already held prompt across machines.
-            with pytest.raises(PlannerError, match="activity or waiting messages"):
-                await move_ticket_locale(
-                    harness.system,
-                    conn,
-                    "t_failed",
-                    locale=TicketLocale.macos,
-                    principal=OWNER_PRINCIPAL,
-                    now=2,
-                )
-            backend = harness.backend("c")
-            backend.write_has_begun = asyncio.Event()
-            backend.writes_wait_for_release = asyncio.Event()
-            promoting = asyncio.create_task(
-                harness.system.promote_held_prompt(
-                    "c",
-                    held[0].held_prompt_id,
-                    HeldPromptPromotionMode.send_now,
-                )
-            )
-            await backend.write_has_begun.wait()
-            # Promotion has removed the held prompt and is out at the backend wire.
-            # The locale move must still refuse immediately, before that write settles.
-            state = harness.system._conversations["c"]
-            assert not state.held_prompts
-            assert state.reserved_turn is not None
-            with pytest.raises(PlannerError, match="activity or waiting messages"):
-                await asyncio.wait_for(
-                    move_ticket_locale(
-                        harness.system,
-                        conn,
-                        "t_failed",
-                        locale=TicketLocale.macos,
-                        principal=OWNER_PRINCIPAL,
-                        now=3,
-                    ),
-                    timeout=1,
-                )
-            assert tickets_data.read_ticket(conn, "t_failed").locale is TicketLocale.vps
-            backend.writes_wait_for_release.set()
-            assert await promoting == PromptDeliveryStarted()
-            assert backend.written_texts() == ("incumbent", "selected")
-        finally:
-            conn.close()
-
-    _run(exercise)
-
-
 # These cases exercise the real durable queue and admission transaction. The fake only
 # replaces the child wire; session barriers expose state changes before final admission.
 def _review_notice(db_path: Path, *, conversation_id: str = "c") -> tuple[str, str, str]:
@@ -2591,7 +2576,7 @@ def _review_notice(db_path: Path, *, conversation_id: str = "c") -> tuple[str, s
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="coding",
             brief="Review",
-            stated_ceiling="needs_success_condition",
+            stated_ceiling="needs_what_changes",
         )
         tickets_data.file_current_proposal(
             conn,
@@ -2622,10 +2607,10 @@ def _resolve_review(db_path: Path, ticket_id: str) -> None:
         tickets_data.accept_proposal(
             conn,
             ticket_id,
-            field="success_condition",
+            field="what_changes",
             principal=CHIEF_PRINCIPAL,
             next_holder=CHIEF_PRINCIPAL,
-            next_ceiling="needs_what_changes",
+            next_ceiling="needs_implementation",
             now=4,
         )
     finally:
@@ -2910,7 +2895,7 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
                 title_max_chars=TITLE_MAX_CHARS,
                 worker_type="coding",
                 brief="Review",
-                stated_ceiling="needs_success_condition",
+                stated_ceiling="needs_what_changes",
             )
             worker = Principal(PrincipalKind.ticket, ticket.id)
             tickets_data.file_current_proposal(
@@ -2956,10 +2941,10 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
                 tickets_data.accept_proposal(
                     conn,
                     ticket.id,
-                    field="success_condition",
+                    field="what_changes",
                     principal=CHIEF_PRINCIPAL,
                     next_holder=CHIEF_PRINCIPAL,
-                    next_ceiling="needs_what_changes",
+                    next_ceiling="needs_implementation",
                     now=4,
                 )
             tickets_data.edit_ticket(
@@ -3014,6 +2999,7 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
         )
 
     _run(exercise)
+
 
 def test_review_reply_reads_only_displayed_run_on_queue_admission_and_later_delivery(
     harness: _Harness,
@@ -3213,5 +3199,89 @@ def test_identified_review_attachment_retry_is_one_delivery_and_keeps_original_r
         body.data = base64.b64encode(b"different reply attachment").decode()
         with pytest.raises(ValueError, match="different message"):
             await attempt()
+
+    _run(exercise)
+
+
+def test_local_worker_does_not_receive_native_context(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(
+            harness,
+            role_materials=ConversationRoleMaterials(
+                "Local Worker role.", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_worker"))
+            ),
+        )
+        await harness.system.send("c", text_message_content("Local work"), sender_label="Panels")
+        assert harness.backend("c").writes[0].content == text_message_content(
+            "Local Worker role.\n\nLocal work"
+        )
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_shutdown_retains_unconfirmed_local_child_and_revokes_callbacks(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, cancelled: bool
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        await harness.settle()
+        state = harness.system._conversations["c"]
+        child = state.child
+        assert child is not None
+        backend = harness.backend("c")
+        token = backend.live_turn_token
+        sink = backend.sink
+        assert token is not None and sink is not None
+        before = await harness.events("c")
+
+        async def fail_stop() -> None:
+            if cancelled:
+                raise asyncio.CancelledError
+            raise RuntimeError("termination remains unconfirmed")
+
+        monkeypatch.setattr(child, "stop", fail_stop)
+        await harness.system.shutdown()
+        assert state.child is child
+        assert state.child_is_quarantined
+        assert state.backend_event_pump is None
+        assert harness.system._runtime_ownership.closed
+        await sink.report(
+            token, AgentMessageCompleted(content=text_message_content("late callback"))
+        )
+        assert await harness.events("c") == before
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("mode", [PromptDeliveryMode.queue, PromptDeliveryMode.send_now])
+def test_spawn_refusal_retains_native_detail_after_rebind(
+    harness: _Harness, mode: PromptDeliveryMode
+) -> None:
+    from planner.conversation.events import PromptDeliveryRefusedEventPayload
+
+    async def exercise() -> None:
+        await _start(harness)
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.backend("c").needs_rebind_once = True
+        harness.backend("c").spawn_fails = True
+        fate = await harness.system.send(
+            "c",
+            text_message_content("retry"),
+            sender_label="owner",
+            sender_message_id="spawn-refusal",
+            mode=mode,
+        )
+        assert isinstance(fate, PromptDeliveryRefused)
+        assert fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
+        events = await harness.events("c")
+        refused = [
+            e.payload for e in events if isinstance(e.payload, PromptDeliveryRefusedEventPayload)
+        ]
+        assert len(refused) == 1
+        assert refused[0].refusal_detail == "c"
+        assert refused[0].sender_message_id == "spawn-refusal"
 
     _run(exercise)

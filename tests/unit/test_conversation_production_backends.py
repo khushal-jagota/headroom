@@ -9,6 +9,7 @@ agent or to none at all.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from planner.conversation.production_backends import production_backend_launches
 
@@ -42,3 +43,32 @@ def test_every_agent_is_told_where_panels_is_answering() -> None:
     assert dict(launches.hermes.environment_overrides)["PLAN_SERVER_URL"] == SERVER_URL
     assert dict(launches.codex.environment_overrides)["PLAN_SERVER_URL"] == SERVER_URL
     assert dict(launches.claude.environment_overrides)["PLAN_SERVER_URL"] == SERVER_URL
+
+
+def test_local_providers_refuse_unresolved_executor_workspace(tmp_path: Path) -> None:
+    import asyncio
+    from typing import cast
+
+    import pytest
+
+    from planner.conversation.backends.contracts import BackendEventSink, BackendSpawnFailed
+    from planner.conversation.contracts import (
+        ConversationAccess,
+        ResolvedConversationStart,
+        WorkspacePathPolicy,
+    )
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.conversation.production_backends import production_backend_child_factories
+
+    async def run() -> None:
+        factories = production_backend_child_factories(panels_server_url=SERVER_URL)
+        for key, factory in factories.items():
+            resolved = ResolvedConversationStart(
+                "unresolved-default", key, "test", None, None, Path("/"),
+                ConversationAccess.full, workspace_path_policy=WorkspacePathPolicy.executor_default,
+            )
+            child = factory(resolved_start=resolved, event_sink=cast(BackendEventSink, object()),
+                            message_files=ConversationMessageFiles(tmp_path / "files"))
+            with pytest.raises(BackendSpawnFailed, match="requires native resolution"):
+                await child.start(resolved, vendor_session_cursor=None)
+    asyncio.run(run())

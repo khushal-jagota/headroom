@@ -20,11 +20,13 @@
   let {
     row,
     conversationId,
+    activityUncertain = false,
     openRows,
     wholeDetails
   }: {
     row: ToolCallRow;
     conversationId: string;
+    activityUncertain?: boolean;
     /** Which rows the reader has opened, by tool call id. Owned by the thread. */
     openRows: SvelteSet<string>;
     /** The whole output of every row the reader opened, so a row that is drawn again
@@ -75,6 +77,8 @@
     <span class="acp-step-mark acp-mark-ok" role="img" aria-label="Completed">✓</span>
   {:else if row.status === "failed"}
     <span class="acp-step-mark acp-mark-fail" role="img" aria-label="Failed">✕</span>
+  {:else if activityUncertain}
+    <span class="c2-tool-summary">activity unknown</span>
   {:else}
     <span class="acp-spin" role="img" aria-label="Running"></span>
   {/if}

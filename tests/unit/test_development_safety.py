@@ -19,6 +19,8 @@ from development_safety.contracts import SafetyRefusal
 
 
 def _fixture(tmp_path: Path) -> tuple[Path, Path, tuple[scanner.Mount, ...]]:
+    if sys.platform == "darwin":
+        pytest.skip("Linux dependency storage proof requires /proc/self/mountinfo and Bubblewrap")
     protected = tmp_path / "deployed"
     protected.mkdir()
     independent = tmp_path / "independent"

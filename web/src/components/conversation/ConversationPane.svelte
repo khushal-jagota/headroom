@@ -50,7 +50,14 @@
     ask = null,
     userInput = null,
     askNote = null,
+    userInputNote = null,
+    permissionAvailable = true,
+    userInputAvailable = true,
+    activityUncertain = false,
     current = { model: null, reasoningEffort: null },
+    readError = null,
+    onRetryModelChoices,
+    onPreviewRunSelection,
     models = [],
     backends = $bindable([]),
     ownSenderLabel = null,
@@ -130,7 +137,14 @@
       questions: readonly UserInputQuestion[];
     } | null;
     askNote?: string | null;
+    userInputNote?: string | null;
+    permissionAvailable?: boolean;
+    userInputAvailable?: boolean;
+    activityUncertain?: boolean;
     current?: RunValues;
+    readError?: string | null;
+    onRetryModelChoices?: () => Promise<void>;
+    onPreviewRunSelection?: (selection: import("../../lib/conversation/runControls/contracts").ComposerRunSelection, backend?: ConversationBackendKey) => void;
     models?: readonly BackendModel[];
     /** Every backend this machine reported. The composer's rail chooses from them while
      *  there is no conversation to be fixed to one. */
@@ -207,6 +221,7 @@
 
   let headerException = $derived.by(() => {
     if (readOnly) return { text: "past · read only", accent: false };
+    if (activityUncertain) return {text:"activity unknown on Mac",accent:false};
     if (ask || userInput) return { text: "waiting for you", accent: true };
     if (running) return { text: "working", accent: false };
     return null;
@@ -262,7 +277,7 @@
     return kind && ["prompt_refused", "prompt_uncertain", "prompt_discarded", "explicit_reply_missing", "turn_stopped", "turn_ended"].includes(kind)
       ? restLine?.text ?? null : null;
   });
-  let activityKnown = $derived(reader ? typeof reader.status?.turn_running === "boolean" : true);
+  let activityKnown = $derived(!activityUncertain && (reader ? typeof reader.status?.turn_running === "boolean" : true));
 
   function closeMenu(): void {
     menuOpen = false;
@@ -502,6 +517,7 @@
     {models}
     {ownSenderLabel}
     {livenessPulse}
+    {activityUncertain}
     {conversationState}
     {emptyState}
   />
@@ -514,7 +530,7 @@
       progress={taskProgress}
       variant="strip"
       {running}
-      moving={running && ask === null && userInput === null}
+      moving={!activityUncertain && running && ask === null && userInput === null}
       composerGap={conversationState === "opened"}
     />
   {/if}
@@ -522,7 +538,7 @@
   <!-- Activity and the latest unread preview belong to the dock surface above the input. -->
   {#if conversationState === "rest"}
     <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
-      {connectionTrouble} {running} feedback={dockFeedback} onOpen={moveThroughTheStates} />
+      {connectionTrouble} running={running && !activityUncertain} feedback={activityUncertain ? "Current activity on Mac is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
   {#if readOnly}
@@ -540,7 +556,13 @@
       {running}
       {ask}
       {askNote}
+    {userInputNote}
+    {permissionAvailable}
+    {userInputAvailable}
       {current}
+      {readError}
+      {onRetryModelChoices}
+      {onPreviewRunSelection}
       {models}
       bind:backends
       {effortOptions}

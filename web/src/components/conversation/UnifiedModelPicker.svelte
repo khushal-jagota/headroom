@@ -1,8 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
   import {
-    backendSelectionDefaults,
-    modelSelectionEffort,
     type ModelPickerChoice,
     type ModelPickerView
   } from "../../lib/conversation/modelPicker";
@@ -12,7 +10,7 @@
     backendUsageOutcomeLabel,
     refreshBackendSnapshots
   } from "../../lib/conversation/backendRefresh";
-  import type { BackendModel, BackendSnapshot, ConversationBackendKey } from "../../lib/conversation/wire";
+  import { type BackendModel, type BackendSnapshot, type ConversationBackendKey } from "../../lib/conversation/wire";
   import BackendMark from "./BackendMark.svelte";
   import ListboxPicker, {
     type ListboxPickerController,
@@ -23,6 +21,9 @@
   import UsageRings from "./UsageRings.svelte";
 
   let {
+    readError = null,
+    onRetry,
+    scrollPanel = false,
     view,
     snapshots = $bindable(),
     models,
@@ -38,6 +39,10 @@
     onChooseBackend,
     onChooseModel
   }: {
+    /** Scoped transport failure; it supplies no canonical launch judgment. */
+    readError?: string | null;
+    onRetry?: () => Promise<void>;
+    scrollPanel?: boolean;
     view: ModelPickerView;
     snapshots: readonly BackendSnapshot[];
     models: readonly BackendModel[];
@@ -47,7 +52,7 @@
     keepOpenWhenDisabled?: boolean;
     /** Which chevron the trigger draws. The composer asks for the drawn one so its rail
      *  matches the icons beside it; the setup screens keep the typed caret they had. */
-    chevron?: "typed" | "drawn";
+    chevron?: "typed" | "drawn" | "none";
     /** Usage belongs only beside the run choice in the conversation composer. */
     showUsage?: boolean;
     below?: boolean;
@@ -67,14 +72,22 @@
   let refreshing = $state(false);
   let picker = $state<ListboxPickerController>(null!);
 
-  let effortRows = $derived(
-    effortOptionsFor(models, pendingModel ?? view.modelValue, backendEffortOptions)
-      .map((effort) => ({ value: effort, name: effort }))
-  );
+  let displayed = $derived({
+    backendKey: view.backendKey,
+    model: view.modelValue,
+    reasoningEffort: view.reasoningEffort || null
+  });
+  let currentEffort = $derived(displayed.reasoningEffort);
+  let activeBackendKey = $derived(displayed.backendKey);
+  let activeBackendName = $derived(activeBackendKey ? activeBackendKey[0].toUpperCase() + activeBackendKey.slice(1) : "");
+  let effortRows = $derived(activeBackendKey === "hermes" ? [] :
+    effortOptionsFor(models, pendingModel ?? displayed.model ?? "", backendEffortOptions)
+      .map((effort) => ({ value: effort, name: effort })));
   let rows = $derived((showing === "models" ? view.models : effortRows) as readonly ListboxPickerItem[]);
-  let chosenValue = $derived(showing === "models" ? view.modelValue : view.reasoningEffort);
-  let foot = $derived(feedback ?? view.staleModelReason ?? view.catalogueWarning);
-  let pickerBusy = $derived(disabled || refreshing);
+  let chosenValue = $derived(showing === "models" ? displayed.model : currentEffort ?? "");
+  let triggerFace = $derived(view.face);
+  let foot = $derived(feedback ?? readError ?? (showing === "models" ? view.emptyReason : null));
+  let pickerBusy = $derived(disabled);
   let refreshControl = $derived(backendRefreshControl(refreshing));
 
   function snapshotFor(key: ConversationBackendKey): BackendSnapshot | null {
@@ -102,78 +115,72 @@
   function take(choice: ModelPickerChoice): void {
     if (disabled) return;
     if (showing === "models") {
-      const effort = modelSelectionEffort(
-        models,
-        backendEffortOptions,
-        choice.value,
-        view.reasoningEffort || null,
-        view.defaultReasoningEffort
-      );
-      if (effort === null) {
-        onChooseModel(choice.value, null);
-        picker.close(!afterChoose);
-        if (afterChoose) void tick().then(afterChoose);
+      const efforts = activeBackendKey === "hermes" ? [] : effortOptionsFor(models, choice.value, backendEffortOptions);
+      if (!efforts.length) {
+        finish(choice.value, null);
         return;
       }
       pendingModel = choice.value;
       showing = "efforts";
-      void tick().then(() => picker.setActiveValue(effort));
+      void tick().then(() => picker.setActiveValue(currentEffort ?? ""));
       return;
-    } else {
-      onChooseModel(pendingModel ?? view.modelValue, choice.value);
-      pendingModel = null;
     }
+    finish(pendingModel ?? displayed.model ?? "", choice.value);
+  }
+
+  function finish(model: string, effort: string | null): void {
+    onChooseModel(model, effort);
+    pendingModel = null;
     picker.close(!afterChoose);
     if (afterChoose) void tick().then(afterChoose);
   }
 
-  function chooseBackend(key: ConversationBackendKey, unavailableReason: string | null): void {
+  function chooseBackend(key: ConversationBackendKey, _unavailableReason: string | null): void {
     if (disabled) return;
-    if (unavailableReason !== null) {
-      feedback = unavailableReason;
+    if (view.backendLocked && key !== activeBackendKey) {
+      feedback = _unavailableReason;
       return;
     }
     feedback = null;
     showing = "models";
     pendingModel = null;
-    if (key === view.backendKey) {
-      picker.setActiveValue(view.modelValue);
-      return;
-    }
-    onChooseBackend(key, backendSelectionDefaults(snapshots, key));
-    void tick().then(() => picker.setActiveValue(view.modelValue));
+    if (key !== activeBackendKey) onChooseBackend(key, {model: null, reasoningEffort: null});
+    void tick().then(() => picker.setActiveValue(displayed.model));
   }
 
   function showReasoning(): void {
     if (disabled) return;
-    if (view.reasoningUnavailableReason !== null) {
-      feedback = view.reasoningUnavailableReason;
-      return;
-    }
     feedback = null;
     pendingModel = null;
     showing = "efforts";
-    void tick().then(() => picker.setActiveValue(view.reasoningEffort));
+    void tick().then(() => picker.setActiveValue(currentEffort ?? ""));
   }
 
   function showModels(): void {
     if (disabled) return;
     showing = "models";
     pendingModel = null;
-    void tick().then(() => picker.setActiveValue(view.modelValue));
+    void tick().then(() => picker.setActiveValue(displayed.model));
   }
 
   async function runRefresh(): Promise<void> {
     if (refreshing) return;
     refreshing = true;
     feedback = null;
-    const result = await refreshBackendSnapshots();
-    if (result.snapshots !== null) snapshots = result.snapshots;
-    feedback = result.error ?? (result.outcomes
-      .filter(outcome => outcome.outcome !== "succeeded")
-      .map(outcome => `${outcome.backend_key}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
-      .join(" · ") || null);
-    refreshing = false;
+    try {
+      if (onRetry) {
+        await onRetry();
+      } else {
+        const result = await refreshBackendSnapshots();
+        if (result.snapshots !== null) snapshots = result.snapshots;
+        feedback = result.error ?? (result.outcomes
+          .filter(outcome => outcome.outcome !== "succeeded")
+          .map(outcome => `${outcome.backend_key}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
+          .join(" · ") || null);
+      }
+    } catch (error) {
+      feedback = error instanceof Error ? error.message : "The read failed. Check again.";
+    } finally { refreshing = false; }
     await tick();
     picker.focusList();
   }
@@ -185,10 +192,11 @@
   {disabled}
   selectionDisabled={pickerBusy}
   {keepOpenWhenDisabled}
-  label={`${label}: ${view.backendName} ${view.face}`.trim()}
+  label={`${label}: ${activeBackendName} ${triggerFace}`.trim()}
   listLabel={showing === "models" ? "Models" : "Reasoning efforts"}
   kind="rail"
   {chevron}
+  {scrollPanel}
   {below}
   attributes={{ "data-conversation-model-picker": "", ...attributes }}
   panelBusy={pickerBusy}
@@ -207,23 +215,23 @@
   }}
 >
   {#snippet triggerContent(open)}
-    {#if view.backendKey}<BackendMark backend={view.backendKey} />{/if}
-    {#if view.face}<span class="model-picker-face">{view.face}</span>{/if}
+    {#if activeBackendKey}<BackendMark backend={activeBackendKey} />{/if}
+    {#if triggerFace}<span class="model-picker-face">{triggerFace}</span>{/if}
   {/snippet}
   {#snippet beforeList()}
     <PickerRail label="Backend and reasoning" attributes={{ "data-conversation-backend-rail": "" }}>
       {#each view.backends as backend (backend.key)}
         <PickerRailRow
-          held={backend.selected}
-          on={backend.selected && showing === "models"}
-          dim={backend.unavailableReason !== null}
+          held={backend.key === activeBackendKey}
+          on={backend.key === activeBackendKey && showing === "models"}
+          dim={view.backendLocked && backend.key !== activeBackendKey}
           disabled={pickerBusy}
           label={backend.name}
           attributes={{
             "data-conversation-backend": backend.key,
-            "data-conversation-backend-showing": backend.selected ? "true" : undefined,
-            "aria-pressed": backend.selected && showing === "models" ? "true" : "false",
-            "aria-disabled": backend.unavailableReason !== null ? "true" : undefined
+            "data-conversation-backend-showing": backend.key === activeBackendKey ? "true" : undefined,
+            "aria-pressed": backend.key === activeBackendKey && showing === "models" ? "true" : "false",
+            "aria-disabled": view.backendLocked && backend.key !== activeBackendKey ? "true" : undefined
           }}
           onclick={() => chooseBackend(backend.key, backend.unavailableReason)}
         >
@@ -247,7 +255,7 @@
           </PickerRailRow>
         {/if}
         <PickerRailRow
-          disabled={pickerBusy}
+          disabled={pickerBusy || refreshing}
           label={refreshControl.label}
           attributes={{
             "data-conversation-picker-refresh": "",
@@ -259,15 +267,14 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M19 8a8 8 0 1 0 1 7M19 3v5h-5" /></svg>
           {/snippet}
         </PickerRailRow>
+        {#if effortRows.length}
         <PickerRailRow
           on={showing === "efforts"}
-          dim={view.reasoningUnavailableReason !== null}
           disabled={pickerBusy}
           label="Reasoning"
           attributes={{
             "data-conversation-picker-reasoning": "",
             "aria-pressed": showing === "efforts" ? "true" : "false",
-            "aria-disabled": view.reasoningUnavailableReason !== null ? "true" : undefined
           }}
           onclick={showReasoning}
         >
@@ -275,6 +282,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3.5 14h3.4v6.5H3.5Zm6.8-4h3.4v10.5h-3.4Zm6.8-6.5h3.4v17h-3.4Z" /></svg>
           {/snippet}
         </PickerRailRow>
+        {/if}
       </div>
     </PickerRail>
   {/snippet}
@@ -291,7 +299,9 @@
   {/snippet}
   {#snippet afterList()}
     {#if foot}
-      <div class="model-picker-foot" data-conversation-picker-feedback aria-live="polite">{foot}</div>
+      <div class="model-picker-foot" data-conversation-picker-feedback>
+        <div class="model-picker-summary" aria-live="polite">{foot}</div>
+      </div>
       {/if}
   {/snippet}
 </ListboxPicker>
@@ -301,9 +311,10 @@
   .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }
   .model-picker-choice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-picker-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-foot {
     grid-column: 1 / -1; border-top: var(--border-hairline) solid var(--border-color);
-    background: var(--surface-recessed); color: var(--text-faint); font-size: var(--type-xs);
+    background: var(--surface-recessed); color: var(--text-muted); font-size: var(--type-xs);
     line-height: 1.45; padding: var(--space-2) var(--space-3);
   }
 </style>

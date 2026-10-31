@@ -284,6 +284,22 @@ class ScriptedAppServer:
         await self._respond(request_id, configured)
 
     async def _answer_app_list(self, request_id: Any, parameters: dict[str, Any]) -> None:
+        # A step controls one page's wire order, including error and recovery snapshots.
+        steps = self._script.get("app_list_steps")
+        if steps:
+            read = self._catalog_reads.get("apps", 0)
+            self._catalog_reads["apps"] = read + 1
+            step = steps[min(read, len(steps) - 1)]
+            for snapshot in step.get("before", []):
+                await self._notify("app/list/updated", {"data": snapshot})
+            await asyncio.sleep(step.get("delay", 0))
+            if step.get("error"):
+                await self._respond_with_error(request_id, "apps failed")
+            elif not step.get("never"):
+                await self._respond(request_id, step.get("result", {"data": []}))
+            for snapshot in step.get("after", []):
+                await self._notify("app/list/updated", {"data": snapshot})
+            return
         configured = self._script.get("apps", {"data": []})
         if configured == "error":
             await self._respond_with_error(request_id, "apps failed")

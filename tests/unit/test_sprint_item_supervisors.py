@@ -13,7 +13,6 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backends.contracts import BackendChildFactory
@@ -64,7 +63,7 @@ def _app(
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(str(db_path))
     create_schema(conn)
-    seed_test_model_catalogue(conn)
+
     conn.close()
     env = {
         "PLAN_TEST_MODE": "1",
@@ -103,7 +102,7 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
             "title": "Supervisor review",
             "brief": "Start here.",
             "manager": {"kind": "manager", "id": item_id},
-            "ceiling": "needs_success_condition",
+            "ceiling": "needs_what_changes",
         },
         headers=_supervisor_headers(item_id),
     )
@@ -463,7 +462,7 @@ def _stranded_child(
             "next_ceiling": (
                 "needs_purpose_and_boundaries"
                 if worker_type == "new_worker"
-                else "needs_success_condition"
+                else "needs_what_changes"
             ),
             "next_holder": _OWNER_HOLDER,
         },
@@ -599,12 +598,12 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             ),
             client.patch(
                 f"/api/tickets/{theirs['id']}",
-                json={"ceiling": "needs_plan"},
+                json={"ceiling": "needs_implementation"},
                 headers=own_headers,
             ),
             client.post(
-                f"/api/tickets/{theirs['id']}/accept/success_condition",
-                json={"next_ceiling": "needs_what_changes", "next_holder": _OWNER_HOLDER},
+                f"/api/tickets/{theirs['id']}/accept/what_changes",
+                json={"next_ceiling": "needs_implementation", "next_holder": _OWNER_HOLDER},
                 headers=own_headers,
             ),
             client.put(

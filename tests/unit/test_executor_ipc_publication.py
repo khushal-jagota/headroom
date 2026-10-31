@@ -1,0 +1,443 @@
+"""Real Unix IPC proves response uncertainty separately from journal acceptance."""
+
+from __future__ import annotations
+
+import asyncio
+import errno
+import json
+import socket
+import struct
+import threading
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+from uuid import uuid4
+
+import pytest
+from click.testing import CliRunner
+from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+from planner.cli.main import main
+from planner.conversation.backends.contracts import BackendChild
+from planner.conversation.contracts import (
+    ConversationAccess,
+    ConversationBackendKey,
+    ConversationRoleMaterials,
+    ResolvedConversationStart,
+)
+from planner.execution_identity import ChildReference
+from planner.executor import ipc_client
+from planner.executor.cli import executor_group
+from planner.executor.configuration import ExecutorPaths
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_runner import RunningChild
+from planner.executor.mac_service import MacService
+from planner.executor.protocol import (
+    AcceptanceReceipt,
+    ChildCommand,
+    ChildOperation,
+    CommandDisposition,
+    FileSnapshot,
+    IpcOperation,
+    IpcRequest,
+    IpcResponse,
+    ReceiptDisposition,
+    StartRun,
+    StopRun,
+    encode_frame,
+    read_typed_frame,
+)
+
+
+@asynccontextmanager
+async def ipc_service(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[tuple[MacService, RunningChild]]:
+    executor = MacService(
+        paths=ExecutorPaths(root),
+        revision="a" * 40,
+        executor_id="synthetic",
+        panels_server_url="https://unused",
+    )
+    resolved = ResolvedConversationStart(
+        "c_one",
+        ConversationBackendKey.codex,
+        "test",
+        None,
+        ConversationRoleMaterials(
+            "worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_example"))
+        ),
+        root,
+        ConversationAccess.full,
+    )
+    child = RunningChild(
+        ChildReference(executor.identity.executor_incarnation, "child", "c_one"),
+        "capability",
+        cast(BackendChild, object()),
+        ticket_id="t_example",
+        launch_input=StartRun(
+            resolved_start=resolved, canonical_skill_snapshot=canonical_snapshot()
+        ),
+        localized_start=resolved,
+        backend_key=resolved.backend_key,
+    )
+    executor.runner._children["child"] = child
+    monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(root))
+    monkeypatch.setenv("PLAN_TICKET_ID", "t_example")
+    monkeypatch.setenv("PLAN_EXECUTOR_CHILD_ID", "child")
+    monkeypatch.setenv("PLAN_EXECUTOR_CAPABILITY", "capability")
+    executor.paths.run.mkdir(parents=True)
+    executor.paths.artifacts.joinpath("t_example").mkdir(parents=True)
+    (executor.paths.artifacts / "t_example" / "file").write_text("original bytes")
+    handlers: set[asyncio.Task[None]] = set()
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        handlers.add(task)
+        try:
+            await executor.gateway._ipc_client(reader, writer)
+        finally:
+            handlers.discard(task)
+
+    server = await asyncio.start_unix_server(handle, path=executor.paths.ipc_socket)
+    try:
+        async with server:
+            yield executor, child
+    finally:
+        if handlers:
+            await asyncio.gather(*handlers)
+        if executor.gateway._publishing:
+            await asyncio.gather(*(task for _, task in executor.gateway._publishing.values()))
+        executor.outbox.close()
+
+
+def write_request(child: RunningChild, identity: str, *, budget: float = 0.04) -> IpcRequest:
+    return IpcRequest(
+        identity,
+        IpcOperation.write,
+        child.reference.child_id,
+        child.capability,
+        {
+            "operation": "ticket.edit",
+            "arguments": {"ticket_id": "t_example", "body": {"recap": "original"}},
+        },
+        time.monotonic() + budget,
+    )
+
+
+def retry_request(child: RunningChild, identity: str) -> IpcRequest:
+    return IpcRequest(
+        str(uuid4()),
+        IpcOperation.retry,
+        child.reference.child_id,
+        child.capability,
+        {"submission_id": identity},
+        time.monotonic() + 0.03,
+    )
+
+
+def short_client_socket(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ipc_client, "CLI_RESULT_TIMEOUT_SECONDS", 0.3)
+
+    class ShortSocket(socket.socket):
+        def settimeout(self, value: float | None) -> None:
+            super().settimeout(min(value, 0.05) if value is not None else value)
+
+    monkeypatch.setattr(
+        ipc_client,
+        "socket",
+        SimpleNamespace(
+            socket=ShortSocket,
+            AF_UNIX=socket.AF_UNIX,
+            SOCK_STREAM=socket.SOCK_STREAM,
+        ),
+    )
+
+
+def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def run() -> None:
+        entered, release = threading.Event(), threading.Event()
+        original = MacOutbox._capture
+        captures = 0
+
+        def held_snapshot(
+            *args: object, **kwargs: object
+        ) -> tuple[tuple[FileSnapshot, ...], list[tuple[object, ...]]]:
+            nonlocal captures
+            captures += 1
+            snapshots = original(*args, **kwargs)  # type: ignore[arg-type]
+            entered.set()
+            assert release.wait(5)
+            return snapshots
+
+        monkeypatch.setattr(MacOutbox, "_capture", held_snapshot)
+        short_client_socket(monkeypatch)
+        async with ipc_service(tmp_path, monkeypatch) as (executor, child):
+            try:
+                result = await asyncio.to_thread(
+                    CliRunner().invoke, main, ["worker", "recap", "--json"], input="original"
+                )
+                monkeypatch.setattr(ipc_client, "socket", socket)
+                assert entered.is_set()
+                assert result.exit_code == 3, result.output
+                outcome = json.loads(result.stdout)
+                identity = outcome["submission_id"]
+                assert outcome["request_id"] == identity
+                assert outcome["publication"] == "unknown"
+                assert executor.outbox.pending_count() == 0
+                (executor.paths.artifacts / "t_example" / "file").write_text("changed bytes")
+                concurrent = await executor.gateway.handle(retry_request(child, identity))
+                assert concurrent.unconfirmed is not None
+                assert concurrent.unconfirmed.publication == "preparing"
+                other = replace(
+                    child,
+                    reference=replace(child.reference, child_id="other"),
+                    capability="other-capability",
+                )
+                executor.runner._children["other"] = other
+                forbidden = await executor.gateway.handle(retry_request(other, identity))
+                assert forbidden.error is not None and forbidden.error["code"] == "agent_forbidden"
+                release.set()
+                async with asyncio.timeout(5):
+                    while True:
+                        response = await executor.gateway.handle(retry_request(child, identity))
+                        assert response.unconfirmed is not None
+                        if response.unconfirmed.publication == "queued":
+                            break
+                        await asyncio.sleep(0.01)
+                forbidden = await executor.gateway.handle(retry_request(other, identity))
+                assert forbidden.error is not None and forbidden.error["code"] == "agent_forbidden"
+                publication = executor.outbox.pending()[0]
+                snapshots = executor.outbox.snapshots(publication)
+                assert snapshots[0].local_path.read_text() == "original bytes"
+                retried = await asyncio.to_thread(
+                    CliRunner().invoke, executor_group, ["retry", identity, "--json"]
+                )
+                assert retried.exit_code == 3, retried.output
+                assert json.loads(retried.stdout)["publication"] == "queued"
+                assert executor.outbox.pending() == (publication,)
+                assert captures == 1
+            finally:
+                release.set()
+
+    asyncio.run(run())
+
+
+def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def run() -> None:
+        async with ipc_service(tmp_path, monkeypatch) as (executor, child):
+            response = await executor.gateway.handle(write_request(child, "original"))
+            assert response.unconfirmed is not None
+            assert response.unconfirmed.publication == "queued"
+            envelope = executor.outbox.pending()[0]
+            executor.outbox.acknowledge(
+                AcceptanceReceipt(
+                    envelope.sender_id,
+                    "original",
+                    envelope.payload_sha256,
+                    ReceiptDisposition.refused,
+                    {"error": {"code": "validation"}},
+                    1,
+                )
+            )
+            assert not (executor.outbox.root / "entries" / "original").exists()
+            acknowledged = await executor.gateway.handle(retry_request(child, "original"))
+            assert acknowledged.error == {"code": "validation"}
+            sender = executor.outbox.sender_id
+        # A fresh registry has no old native child authority. Journal identity still survives.
+        restarted = MacService(
+            paths=ExecutorPaths(tmp_path),
+            revision="a" * 40,
+            executor_id="synthetic",
+            panels_server_url="https://unused",
+        )
+        try:
+            assert restarted.outbox.sender_id == sender
+            row = restarted.outbox.lookup("original")
+            assert row is None  # Old run capabilities are gone, so confirmed lookup rows are swept.
+            stale = await restarted.gateway.handle(retry_request(child, "original"))
+            assert stale.error is not None and stale.error["code"] == "agent_forbidden"
+            restarted.runner._children["child"] = child
+            missing = await restarted.gateway.handle(retry_request(child, "absent"))
+            assert missing.unconfirmed is not None and missing.unconfirmed.publication == "unknown"
+            assert not restarted.outbox.pending()
+        finally:
+            restarted.outbox.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+@pytest.mark.parametrize("refusal", ["capability", "admission"])
+def test_actual_local_refusal_is_canonical_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, as_json: bool, refusal: str
+) -> None:
+    async def run() -> None:
+        async with ipc_service(tmp_path, monkeypatch) as (executor, _):
+            if refusal == "capability":
+                monkeypatch.setenv("PLAN_EXECUTOR_CAPABILITY", "wrong")
+            else:
+                executor.runner.admission_stopped = True
+            result = await asyncio.to_thread(
+                CliRunner().invoke,
+                main,
+                ["worker", "recap"] + (["--json"] if as_json else []),
+                input="refused",
+            )
+            assert result.exit_code == 1
+            assert isinstance(result.exception, SystemExit)
+            assert "Traceback" not in result.output
+            if as_json:
+                error = json.loads(result.stderr)["error"]
+                assert set(error) == {"code", "message", "detail"}
+                assert error["code"] == "agent_forbidden"
+            else:
+                assert "cannot perform" in result.stderr
+            assert not executor.outbox.pending()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["eof", "malformed", "oversized", "identity"])
+def test_response_failure_after_send_retains_original_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    async def run() -> None:
+        path = tmp_path / "run"
+        path.mkdir()
+        monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(tmp_path))
+        observed: list[IpcRequest] = []
+        completed = asyncio.Event()
+
+        async def peer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            incoming = await read_typed_frame(reader, IpcRequest)
+            observed.append(incoming)
+            if failure == "malformed":
+                writer.write(struct.pack("!I", 1) + b"{")
+            elif failure == "oversized":
+                writer.write(struct.pack("!I", 2**22))
+            elif failure == "identity":
+                writer.write(encode_frame(IpcResponse("wrong", {}, None)))
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+            completed.set()
+
+        async with await asyncio.start_unix_server(peer, path=path / "executor.sock"):
+            response = await asyncio.to_thread(
+                ipc_client.request,
+                IpcOperation.write,
+                {"operation": "ticket.edit", "arguments": {}},
+            )
+            await completed.wait()
+        assert response.unconfirmed is not None
+        assert response.unconfirmed.request_id == observed[0].request_id
+        assert response.unconfirmed.submission_id == observed[0].request_id
+        assert response.unconfirmed.publication == "unknown"
+
+    asyncio.run(run())
+
+
+def test_partial_send_failure_is_uncertain_but_pre_send_failure_is_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed = bytearray()
+
+    class PartialSocket:
+        def __enter__(self) -> PartialSocket:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def settimeout(self, value: float) -> None:
+            pass
+
+        def connect(self, path: str) -> None:
+            pass
+
+        def sendall(self, content: bytes) -> None:
+            observed.extend(content[:10])
+            raise BrokenPipeError("partial frame")
+
+    monkeypatch.setattr(
+        ipc_client,
+        "socket",
+        SimpleNamespace(
+            socket=lambda *args: PartialSocket(),
+            AF_UNIX=socket.AF_UNIX,
+            SOCK_STREAM=socket.SOCK_STREAM,
+        ),
+    )
+    response = ipc_client.request(IpcOperation.write, {"operation": "ticket.edit", "arguments": {}})
+    assert observed and response.unconfirmed is not None
+    assert response.unconfirmed.submission_id == response.request_id
+    with pytest.raises(ValueError):
+        ipc_client.request(IpcOperation.write, {"operation": "ticket.edit"})
+
+
+def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def run() -> None:
+        async with ipc_service(tmp_path, monkeypatch) as (executor, child):
+            mint = executor.outbox.add
+
+            def committed_then_failed(*args: object, **kwargs: object) -> object:
+                mint(*args, **kwargs)  # type: ignore[arg-type]
+                raise OSError("snapshot cleanup failed after commit")
+
+            monkeypatch.setattr(executor.outbox, "add", committed_then_failed)
+            response = await executor.gateway.handle(write_request(child, "original"))
+            assert response.error is None and response.unconfirmed is not None
+            assert response.unconfirmed.submission_id == "original"
+            original = executor.outbox.pending()[0]
+            retried = await executor.gateway.handle(
+                replace(retry_request(child, "original"), response_deadline=time.monotonic() + 5)
+            )
+            assert retried.unconfirmed is not None and retried.unconfirmed.publication == "queued"
+            assert retried.unconfirmed.submission_id == original.submission_id == "original"
+            assert executor.outbox.pending() == (original,)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["missing_blob", "disk_full"])
+def test_failed_add_reports_unknown_and_never_proves_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    async def run() -> None:
+        async with ipc_service(tmp_path, monkeypatch) as (executor, child):
+
+            def fail_add(*args: object, **kwargs: object) -> object:
+                if failure == "missing_blob":
+                    raise FileNotFoundError("captured blob vanished")
+                raise OSError(errno.ENOSPC, "outbox disk full")
+
+            monkeypatch.setattr(executor.outbox, "add", fail_add)
+            response = await executor.gateway.handle(write_request(child, "lost-output"))
+            assert response.unconfirmed is not None
+            assert response.unconfirmed.publication == "unknown"
+            assert not executor.outbox.pending()
+            # Even if the native child is already absent, lost authored output
+            # prevents the final stop proof from claiming complete delivery.
+            executor.runner._children.clear()
+            stopped = await executor.runner.run(
+                ChildCommand("stop", child.reference, ChildOperation.stop, None, StopRun())
+            )
+            assert stopped.disposition is CommandDisposition.uncertain
+            assert stopped.result == {
+                "error_type": "RuntimeError",
+                "error_message": "required source publication failed",
+            }
+
+    asyncio.run(run())

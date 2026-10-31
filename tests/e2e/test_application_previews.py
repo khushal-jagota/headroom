@@ -53,6 +53,7 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=5)
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Real preview registration needs Linux /proc")
 def test_real_vite_applications_share_only_their_generation(
     browser: Browser,
     server_factory: Callable[..., ServerHandle],
@@ -253,7 +254,7 @@ def test_real_vite_applications_share_only_their_generation(
             record = preview_cli(ticket["id"], "register", "--port", str(app_port))
             apps.append((ticket, record, source))
         # Settle this synthetic Ticket through the real writers before timing expiry.
-        fields = ("brief", "success_condition", "what_changes", "plan", "implementation")
+        fields = ("brief", "what_changes", "implementation")
         for field, next_field in zip(fields, (*fields[1:], "consequences"), strict=True):
             worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": apps[0][0]["id"]}
             api(

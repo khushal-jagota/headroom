@@ -178,6 +178,7 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         "waiting_to_closeout": facts.waiting_to_closeout,
         "id": str(row["id"]),
         "title": str(row["title"]),
+        "locale": str(row["locale"]),
         "worker_type": str(row["worker_type"]),
         "stage": str(row["stage"]),
         "ticket_status": facts.ticket_status.value,
@@ -225,7 +226,7 @@ def list_ticket_summaries(
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
     rows = conn.execute(
-        "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
+        "SELECT tickets.id, tickets.title, tickets.locale, tickets.worker_type, tickets.stage, "
         "tickets.is_backlogged, "
         "tickets.worker_step_claim, tickets.recap, "
         "tickets.pending_proposal, "
@@ -415,7 +416,7 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
         "managers.title AS manager_title, "
         "parent_projects.name AS parent_project_name, "
         "tickets.pending_proposal, tickets.worker_type, "
-        "tickets.employee_backend, "
+        "tickets.employee_backend, tickets.locale, "
         "tickets.conversation_id, "
         "tickets.worker_step_claim, "
         "tickets.created_at, tickets.updated_at FROM tickets "
@@ -479,6 +480,7 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
             "ticket_status": facts.ticket_status.value,
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
+            "locale": str(row["locale"]),
             "stage": stage,
             "stage_label": worker_type_definition.stage_definition(stage).label,
             "gating_field": gating_field_id,

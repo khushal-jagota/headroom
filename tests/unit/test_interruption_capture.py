@@ -41,6 +41,7 @@ def capture_database(tmp_path: Path) -> Path:
                 conversation_id TEXT,owner_kind TEXT,owner_id TEXT);
             CREATE TABLE managers(id TEXT,title TEXT);
             CREATE TABLE agents(agent_key TEXT,conversation_id TEXT);
+            CREATE TABLE mac_runs(conversation_id TEXT,stop_state TEXT);
             INSERT INTO agents VALUES('chief_of_staff','legacy');
         """)
     return database
@@ -177,3 +178,23 @@ def test_capture_keeps_historical_ticket_name_without_current_claim_authority(
         "Ship the change",
     )
     assert turn.claim is None and turn.claim_revision is None
+
+
+@pytest.mark.parametrize("evidence", ["stopping", "closed"])
+def test_vps_stop_requires_native_evidence_before_excluding_local_recovery(
+    capture_database: Path, evidence: str
+) -> None:
+    # Existing local fixture also proves that the exclusion does not suppress
+    # ordinary local recovery. No native connection or provider is involved.
+    with sqlite3.connect(capture_database) as conn:
+        conn.execute("INSERT INTO mac_runs VALUES('worker',?)", (evidence,))
+    capture_after_stop(capture_database, "native-survives")
+    manifest = read_manifests(capture_database)[0]
+    assert manifest.state == "captured"
+    assert [turn.conversation_id for turn in manifest.turns] == (
+        ["legacy", "worker"] if evidence == "closed" else ["legacy"]
+    )
+    with sqlite3.connect(capture_database) as conn:
+        assert conn.execute(
+            "SELECT status FROM conversation_lifecycle_facts WHERE conversation_id='worker'"
+        ).fetchone() == ("running",)

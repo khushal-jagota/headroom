@@ -36,6 +36,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, Protocol
 
+import anyio
 import httpx
 
 from planner.conversation.backends.claude_model_catalog import (
@@ -74,6 +75,8 @@ UPDATE_COMMAND_TIMEOUT_SECONDS: Final = 600.0
 # How much of a failed command's output is kept. Enough to see what went wrong, not enough
 # to be a log file in a browser.
 UPDATE_OUTPUT_TAIL_MAXIMUM_CHARACTERS: Final = 10_000
+
+MACHINE_CATALOG_BACKSTOP_SECONDS: Final = 12 * 60 * 60
 
 VERSION_ARGUMENTS: Final = ("--version",)
 
@@ -129,16 +132,16 @@ class BackendModel:
     ``reasoning_effort_options`` are the efforts THIS model takes, which is not always
     the backend's whole list: codex and claude both say so per model, and a picker that
     offered a model the efforts of its siblings would offer values that model refuses.
-    Empty means the model said nothing about it, and the backend's own list applies.
+    Null means unknown metadata. An empty tuple means known empty support.
     """
 
     model_id: str
     display_name: str | None = None
     detail: str | None = None
-    reasoning_effort_options: tuple[str, ...] = ()
+    reasoning_effort_options: tuple[str, ...] | None = None
     selected_variant: str | None = None
+    version: tuple[int, ...] = ()
     resolved_model_id: str | None = None
-    catalogue_warning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +184,7 @@ class BackendSnapshot:
     default_reasoning_effort: str | None
     update_advisory: BackendUpdateAdvisory | None
     diagnoses: tuple[str, ...]
+    models_complete: bool = False
 
 
 class BackendUpdateOutcome(StrEnum):
@@ -254,6 +258,11 @@ class SubprocessBackendProbeEnvironment:
     """The real machine: PATH, real paths, child processes, and the npm registry."""
 
     def executable_path(self, executable_name: str) -> str | None:
+        if executable_name == "claude":
+            from planner.conversation.production_backends import production_backend_launches
+
+            selected = production_backend_launches(panels_server_url="").claude.claude_executable
+            return str(selected) if selected is not None and selected.is_file() else None
         return shutil.which(executable_name)
 
     def configured_executable_path(self, executable_name: str) -> str | None:
@@ -300,49 +309,44 @@ class SubprocessBackendProbeEnvironment:
         *,
         timeout_seconds: float,
         environment_overrides: Mapping[str, str] | None = None,
+        working_directory: Path | None = None,
     ) -> CommandOutcome:
         environment = dict(os.environ)
         if environment_overrides is not None:
             environment.update(environment_overrides)
+
+        async def operation() -> CommandOutcome:
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=environment,
+                    cwd=working_directory,
+                    start_new_session=True,
+                )
+            except (OSError, ValueError) as error:
+                return CommandOutcome(-1, "", str(error))
+            try:
+                standard_output, standard_error = await process.communicate()
+                return CommandOutcome(
+                    process.returncode if process.returncode is not None else -1,
+                    standard_output.decode("utf-8", errors="replace"),
+                    standard_error.decode("utf-8", errors="replace"),
+                )
+            except BaseException:
+                with anyio.CancelScope(shield=True):
+                    _end_the_whole_process_group(process)
+                    await process.wait()
+                raise
+
         try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=environment,
-                # Its own process group, so that everything this command starts can be
-                # stopped with it. An installer is a script that runs other programs, and
-                # killing only the script it was launched as would leave those still
-                # writing to this machine after Panels had reported the update failed.
-                start_new_session=True,
-            )
-        except (OSError, ValueError) as error:
-            return CommandOutcome(exit_code=-1, standard_output="", standard_error=str(error))
-        try:
-            standard_output, standard_error = await asyncio.wait_for(
-                process.communicate(), timeout=timeout_seconds
-            )
+            return await asyncio.wait_for(operation(), timeout=timeout_seconds)
         except TimeoutError:
-            _end_the_whole_process_group(process)
-            await process.wait()
             return CommandOutcome(
-                exit_code=-1,
-                standard_output="",
-                standard_error=f"{argv[0]} did not answer within {timeout_seconds:g}s",
+                -1, "", f"{argv[0]} did not answer within {timeout_seconds:g}s"
             )
-        except asyncio.CancelledError:
-            # An HTTP caller going away must not leave an installer working after its
-            # request is canceled. End the whole group before cancellation leaves this
-            # boundary, just as a timeout does.
-            _end_the_whole_process_group(process)
-            await process.wait()
-            raise
-        return CommandOutcome(
-            exit_code=process.returncode if process.returncode is not None else -1,
-            standard_output=standard_output.decode("utf-8", errors="replace"),
-            standard_error=standard_error.decode("utf-8", errors="replace"),
-        )
 
     async def latest_released_version(
         self, package_name: str, *, timeout_seconds: float
@@ -377,7 +381,7 @@ def _end_the_whole_process_group(process: asyncio.subprocess.Process) -> None:
     still killed rather than left running.
     """
     try:
-        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        os.killpg(process.pid, signal.SIGKILL)
         return
     except (ProcessLookupError, PermissionError):
         pass
@@ -539,6 +543,7 @@ class _CatalogAnswer:
     default_model_id: str | None = None
     default_reasoning_effort: str | None = None
     diagnoses: tuple[str, ...] = ()
+    complete: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -618,9 +623,10 @@ async def _claude_catalog(request: _CatalogRequest) -> _CatalogAnswer:
             ),
         )
     return _CatalogAnswer(
+        complete=True,
         models=tuple(
             BackendModel(
-                model_id=model.model_id,
+                model_id=model.resolved_model_id,
                 display_name=model.display_name,
                 detail=f"{model.model_id} → {model.resolved_model_id}",
                 resolved_model_id=model.resolved_model_id,
@@ -727,6 +733,7 @@ async def _codex_catalog(request: _CatalogRequest) -> _CatalogAnswer:
             )
         )
     return _CatalogAnswer(
+        complete=catalog.complete,
         models=tuple(
             BackendModel(
                 model_id=model.model_id,
@@ -1104,25 +1111,27 @@ async def probe_backend(
         default_reasoning_effort=catalog.default_reasoning_effort,
         update_advisory=advisory,
         diagnoses=tuple(diagnoses),
+        models_complete=catalog.complete,
     )
 
 
 def _model_metadata(
     backend_key: ConversationBackendKey, models: tuple[BackendModel, ...]
 ) -> tuple[BackendModel, ...]:
-    from planner.conversation.model_resolution.logic.variants import identify_variant
-    from planner.core.contracts import PlannerError
+    from planner.conversation.model_resolution.logic.variants import (
+        numerical_version,
+        recognize_variant,
+    )
 
     entries: list[BackendModel] = []
     for model in models:
-        try:
-            variant = identify_variant(backend_key, model.model_id).name
-        except PlannerError:
-            variant = None
+        recognized = recognize_variant(backend_key, model.resolved_model_id or model.model_id)
+        variant = None if recognized is None else recognized.name
         entries.append(
             replace(
                 model,
                 selected_variant=variant,
+                version=numerical_version(model.resolved_model_id or model.model_id),
                 resolved_model_id=model.resolved_model_id or model.model_id,
             )
         )
@@ -1253,7 +1262,10 @@ class BackendSnapshotService:
         claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
         remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
         now: Callable[[], datetime] | None = None,
+        machine_catalog: bool = False,
     ) -> None:
+        self._machine_catalog = machine_catalog
+        self._probed_at: dict[ConversationBackendKey, datetime] = {}
         self._environment = environment or SubprocessBackendProbeEnvironment()
         self._now = now or (lambda: datetime.now(UTC))
         self._codex_model_catalog_probe = codex_model_catalog_probe
@@ -1281,6 +1293,9 @@ class BackendSnapshotService:
             backend_key: asyncio.Lock() for backend_key in ConversationBackendKey
         }
 
+    def retained(self, backend_key: ConversationBackendKey) -> BackendSnapshot | None:
+        return self._snapshots.get(backend_key)
+
     async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
         return tuple(
             await asyncio.gather(
@@ -1300,12 +1315,34 @@ class BackendSnapshotService:
     ) -> BackendSnapshot:
         # A forced advisory refresh keeps the last complete card readable. An ordinary
         # reader never waits behind remote work when this process already has an answer.
-        stale = self._codex_login_has_moved(backend_key)
+        login_moved = self._codex_login_has_moved(backend_key)
+        stale = False if self._machine_catalog else login_moved
+        if self._machine_catalog and not refresh:
+            previous = self._snapshots.get(backend_key)
+            if previous is not None:
+                stale = (
+                    self._now() - self._probed_at[backend_key]
+                ).total_seconds() >= MACHINE_CATALOG_BACKSTOP_SECONDS
+                if backend_key is not ConversationBackendKey.hermes:
+                    executable = self._environment.executable_path(str(backend_key))
+                    version = None
+                    if executable is not None:
+                        outcome = await self._environment.run(
+                            (executable, *VERSION_ARGUMENTS),
+                            timeout_seconds=VERSION_PROBE_TIMEOUT_SECONDS,
+                        )
+                        version = parse_version(outcome.standard_output + outcome.standard_error)
+                    stale = stale or version != previous.version
         if not refresh and not stale:
             kept = self._snapshots.get(backend_key)
             if kept is not None:
                 return kept
+        waiting = self._snapshot_locks[backend_key].locked()
         async with self._snapshot_locks[backend_key]:
+            if waiting and not self._codex_login_has_moved(backend_key):
+                shared = self._snapshots.get(backend_key)
+                if shared is not None:
+                    return shared
             kept = None if refresh or stale else self._snapshots.get(backend_key)
             if kept is not None:
                 return kept
@@ -1328,15 +1365,45 @@ class BackendSnapshotService:
                 codex_login=codex_login,
                 now=reading_at,
             )
+            if codex_login is not None:
+                latest_login = read_codex_login_standing(self._remembered_codex_login_rejection)
+                if latest_login.everything_a_card_reads(
+                    now=self._now()
+                ) != codex_login.everything_a_card_reads(now=reading_at):
+                    return replace(
+                        probed,
+                        identity=None,
+                        available_models=(),
+                        reasoning_effort_options=(),
+                        default_model_id=None,
+                        default_reasoning_effort=None,
+                        models_complete=False,
+                    )
             if stale and not refresh and probed.update_advisory is None:
-                # This probe happened because the login moved, not because anybody asked
-                # for update discovery, so it carries no advisory. Dropping the one the
+                # This automatic read was not asked for update discovery, so it carries
+                # no advisory. Dropping the one the
                 # kept card had would make the Update button vanish for a reason that has
                 # nothing to do with updates.
                 kept_advisory = self._snapshots.get(backend_key)
                 if kept_advisory is not None and kept_advisory.update_advisory is not None:
                     probed = replace(probed, update_advisory=kept_advisory.update_advisory)
+            previous = self._snapshots.get(backend_key)
+            if (
+                not login_moved
+                and previous is not None
+                and previous.models_complete
+                and not probed.models_complete
+            ):
+                probed = replace(
+                    probed,
+                    available_models=previous.available_models,
+                    reasoning_effort_options=previous.reasoning_effort_options,
+                    default_model_id=previous.default_model_id,
+                    default_reasoning_effort=previous.default_reasoning_effort,
+                    models_complete=True,
+                )
             self._snapshots[backend_key] = probed
+            self._probed_at[backend_key] = reading_at
             if backend_key is ConversationBackendKey.codex and codex_login is not None:
                 self._codex_card_was_probed_against = codex_login.everything_a_card_reads(
                     now=reading_at

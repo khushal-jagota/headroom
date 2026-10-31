@@ -92,6 +92,10 @@ def _require_same_restart_target(
         current.worker_step_claim is not expected.worker_step_claim
         or current.worker_step_claim_revision != expected.worker_step_claim_revision
         or current.conversation_id != expected.conversation_id
+        or tickets_data.employee_launch_configuration(current)
+        != tickets_data.employee_launch_configuration(expected)
+        or (current.locale, current.project_id, current.manager_id, current.manager_kind)
+        != (expected.locale, expected.project_id, expected.manager_id, expected.manager_kind)
     ):
         raise PlannerError(
             ErrorCode.already_running,
@@ -107,20 +111,53 @@ async def restart_worker(
     principal: Principal,
     ticket_id: str,
     *,
-    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     start_worker_step: Callable[[], Awaitable[WorkerStepStartResult]],
     now: Callable[[], int],
+    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None = None,
 ) -> dict[str, object]:
     """Kill this Ticket's dead conversation, give the claim back, and start again.
 
     A reset on its own would leave the claim out, with no conversation and nothing that
     ever picks the Ticket up. Both halves happen here, and the caller sees one action.
 
-    ``write_employee_configuration`` is already validated when it arrives: the caller
-    resolved it against the backend registry and catalog before anything was killed, so a
+    The configuration is already validated when it arrives: the caller checked
+    the backend name and disabled-model policy before anything was killed, so a
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
     """
+    (
+        killed_conversation_id,
+        killed_conversation_looked_running,
+    ) = await _prepare_worker_restart(
+        conversations,
+        conn,
+        principal,
+        ticket_id,
+        write_employee_configuration=write_employee_configuration,
+        now=now,
+    )
+    # Start obtains fresh read ownership, after mutation ownership ends.
+    start_result = await start_worker_step()
+    restarted = tickets_data.read_ticket(conn, ticket_id)
+    return _restart_result(
+        conn,
+        ticket_id,
+        restarted,
+        start_result,
+        killed_conversation_id,
+        killed_conversation_looked_running,
+    )
+
+
+async def _prepare_worker_restart(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    principal: Principal,
+    ticket_id: str,
+    *,
+    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
+    now: Callable[[], int],
+) -> tuple[str | None, bool]:
     ticket = require_restartable(conn, principal, ticket_id)
     rearming_idle_revision = (
         ticket.worker_step_claim is WorkerStepClaim.none and ticket.conversation_id is not None
@@ -144,49 +181,85 @@ async def restart_worker(
             # this conversation if the Ticket moves while kill is awaited.
             await conversations.kill(killed_conversation_id)
 
-        write_now = now()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            _require_same_restart_target(conn, principal, ticket)
-            if ticket.worker_step_claim in {
-                WorkerStepClaim.out,
-                WorkerStepClaim.errored,
-            }:
-                given_back = tickets_data.release_worker_step_claim(
-                    conn,
-                    ticket_id,
-                    expected_claim=ticket.worker_step_claim,
-                    expected_claim_revision=ticket.worker_step_claim_revision,
-                    now=write_now,
+        source_retirement_proven = False
+        if killed_conversation_id is not None:
+            source_retirement_proven = await conversations.retirement_is_confirmed(
+                killed_conversation_id
+            )
+            if not source_retirement_proven:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "source retirement is unresolved; executor or operator settlement is required",
+                    {
+                        "retirement_started": True,
+                        "source_retired": None,
+                        "reason": "context_changed",
+                        "corrective_action": "verify_launch_context",
+                    },
                 )
-                if not given_back:
-                    raise PlannerError(
-                        ErrorCode.already_running,
-                        "the Ticket moved while it was being restarted",
-                        {"ticket_id": ticket_id},
-                    )
-                if killed_conversation_id is not None:
-                    unlinked = tickets_data.clear_ticket_conversation_link(
+        try:
+            write_now = now()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                _require_same_restart_target(conn, principal, ticket)
+                if ticket.worker_step_claim in {
+                    WorkerStepClaim.out,
+                    WorkerStepClaim.errored,
+                }:
+                    given_back = tickets_data.release_worker_step_claim(
                         conn,
                         ticket_id,
-                        expected_conversation_id=killed_conversation_id,
+                        expected_claim=ticket.worker_step_claim,
+                        expected_claim_revision=ticket.worker_step_claim_revision,
                         now=write_now,
                     )
-                    if not unlinked:
+                    if not given_back:
                         raise PlannerError(
                             ErrorCode.already_running,
                             "the Ticket moved while it was being restarted",
                             {"ticket_id": ticket_id},
                         )
-            if write_employee_configuration is not None:
-                write_employee_configuration(conn, write_now)
-            conn.execute("COMMIT")
-        except BaseException:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
-    start_result = await start_worker_step()
-    restarted = tickets_data.read_ticket(conn, ticket_id)
+                    if killed_conversation_id is not None:
+                        unlinked = tickets_data.clear_ticket_conversation_link(
+                            conn,
+                            ticket_id,
+                            expected_conversation_id=killed_conversation_id,
+                            now=write_now,
+                        )
+                        if not unlinked:
+                            raise PlannerError(
+                                ErrorCode.already_running,
+                                "the Ticket moved while it was being restarted",
+                                {"ticket_id": ticket_id},
+                            )
+                if write_employee_configuration is not None:
+                    write_employee_configuration(conn, write_now)
+                conn.execute("COMMIT")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+        except PlannerError as error:
+            raise PlannerError(
+                error.code,
+                error.message,
+                {
+                    **error.detail,
+                    "retirement_started": killed_conversation_id is not None,
+                    "source_retired": True if source_retirement_proven else None,
+                },
+            ) from error
+    return killed_conversation_id, killed_conversation_looked_running
+
+
+def _restart_result(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    restarted: Ticket,
+    start_result: WorkerStepStartResult,
+    killed_conversation_id: str | None,
+    killed_conversation_looked_running: bool,
+) -> dict[str, object]:
     return {
         "ticket_id": ticket_id,
         "killed_conversation_id": killed_conversation_id,

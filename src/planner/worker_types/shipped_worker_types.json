@@ -6,16 +6,8 @@
         "label": "Brief"
       },
       {
-        "id": "success_condition",
-        "label": "Success Condition"
-      },
-      {
         "id": "what_changes",
         "label": "What Changes"
-      },
-      {
-        "id": "plan",
-        "label": "Plan"
       },
       {
         "id": "implementation",
@@ -29,7 +21,7 @@
     "label": "Coding",
     "profile": {
       "default_backend": "codex",
-      "default_model": "gpt-5.6-sol",
+      "default_model": "gpt-6.1-sol",
       "default_reasoning_effort": "medium",
       "specialist_skill": "panels-worker-coding",
       "toolset_profile": "default"
@@ -43,24 +35,10 @@
         "ownership_mode": "worker"
       },
       {
-        "gating_field": "success_condition",
-        "id": "needs_success_condition",
-        "is_terminal": false,
-        "label": "Success Condition",
-        "ownership_mode": "worker"
-      },
-      {
         "gating_field": "what_changes",
         "id": "needs_what_changes",
         "is_terminal": false,
         "label": "What Changes",
-        "ownership_mode": "worker"
-      },
-      {
-        "gating_field": "plan",
-        "id": "needs_plan",
-        "is_terminal": false,
-        "label": "Plan",
         "ownership_mode": "worker"
       },
       {
@@ -105,7 +83,7 @@
     "label": "General",
     "profile": {
       "default_backend": "codex",
-      "default_model": "gpt-5.6-sol",
+      "default_model": "gpt-6.1-sol",
       "default_reasoning_effort": "medium",
       "specialist_skill": "panels-worker-general",
       "toolset_profile": "default"
@@ -168,7 +146,7 @@
     "label": "Debugging",
     "profile": {
       "default_backend": "codex",
-      "default_model": "gpt-5.6-sol",
+      "default_model": "gpt-6.1-sol",
       "default_reasoning_effort": "high",
       "specialist_skill": "panels-worker-debugging",
       "toolset_profile": "default"
@@ -253,7 +231,7 @@
     "label": "New Worker",
     "profile": {
       "default_backend": "codex",
-      "default_model": "gpt-5.6-sol",
+      "default_model": "gpt-6.1-sol",
       "default_reasoning_effort": "medium",
       "specialist_skill": "panels-worker-new-worker",
       "toolset_profile": "default"
@@ -340,7 +318,7 @@
     "label": "Amend Worker",
     "profile": {
       "default_backend": "codex",
-      "default_model": "gpt-5.6-sol",
+      "default_model": "gpt-6.1-sol",
       "default_reasoning_effort": "medium",
       "specialist_skill": "panels-worker-amend-worker",
       "toolset_profile": "default"
@@ -418,7 +396,7 @@
     "label": "Exploration",
     "profile": {
       "default_backend": "codex",
-      "default_model": "gpt-5.6-sol",
+      "default_model": "gpt-6.1-sol",
       "default_reasoning_effort": "medium",
       "specialist_skill": "panels-worker-exploration",
       "toolset_profile": "default"
@@ -513,7 +491,7 @@
     "label": "Initiative Planning",
     "profile": {
       "default_backend": "codex",
-      "default_model": "gpt-5.6-sol",
+      "default_model": "gpt-6.1-sol",
       "default_reasoning_effort": "medium",
       "specialist_skill": "panels-worker-initiative-planning",
       "toolset_profile": "default"
@@ -670,7 +648,7 @@
     "label": "Product Design",
     "profile": {
       "default_backend": "claude",
-      "default_model": "opus",
+      "default_model": "claude-opus-5-5",
       "default_reasoning_effort": "medium",
       "specialist_skill": "panels-worker-product-design",
       "toolset_profile": "default"
@@ -736,7 +714,7 @@
     "label": "Research",
     "profile": {
       "default_backend": "claude",
-      "default_model": "opus",
+      "default_model": "claude-opus-5-5",
       "default_reasoning_effort": "high",
       "specialist_skill": "panels-worker-research",
       "toolset_profile": "default"

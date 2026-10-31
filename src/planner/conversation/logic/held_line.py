@@ -46,9 +46,11 @@ def leading_run_that_can_share_a_turn[MessageT: WaitingMessage](
     run: list[MessageT] = []
     for message in waiting:
         carries_a_change = (
-            message.model_change is not None or message.reasoning_effort_change is not None
+            message.model_change is not None
+            or message.reasoning_effort_change is not None
+            or bool(getattr(message, "reasoning_effort_is_set", False))
         )
-        if run and carries_a_change:
+        if run and (carries_a_change):
             break
         run.append(message)
     return tuple(run)

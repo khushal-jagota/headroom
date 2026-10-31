@@ -1,5 +1,9 @@
 <script lang="ts">
   import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
+  import { createQuery } from "@tanstack/svelte-query";
+  import { queries } from "../../lib/queryCatalogue";
+  import { macActivityKnown, type TicketLocale } from "../../lib/ticketMachines";
+  import { executorAnswerAvailable, executorAnswerSentence, EXECUTOR_ASK_UNCERTAIN } from "../../lib/conversation/executorEvidence";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** A conversation, bound to the system that runs it.
    *
@@ -84,6 +88,7 @@
   } from "../../lib/conversation/wire";
 
   let {
+    locale,
     conversationId = null,
     ownerLoading = false,
     persistenceKey,
@@ -104,6 +109,7 @@
     selectedPastConversationId = $bindable(null)
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
+    locale?: TicketLocale;
     conversationId?: string | null;
     /** The owner is still reading which conversation belongs here. */
     ownerLoading?: boolean;
@@ -148,6 +154,26 @@
   } = $props();
 
   let view = $state<ConversationView | null>(null);
+  // Ticket suggestions use the same resolved workspace as ordinary creation.
+  let pickerTicketId = $derived(uploadOwner?.kind === "ticket" ? uploadOwner.id : null);
+  const pickerQuery = createQuery(() => ({
+    ...queries.ticketBackends(pickerTicketId ?? "", [locale, startValues?.workspace_folder, startValues?.workspace_path_policy]),
+    enabled: pickerTicketId !== null && !readOnly && startValues?.workspace_folder !== undefined
+  }), () => queryClient);
+  let pickerReadError = $derived(pickerTicketId !== null && pickerQuery.error ? sentenceFor(pickerQuery.error) : null);
+  async function retryScopedChoices(): Promise<void> {
+    if (pickerTicketId === null) return;
+    await queryClient.fetchQuery({...queries.ticketBackends(pickerTicketId,
+      [locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
+  }
+
+  let remote = $derived(locale === "macos");
+  const healthQuery = createQuery(() => ({...queries.executorHealth(), enabled:remote}), () => queryClient);
+  let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
+  $effect(() => {
+    healthQuery.dataUpdatedAt;
+    if (remote && openedId) untrack(() => void refreshView());
+  });
   let reader = $state<ConversationViewReader | null>(null);
   let viewAnchor=$state<ViewReaderAnchor|null>(null);
   let viewFolds=new Set<string>();
@@ -168,6 +194,7 @@
   let visibleFateNote = $derived(fateNote);
   let errorNote = $state<string | null>(null);
   let askNote = $state<string | null>(null);
+  let askNoteKey = $state<string | null>(null);
   let busy = $state(false);
   let opening = $state(false);
   let lens = $state<ConversationLens>("focus");
@@ -205,6 +232,15 @@
     const pending=view?.pending_user_input;
     return pending&&pending.request_id===reader?.status?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
   });
+  let permissionAvailable = $derived(executorAnswerAvailable(view,"permission",ask?.askId,locale,
+    reader?.status?.pending_permission?.request_id === ask?.askId));
+  let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
+    reader?.status?.pending_user_input?.request_id === userInput?.requestId));
+  let executorAnswers = $derived(rows.filter(row => (row.kind === "permission_ask" || row.kind === "user_input") && row.answerFate).map(row => ({answerId:row.key,sentence:executorAnswerSentence((row as {answerFate:"saved"|"applied"|"unconfirmed"}).answerFate)})));
+  let permissionNote = $derived((askNoteKey === `permission:${ask?.askId}` ? askNote : null) ??
+    (remote && !permissionAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
+  let userInputNote = $derived((askNoteKey === `user_input:${userInput?.requestId}` ? askNote : null) ??
+    (remote && !userInputAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
   const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
@@ -285,8 +321,9 @@
   $effect(() => {
     runningBackendKey = backendKey;
   });
+  let pickerBackends = $derived(pickerTicketId === null ? backends : pickerQuery.data ?? []);
   let backendSnapshot = $derived(
-    backends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
+    pickerBackends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
   );
   let current = $derived<RunValues>({model:view?.model??null,reasoningEffort:view?.reasoning_effort??null});
   let serverHeldSenderIds = $derived(
@@ -579,7 +616,9 @@
       senderLabel,
       mode,
       pickedModel: picked.model,
-      pickedReasoningEffort: picked.reasoningEffort
+      pickedReasoningEffort: picked.reasoningEffort,
+      effortIsSet: picked.effortIsSet,
+      pickedBackend: picked.backendKey
     }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}) };
     if (!reserveOutgoingMessageImages(message)) {
       errorNote = "Wait for an outstanding image message to reach the conversation.";
@@ -732,7 +771,9 @@
     await stopDrawing(senderMessageId, true);
     const away = await send(uncertain.content, uncertain.mode, {
       model: uncertain.pickedModel ?? null,
-      reasoningEffort: uncertain.pickedReasoningEffort ?? null
+      reasoningEffort: uncertain.pickedReasoningEffort ?? null,
+      effortIsSet: uncertain.effortIsSet,
+      backendKey: uncertain.pickedBackend
     }, uncertain.displayMessageId ?? uncertain.messageId);
     if (away) return;
     // The server turned it away, so the words are nowhere. Put the copy back rather than
@@ -813,14 +854,16 @@
 
   async function answer(optionId: string): Promise<void> {
     const askId = ask?.askId;
-    if (readOnly || askId === undefined || openedId === null) return;
+    if (readOnly || busy || !permissionAvailable || askId === undefined || openedId === null) return;
+    askNoteKey = `permission:${askId}`;
     askNote = null;
     busy = true;
     try {
-      const { landed } = await answerPermissionAsk(openedId, askId, optionId);
-      askNote = landed
-        ? null
+      const { fate } = await answerPermissionAsk(openedId, askId, optionId);
+      askNote = fate !== "refused"
+        ? fate === "saved" ? "Answer saved on VPS; delivery to Mac is pending." : null
         : "The backend did not take that answer. Cancelling the turn always works.";
+      await refreshView();
     } catch (error) {
       askNote = sentenceFor(error);
     } finally {
@@ -830,14 +873,16 @@
 
   async function submitUserInput(answers: UserInputAnswers): Promise<void> {
     const requestId = userInput?.requestId;
-    if (readOnly || requestId === undefined || openedId === null) return;
+    if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return;
+    askNoteKey = `user_input:${requestId}`;
     askNote = null;
     busy = true;
     try {
-      const { landed } = await answerUserInput(openedId, requestId, answers);
-      askNote = landed
-        ? null
+      const { fate } = await answerUserInput(openedId, requestId, answers);
+      askNote = fate !== "refused"
+        ? fate === "saved" ? "Answer saved on VPS; delivery to Mac is pending." : null
         : "The backend did not take those answers. You can try again or stop the turn.";
+      await refreshView();
     } catch (error) {
       askNote = sentenceFor(error);
     } finally {
@@ -938,14 +983,18 @@
   });
 </script>
 
+{#each executorAnswers as record (record.answerId)}
+  <p class="executor-answer-status" data-executor-answer-status role="status">{record.sentence}</p>
+{/each}
 <ConversationPane
   roleLabel={historyOwner?.kind === "goal" ? "Goal" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
   {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
   {backendKey}
   conversationExists={started}
-  bind:backends
-  workspaceFolder={view?.workspace_folder ?? null}
+  backends={pickerBackends}
+  workspaceFolder={view?.workspace_path_policy === "executor_default"
+    ? "Panels workspace (Mac)" : view?.workspace_folder ?? null}
   {reader}
   {acknowledgedMessageIds}
   transcriptLoading={ownerLoading || opening || (reader?.loading === true && reader.status === null)}
@@ -964,8 +1013,14 @@
   {running}
   {ask}
   {userInput}
-  {askNote}
+  askNote={permissionNote}
+  {userInputNote}
+  {permissionAvailable}
+  {userInputAvailable}
+  {activityUncertain}
   {current}
+  readError={pickerReadError}
+  onRetryModelChoices={pickerTicketId === null ? undefined : retryScopedChoices}
   models={backendSnapshot?.available_models ?? []}
   effortOptions={backendSnapshot?.reasoning_effort_options ?? []}
   composerCatalog={composerCatalog}
@@ -973,7 +1028,7 @@
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   bind:conversationState
   fateNote={visibleFateNote}
-  {errorNote}
+  errorNote={errorNote ?? pickerReadError}
   {connectionTrouble}
   {readOnly}
   {historyOwner}

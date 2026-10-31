@@ -11,7 +11,7 @@ export function ticketSectionImpact(impact:RecordImpact,record:TicketRecord | un
 }
 export function ticketMastheadImpact(impact:RecordImpact,record:TicketRecord | undefined,parentId:string | null,projectId:string | null):boolean {
   if(!record) return false;
-  return impact.kind==='ticket' && impact.id===record.id && impactHas(impact,['title','worker_type','conversation_id','manager_id','project_id'])
+  return impact.kind==='ticket' && impact.id===record.id && impactHas(impact,['title','locale','worker_type','conversation_id','manager_id','project_id'])
     || impact.kind==='manager' && impact.id===parentId && impactHas(impact,['project_id'])
     || impact.kind==='project' && impact.id===projectId && impactHas(impact,['name'])
     || impact.kind==='conversation' && impact.id===record.value.conversation_id && impactHas(impact,['attention']);

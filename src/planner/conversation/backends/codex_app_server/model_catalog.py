@@ -1,12 +1,11 @@
 """What codex says it can be run as, asked of the app-server and nothing else.
 
-Codex is the one backend whose catalog cannot be written down anywhere. Its models are
-whatever the account is entitled to today, and its reasoning efforts are not a fixed list
-at all — the protocol calls an effort "a non-empty reasoning effort value advertised by the
-model", and every model carries its own set. So the only honest answer comes from asking.
+Codex advertises model metadata through its local app-server. Each model carries its
+own advertised reasoning efforts. Catalog presence does not establish execution
+entitlement. Catalog absence does not establish an authoritative refusal.
 
-Asking costs one short-lived child and one request. No thread is started and no turn is
-run, so nothing here reaches an agent API or spends anything.
+A probe starts one short-lived child and reads the catalog pages. It starts no thread
+or turn and sends no provider prompt.
 """
 
 from __future__ import annotations
@@ -66,6 +65,7 @@ class CodexModelCatalog:
     # Codex flags both itself, per model, so neither is worked out here.
     default_model_id: str | None = None
     default_reasoning_effort: str | None = None
+    complete: bool = True
 
 
 class _SaysNothing:
@@ -79,9 +79,7 @@ class _SaysNothing:
     async def on_notification(self, method: str, notification: BaseModel) -> None:
         del method, notification
 
-    async def on_server_request(
-        self, method: str, request_id: Any, params: BaseModel
-    ) -> None:
+    async def on_server_request(self, method: str, request_id: Any, params: BaseModel) -> None:
         del method, request_id, params
 
     async def on_child_ended(self) -> None:
@@ -101,13 +99,14 @@ async def probe_codex_model_catalog(codex_executable: str) -> CodexModelCatalog:
         )
     except TimeoutError as did_not_answer:
         raise CodexModelCatalogUnavailable(
-            "codex did not answer within "
-            f"{MODEL_CATALOG_TIMEOUT_SECONDS:g}s"
+            f"codex did not answer within {MODEL_CATALOG_TIMEOUT_SECONDS:g}s"
         ) from did_not_answer
 
 
 async def _ask_codex(codex_executable: str) -> CodexModelCatalog:
     client = CodexAppServerClient(handler=_SaysNothing(), description="model-catalog")
+    pages: list[bindings.Model1] = []
+    complete = False
     try:
         await client.start(
             argv=(codex_executable, "app-server"),
@@ -126,17 +125,36 @@ async def _ask_codex(codex_executable: str) -> CodexModelCatalog:
             ).model_dump(mode="json", exclude_none=True, by_alias=True),
         )
         await client.notify("initialized")
-        answered = await client.request("model/list", {})
-        listed = bindings.ModelListResponse.model_validate(answered)
+        cursor: str | None = None
+        seen: set[str] = set()
+        while True:
+            try:
+                answered = await client.request(
+                    "model/list",
+                    {} if cursor is None else {"cursor": cursor},
+                )
+                listed = bindings.ModelListResponse.model_validate(answered)
+            except (CodexAppServerError, ValidationError):
+                if not pages:
+                    raise
+                break
+            pages.extend(listed.data)
+            cursor = listed.nextCursor
+            if cursor is None:
+                complete = True
+                break
+            if cursor in seen:
+                break
+            seen.add(cursor)
     except (CodexAppServerError, ValidationError) as would_not_say:
         raise CodexModelCatalogUnavailable(str(would_not_say)) from would_not_say
     finally:
         await client.stop()
-    return _catalog(listed)
+    return _catalog(bindings.ModelListResponse(data=pages), complete=complete)
 
 
-def _catalog(listed: bindings.ModelListResponse) -> CodexModelCatalog:
-    """The answer as a catalog. Hidden models are left out: codex hides its own.
+def _catalog(listed: bindings.ModelListResponse, *, complete: bool = True) -> CodexModelCatalog:
+    """Keep the advertised models; hidden rows are not picker choices.
 
     The efforts are collected in the order they were listed and de-duplicated, so the list
     a picker shows is codex's own order rather than an alphabet nobody chose.
@@ -162,6 +180,7 @@ def _catalog(listed: bindings.ModelListResponse) -> CodexModelCatalog:
     default = next((model for model in models if model.is_default), None)
     return CodexModelCatalog(
         models=tuple(models),
+        complete=complete,
         reasoning_effort_options=tuple(efforts),
         default_model_id=None if default is None else default.model_id,
         default_reasoning_effort=None if default is None else default.default_reasoning_effort,

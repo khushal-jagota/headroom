@@ -31,6 +31,7 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import (
     BackendInstallMethod,
+    BackendSnapshotService,
     CommandOutcome,
     SubprocessBackendProbeEnvironment,
     probe_backend,
@@ -132,7 +133,7 @@ def _codex_that_answers(
         del codex_executable
         efforts: list[str] = []
         for model in models:
-            for effort in model.reasoning_effort_options:
+            for effort in model.reasoning_effort_options or ():
                 if effort not in efforts:
                     efforts.append(effort)
         default = next((model for model in models if model.is_default), None)
@@ -184,7 +185,7 @@ def _claude_that_answers(
         del claude_executable
         efforts: list[str] = []
         for model in answered:
-            for effort in model.reasoning_effort_options:
+            for effort in model.reasoning_effort_options or ():
                 if effort not in efforts:
                     efforts.append(effort)
         return ClaudeModelCatalog(
@@ -248,35 +249,13 @@ def _installed_claude(
 # --- reading a version line ----------------------------------------------------------------
 
 
-
-
 # --- reading where a binary lives ------------------------------------------------------------
 
 
 # --- what a card says --------------------------------------------------------------------
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # --- what a backend runs when nobody picks --------------------------------------------------
-
-
-
-
 
 
 # --- the update advisory ------------------------------------------------------------------
@@ -318,12 +297,6 @@ def test_codex_user_local_npm_install_targets_the_same_resolved_prefix() -> None
     _run(exercise)
 
 
-
-
-
-
-
-
 # --- running an update --------------------------------------------------------------------
 
 
@@ -336,16 +309,6 @@ def _claude_update_command() -> tuple[str, ...]:
         USER_LOCAL_NPM_PREFIX,
         "@anthropic-ai/claude-code@latest",
     )
-
-
-
-
-
-
-
-
-
-
 
 
 # --- what a command that runs out of time leaves behind ------------------------------------
@@ -398,3 +361,76 @@ def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
 
 
 # --- keeping the answers ---------------------------------------------------------------------
+
+
+def test_machine_catalog_refreshes_on_version_refresh_and_twelve_hour_backstop() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    async def exercise() -> None:
+        clock = [datetime(2026, 10, 31, tzinfo=UTC)]
+        machine = _installed_claude()
+        generation = ["claude-fable-5-1"]
+
+        async def models(executable: str) -> ClaudeModelCatalog:
+            return ClaudeModelCatalog(
+                (ClaudeModel(generation[0], "Fable", generation[0], ("high",)),),
+                ("high",),
+                generation[0],
+            )
+
+        service = BackendSnapshotService(
+            machine, claude_model_catalog_probe=models, machine_catalog=True, now=lambda: clock[0]
+        )
+        first = await service.snapshot(ConversationBackendKey.claude)
+        assert first.available_models[0].selected_variant == "fable"
+        assert first.available_models[0].version == (5, 1)
+        generation[0] = "claude-fable-5-5"
+        assert (
+            await service.snapshot(ConversationBackendKey.claude)
+        ).default_model_id == "claude-fable-5-1"
+        machine.outcomes[(CLAUDE_PATH, "--version")] = CommandOutcome(0, "2.1.314", "")
+        assert (
+            await service.snapshot(ConversationBackendKey.claude)
+        ).default_model_id == "claude-fable-5-5"
+        generation[0] = "claude-fable-6"
+        clock[0] += timedelta(hours=12)
+        assert (
+            await service.snapshot(ConversationBackendKey.claude)
+        ).default_model_id == "claude-fable-6"
+        generation[0] = "claude-fable-7"
+        assert (
+            await service.snapshot(
+                ConversationBackendKey.claude, refresh=True, discover_update_advisory=False
+            )
+        ).default_model_id == "claude-fable-7"
+        assert machine.registry_lookups == []
+
+    _run(exercise)
+
+
+def test_machine_codex_update_retains_complete_models_and_variant_metadata() -> None:
+    async def exercise() -> None:
+        machine = _installed_codex()
+        complete = [True]
+        full = _codex_that_answers(
+            CodexModel("gpt-6.1-terra", "GPT 6.1 Terra", ("high",), "high", True)
+        )
+
+        async def models(executable: str) -> CodexModelCatalog:
+            if complete[0]:
+                return await full(executable)
+            return CodexModelCatalog((), (), complete=False)
+
+        service = BackendSnapshotService(
+            machine, machine_catalog=True, codex_model_catalog_probe=models
+        )
+        result = await service.snapshot(ConversationBackendKey.codex)
+        assert result.available_models[0].selected_variant == "terra"
+        assert result.available_models[0].version == (6, 1)
+        complete[0] = False
+        machine.outcomes[(CODEX_PATH, "--version")] = CommandOutcome(0, "0.166.0", "")
+        after_update = await service.snapshot(ConversationBackendKey.codex)
+        assert after_update.available_models == result.available_models
+        assert after_update.default_model_id == result.default_model_id
+
+    _run(exercise)

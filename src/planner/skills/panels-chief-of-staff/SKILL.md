@@ -165,7 +165,7 @@ Do not create extra tickets, items, projects, or statuses unless the user asked 
 
 A ticket worker owns one ticket's next gated step. You do not.
 
-Do not draft a Ticket's gated fields (for `coding`: `success_condition`, `what_changes`, `plan`,
+Do not draft a Ticket's gated fields (for `coding`: `brief`, `what_changes`,
 `implementation`, `consequences`; other Worker types have their own) as if you are
 completing that Ticket worker step unless the user explicitly asks for a planning draft
 in chat. Even then, present it as a draft for the human or Ticket worker, not as a filed

@@ -48,7 +48,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
         server,
         f"/api/tickets/{ticket_id}/accept/brief",
         {
-            "next_ceiling": "needs_success_condition",
+            "next_ceiling": "needs_what_changes",
             "next_holder": {"kind": "owner", "id": "owner"},
         },
     )

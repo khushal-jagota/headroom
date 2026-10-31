@@ -24,7 +24,7 @@ from planner.core.server import handle_planner_error
 from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
 from planner.environments.app import AppManifest
 from planner.environments.deployment import deploy_app
-from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+from planner.environments.deployment_lifecycle import DeploymentLifecycleStore, LifecycleProjection
 from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_admission import matching_commit, startup_requires_commit
 from planner.environments.update_api import router
@@ -301,7 +301,10 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         assert app.state.conversation is None
         assert cleaned == []
         assert (old_epoch / "retained.json").read_text() == "prior output"
-        assert "Recovery required" in client.get("/api/deployment-status").json()["detail"]
+        held_status = client.get("/api/deployment-status").json()
+        assert "Chief review is required" in held_status["detail"]
+        assert held_status["installation_confirmed"] is False
+        assert held_status["unknown_display_until"] is None
         progress.start("runner", SHA_B, prior_sha=SHA_A)
         progress.transition("runner", "verifying")
         assert client.get("/api/worker-types").status_code == 503
@@ -309,6 +312,39 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         assert client.portal is not None
         client.portal.call(asyncio.sleep, 0.5)
         assert client.get("/api/worker-types").status_code == 200
+        admitted_status = client.get("/api/deployment-status").json()
+        assert admitted_status["installation_confirmed"] is True
+        assert admitted_status["unknown_display_until"] is not None
+        # A new admission hold must invalidate the harmless notice's proof too.
+        app.state.update_admission_closed = True
+        closed_status = client.get("/api/deployment-status").json()
+        assert client.get("/api/worker-types").status_code == 503
+        assert closed_status["installation_confirmed"] is False
+        assert closed_status["unknown_display_until"] is None
+        app.state.update_admission_closed = False
+        project = DeploymentLifecycleStore.project
+
+        def close_during_projection(
+            store: DeploymentLifecycleStore, deployed_sha: str | None, *,
+            admission_open: bool = False,
+        ) -> LifecycleProjection:
+            snapshot = project(store, deployed_sha, admission_open=admission_open)
+            app.state.update_admission_closed = True
+            return snapshot
+
+        with monkeypatch.context() as patch:
+            patch.setattr(DeploymentLifecycleStore, "project", close_during_projection)
+            raced_status = client.get("/api/deployment-status").json()
+        assert raced_status["installation_confirmed"] is False
+        assert raced_status["unknown_display_until"] is None
+        app.state.update_admission_closed = False
+        # Deferred setup failure is a persistent problem, never a harmless report gap.
+        app.state.update_startup_detail = "The app is installed, but setup did not complete."
+        setup_status = client.get("/api/deployment-status").json()
+        assert setup_status["state"] == "problem"
+        assert setup_status["installation_confirmed"] is False
+        assert setup_status["unknown_display_until"] is None
+        app.state.update_startup_detail = None
         assert cleaned == [True]
         assert not old_epoch.exists()
         stale = client.post("/api/projects", headers={"X-Panels-App-SHA": SHA_A}, json={})

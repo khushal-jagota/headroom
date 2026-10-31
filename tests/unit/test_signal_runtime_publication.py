@@ -21,8 +21,11 @@ from tests.unit.test_signal_publication import (
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     PermissionAnswerWriteFailed,
+    PermissionAskRaised,
+    TurnEnded,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     ConversationAttention,
     ConversationBackendKey,
     ConversationStartRequest,
@@ -64,7 +67,11 @@ class _SignalHarness(controlled._Harness):
 
 
 _EnabledRuntime = tuple[
-    _SignalHarness, SignalPublicationCoordinator, list[SignalBatch], SignalAttachment
+    _SignalHarness,
+    SignalPublicationCoordinator,
+    list[SignalBatch],
+    SignalAttachment,
+    asyncio.Runner,
 ]
 
 
@@ -167,11 +174,13 @@ def _enabled_runtime(
         participate=lambda connection, batch: batches.append(batch),
         unavailable=lambda reason: None,
     )
-    try:
-        yield runtime, coordinator, batches, attachment
-    finally:
-        asyncio.run(runtime.system.shutdown())
-        assert ownership.closed
+    # Exercise and shutdown share the same live loop and its owned tasks.
+    with asyncio.Runner() as loop:
+        try:
+            yield runtime, coordinator, batches, attachment, loop
+        finally:
+            loop.run(runtime.system.shutdown())
+            assert ownership.closed
 
 
 def _latest_attention(batches: list[SignalBatch]) -> ConversationAttention:
@@ -183,12 +192,16 @@ def _latest_attention(batches: list[SignalBatch]) -> ConversationAttention:
     )
 
 
-
-
 def test_actual_turn_pending_answer_and_end_share_source_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
 
         async def exercise() -> None:
             await controlled._start(runtime)
@@ -201,29 +214,33 @@ def test_actual_turn_pending_answer_and_end_share_source_boundary(
             request = await runtime.request_user_input("c")
             assert _latest_attention(batches).awaiting_answer
             runtime.backend("c").permission_answer_write_fails = True
-            assert not await runtime.system.answer_permission_ask("c", permission, "allow-once")
+            assert (
+                await runtime.system.answer_permission_ask("c", permission, "allow-once")
+            ) is AnswerFate.refused
             assert await runtime.system.has_pending_permission_ask("c")
             runtime.backend("c").permission_answer_write_fails = False
-            assert await runtime.system.answer_permission_ask("c", permission, "deny")
+            assert (
+                await runtime.system.answer_permission_ask("c", permission, "deny")
+            ) is AnswerFate.applied
             state = runtime.system._conversations["c"]
             assert state.running_turn is not None
             assert state.running_turn.user_input_provider_ids[request.request_id] == "input-1"
             runtime.backend("c").user_input_answer_write_fails = True
-            assert not await runtime.system.answer_user_input(
+            assert (await runtime.system.answer_user_input(
                 "c",
                 request.request_id,
                 (UserInputAnswer("scope", ("Backend",)), UserInputAnswer("timing", ("Now",))),
-            )
+            )) is AnswerFate.refused
             assert await runtime.system.has_pending_user_input("c")
             runtime.backend("c").user_input_answer_write_fails = False
-            assert await runtime.system.answer_user_input(
+            assert (await runtime.system.answer_user_input(
                 "c",
                 request.request_id,
                 (
                     UserInputAnswer("scope", ("Backend",)),
                     UserInputAnswer("timing", ("Now",)),
                 ),
-            )
+            )) is AnswerFate.applied
             assert not _latest_attention(batches).awaiting_answer
             assert not await runtime.system.has_pending_permission_ask("c")
             assert not await runtime.system.has_pending_user_input("c")
@@ -234,13 +251,19 @@ def test_actual_turn_pending_answer_and_end_share_source_boundary(
             assert not await runtime.system.is_running("c")
             attachment.validate(attachment.capture_permit())
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_status_reads_retain_signal_and_runtime_ownership_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
 
         async def exercise() -> None:
             await controlled._start(runtime)
@@ -265,13 +288,19 @@ def test_status_reads_retain_signal_and_runtime_ownership_admission(
                     with pytest.raises(RuntimeError, match="the conversation runtime is shut down"):
                         await read(conversation_id)
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_rejected_request_restores_actual_slot_fields_before_gate_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
 
         async def exercise() -> None:
             await controlled._start(runtime)
@@ -287,10 +316,11 @@ def test_rejected_request_restores_actual_slot_fields_before_gate_release(
 
             coordinator._participant = reject
             task = asyncio.create_task(
-                runtime.system._on_permission_ask_raised(
-                    state,
+                runtime.system.take_backend_event(
                     running.token,
-                    BackendPermissionAsk("provider-ask", "Title", "Detail", ()),
+                    PermissionAskRaised(
+                        ask=BackendPermissionAsk("provider-ask", "Title", "Detail", ())
+                    ),
                 )
             )
             for _ in range(500):
@@ -314,18 +344,26 @@ def test_rejected_request_restores_actual_slot_fields_before_gate_release(
             coordinator._participant = original
             runtime.store.resume_recording("c")
             await asyncio.wait_for(task, 5)
-            assert running.pending_permission_ask_ids == {"1:permission:provider-ask"}
-            assert running.permission_provider_ids == {"1:permission:provider-ask": "provider-ask"}
+            recovered = state.running_turn
+            assert recovered is not None and recovered.token == running.token
+            assert recovered.pending_permission_ask_ids == {"1:permission:provider-ask"}
+            assert recovered.permission_provider_ids == {
+                "1:permission:provider-ask": "provider-ask"
+            }
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
-
-
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
 
         async def exercise() -> None:
             await controlled._start(runtime)
@@ -336,7 +374,7 @@ def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
             assert running is not None
             entered, release = asyncio.Event(), asyncio.Event()
 
-            async def blocked_send(*args: object) -> None:
+            async def blocked_send(*args: object, **kwargs: object) -> None:
                 assert not _latest_attention(batches).awaiting_answer
                 assert not running.pending_permission_ask_ids
                 entered.set()
@@ -349,26 +387,30 @@ def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
                 runtime.system.answer_permission_ask("c", permission, "deny")
             )
             await entered.wait()
-            await runtime.system._on_turn_ended(
-                state,
+            await runtime.system.take_backend_event(
                 running.token,
-                ConversationTurnEnding.completed,
-                None,
-                None,
+                TurnEnded(ending=ConversationTurnEnding.completed),
             )
             release.set()
-            assert not await answer
+            assert await answer is AnswerFate.refused
             assert state.running_turn is None
-            assert not running.pending_permission_ask_ids and not running.permission_provider_ids
+            assert not await runtime.system.has_pending_permission_ask("c")
+            assert await runtime.system.pending_permission_ask_ids("c") == frozenset()
             assert not _latest_attention(batches).awaiting_answer
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_uncertain_committed_prompt_recovers_result_without_provider_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
+    with _enabled_runtime(tmp_path, monkeypatch) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+        loop,
+    ):
         original = coordinator.record_result
         failed = False
 
@@ -405,11 +447,7 @@ def test_uncertain_committed_prompt_recovers_result_without_provider_retry(
             assert sum(event.kind.value == "prompt" for event in events) == 1
             assert runtime.system._conversations["c"].running_turn is not None
 
-        asyncio.run(asyncio.wait_for(exercise(), 8))
-
-
-
-
+        loop.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_startup_reconciles_persisted_pending_but_preserves_unread(
@@ -455,13 +493,14 @@ def test_startup_reconciles_persisted_pending_but_preserves_unread(
         coordinator,
         batches,
         attachment,
+        loop,
     ):
         (value,) = runtime.signal_snapshot.values
         assert value.conversation_id == "historical"
         assert value.attention.signal == {"working": False, "message_for_owner": True}
         assert not value.attention.awaiting_answer
         assert not runtime.spawned_conversation_ids
-        facts = asyncio.run(runtime.store.lifecycle_facts("historical"))
+        facts = loop.run(runtime.store.lifecycle_facts("historical"))
         assert facts[0].status is LifecycleStatus.unavailable
         with pytest.raises(ConversationRuntimeAlreadyOwned):
             acquire_runtime_ownership(runtime.store._db_path)

@@ -321,4 +321,56 @@ def test_neutral_cancellation_and_uncertainty_have_distinct_projections(tmp_path
     store.transition("uncertain-attempt", "unknown", detail="Admission is uncertain.")
     uncertain = store.project(PRIOR_SHA)
     assert (uncertain.state, uncertain.outcome) == ("unknown", None)
-    assert uncertain.detail == "Admission is uncertain."
+    assert uncertain.detail == (
+        "Installation is unconfirmed. Work remains paused. Chief review is required."
+    )
+
+
+@pytest.mark.parametrize("phase", ["app_healthy", "unknown"])
+def test_unconfirmed_report_notice_uses_fixed_deadline_without_erasing_unknown_evidence(
+    tmp_path: Path, phase: DeploymentPhase,
+) -> None:
+    clock = Clock()
+    store = DeploymentLifecycleStore(tmp_path / "lifecycle.json", now=clock)
+    store.start("deploy", SHA, prior_sha=PRIOR_SHA)
+    store.transition("deploy", "verifying")
+    committed = store.transition("deploy", "app_healthy", serving_sha=SHA)
+    if phase == "unknown":
+        committed = store.transition("deploy", "unknown")
+    before = store.path.read_bytes()
+    anchor = committed.updated_at if phase == "unknown" else committed.expires_at
+    clock.value = anchor
+    projection = store.project(SHA, admission_open=True)
+    deadline = anchor + timedelta(seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS)
+    assert projection.state == "unknown"
+    assert projection.installation_confirmed is True
+    assert projection.unknown_display_until == deadline.isoformat().replace("+00:00", "Z")
+    assert "No action is needed from you." in (projection.detail or "")
+    clock.value = deadline + timedelta(days=1)
+    assert store.project(SHA, admission_open=True) == projection
+    for running, admitted in ((SHA, False), (PRIOR_SHA, True)):
+        unresolved = store.project(running, admission_open=admitted)
+        assert unresolved.state == "unknown"
+        assert unresolved.installation_confirmed is False
+        assert unresolved.unknown_display_until is None
+        assert "Chief review is required." in (unresolved.detail or "")
+    assert store.project(SHA).installation_confirmed is False
+    assert store.path.read_bytes() == before
+
+
+def test_unconfirmed_other_candidate_does_not_claim_that_prior_app_work_is_paused(
+    tmp_path: Path,
+) -> None:
+    clock = Clock()
+    store = DeploymentLifecycleStore(tmp_path / "lifecycle.json", now=clock)
+    record = store.start("before-claim", SHA, prior_sha=PRIOR_SHA)
+    clock.value = record.expires_at
+    projection = store.project(PRIOR_SHA, admission_open=True)
+    assert projection.state == "unknown"
+    assert projection.installation_confirmed is False
+    assert projection.work_paused is False
+    assert projection.unknown_display_until is None
+    assert projection.detail == "Installation is unconfirmed. Chief review is required."
+    paused = store.project(PRIOR_SHA, admission_open=False)
+    assert paused.work_paused is True
+    assert "Work remains paused." in (paused.detail or "")

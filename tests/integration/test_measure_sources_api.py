@@ -19,7 +19,6 @@ from typing import Any, Never
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
-from tests.support.model_catalogue import seed_test_model_catalogue
 
 from planner.cli.main import main
 from planner.conversation.backends.contracts import BackendEventSink
@@ -123,7 +122,6 @@ def source_client(
     database = tmp_path / "planning.db"
     with closing(connect(str(database))) as conn:
         create_schema(conn)
-        seed_test_model_catalogue(conn)
     config = load_config(
         None,
         env={

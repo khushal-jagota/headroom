@@ -15,7 +15,6 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -33,7 +32,7 @@ def client(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "worker-types.db"
     with closing(connect(str(db_path))) as boot:
         create_schema(boot)
-        seed_test_model_catalogue(boot)
+
     config = load_config(
         path=None,
         env={
@@ -81,20 +80,21 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
             title_max_chars=200,
         )
         conn.execute(
-            "UPDATE tickets SET stage = 'needs_plan', pending_proposal = NULL WHERE id = ?",
+            "UPDATE tickets SET stage = 'needs_implementation', "
+            "pending_proposal = NULL WHERE id = ?",
             (ticket.id,),
         )
         finished = tickets_data.create_ticket(
             conn,
             worker_type="coding",
-            title="Historical Plan ceiling",
+            title="Historical Implementation ceiling",
             brief="Kickoff",
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
         )
         conn.execute(
-            "UPDATE tickets SET stage='done', ceiling='needs_plan', "
+            "UPDATE tickets SET stage='done', ceiling='needs_implementation', "
             "pending_proposal=NULL WHERE id=?",
             (finished.id,),
         )
@@ -105,28 +105,30 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
         conn.close()
 
     coding = test_client.get("/api/worker-types/coding").json()
-    without_plan = json.loads(json.dumps(coding))
-    without_plan["stages"] = [
-        stage for stage in without_plan["stages"] if stage["id"] != "needs_plan"
+    without_implementation = json.loads(json.dumps(coding))
+    without_implementation["stages"] = [
+        stage for stage in without_implementation["stages"] if stage["id"] != "needs_implementation"
     ]
-    without_plan["fields"] = [field for field in without_plan["fields"] if field["id"] != "plan"]
+    without_implementation["fields"] = [
+        field for field in without_implementation["fields"] if field["id"] != "implementation"
+    ]
 
-    response = test_client.post("/api/worker-types", json=without_plan)
+    response = test_client.post("/api/worker-types", json=without_implementation)
 
     assert response.status_code == 200, response.text
     assert response.json()["migrations"] == [
         {
             "ticket_id": ticket.id,
             "title": "Mid flight",
-            "old_stage": "needs_plan",
+            "old_stage": "needs_implementation",
             "new_stage": "needs_what_changes",
             "old_ceiling": "needs_brief",
             "new_ceiling": "needs_brief",
         }
     ]
-    assert test_client.get("/api/worker-types/coding").json() == without_plan
+    assert test_client.get("/api/worker-types/coding").json() == without_implementation
     assert configured_worker_type_registry().require("coding").stage_ids() == tuple(
-        stage["id"] for stage in without_plan["stages"]
+        stage["id"] for stage in without_implementation["stages"]
     )
     with closing(connect(str(db_path))) as conn:
         assert conn.execute("SELECT stage FROM tickets WHERE id=?", (ticket.id,)).fetchone()[0] == (
@@ -135,7 +137,7 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
     historical = test_client.get(f"/api/tickets?detail=full&id={finished.id}")
     assert historical.status_code == 200, historical.text
     assert historical.json()["stage"] == "done"
-    assert historical.json()["ceiling"] == "needs_plan"
+    assert historical.json()["ceiling"] == "needs_implementation"
     listing = test_client.get("/api/tickets?detail=full")
     assert listing.status_code == 200, listing.text
     assert finished.id in {row["id"] for row in listing.json()["tickets"]}
@@ -163,10 +165,10 @@ def test_failed_bundled_amendment_preserves_skill_definition_and_runtime(
             now=1,
             title_max_chars=200,
         )
-        conn.execute("UPDATE tickets SET stage='needs_plan' WHERE id=?", (ticket.id,))
+        conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id=?", (ticket.id,))
     replacement = json.loads(json.dumps(coding))
-    replacement["stages"] = [s for s in replacement["stages"] if s["id"] != "needs_plan"]
-    replacement["fields"] = [f for f in replacement["fields"] if f["id"] != "plan"]
+    replacement["stages"] = [s for s in replacement["stages"] if s["id"] != "needs_implementation"]
+    replacement["fields"] = [f for f in replacement["fields"] if f["id"] != "implementation"]
     replacement["skill"] = {"description": "must not persist"}
     response = test_client.post("/api/worker-types", json=replacement)
     assert response.status_code == 400, response.text
@@ -195,9 +197,10 @@ def test_launch_defaults_are_the_type_and_take_effect_at_once(
     assert response.status_code == 200, response.text
     record = test_client.get("/api/worker-types/coding").json()
     assert record["profile"]["default_backend"] == "claude"
-    assert record["profile"]["default_model"] == "opus"
+    assert record["profile"]["default_model"] == "claude-opus-5"
     assert (
-        configured_worker_type_registry().require("coding").worker_profile.default_model == "opus"
+        configured_worker_type_registry().require("coding").worker_profile.default_model
+        == "claude-opus-5"
     )
 
 
@@ -452,13 +455,13 @@ def test_committed_amendment_receipt_survives_skill_file_publication_failure(
             title_max_chars=200,
         )
         conn.execute(
-            "UPDATE tickets SET stage='needs_what_changes', ceiling='needs_plan', "
+            "UPDATE tickets SET stage='needs_what_changes', ceiling='needs_implementation', "
             "pending_proposal=NULL WHERE id=?",
             (ticket.id,),
         )
     record = test_client.get("/api/worker-types/coding").json()
-    record["stages"] = [s for s in record["stages"] if s["id"] != "needs_plan"]
-    record["fields"] = [f for f in record["fields"] if f["id"] != "plan"]
+    record["stages"] = [s for s in record["stages"] if s["id"] != "needs_implementation"]
+    record["fields"] = [f for f in record["fields"] if f["id"] != "implementation"]
     record["skill"] = {"description": "committed with receipt"}
 
     def fail_replace(*args: object, **kwargs: object) -> None:
@@ -475,11 +478,14 @@ def test_committed_amendment_receipt_survives_skill_file_publication_failure(
             "title": "Receipt survives",
             "old_stage": "needs_what_changes",
             "new_stage": "needs_what_changes",
-            "old_ceiling": "needs_plan",
+            "old_ceiling": "needs_implementation",
             "new_ceiling": "needs_what_changes",
         }
     ]
-    assert "needs_plan" not in configured_worker_type_registry().require("coding").stage_ids()
+    assert (
+        "needs_implementation"
+        not in configured_worker_type_registry().require("coding").stage_ids()
+    )
     with closing(connect(str(db_path))) as conn:
         assert conn.execute("SELECT ceiling FROM tickets WHERE id=?", (ticket.id,)).fetchone()[
             0

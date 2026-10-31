@@ -46,6 +46,8 @@ def launch(
     active: bool = True, parent: bool = False, writer: Path | None = None,
     shutdown_grace: float = 0.08,
 ) -> subprocess.Popen[bytes]:
+    if sys.platform != "linux":
+        pytest.skip("Deployment runner supervision requires Linux prctl, /proc and pidfds")
     command = tmp_path / "command.sh"
     command.write_text(script)
     environment = {
@@ -323,13 +325,14 @@ def test_exited_adopted_child_is_reaped_before_owned_command_finishes(
 def test_permission_denial_skips_only_proved_foreign_children(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], ownership: str,
 ) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
     children = [101, 102]
     signaled: list[int] = []
     monkeypatch.setattr(deployment_progress, "_direct_children", lambda: children.copy())
     monkeypatch.setattr(deployment_progress, "process_identity", lambda _pid: "start-tick")
     monkeypatch.setattr(os, "getuid", lambda: 1000)
     monkeypatch.setattr(os, "geteuid", lambda: 1000)
-    monkeypatch.setattr(os, "pidfd_open", lambda pid: pid)
+    monkeypatch.setattr(os, "pidfd_open", lambda pid: pid, raising=False)
     monkeypatch.setattr(os, "close", lambda _fd: None)
     def read_status(path: Path) -> str:
         if str(path) == "/proc/101/status":
@@ -352,7 +355,7 @@ def test_permission_denial_skips_only_proved_foreign_children(
             children.remove(descriptor)
 
     monkeypatch.setattr(os, "waitpid", waitpid)
-    monkeypatch.setattr(signal, "pidfd_send_signal", send_signal)
+    monkeypatch.setattr(signal, "pidfd_send_signal", send_signal, raising=False)
     def deny_group_signal(_pid: int, _signum: int) -> None:
         raise PermissionError("permission denied")
 

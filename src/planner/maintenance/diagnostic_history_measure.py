@@ -121,9 +121,21 @@ def independent_removal_oracle(connection: sqlite3.Connection, cutoff_unix: int)
         row["conversation_id"]: row["through_sequence"]
         for row in _rows(connection, "conversation_error_acknowledgements")
     }
+    tables = {
+        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    unresolved_native: set[str] = set()
+    if "mac_runs" in tables:
+        unresolved_native.update(
+            row["conversation_id"]
+            for row in _rows(connection, "mac_runs")
+            if row["stop_state"] != "closed"
+        )
     result: set[EventKey] = set()
     for conversation in _rows(connection, "conversations"):
         identity = conversation["conversation_id"]
+        if identity in unresolved_native:
+            continue
         try:
             pairs = json.loads(conversation["identity_environment_variables"])
             environment = dict(pairs)
@@ -172,10 +184,7 @@ def independent_removal_oracle(connection: sqlite3.Connection, cutoff_unix: int)
             for owner in owners
         ):
             continue
-        if any(
-            owner not in managers or not managers[owner]["settled"]
-            for owner in manager_ids
-        ):
+        if any(owner not in managers or not managers[owner]["settled"] for owner in manager_ids):
             continue
         terminal = {
             "turn": {"completed", "failed", "interrupted", "unavailable"},

@@ -55,12 +55,13 @@ from tests.support.conversation_scripted_acp_agent import (
 
 from planner.conversation.backends.contracts import (
     BackendEventSink,
-    BackendPermissionAsk,
+    BackendEventValue,
     BackendPromptAccepted,
     BackendSteerOutcome,
     BackendSteerRefused,
-    BackendUserInputRequest,
-    PromptWriteFailed,
+    PermissionAskRaised,
+    PromptWriteRefused,
+    TurnEnded,
     TurnToken,
 )
 from planner.conversation.backends.hermes_acp import (
@@ -68,7 +69,7 @@ from planner.conversation.backends.hermes_acp import (
     HermesAcpBackendChild,
 )
 from planner.conversation.contracts import (
-    ComposerCatalogEntry,
+    AnswerFate,
     ConversationBackendKey,
     ConversationSystem,
     PromptDeliveryMode,
@@ -80,12 +81,10 @@ from planner.conversation.events import (
     ModelChangedEventPayload,
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
-    PlanEntry,
     PromptDeliveryRefusedEventPayload,
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
-    ToolCallStatus,
     TurnEndedEventPayload,
     UserInputAnswer,
 )
@@ -175,115 +174,15 @@ class _ObservingSink:
         self._sink = sink
         self._conversation = conversation
 
-    async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
-        await self._sink.agent_message_delta(turn_token, text_delta)
-
-    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
-        await self._sink.model_thinking_happened(turn_token)
-
-    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
-        await self._sink.plan_updated(turn_token, entries)
-
-    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
-        await self._sink.agent_message_completed(turn_token, content)
-
-    async def tool_call_started(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        title: str,
-        tool_kind: str,
-        detail: str | None,
-    ) -> None:
-        await self._sink.tool_call_started(
-            turn_token,
-            tool_call_id=tool_call_id,
-            title=title,
-            tool_kind=tool_kind,
-            detail=detail,
-        )
-
-    async def tool_call_progress(
-        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
-    ) -> None:
-        await self._sink.tool_call_progress(turn_token, tool_call_id=tool_call_id, detail=detail)
-
-    async def tool_call_finished(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        tool_call_status: ToolCallStatus,
-        detail: str | None,
-    ) -> None:
-        await self._sink.tool_call_finished(
-            turn_token,
-            tool_call_id=tool_call_id,
-            tool_call_status=tool_call_status,
-            detail=detail,
-        )
-
-    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
-        await self._sink.permission_ask_raised(turn_token, ask)
-        self._conversation.ask_ids_in_order.append(ask.ask_id)
-        self._conversation.permission_asks_reported += 1
-        self._conversation.pulse.send()
-
-    async def user_input_requested(
-        self, turn_token: TurnToken, request: BackendUserInputRequest
-    ) -> None:
-        await self._sink.user_input_requested(turn_token, request)
-
-    async def user_input_failed(
-        self, turn_token: TurnToken, *, request_id: str, detail: str
-    ) -> None:
-        await self._sink.user_input_failed(turn_token, request_id=request_id, detail=detail)
-
-    async def turn_ended(
-        self,
-        turn_token: TurnToken,
-        *,
-        ending: ConversationTurnEnding,
-        error_summary: str | None,
-        standard_error_tail: str | None,
-    ) -> None:
-        await self._sink.turn_ended(
-            turn_token,
-            ending=ending,
-            error_summary=error_summary,
-            standard_error_tail=standard_error_tail,
-        )
-        self._conversation.turn_endings_reported += 1
-        self._conversation.pulse.send()
-
-    async def token_usage_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        cached_input_tokens: int | None,
-        cost_usd: float | None,
-    ) -> None:
-        await self._sink.token_usage_reported(
-            turn_token,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cached_input_tokens=cached_input_tokens,
-            cost_usd=cost_usd,
-        )
-
-    async def context_compacted(self, turn_token: TurnToken) -> None:
-        await self._sink.context_compacted(turn_token)
-
-    async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
-        await self._sink.vendor_session_cursor_rebound(vendor_session_cursor)
-
-    async def composer_catalog_reported(
-        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        await self._sink.composer_catalog_reported(composer_catalog)
+    async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
+        await self._sink.report(turn, event)
+        if isinstance(event, PermissionAskRaised):
+            self._conversation.ask_ids_in_order.append(event.ask.ask_id)
+            self._conversation.permission_asks_reported += 1
+            self._conversation.pulse.send()
+        elif isinstance(event, TurnEnded):
+            self._conversation.turn_endings_reported += 1
+            self._conversation.pulse.send()
 
 
 class _CountedChild:
@@ -304,7 +203,10 @@ class _CountedChild:
         *,
         vendor_session_cursor: str | None,
     ) -> None:
-        await self._child.start(resolved_start, vendor_session_cursor=vendor_session_cursor)
+        await self._child.start(
+            resolved_start,
+            vendor_session_cursor=vendor_session_cursor,
+        )
 
     async def write_prompt(
         self,
@@ -318,9 +220,10 @@ class _CountedChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         if self._conversation.known_prewrite_failure:
-            raise PromptWriteFailed("the controlled backend refused before transmission")
+            raise PromptWriteRefused("the controlled backend refused before transmission")
         accepted = await self._child.write_prompt(
             turn_token,
             content,
@@ -331,6 +234,7 @@ class _CountedChild:
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             automatic_compaction=automatic_compaction,
+            reasoning_effort_is_set=reasoning_effort_is_set,
         )
         self._conversation.prompt_turn_numbers.append(turn_token.turn_number)
         self._conversation.expected_prompt_writes += 1
@@ -357,14 +261,28 @@ class _CountedChild:
         await self._child.cancel_running_turn()
         self._conversation.expected_cancellations += 1
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         await self._child.answer_permission_ask(ask_id, option_id)
         self._conversation.expected_permission_answers += 1
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self, request_id: str, answers: tuple[UserInputAnswer, ...], **kwargs: object
+    ) -> AnswerFate:
         await self._child.answer_user_input(request_id, answers)
+        return AnswerFate.applied
+
+    @property
+    def stop_outside_lock(self) -> bool:
+        return self._child.stop_outside_lock
+
+    async def withdraw_delivery(self) -> bool:
+        return await self._child.withdraw_delivery()
+
+    async def detach(self) -> None:
+        await self.stop()
 
     async def stop(self) -> None:
         # Read the agent one last time while it is still there, so what it saw stays with
@@ -563,8 +481,8 @@ class ConversationSystemUnderTest:
         )
 
     async def answer_permission_ask(
-        self, conversation_id: str, ask_id: str, option_id: str
-    ) -> bool:
+        self, conversation_id: str, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         landed = await self._system.answer_permission_ask(conversation_id, ask_id, option_id)
         await self.settle()
         return landed

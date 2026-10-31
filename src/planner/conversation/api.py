@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
@@ -59,6 +58,7 @@ from planner.conversation.contracts import (
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
     PromptDeliveryUncertain,
+    WorkspacePathPolicy,
     backend_supports_steer,
 )
 from planner.conversation.events import (
@@ -97,11 +97,6 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
-from planner.conversation.model_corrections.contracts import (
-    CorrectionBatch,
-    CorrectionPreviewRequest,
-)
-from planner.conversation.model_corrections.service import apply_corrections, preview_corrections
 from planner.conversation.runtime_composition import (
     ConversationRuntime as ConversationRuntime,
 )
@@ -110,6 +105,7 @@ from planner.conversation.runtime_composition import (
 )
 from planner.conversation.snapshot import (
     BackendSnapshot,
+    BackendSnapshotService,
     BackendUpdateResult,
 )
 from planner.conversation.storage import (
@@ -378,6 +374,8 @@ class VoiceTranscriptionBody(BaseModel):
 
 
 class PermissionAnswerBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     ask_id: str
     option_id: str
 
@@ -387,6 +385,8 @@ class UserInputQuestionAnswerBody(BaseModel):
 
 
 class UserInputAnswerBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     request_id: str
     answers: dict[str, UserInputQuestionAnswerBody]
 
@@ -746,35 +746,28 @@ async def promote_held_prompt(
 
 @router.post("/conversations/{conversation_id}/permission-answers")
 async def answer_permission_ask(
-    conversation_id: str, body: PermissionAnswerBody, runtime: Runtime
-) -> dict[str, bool]:
-    """Give the backend the option a person chose, and say whether it landed.
-
-    Not landing is an ordinary outcome — the ask was answered already, or its turn has
-    since ended — so it is a false rather than an error.
-    """
+    conversation_id: str, body: PermissionAnswerBody, runtime: Runtime, ctx: Ctx
+) -> dict[str, str]:
+    """Return the conversation's answer fate."""
+    require_owner(ctx)
     _require_mutable_conversation(runtime, conversation_id)
-    landed = await runtime.system.answer_permission_ask(
-        conversation_id, body.ask_id, body.option_id
-    )
-    return {"landed": landed}
+    fate = await runtime.system.answer_permission_ask(conversation_id, body.ask_id, body.option_id)
+    return {"fate": fate.value}
 
 
 @router.post("/conversations/{conversation_id}/user-input-answers")
 async def answer_user_input(
-    conversation_id: str, body: UserInputAnswerBody, runtime: Runtime
-) -> dict[str, bool]:
-    """Give the backend the complete answer map for one question request."""
+    conversation_id: str, body: UserInputAnswerBody, runtime: Runtime, ctx: Ctx
+) -> dict[str, str]:
+    """Save or apply one complete answer through the conversation."""
+    require_owner(ctx)
     _require_mutable_conversation(runtime, conversation_id)
-    landed = await runtime.system.answer_user_input(
-        conversation_id,
-        body.request_id,
-        tuple(
-            UserInputAnswer(question_id=question_id, answers=tuple(answer.answers))
-            for question_id, answer in body.answers.items()
-        ),
+    answers = tuple(
+        UserInputAnswer(question_id=key, answers=tuple(value.answers))
+        for key, value in body.answers.items()
     )
-    return {"landed": landed}
+    fate = await runtime.system.answer_user_input(conversation_id, body.request_id, answers)
+    return {"fate": fate.value}
 
 
 # --- the backends on this machine ---------------------------------------------------------
@@ -799,9 +792,42 @@ async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, An
     about this route passes whether it opens five connections or eighty.
     """
     snapshots = await runtime.backend_snapshots.snapshots(refresh=refresh)
-    if runtime.model_resolution is not None:
-        snapshots = tuple(runtime.model_resolution.decorate_snapshot(item) for item in snapshots)
     return {"backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots]}
+
+
+@router.post("/backends")
+async def read_scoped_backends(
+    raw: dict[str, Any],
+    runtime: Runtime,
+    ctx: Ctx,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Read the models of the Ticket's machine, including its last offline copy."""
+    from planner.core import authority
+    from planner.core.errors import ErrorCode, PlannerError
+    from planner.tickets import data as ticket_data
+    from planner.tickets.contracts import TicketLocale
+
+    if (
+        set(raw) != {"ticket_id"}
+        or not isinstance(raw["ticket_id"], str)
+        or not raw["ticket_id"].strip()
+    ):
+        raise PlannerError(ErrorCode.validation, "ticket_id is required", {})
+    with closing(connect(runtime.database_path)) as conn:
+        authority.require_above_or_self(conn, ctx.principal, authority.ticket(raw["ticket_id"]))
+        ticket = ticket_data.read_ticket(conn, raw["ticket_id"])
+    from planner.conversation.model_resolution.contracts import RemoteCatalogSource
+
+    source: RemoteCatalogSource | BackendSnapshotService | None = runtime.backend_snapshots
+    if ticket.locale is TicketLocale.macos:
+        source = runtime.system.machine_catalog
+    if source is None:
+        raise PlannerError(ErrorCode.validation, "The selected machine is unavailable", {})
+    snapshots = await asyncio.gather(
+        *(source.snapshot(backend, refresh=refresh) for backend in ConversationBackendKey)
+    )
+    return {"backends": [_snapshot_json(item, runtime.backend_state) for item in snapshots]}
 
 
 @router.post("/backends/refresh")
@@ -815,10 +841,6 @@ async def refresh_backends(runtime: Runtime) -> dict[str, Any]:
         # wait for version, identity, model-catalogue, or update-advisory probes.
         await asyncio.sleep(0)
         snapshots = await runtime.backend_snapshots.snapshots()
-        if runtime.model_resolution is not None:
-            snapshots = tuple(
-                runtime.model_resolution.decorate_snapshot(item) for item in snapshots
-            )
         refreshed = await usage_refresh
     finally:
         if not usage_refresh.done():
@@ -987,7 +1009,12 @@ async def _conversation_view(runtime: ConversationRuntime, conversation_id: str)
         "supports_steer": backend_supports_steer(record.backend_key),
         "model": record.model,
         "reasoning_effort": record.reasoning_effort,
-        "workspace_folder": str(record.workspace_folder),
+        "workspace_folder": (
+            None
+            if record.workspace_path_policy == WorkspacePathPolicy.executor_default
+            else str(record.workspace_folder)
+        ),
+        "workspace_path_policy": record.workspace_path_policy.value,
         "access": str(record.access),
         "latest_sequence": record.latest_sequence,
         "owner_read_through_sequence": record.owner_read_through_sequence,
@@ -1010,6 +1037,7 @@ async def _conversation_view(runtime: ConversationRuntime, conversation_id: str)
                     else {"kind": held.recipient.kind.value, "id": held.recipient.id}
                 ),
                 "queue_reason": str(held.queue_reason),
+                "delivery_uncertain": held.delivery_uncertain,
             }
             for held in await runtime.system.held_prompts(conversation_id)
         ],
@@ -1144,7 +1172,9 @@ class VideoSendAdmission:
             elif isinstance(payload, PromptDiscardedEventPayload) and payload.suppression_reason:
                 fate = PromptDeliverySuppressed(payload.suppression_reason)
             elif hasattr(payload, "refusal_reason"):
-                fate = PromptDeliveryRefused(payload.refusal_reason)
+                fate = PromptDeliveryRefused(
+                    payload.refusal_reason,
+                )
         self.finish(fate)
         assert self.recipient is not None
         return MessageDeliveryResult(self.recipient, prior, fate)
@@ -1455,10 +1485,14 @@ def _snapshot_json(
                 "model_id": model.model_id,
                 "display_name": model.display_name,
                 "selected_variant": model.selected_variant,
+                "version": model.version,
                 "resolved_model_id": model.resolved_model_id,
-                "catalogue_warning": model.catalogue_warning,
                 "detail": model.detail,
-                "reasoning_effort_options": list(model.reasoning_effort_options),
+                "reasoning_effort_options": (
+                    list(model.reasoning_effort_options)
+                    if model.reasoning_effort_options is not None
+                    else None
+                ),
                 "enabled": enabled_by_model[model.model_id],
             }
             for model in snapshot.available_models
@@ -1646,39 +1680,3 @@ __all__ = [
     "build_conversation_runtime",
     "router",
 ]
-
-
-@router.post("/model-corrections/preview")
-async def preview_model_corrections(
-    body: CorrectionPreviewRequest,
-    request: Request,
-    ctx: Ctx,
-) -> dict[str, Any]:
-    runtime = _runtime(request)
-    if runtime.model_resolution is None:
-        raise HTTPException(status_code=503, detail="model resolution is unavailable")
-    with closing(connect(runtime.database_path)) as conn:
-        results = await preview_corrections(
-            conn, ctx.principal, body.targets, runtime.model_resolution
-        )
-    return CorrectionBatch(corrections=results).model_dump(mode="json")
-
-
-@router.post("/model-corrections/apply")
-async def apply_model_corrections(
-    body: CorrectionBatch,
-    request: Request,
-    ctx: Ctx,
-) -> dict[str, Any]:
-    runtime = _runtime(request)
-    if runtime.model_resolution is None:
-        raise HTTPException(status_code=503, detail="model resolution is unavailable")
-    with closing(connect(runtime.database_path)) as conn:
-        results = await apply_corrections(
-            conn, ctx.principal, body.corrections, runtime.model_resolution, now=int(time.time())
-        )
-        if any(item.applied and item.target.kind == "worker-default" for item in results):
-            from planner.worker_types.configuration import load_worker_runtime_definitions
-
-            load_worker_runtime_definitions(conn)
-    return CorrectionBatch(corrections=results).model_dump(mode="json")

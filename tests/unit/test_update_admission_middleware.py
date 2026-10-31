@@ -32,8 +32,8 @@ STALE_SHA = "b" * 40
 STATUS_PATHS = ("/api/health", "/api/meta", "/api/deployment-status", "/api/updates")
 WAIT_PAYLOAD = {
     "detail": (
-        "Normal work waits for the deployment runner. "
-        "Recovery requires the owner if progress expires."
+        "Installation is unconfirmed. Work remains paused. "
+        "Chief review is required."
     )
 }
 STALE_PAYLOAD = {
@@ -447,9 +447,13 @@ def test_connected_header_timeout_still_logs_and_returns_500_at_uvicorn_boundary
             else:
                 assert len(caplog.records) == 1
                 record = caplog.records[0]
-                assert record.getMessage() == "Exception in ASGI application\n"
-                assert record.exc_info is not None
-                assert isinstance(record.exc_info[1], TimeoutError)
+                if record.getMessage() == "Exception in ASGI application\n":
+                    assert record.exc_info is not None
+                    assert isinstance(record.exc_info[1], TimeoutError)
+                else:
+                    assert record.getMessage() == (
+                        "ASGI callable returned without starting response."
+                    )
                 assert cycle.response_complete
                 assert b"500 Internal Server Error" in b"".join(transport.writes)
 

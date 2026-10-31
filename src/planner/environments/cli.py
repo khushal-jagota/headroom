@@ -171,9 +171,7 @@ def app_build(source_root: Path, requested_sha: str, candidate_app: Path) -> Non
 
 
 @environment.command("app-identity")
-@click.option(
-    "--app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
-)
+@click.option("--app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True)
 def app_identity(app: Path) -> None:
     """Print the validated SHA for one app directory."""
     try:
@@ -246,9 +244,7 @@ def app_deploy(
     except (OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
     lifecycle_store = (
-        DeploymentLifecycleStore(lifecycle_path)
-        if lifecycle_path is not None
-        else None
+        DeploymentLifecycleStore(lifecycle_path) if lifecycle_path is not None else None
     )
 
     def publish_lifecycle(

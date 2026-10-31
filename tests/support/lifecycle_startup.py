@@ -113,13 +113,22 @@ def assert_lifecycle_startup(root: Path, scratch: Path, *, packaged: bool) -> No
                         raise AssertionError((scratch / f"{case}.log").read_text())
                     data: dict[str, Any] = json.loads(observation.read_text())
                     assert data["cwd"] == str(root.resolve())
-                    assert Path(f"/proc/{proc.pid}/cwd").resolve() == unrelated
+                    if sys.platform == "darwin":
+                        cwd_output = subprocess.check_output(
+                            ["/usr/sbin/lsof", "-a", "-p", str(proc.pid), "-d", "cwd", "-Fn"],
+                            text=True,
+                        )
+                        cwd_paths = [line[1:] for line in cwd_output.splitlines()
+                                     if line.startswith("n")]
+                        assert cwd_paths == [str(unrelated)]
+                    else:
+                        assert Path(f"/proc/{proc.pid}/cwd").resolve() == unrelated
                     assert data["parent_pid"] == proc.pid
                     assert data["config_path"] == str(expected_config)
                     assert data["tick_seconds"] == expected_tick
                     assert data["db_path"] == env["PLAN_DB_PATH"]
                     assert Path(data["db_path"]).is_file()
-                    assert data["control_socket"] == str(socket_path)
+                    assert Path(data["control_socket"]).resolve() == socket_path.resolve()
                     assert socket_path.is_socket()
                     assert data["pythonpath"] is None
                     assert data["descendant"] == {"pythonpath": None, "planner": None}
@@ -159,7 +168,13 @@ if sys.orig_argv[-2:] == ["-m", "planner.server_lifecycle.application"]:
         valid = False
         if fd is not None:
             with socket.fromfd(int(fd), socket.AF_INET, socket.SOCK_STREAM) as inherited:
-                valid = inherited.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) == 1
+                if sys.platform == "darwin":
+                    with socket.create_connection(inherited.getsockname(), timeout=1):
+                        accepted, _ = inherited.accept()
+                        accepted.close()
+                        valid = True
+                else:
+                    valid = inherited.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) == 1
         descendant = subprocess.check_output([
             {str(descendant)!r}, "-c",
             "import os,json,importlib.util; "

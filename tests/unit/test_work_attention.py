@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import ConversationSystem
@@ -40,7 +39,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     db_path = tmp_path / "complete_board.db"
     conn = connect(str(db_path))
     create_schema(conn)
-    seed_test_model_catalogue(conn)
+
     item = managers_data.create_manager(
         conn, title="Complete approval queue", project_id="project_vylo", clock=RealClock()
     )

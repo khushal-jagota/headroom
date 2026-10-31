@@ -124,7 +124,19 @@ def test_notice_actual_wire_receipt_and_fresh_worker_link(
                 await _start(restarted, target)
             backend = restarted.backend(target)
             backend.spawn_fails = delivery == "refused"
-            backend.write_fails = delivery == "unknown"
+            if delivery == "unknown":
+                from typing import Any
+
+                from tests.unit.test_conversation_system import _FakeBackendChild
+
+                from planner.conversation.backends.contracts import PromptWriteFailed
+
+                async def possible_emission(
+                    self: _FakeBackendChild, *args: Any, **kwargs: Any
+                ) -> None:
+                    raise PromptWriteFailed("acknowledgment lost after possible transmission")
+
+                monkeypatch.setattr(_FakeBackendChild, "write_prompt", possible_emission)
             backend.composed_content_delivered = delivery != "context_missing"
             if actual_restart:
                 monkeypatch.setattr(conversation_start, "new_conversation_id", lambda: target)
@@ -145,7 +157,6 @@ def test_notice_actual_wire_receipt_and_fresh_worker_link(
                         conn,
                         OWNER_PRINCIPAL,
                         "t",
-                        write_employee_configuration=None,
                         start_worker_step=start_step,
                         now=lambda: 10,
                     )
@@ -334,6 +345,18 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
     create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM conversation_turn_occurrences").fetchone()[0] == 0
     assert conn.execute("SELECT status FROM conversation_lifecycle_facts").fetchone()[0] == "intent"
+    # The historical phase above proves the legacy occurrence fallback. A current
+    # runtime requires the complete supported schema, including native execution
+    # evidence and persisted workspace policy. Upgrade before constructing it.
+    # This two-column table is legacy epoch evidence, not an initialized Signal
+    # producer. Keep it out of migrations that reinstall producer-owned triggers.
+    conn.execute("DROP TABLE signal_publication_meta")
+    conn.commit()
+    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
+    create_schema(conn)
+    conn.execute("CREATE TABLE signal_publication_meta(singleton INTEGER, runtime_epoch TEXT)")
+    conn.execute("INSERT INTO signal_publication_meta VALUES (1,'legacy-epoch')")
+    conn.commit()
     conn.close()
 
     async def exercise() -> None:
@@ -703,9 +726,9 @@ def test_second_boot_does_not_replay_an_unknown_recovery_attempt(tmp_path: Path)
     _run(exercise)
 
 
-@pytest.mark.parametrize("delivery", ["refused", "unknown"])
+@pytest.mark.parametrize("delivery", ["refused", "unknown", "possible_emission"])
 def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
-    tmp_path: Path, delivery: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delivery: str,
 ) -> None:
     """The owner's Chief chat retains a factual delivery failure without another surface."""
     from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
@@ -740,6 +763,19 @@ def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
         try:
             restarted.backend("c").spawn_fails = delivery == "refused"
             restarted.backend("c").write_fails = delivery == "unknown"
+            if delivery == "possible_emission":
+                from typing import Any
+
+                from tests.unit.test_conversation_system import _FakeBackendChild
+
+                from planner.conversation.backends.contracts import PromptWriteFailed
+
+                async def possible_emission(
+                    self: _FakeBackendChild, *args: Any, **kwargs: Any
+                ) -> None:
+                    raise PromptWriteFailed("acknowledgment lost after possible transmission")
+
+                monkeypatch.setattr(_FakeBackendChild, "write_prompt", possible_emission)
             await run_automatic_recovery(restarted.system, restarted.store)
             events = await restarted.store.read_events_after("c", 0)
             payload_type = (
@@ -751,6 +787,7 @@ def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
             ]
             assert len(failures) == 1
             assert failures[0].sender_label == "Panels deployment recovery"
+            assert failures[0].recovery_references
             assert _entry(path)["recovery_state"] == "unable_to_resume"
             await run_automatic_recovery(restarted.system, restarted.store)
             assert await restarted.store.read_events_after("c", 0) == events
@@ -758,7 +795,6 @@ def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
             await restarted.system.shutdown()
 
     _run(exercise)
-
 
 
 def test_grouped_deployments_restore_one_ticket_claim_and_send_one_prompt(tmp_path: Path) -> None:
@@ -921,8 +957,13 @@ def test_cancelled_recovery_after_claim_restore_releases_only_exact_claim(
         await original.system.shutdown()
         restarted = _Harness(path)
 
-        async def cancel_after_restore(*args, **kwargs):  # type: ignore[no-untyped-def]
-            with connect(str(path)) as conn:
+        def inspect_and_replace_claim() -> None:
+            conn = connect(str(path))
+            try:
+                # The backend session cursor can commit in another thread. Acquire
+                # the writer before reading, so this fixture cannot upgrade a stale
+                # WAL snapshot instead of installing the newer claim.
+                conn.execute("BEGIN IMMEDIATE")
                 assert tuple(conn.execute(
                     "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id='t'"
                 ).fetchone()) == ("out", 9)
@@ -930,7 +971,13 @@ def test_cancelled_recovery_after_claim_restore_releases_only_exact_claim(
                     conn.execute(
                         "UPDATE tickets SET worker_step_claim_revision=11 WHERE id='t'"
                     )
-                    conn.commit()
+                conn.commit()
+            finally:
+                conn.close()
+
+        async def cancel_after_restore(*args, **kwargs):  # type: ignore[no-untyped-def]
+            # Keep the event loop free while the fixture waits for a real writer.
+            await asyncio.to_thread(inspect_and_replace_claim)
             raise asyncio.CancelledError
 
         monkeypatch.setattr(restarted.system, "_compose_prompt_content", cancel_after_restore)

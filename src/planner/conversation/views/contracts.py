@@ -7,9 +7,12 @@ All sequence values are scoped to the named conversation, not global database ro
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
-from planner.conversation.contracts import PromptDeliveryMode, PromptDeliveryRefusalReason
+from planner.conversation.contracts import (
+    PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
+)
 from planner.conversation.events import (
     AutomaticCompactionResult,
     ConversationTurnEnding,
@@ -22,7 +25,7 @@ from planner.core.contracts import Principal
 from planner.credentials.requests.contracts import CredentialRequestRowBody
 
 VIEW_PROTOCOL_VERSION = 1
-VIEW_PROJECTION_VERSION = 2
+VIEW_PROJECTION_VERSION = 4
 
 type ConversationViewLens = Literal["focus", "full"]
 type ViewRowKind = Literal[
@@ -122,6 +125,7 @@ class PermissionRowBody(TypedDict):
     state: Literal["live", "answered", "dead"]
     dead_reason: AskDeadReason | None
     answered_option_label: str | None
+    answer_fate: NotRequired[Literal["saved", "applied", "unconfirmed"]]
 
 
 class UserInputRowBody(TypedDict):
@@ -132,6 +136,7 @@ class UserInputRowBody(TypedDict):
     dead_reason: AskDeadReason | None
     answers: list[UserInputAnswer] | None
     failure_detail: str | None
+    answer_fate: NotRequired[Literal["saved", "applied", "unconfirmed"]]
 
 
 class ModelRowBody(TypedDict):

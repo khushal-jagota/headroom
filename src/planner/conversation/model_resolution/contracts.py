@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.core.contracts import ErrorCode, PlannerError
+from planner.conversation.snapshot import BackendSnapshot
+from planner.execution_identity import ExecutorIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,50 +16,17 @@ class ModelVariant:
     name: str
 
 
-class ModelResolutionUnavailable(PlannerError):
-    """Absent evidence permits creation compatibility, but never dispatch."""
+class RemoteCatalogSource(Protocol):
+    @property
+    def identity(self) -> ExecutorIdentity | None: ...
 
-    def __init__(
-        self,
-        backend_key: ConversationBackendKey,
-        variant: ModelVariant | None,
-        *,
-        detail: str | None = None,
-    ) -> None:
-        super().__init__(
-            ErrorCode.validation,
-            "model catalogue unavailable and no last-known-good resolution exists",
-            {
-                "backend_key": backend_key.value,
-                "variant": variant.name if variant else None,
-                "detail": detail,
-            },
-        )
-        self.variant = variant
+    @property
+    def ready(self) -> bool: ...
 
+    def owns_conversation(self, conversation_id: str) -> bool: ...
 
-@dataclass(frozen=True, slots=True)
-class ModelResolution:
-    variant: ModelVariant
-    model: str
-    reasoning_effort: str | None
-    supported_reasoning_efforts: tuple[str, ...]
-    used_last_known_good: bool = False
-    catalogue_warning: str | None = None
+    def retained(self, backend_key: ConversationBackendKey) -> BackendSnapshot | None: ...
 
-
-class CurrentModelResolver(Protocol):
-    async def resolve(
-        self,
-        backend_key: ConversationBackendKey,
-        model: str,
-        reasoning_effort: str | None = None,
-    ) -> ModelResolution: ...
-
-
-@dataclass(frozen=True, slots=True)
-class CachedModelResolution:
-    model: str
-    supported_reasoning_efforts: tuple[str, ...]
-    observed_at: int
-    resolved_model_id: str | None = None
+    async def snapshot(
+        self, backend_key: ConversationBackendKey, *, refresh: bool = False
+    ) -> BackendSnapshot: ...

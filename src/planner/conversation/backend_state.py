@@ -157,9 +157,7 @@ class BackendStateStore:
         finally:
             conn.close()
 
-    def model_is_enabled(
-        self, backend_key: ConversationBackendKey, model_id: str
-    ) -> bool:
+    def model_is_enabled(self, backend_key: ConversationBackendKey, model_id: str) -> bool:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             return model_is_enabled(conn, backend_key, model_id)
@@ -242,10 +240,11 @@ def require_enabled_model(
     model_id: str,
 ) -> None:
     """Refuse a new choice without changing historical selections."""
-    if not model_is_enabled(conn, backend_key, model_id):
+    disabled = model_id if not model_is_enabled(conn, backend_key, model_id) else None
+    if disabled is not None:
         raise PlannerError(
             ErrorCode.validation,
-            f'Model "{model_id}" is disabled. Choose an enabled model.',
+            f'Model "{disabled}" is disabled. Choose an enabled model.',
             {"employee_backend": str(backend_key), "employee_launch_model": model_id},
         )
 
@@ -256,8 +255,10 @@ def write_model_enablement(
     model_id: str,
     enabled: bool,
 ) -> None:
+    # One upsert is atomic and joins an existing caller transaction when present.
     conn.execute(
-        "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) VALUES (?, ?, ?) "
+        "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) "
+        "VALUES (?, ?, ?) "
         "ON CONFLICT(backend_key, model_id) DO UPDATE SET enabled = excluded.enabled",
         (str(backend_key), model_id, int(enabled)),
     )
@@ -283,7 +284,8 @@ def _catalogue_model_id(snapshot: BackendSnapshot, scope: str) -> str | None:
     exact = [
         model.model_id
         for model in snapshot.available_models
-        if wanted in {
+        if wanted
+        in {
             model.model_id.casefold(),
             (model.display_name or "").casefold(),
         }

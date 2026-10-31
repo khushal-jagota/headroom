@@ -389,6 +389,7 @@ jobs:
           PANELS_SUITE: ${{ matrix.suite }}
         run: python3 scripts/publication_checks.py pack --suite "$PANELS_SUITE" --output "$RUNNER_TEMP/publication-suite"
       - name: Retain suite evidence and diagnostics
+        id: suite_proof
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -398,6 +399,8 @@ jobs:
           include-hidden-files: true
           retention-days: 30
       - name: Remove suite temporary state
+        env:
+          PANELS_PROOF_RETENTION_OUTCOME: ${{ steps.suite_proof.outcome }}
         shell: python3 scripts/deployment_progress.py --cleanup {0}
         run: python3 scripts/deployment_rehearsal.py cleanup
         if: ${{ always() }}
@@ -681,7 +684,6 @@ jobs:
         env:
           PANELS_PRIOR_JOB_STATUS: ${{ job.status }}
         run: |
-          test -f "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" || exit 0
           if [ "$PANELS_PRIOR_JOB_STATUS" = "success" ]; then
             phase=succeeded
             detail="Deployment completed."
@@ -693,7 +695,7 @@ jobs:
             code=workflow_failed
             serving_args=()
           fi
-          python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" transition \
+          python3 -I -S -B "$GITHUB_WORKSPACE/scripts/deployment_finalize.py" lifecycle transition \
             --path "$PANELS_LIFECYCLE_PATH" \
             --deployment-id "$PANELS_DEPLOYMENT_ID" \
             --phase "$phase" \
@@ -729,6 +731,7 @@ jobs:
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" > "$PANELS_GATE_DIR/job-timings.json"
           # GitHub records the final upload/cleanup and total duration after this snapshot.
       - name: Retain publication proof
+        id: publication_proof
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -742,6 +745,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Remove rehearsal temporary state
+        env:
+          PANELS_PROOF_RETENTION_OUTCOME: ${{ steps.publication_proof.outcome }}
+          PANELS_LIFECYCLE_START_OUTCOME: ${{ steps.lifecycle_start.outcome }}
         shell: python3 scripts/deployment_progress.py --cleanup {0}
         run: python3 scripts/deployment_rehearsal.py cleanup
         if: ${{ always() }}
@@ -803,9 +809,6 @@ jobs:
         env:
           PANELS_PUBLISHED_ORIGIN: ${{ vars.PANELS_PUBLISHED_ORIGIN }}
         run: python3 scripts/check_published_http2.py
-      - name: Remove adoption temporary state
-        if: ${{ always() }}
-        run: python3 scripts/deployment_rehearsal.py cleanup
       - name: Finalize owner adoption lifecycle
         if: ${{ always() }}
         shell: bash
@@ -838,8 +841,11 @@ jobs:
               pass
           PYTHON
           )"
-          "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.update_reporting \
+          python3 -I -S -B "$GITHUB_WORKSPACE/scripts/deployment_finalize.py" adoption \
             --current-root "$PANELS_CURRENT_ROOT" --request-id "$UPDATE_REQUEST_ID" \
             --deployment-id "$PANELS_DEPLOYMENT_ID" --app-sha "$UPDATE_APP_SHA" \
             --apply-outcome "$UPDATE_APPLY_OUTCOME" --provision-outcome "$UPDATE_PROVISION_OUTCOME" \
             --published-route-outcome "$UPDATE_PUBLISHED_ROUTE_OUTCOME" --serving-sha "$serving_sha"
+      - name: Remove adoption temporary state
+        if: ${{ always() }}
+        run: python3 scripts/deployment_rehearsal.py cleanup

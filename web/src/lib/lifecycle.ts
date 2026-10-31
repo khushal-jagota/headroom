@@ -152,7 +152,7 @@ export function preferredScopeCeilingFor(
   newStage: string | null
 ): string | null {
   if (!lc) return null;
-  const options = ceilingOptionsFor(lc, newStage || lc.ceilingRange[0] || "needs_success_condition");
+  const options = ceilingOptionsFor(lc, newStage || lc.ceilingRange[0] || "needs_brief");
   // Approval passes the stage after the pending proposal here. Advancing again skipped
   // the next approval gate for every Worker type.
   if (newStage && options.some((option) => option.value === newStage)) return newStage;

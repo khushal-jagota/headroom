@@ -71,7 +71,7 @@ def test_brief_persists_as_a_proposal_or_settled_field_for_the_creation_ceiling(
         assert stored.pending_proposal.body == brief
         assert created["pending_proposal"]["body"] == brief
     else:
-        assert created["stage"] == stored.stage == "needs_success_condition"
+        assert created["stage"] == stored.stage == "needs_what_changes"
         assert stored.ceiling == ceiling
         assert stored.field_values["brief"] == brief
         assert stored.pending_proposal is None
@@ -265,7 +265,8 @@ def test_create_refuses_holders_without_authority_before_kickoff_routing(
         refused = client.post(
             "/api/tickets",
             json={
-                "title": "Invalid reviewer", "worker_type": "coding",
+                "title": "Invalid reviewer",
+                "worker_type": "coding",
                 "brief": "This Brief must not normalize the invalid holder to owner.",
                 "ceiling_holder": holder,
                 "manager": assignment,

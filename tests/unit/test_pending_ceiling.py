@@ -20,7 +20,7 @@ def _park(conn: Connection) -> Ticket:
         worker_type="coding",
         principal=OWNER_PRINCIPAL,
         brief="Brief",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
     )
@@ -44,7 +44,7 @@ def _edit(conn: Connection, ticket: Ticket, **values: Unpack[TicketEdit]) -> Tic
     )
 
 
-@pytest.mark.parametrize("ceiling", ["needs_success_condition", "needs_brief"])
+@pytest.mark.parametrize("ceiling", ["needs_what_changes", "needs_brief"])
 def test_pending_same_or_lower_scope_preserves_authored_work(
     tmp_db: Connection,
     ceiling: str,
@@ -79,18 +79,18 @@ def test_visible_accept_sets_selected_scope_reviewer_and_releases_claim(tmp_db: 
     accepted = data.accept_proposal(
         tmp_db,
         original.id,
-        field="success_condition",
+        field="what_changes",
         principal=OWNER_PRINCIPAL,
         now=4,
         next_ceiling="needs_implementation",
         next_holder=CHIEF_PRINCIPAL,
         expected_proposal_revision=original.pending_proposal_revision,
     )
-    assert accepted.stage == "needs_what_changes"
+    assert accepted.stage == "needs_implementation"
     assert accepted.ceiling == "needs_implementation"
     assert accepted.ceiling_holder == CHIEF_PRINCIPAL
     assert accepted.pending_proposal is None
-    assert accepted.field_values["success_condition"] == "Exact visible success condition"
+    assert accepted.field_values["what_changes"] == "Exact visible success condition"
     assert accepted.worker_step_claim is WorkerStepClaim.none
     assert accepted.manager_id == original.manager_id
 
@@ -117,7 +117,7 @@ def test_stale_or_wrong_visible_proposal_acceptance_has_no_effects(
         data.accept_proposal(
             tmp_db,
             original.id,
-            field="what_changes" if change == "field" else "success_condition",
+            field="implementation" if change == "field" else "what_changes",
             principal=OWNER_PRINCIPAL,
             now=5,
             next_ceiling="done",
@@ -168,7 +168,7 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
         "expected_proposal_revision": original.pending_proposal_revision + 1,
     }
     with TestClient(app) as client:
-        response = client.post(f"/api/tickets/{original.id}/accept/success_condition", json=body)
+        response = client.post(f"/api/tickets/{original.id}/accept/what_changes", json=body)
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "validation"
         assert data.read_ticket(tmp_db, original.id) == original
@@ -185,7 +185,7 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
         tmp_db.commit()
         before = tuple(tmp_db.iterdump())
         refused = client.post(
-            f"/api/tickets/{original.id}/accept/success_condition",
+            f"/api/tickets/{original.id}/accept/what_changes",
             json={**body, "next_holder": {"kind": "chief", "id": "chief"}},
         )
         assert refused.status_code == 400, refused.text
@@ -196,10 +196,10 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
         )
         # The proposal, revision, extant claim, attention, and wake rows stay untouched.
         assert tuple(tmp_db.iterdump()) == before
-        response = client.post(f"/api/tickets/{original.id}/accept/success_condition", json=body)
+        response = client.post(f"/api/tickets/{original.id}/accept/what_changes", json=body)
         assert response.status_code == 200, response.text
         accepted = response.json()
-        assert accepted["stage"] == "needs_what_changes"
+        assert accepted["stage"] == "needs_implementation"
         assert accepted["ceiling"] == "needs_implementation"
         assert accepted["ceiling_holder"] == {"kind": "owner", "id": "owner"}
-        assert accepted["field_values"]["success_condition"] == original.pending_proposal.body
+        assert accepted["field_values"]["what_changes"] == original.pending_proposal.body

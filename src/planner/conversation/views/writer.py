@@ -9,6 +9,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 from planner.conversation import events as event
+from planner.conversation.contracts import AnswerFate
 from planner.conversation.message_content import message_content_text
 from planner.conversation.views.configuration import PROJECTION_BACKFILL_BATCH
 from planner.conversation.views.contracts import VIEW_PROJECTION_VERSION
@@ -162,6 +163,29 @@ def _append(
                     "AND lookup_kind=? AND lookup_id=?",
                     (conversation_id, effect.lookup_kind, effect.lookup_id),
                 )
+
+    if (
+        isinstance(
+            payload, (event.PermissionAnsweredEventPayload, event.UserInputAnsweredEventPayload)
+        )
+        and payload.fate is AnswerFate.saved
+        and payload.answer_id
+        and matched is not None
+    ):
+        _lookup(conn, conversation_id, "saved_answer", payload.answer_id, matched[0], turn_key)
+    if isinstance(payload, event.AnswerAppliedEventPayload):
+        original = conn.execute(
+            "SELECT source_sequence FROM conversation_view_lookups WHERE conversation_id=? "
+            "AND lookup_kind='saved_answer' AND lookup_id=?",
+            (conversation_id, payload.answer_id),
+        ).fetchone()
+        if original is not None:
+            conn.execute(
+                "UPDATE conversation_view_rows SET changed_sequence=? "
+                "WHERE conversation_id=? AND sequence=?",
+                (sequence, conversation_id, original[0]),
+            )
+            _lookup(conn, conversation_id, "applied_answer", payload.answer_id, sequence, turn_key)
 
     if effect.row_kind is not None and matched is None:
         conn.execute(
@@ -427,6 +451,12 @@ def _layout_row(
                     turn_key,
                 ),
             )
+        conn.execute(
+            "UPDATE conversation_view_rows SET changed_sequence=? WHERE conversation_id=? "
+            "AND sequence IN (SELECT source_sequence FROM conversation_view_lookups "
+            "WHERE conversation_id=? AND lookup_kind='saved_answer' AND turn_key=?)",
+            (changed_sequence, conversation_id, conversation_id, turn_key),
+        )
         turn_key, group_key = None, None
     return turn_key, group_key
 

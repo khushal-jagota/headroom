@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 from sqlite3 import Connection
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from click.testing import CliRunner
@@ -16,7 +17,7 @@ from tests.unit.test_conversation_system import _FakeBackendChild, _Harness
 
 from planner.cli import http
 from planner.cli.main import main
-from planner.conversation.backends.contracts import BackendEventSink
+from planner.conversation.backends.contracts import BackendEventSink, RetainedBackendChildFactory
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.authctx import RequestContext, _classify
@@ -29,6 +30,7 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.errors import PlannerError
+from planner.executor.routing import LocaleBackendChildFactory
 from planner.files.api import get_goal_file
 from planner.files.goal_files import write_file
 from planner.goals.actions import create_goal
@@ -45,7 +47,15 @@ from planner.runtime.workspaces import register_workspace_root
 class GoalHarness(_Harness):
     def __init__(self, path: Path) -> None:
         self.starts: list[ResolvedConversationStart] = []
-        super().__init__(path)
+        remote = Mock(side_effect=AssertionError("Goal and Chief children must stay on the VPS"))
+        remote.retained_runs.return_value = ()
+        remote.recover.return_value = None
+        super().__init__(
+            path,
+            factory_wrapper=lambda local: LocaleBackendChildFactory(
+                str(path), local, cast(RetainedBackendChildFactory, remote)
+            ),
+        )
 
     def _make_child(
         self,
@@ -155,15 +165,17 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
                     "Goal response",
                 )
                 await harness.complete_turn(ids[-1])
-            assert set(await harness.store.conversation_ids_holding_unread_owner_message()) == set(
-                ids
-            )
+            assert {
+                key for key, facts in (await harness.store.attention_facts(ids)).items()
+                if facts.unread_message_to_owner
+            } == set(ids)
             first = await harness.store.read_conversation(ids[0])
             assert first is not None
             await harness.store.advance_owner_read_through_sequence(ids[0], first.latest_sequence)
-            assert await harness.store.conversation_ids_holding_unread_owner_message() == frozenset(
-                {ids[1]}
-            )
+            assert {
+                key for key, facts in (await harness.store.attention_facts(ids)).items()
+                if facts.unread_message_to_owner
+            } == {ids[1]}
             # Goal messages have their own notification identity and resolvable route.
             queue_deliveries(tmp_db, now=20)
             assert {

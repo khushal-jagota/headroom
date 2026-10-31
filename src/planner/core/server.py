@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 import os
 import re
 import sqlite3
@@ -52,6 +53,8 @@ from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
+from planner.environments.deployment_attention import DeploymentAttentionObserver
+from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.update_admission import matching_commit, startup_requires_commit
 from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
@@ -202,9 +205,12 @@ def create_app(
 
         recovery_task: asyncio.Task[None] | None = None
         lifecycle_observer: asyncio.Task[None] | None = None
+        attention_observer: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
+        executor_endpoint = None
+
         release_task: asyncio.Task[None] | None = None
 
         async def shutdown_dependents() -> None:
@@ -226,6 +232,8 @@ def create_app(
                     pass
 
             await attempt(preview_runtime.close())
+            if attention_observer is not None:
+                await attempt(cancel_task(attention_observer))
             if release_task is not None and not release_task.done():
                 await attempt(cancel_task(release_task))
             if video_cleanup_task is not None:
@@ -239,6 +247,8 @@ def create_app(
             app.state.vps_metrics = None
             if loops is not None:
                 await attempt(_stop_runtime_with_deadline(loops, deadline))
+            if executor_endpoint is not None:
+                await attempt(executor_endpoint.close())
             if lifecycle_observer is not None:
                 await attempt(cancel_task(lifecycle_observer))
             if failures:
@@ -249,19 +259,30 @@ def create_app(
         remembered_codex_login_rejection = DurableCodexLoginRejection(
             config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
         )
+        backend_factories = (
+            backend_child_factories_for_test
+            if backend_child_factories_for_test is not None
+            else production_backend_child_factories(
+                panels_server_url=f"http://{HOST}:{config.port}",
+                remembered_codex_login_rejection=remembered_codex_login_rejection,
+            )
+        )
+        if config.executor_id is not None:
+            from planner.executor.routing import LocaleBackendChildFactory
+            from planner.executor.vps_transport import VpsExecutor
+
+            executor_endpoint = VpsExecutor(config.db_path, clock, machine_id=config.executor_id)
+            backend_factories = {
+                key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
+                for key, local in backend_factories.items()
+            }
+        app.state.executor_endpoint = executor_endpoint
         with register_workspace_root(config.db_path, config.workspace_root):
             async with application_runtime(
                 db_path=config.db_path,
                 db_busy_timeout_ms=config.db_busy_timeout_ms,
                 sse_heartbeat_ms=config.sse_heartbeat_ms,
-                backend_child_factories=(
-                    backend_child_factories_for_test
-                    if backend_child_factories_for_test is not None
-                    else production_backend_child_factories(
-                        panels_server_url=f"http://{HOST}:{config.port}",
-                        remembered_codex_login_rejection=remembered_codex_login_rejection,
-                    )
-                ),
+                backend_child_factories=backend_factories,
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
                 navigation_delivery=navigation_delivery,
                 shutdown_dependents=shutdown_dependents,
@@ -269,17 +290,52 @@ def create_app(
             ) as conversation:
                 audit_conn = conn_factory()
                 try:
+                    from planner.executor.store import ExecutorStore
+
+                    ExecutorStore.interrupt_after_restart(audit_conn)
+                    audit_conn.commit()
                     tickets_data.audit_ticket_registry_integrity(audit_conn)
                     reconcile_managed_skill_versions(audit_conn)
                     reconcile_provisional_worker_step_bindings(audit_conn)
                 finally:
                     audit_conn.close()
 
+                if executor_endpoint is not None:
+                    executor_endpoint.configure(conversation.system, app)
+                conversation.system.configure_machine_catalog(
+                    None if executor_endpoint is None else executor_endpoint.catalog
+                )
                 app.state.conversation_system = (
                     conversation.system
                     if conversation_system_for_test is None
                     else conversation_system_for_test
                 )
+
+                attention = DeploymentAttentionObserver(
+                    lifecycle_store=deployment_lifecycle_store,
+                    attention_directory=deployment_lifecycle_path.parent / "deployment-attention",
+                    app_sha=config.app_sha,
+                    clock=clock,
+                    connect_database=conn_factory,
+                    conversation_system=lambda: app.state.conversation_system,
+                    startup_pending=lambda: app.state.update_startup_pending,
+                    admission_closed=lambda: app.state.update_admission_closed,
+                )
+
+                async def observe_deployment_attention() -> None:
+                    while True:
+                        try:
+                            observed = await attention.poll()
+                            if observed != app.state.deployment_attention:
+                                app.state.deployment_attention = observed
+                                change_signal.emit()
+                        except Exception:
+                            logging.getLogger(__name__).exception(
+                                "Deployment attention could not be recorded or delivered"
+                            )
+                        await asyncio.sleep(DEPLOYMENT_ATTENTION_POLL_SECONDS)
+
+                attention_observer = asyncio.create_task(observe_deployment_attention())
 
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, loops, metrics
@@ -363,8 +419,8 @@ def create_app(
                         def report_setup_result(task: asyncio.Task[None]) -> None:
                             if not task.cancelled() and task.exception() is not None:
                                 app.state.update_startup_detail = (
-                                    f"App {config.app_sha} is installed. "
-                                    "Deferred startup setup failed. Inspect the server log."
+                                    "The app is installed, but setup did not complete. "
+                                    "Chief review is required."
                                 )
                                 import logging
 
@@ -417,6 +473,10 @@ def create_app(
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
+    from planner.executor.app_transport import build_executor_router
+
+    app.include_router(build_executor_router())
+    app.state.executor_id = config.executor_id
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
@@ -455,6 +515,7 @@ def create_app(
     ) or (applying_candidate and not matching_commit(deployment_lifecycle_store, config.app_sha))
     app.state.update_admission_closed = False
     app.state.update_startup_detail = None
+    app.state.deployment_attention = None
     app.state.updates = UpdateService(
         GitHubUpdateProvider.configured(),
         update_request_store,
@@ -529,6 +590,17 @@ def create_app(
             "app_sha": config.app_sha,
         }
 
+    @app.get("/api/executor/health")
+    async def executor_health() -> dict[str, object]:
+        endpoint = getattr(app.state, "executor_endpoint", None)
+        if endpoint is None:
+            return {
+                "mode": "local",
+                "last_contact_at_ms": None,
+                "connection_state": "disconnected",
+            }
+        return {"mode": "remote", **endpoint.health()}
+
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:
         app_sha = config.app_sha
@@ -549,22 +621,47 @@ def create_app(
         snapshot = await asyncio.to_thread(configured_vps_status_collector, config)
         return snapshot.as_dict()
 
+    def deployment_admission_open() -> bool:
+        system = app.state.conversation_system
+        return bool(
+            not app.state.update_startup_pending
+            and not app.state.update_admission_closed
+            and app.state.update_startup_detail is None
+            and system is not None
+            and not system.workspace_admission.closed
+        )
+
     @app.get("/api/deployment-status")
     async def deployment_status() -> dict[str, object]:
-        projection = await asyncio.to_thread(deployment_lifecycle_store.project, config.app_sha)
+        projection = await asyncio.to_thread(
+            deployment_lifecycle_store.project, config.app_sha,
+            admission_open=deployment_admission_open(),
+        )
         payload = projection.to_public_dict()
-        if app.state.update_startup_pending and projection.state == "unknown":
-            payload["detail"] = (
-                "Recovery required: candidate admission lacks a readable runner commit. "
-                "The owner must inspect the deployment runner and recorded recovery paths."
-            )
+        # Admission can close while the record read runs in the worker thread.
+        if not deployment_admission_open():
+            payload["installation_confirmed"] = False
+            payload["unknown_display_until"] = None
+            payload["work_paused"] = True
+            if projection.state == "unknown":
+                payload["detail"] = (
+                    "Installation is unconfirmed. Work remains paused. Chief review is required."
+                )
         if app.state.update_startup_detail is not None:
             payload["detail"] = app.state.update_startup_detail
+            payload["state"] = "problem"
+            payload["installation_confirmed"] = False
+            payload["unknown_display_until"] = None
+        attention = app.state.deployment_attention
+        payload["attention_status"] = attention.status if attention is not None else None
         return payload
 
     @app.get("/api/vps-status-summary")
     async def vps_status_summary() -> dict[str, object]:
-        projection = await asyncio.to_thread(deployment_lifecycle_store.project, config.app_sha)
+        projection = await asyncio.to_thread(
+            deployment_lifecycle_store.project, config.app_sha,
+            admission_open=deployment_admission_open(),
+        )
         summary = await asyncio.to_thread(
             configured_vps_status_summary_collector,
             config,

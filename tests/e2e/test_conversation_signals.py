@@ -132,7 +132,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         server,
         f"/api/tickets/{ticket['id']}/accept/brief",
         {
-            "next_ceiling": "needs_success_condition",
+            "next_ceiling": "needs_what_changes",
             "next_holder": {"kind": "owner", "id": "owner"},
         },
     )
@@ -317,7 +317,7 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
         server,
         f"/api/tickets/{identity}/accept/brief",
         {
-            "next_ceiling": "needs_success_condition",
+            "next_ceiling": "needs_what_changes",
             "next_holder": {"kind": "owner", "id": "owner"},
         },
     )
@@ -348,9 +348,9 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
     capture_success(page, "connected-review-narrow.png")
     page.set_viewport_size({"width": 1440, "height": 1000})
     ticket_card.locator("[data-accept]").click()
-    ticket_card.locator('[data-ceiling-picker-choice="needs_what_changes"]').click()
+    ticket_card.locator('[data-ceiling-picker-choice="needs_implementation"]').click()
     with page.expect_response(
-        lambda response: response.url.endswith(f"/tickets/{identity}/accept/success_condition")
+        lambda response: response.url.endswith(f"/tickets/{identity}/accept/what_changes")
     ) as approved:
         ticket_card.locator('[data-ceiling-picker-choice="owner"]').click()
     assert approved.value.ok, approved.value.text()
@@ -358,7 +358,7 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
     assert isinstance(approval_body, dict)
     assert approval_body["expected_proposal_revision"] == proposal["revision"]
     canonical = api.get(server, f"/api/tickets?id={identity}&detail=full")
-    assert canonical["field_values"]["success_condition"] == proposal["body"]
+    assert canonical["field_values"]["what_changes"] == proposal["body"]
     assert canonical["pending_proposal"] is None
     expect(ticket_card.locator("[data-approval-block]")).to_have_count(0)
     expect(card.locator("[data-review-message-sequence]")).to_have_count(1)
