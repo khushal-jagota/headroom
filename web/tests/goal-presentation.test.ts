@@ -148,7 +148,45 @@ it('never substitutes legacy targets for pending, invalid, or future-only formul
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {GoalChart} from '../src/lib/charts/GoalChart';
+import {Gauge} from '../src/lib/charts/components/gauge';
+import {gaugeArc,gaugePoint} from '../src/lib/charts/lib/gauge-geometry';
 import {observationDetails} from '../src/lib/charts/presentation';
+
+it('preserves the dial endpoints, bounded sweep, and target coordinates across both path precisions',()=>{
+ const empty='M 20.302 79.698 A 42 42 0 0 1 20.302 79.698';
+ const full='M 20.302 79.698 A 42 42 0 1 1 79.698 79.698';
+ expect(gaugeArc(-1,3)).toBe(empty);
+ expect(gaugeArc(0,3)).toBe(empty);
+ expect(gaugeArc(.5,3)).toBe('M 20.302 79.698 A 42 42 0 0 1 50.000 8.000');
+ expect(gaugeArc(1,3)).toBe(full);
+ expect(gaugeArc(2,3)).toBe(full);
+ expect(gaugeArc(1)).toContain('20.301515190165');
+ expect(gaugeArc(1)).not.toBe(full);
+ expect(gaugePoint(.5,35)).toEqual({x:50,y:15});
+ expect(gaugePoint(.5,49)).toEqual({x:50,y:1});
+});
+
+it('retains read-only meter bounds, target marker and formatted inspection rows',()=>{
+ const render=(reading:number,target=50)=>renderToStaticMarkup(createElement(Gauge,{
+  label:'Distance',value:reading,min:0,max:100,unit:' m',formatValue:number=>`${number} m`,
+  target:{value:target,label:`${target} m target`},
+ }));
+ const markup=render(150);
+ const meter=markup.match(/<svg[^>]*role="meter"[^>]*>/)?.[0];
+ expect(meter).toContain('aria-label="Distance"');
+ expect(meter).toContain('aria-valuemin="0"');
+ expect(meter).toContain('aria-valuemax="100"');
+ expect(meter).toContain('aria-valuenow="100"');
+ expect(meter).toContain('aria-valuetext="150 m, 50 m target"');
+ expect(meter).toContain('focusable="false"');
+ expect(markup).toContain('data-gauge-target="50"');
+ expect(markup.match(/d="M 50 15 L 50 1"/g)).toHaveLength(2);
+ expect(markup).toMatch(/<div[^>]*class="[^"]*readout[^"]*"[^>]*aria-hidden="true"/);
+ expect(markup).toMatch(/data-tooltip-series="actual"[\s\S]*?>Current<[^]*?>150 m</);
+ expect(markup).toMatch(/data-tooltip-series="target"[^]*?data-dashed="true"[^]*?>Target<[^]*?>50 m</);
+ expect(render(-5)).toContain('aria-valuenow="0"');
+ expect(render(25,120)).not.toContain('data-gauge-target=');
+});
 
 it('compares retained scalar values through reference paths, sums and corrected inspection regardless of coverage',()=>{
  const partial:MeasureValue={...value('2026-10-28',0),coverage_status:'partial',coverage_reasons:['The query covers part of the date.'],query_start_at:Date.parse('2026-10-28T06:11:26Z')/1000,query_end_at:Date.parse('2026-10-29T00:00:00Z')/1000};

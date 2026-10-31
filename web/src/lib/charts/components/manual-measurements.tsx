@@ -10,6 +10,7 @@ import { SupportingMetric } from './supporting-metric';
 import { Range } from '../GoalChart';
 import { chartData, chartTone, comparisonText, formatReading, readChartPreference, referenceAt, selectedTarget, readingSuffix } from '../presentation';
 import { ChartInspectionContent } from './chart-inspection-content';
+import { GaugeVisual } from './gauge-visual';
 import inspectionStyles from './line-chart.module.css';
 import './manual-measurements.css';
 
@@ -17,11 +18,6 @@ const blue = 'var(--accent-bright)', green = 'var(--accent-done)', red = 'var(--
 const formatCompactNumber = (number: number) => new Intl.NumberFormat('en', { notation: 'compact' }).format(number);
 const dateLabel = (date: string) => new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
 const dayBefore = (date: string, days: number) => { const value = new Date(`${date}T12:00:00Z`); value.setUTCDate(value.getUTCDate() - days); return value.toISOString().slice(0, 10); };
-const arcFor = (fraction: number) => {
-  const start = -135, end = start + 270 * Math.min(1, Math.max(.00001, fraction));
-  const at = (angle: number) => `${50 + 42 * Math.sin(angle * Math.PI / 180)} ${50 - 42 * Math.cos(angle * Math.PI / 180)}`;
-  return `M ${at(start)} A 42 42 0 ${end - start > 180 ? 1 : 0} 1 ${at(end)}`;
-};
 
 type InlineControl = { prepare(): Promise<boolean>; focus(): void };
 type InlineProps = {
@@ -267,9 +263,11 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   }); }} /></div> : null;
   const card = <article className="manual-measurement" data-embedded={foldable || integrated || undefined} data-compact={compact || block.placement === 'supporting' || undefined} data-manual-model={block.manual!.model} aria-busy={pending || undefined}>
     {!foldable && <div className="card-heading"><h3>{title}</h3></div>}
-    {cumulative ? <><div className="radial"><svg viewBox="0 0 100 90" role="meter" aria-label={title} aria-valuemin={Math.min(0, current ?? 0)} aria-valuemax={currentTarget} aria-valuenow={current === undefined || currentTarget === undefined ? undefined : Math.min(current, currentTarget)} aria-valuetext={current === undefined ? 'No reading' : `${current}${currentTarget === undefined ? '' : ` of ${currentTarget}`}${chartTone(block, current, currentTarget) === 'good' ? ', target reached' : ''}`}>
-      <path className="radial-track" d={arcFor(1)} /><motion.path className="radial-fill" d={arcFor(1)} pathLength="1" initial={false} animate={{ strokeDasharray: `${Math.max(0, Math.min(1, fraction))} 1`, stroke: toneColor(current, currentTarget), opacity: current === undefined || currentTarget === undefined || fraction <= 0 ? 0 : 1 }} transition={reduce ? { duration: 0 } : motionTokens.spring.smooth} />
-    </svg><div className="radial-center">{inline}{currentTarget !== undefined && <span className="denominator">of {numberText(currentTarget)}</span>}</div></div><div className="radial-footer"><span className="completion" style={{ color: toneColor(current, currentTarget) }} role="status">{completion}</span>{adds}</div></> : <>
+    {cumulative ? <><GaugeVisual className="radial" trackClassName="radial-track" fillClassName="radial-fill" readoutClassName="radial-center"
+      svgProps={{ role: 'meter', 'aria-label': title, 'aria-valuemin': Math.min(0, current ?? 0), 'aria-valuemax': currentTarget, 'aria-valuenow': current === undefined || currentTarget === undefined ? undefined : Math.min(current, currentTarget), 'aria-valuetext': current === undefined ? 'No reading' : `${current}${currentTarget === undefined ? '' : ` of ${currentTarget}`}${chartTone(block, current, currentTarget) === 'good' ? ', target reached' : ''}` }}
+      fillProps={{ pathLength: '1', initial: false, animate: { strokeDasharray: `${Math.max(0, Math.min(1, fraction))} 1`, stroke: toneColor(current, currentTarget), opacity: current === undefined || currentTarget === undefined || fraction <= 0 ? 0 : 1 }, transition: reduce ? { duration: 0 } : motionTokens.spring.smooth }}>
+      {inline}{currentTarget !== undefined && <span className="denominator">of {numberText(currentTarget)}</span>}
+    </GaugeVisual><div className="radial-footer"><span className="completion" style={{ color: toneColor(current, currentTarget) }} role="status">{completion}</span>{adds}</div></> : <>
       <div className="reading-row">{inline}{!reading && adds}</div>
       {reading ? <div className="reading-chart"><LineChart data={dates.map((date, index) => ({ key: date, label: dateLabel(date), axisLabel: dateLabel(date), values: { actual: readings[index], target: targets[index] }, comparisons: { actual: readings[index] === undefined || targets[index] === undefined ? null : chartTone(block, readings[index], targets[index]) === 'good' } }))}
         series={[{ key: 'actual', label: block.series?.[0]?.name ?? 'Reading', color: blue, area: true, datedComparisons: true, goodColor: green, badColor: block.below_target_tone === 'attention' ? 'var(--accent-attention)' : red, neutralColor: blue }, ...(targets.every(value => value === undefined) ? [] : [{ key: 'target', label: 'Target', color: 'var(--text-faintest)', dashed: true, area: false }])]}

@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, useId, type CSSProperties } from "react";
+import { useEffect, useRef, useState, useId } from "react";
 import { AnimatePresence, animate, motion, useInView, useMotionValue, useMotionValueEvent, useReducedMotion, useTransform, useSpring, type Variants } from "motion/react";
 import { motionTokens } from "../lib/chart-motion";
 import styles from "./gauge.module.css";
 import chartStyles from "./line-chart.module.css";
+import { gaugeArc, gaugePoint } from "../lib/gauge-geometry";
+import { GaugeVisual } from "./gauge-visual";
+import { ChartInspectionContent } from "./chart-inspection-content";
 
 type GaugeTone = "neutral" | "accent" | "success" | "warning" | "danger";
 /** A band that starts at `from`: the highest band the value reaches sets the tone and names the state, so it never rests on color alone. */
@@ -25,13 +28,7 @@ function Swap({ text, direction = 1 }: { text: string; direction?: number }) {
 }
 
 /** A 270 degree ring open at the bottom, drawn clockwise from its lower left end. Redrawn from the sweep every frame so the round cap stays exact. */
-const radius = 42, start = -135, span = 270;
-function arcFor(sweep: number) {
-  const end = start + span * Math.min(1, Math.max(0, sweep));
-  const at = (angle: number) => `${(50 + radius * Math.sin((angle * Math.PI) / 180)).toFixed(3)} ${(50 - radius * Math.cos((angle * Math.PI) / 180)).toFixed(3)}`;
-  return `M ${at(start)} A ${radius} ${radius} 0 ${end - start > 180 ? 1 : 0} 1 ${at(end)}`;
-}
-const track = arcFor(1);
+const arcFor = (sweep: number) => gaugeArc(sweep, 3);
 
 export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '%', value, min = 0, max = 100, label, detail, tone = "accent", thresholds, target }: GaugeProps) {
   const safeMax = max > min ? max : min + 1;
@@ -45,9 +42,7 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '
   // A target occupies its actual position on the same scale as the reading.
   const targetFraction = target ? (target.value - min) / (safeMax - min) : null;
   const showTarget = targetFraction !== null && targetFraction >= 0 && targetFraction <= 1;
-  const targetAngle = (start + span * (targetFraction ?? 0)) * Math.PI / 180;
-  const targetAt = (r: number) => ({ x: 50 + r * Math.sin(targetAngle), y: 50 - r * Math.cos(targetAngle) });
-  const targetInner = targetAt(35), targetOuter = targetAt(49);
+  const targetInner = gaugePoint(targetFraction ?? 0, 35), targetOuter = gaugePoint(targetFraction ?? 0, 49);
   const [inspectionSource, setInspectionSource] = useState<'mouse' | 'keyboard' | 'touch' | null>(null);
   const inspecting = inspectionSource !== null;
   const pointerOrigin = useRef<string | null>(null);
@@ -135,23 +130,21 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '
     onFocus={event => { if (pointerOrigin.current !== 'mouse' && (pointerOrigin.current !== null || event.currentTarget.matches(':focus-visible'))) inspect(pointerOrigin.current === null ? 'keyboard' : 'touch'); }}
     onBlur={() => { pointerOrigin.current = null; setInspectionSource(current => current === 'mouse' ? current : null); }}
     onKeyDown={event => { pointerOrigin.current = null; if (event.key === 'Escape') { setInspectionSource(null); event.stopPropagation(); } }}>
-    <div className={styles.visual}>
-      <svg viewBox="0 0 100 90" role="meter" aria-label={label} aria-valuemin={min} aria-valuemax={safeMax} aria-valuenow={Math.min(safeMax, Math.max(min, value))} aria-valuetext={`${formatValue(displayValue)}${band ? `, ${band.label}` : ""}${target ? `, ${target.label}` : ""}`} focusable="false"><path className={styles.track} d={track} /><motion.path className={styles.arc} d={path} style={{ opacity: arcOpacity }} />
-        {showTarget && target && <g data-gauge-target={target.value}>
+    <GaugeVisual className={styles.visual} trackClassName={styles.track} fillClassName={styles.arc} readoutClassName={styles.readout} coordinatePrecision={3}
+      svgProps={{ role: 'meter', 'aria-label': label, 'aria-valuemin': min, 'aria-valuemax': safeMax, 'aria-valuenow': Math.min(safeMax, Math.max(min, value)), 'aria-valuetext': `${formatValue(displayValue)}${band ? `, ${band.label}` : ""}${target ? `, ${target.label}` : ""}`, focusable: 'false' }}
+      fillProps={{ d: path, style: { opacity: arcOpacity } }} readoutProps={{ 'aria-hidden': true }}
+      decorations={showTarget && target && <g data-gauge-target={target.value}>
           <path className={styles.targetHalo} d={targetPath}/>
           <path className={styles.targetTick} d={targetPath}/>
-
-        </g>}
-      </svg>
-      <div className={styles.readout} aria-hidden="true">
+        </g>}>
         <span className={styles.number}><motion.span className={styles.digits} style={{ width: digitsWidth }}>{digits}</motion.span>{displayUnit && <span className={styles.unit}>{displayUnit}</span>}<span ref={sizer} className={styles.sizer}>{formatDigits(displayValue)}</span></span>
         {thresholds && <span className={styles.status}><Swap text={filled ? shown?.label ?? "" : ""} direction={moved.direction} /></span>}
-      </div>
-    </div>
+    </GaugeVisual>
     <motion.div ref={tipRef} id={tooltipId} role="tooltip" className={[chartStyles.tooltip,styles.inspectionTooltip].join(' ')} style={{x:tipX,y:tipY}} data-open={inspecting||undefined} aria-hidden={!inspecting}>
-      <p className={chartStyles.tipTitle}>{label}</p>
-      <p className={chartStyles.tipRow} style={{'--series':'var(--gauge-color)'} as CSSProperties}><span className={chartStyles.tipSwatch}/><span className={chartStyles.tipName}>Current</span><span className={chartStyles.tipValue}>{formatValue(displayValue)}</span></p>
-      {target&&<p className={chartStyles.tipRow} style={{'--series':'var(--chart-reference)'} as CSSProperties}><span className={chartStyles.tipSwatch} data-dashed/><span className={chartStyles.tipName}>Target</span><span className={chartStyles.tipValue}>{formatValue(target.value)}</span></p>}
+      <ChartInspectionContent label={label} rows={[
+        { key: 'actual', label: 'Current', value: formatValue(displayValue), color: 'var(--gauge-color)' },
+        ...(target ? [{ key: 'target', label: 'Target', value: formatValue(target.value), color: 'var(--chart-reference)', dashed: true }] : []),
+      ]} />
     </motion.div>
     <figcaption><strong><Swap text={label} /></strong>{detail && <span className={styles.detail}><Swap text={detail} direction={moved.direction} /></span>}</figcaption>
   </figure>;
