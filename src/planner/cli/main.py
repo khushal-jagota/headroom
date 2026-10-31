@@ -268,6 +268,9 @@ def _emit_record(
 
 def _ticket_record(
     data: dict[str, Any],
+    raw_part_names: str | None = None,
+    *,
+    as_json: bool = True,
 ) -> tuple[dict[str, Any], dict[str, RecordPart]]:
     header_keys = (
         "id",
@@ -299,6 +302,19 @@ def _ticket_record(
     }
     parts["proposal"] = part(data.get("pending_proposal"))
     parts["recap"] = part(data.get("recap", ""))
+    # Current manifests deliberately omit retired fields. An explicit old-field
+    # request uses the same retained-body read as the selected workspace, without
+    # expanding every historical body or changing the current write declaration.
+    for field in dict.fromkeys(_record_parts(raw_part_names, as_json) or ()):
+        if field in parts or field == "rejection":
+            continue
+        body = http.send(
+            "GET",
+            f"/api/tickets/{quote(str(data['id']), safe='')}/workspace/fields/"
+            f"{quote(field, safe='')}",
+            as_json=as_json,
+        )
+        parts[field] = part(body["value"])
     return header, parts
 
 
@@ -1304,7 +1320,7 @@ def ticket_show(ticket_id: str | None, part_names: str | None, as_json: bool) ->
             as_json=as_json,
             params={"detail": "full", "id": tid},
         )
-    header, parts = _ticket_record(data)
+    header, parts = _ticket_record(data, part_names, as_json=as_json)
     _emit_record(header, parts, part_names, as_json)
 
 
@@ -2289,7 +2305,7 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
         f"/api/tickets/{ticket_id}/worker-self",
         as_json=as_json,
     )
-    header, parts = _ticket_record(data)
+    header, parts = _ticket_record(data, part_names, as_json=as_json)
     _emit_record(header, parts, part_names, as_json)
 
 
