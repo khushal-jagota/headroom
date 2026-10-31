@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from tests.support.executor_control import message_link
+from tests.support.executor_control import MessageStream, message_link
 from tests.unit.test_executor_native_runtime import ScriptedChild
 from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
@@ -17,13 +17,12 @@ from planner.core.clock import Clock
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
     EnvelopeKind,
-    OutboxEntry,
     ReceiptDisposition,
     as_object,
     decode_command_arguments,
@@ -35,13 +34,6 @@ from planner.tickets.contracts import Ticket
 IDENTITY = ExecutorIdentity(
     PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "ca27d941-1e77-4ac9-a102-e0ac14b51626", 1
 )
-
-
-class Writer:
-    closing = False
-
-    def is_closing(self) -> bool:
-        return self.closing
 
 
 def ticket(conn: Connection) -> Ticket:
@@ -62,7 +54,7 @@ def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> VpsE
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
     result = VpsExecutor(path, cast(Clock, SimpleNamespace()))
     result.runs.identity = identity
-    result.runs.link = message_link(Writer(), identity)
+    result.runs.link = message_link(MessageStream(), identity)
     result.runs.ready = True
     result.runs.store.begin_connection(identity)
     result.runs.store.mark_ready(identity)

@@ -6,7 +6,7 @@ import asyncio
 import sqlite3
 from collections.abc import Awaitable, Callable
 from functools import partial
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from starlette.types import ASGIApp
 
@@ -19,17 +19,14 @@ from planner.core.errors import PlannerError
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.catalog_relay import VpsCatalogRelay
 from planner.executor.files import file_digest
-from planner.executor.link import Link, accept_link
+from planner.executor.link import ControlMessageStream, Link, accept_link
 from planner.executor.link_files import GenerationTransfers, settled_io
 from planner.executor.protocol import (
     LIVE_BACKEND_EVENT_METHODS,
     BackendEvent,
     CommandOutcome,
-    ControlMessageReader,
-    ControlMessageWriter,
     EnvelopeRefusal,
     ExecutorHealth,
-    ExecutorHealthRead,
     FileDownloadRequest,
     FileManifest,
     FileScope,
@@ -49,6 +46,14 @@ from planner.executor.protocol import (
 )
 from planner.executor.vps_inbox import MacInbox, MissingFiles
 from planner.executor.vps_runs import MacRuns
+
+
+class ExecutorHealthRead(TypedDict):
+    """VPS API projection; receipt time is not activity or answer delivery evidence."""
+
+    identity: JsonObject | None
+    connection_state: str
+    last_contact_at_ms: int | None
 
 
 class VpsExecutor:
@@ -105,7 +110,7 @@ class VpsExecutor:
             else "reconciling",
         }
 
-    async def session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
+    async def session(self, stream: ControlMessageStream) -> None:
         link: Link | None = None
         admitted: Link | None = None
 
@@ -124,7 +129,7 @@ class VpsExecutor:
             return identity
 
         try:
-            link = await accept_link(reader, admit, writer=writer)
+            link = await accept_link(stream, admit)
             identity = link.identity
             if self.runs.link is not link:
                 return

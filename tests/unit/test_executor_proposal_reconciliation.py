@@ -20,13 +20,12 @@ from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
-from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.mutations import cli_mutation, write_ticket_mutation
 from planner.executor.protocol import (
     CliWrite,
     EnvelopeKind,
     JsonObject,
-    OutboxEntry,
     QueuedEnvelope,
     encode_value,
 )

@@ -13,6 +13,7 @@ import threading
 import time
 from collections import defaultdict
 from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -43,8 +44,6 @@ from planner.executor.protocol import (
     FileSnapshot,
     FileTransfer,
     JsonObject,
-    OutboxEntry,
-    OutboxRecord,
     QueuedEnvelope,
     ReceiptDisposition,
     WireMessage,
@@ -56,6 +55,25 @@ from planner.executor.protocol import (
     payload_child,
     type_adapter,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class OutboxRecord:
+    envelope: QueuedEnvelope
+    receipt: AcceptanceReceipt | None = None
+
+    @property
+    def pending(self) -> bool:
+        return self.receipt is None
+
+
+@dataclass(frozen=True, slots=True)
+class OutboxEntry:
+    conversation_id: str
+    kind: EnvelopeKind
+    payload: JsonObject
+    submission_id: str | None = None
+
 
 DATABASE_NAME = "outbox.sqlite3"
 SCHEMA = """

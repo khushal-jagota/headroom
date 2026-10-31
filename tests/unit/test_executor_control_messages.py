@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-from tests.support.executor_control import BinaryPeer
+from tests.support.executor_control import MessageStream
 
 from planner.execution_identity import ProtocolRefused
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
-from planner.executor.link import ControlWebSocket
 from planner.executor.protocol import WireMessage, WireMessageKind, decode_message, encode_message
 
 
@@ -42,7 +44,7 @@ def test_shared_link_matches_nested_replies_refuses_items_and_fails_waiters_on_l
     from planner.executor.link import Link
 
     async def run() -> None:
-        class PairedPeer(BinaryPeer):
+        class PairedPeer(MessageStream):
             other: PairedPeer
 
             async def send_bytes(self, data: bytes) -> None:
@@ -55,9 +57,8 @@ def test_shared_link_matches_nested_replies_refuses_items_and_fails_waiters_on_l
 
         first_peer, second_peer = PairedPeer(), PairedPeer()
         first_peer.other, second_peer.other = second_peer, first_peer
-        first_socket, second_socket = ControlWebSocket(first_peer), ControlWebSocket(second_peer)
-        first = Link(IDENTITY, first_socket, first_socket)
-        second = Link(IDENTITY, second_socket, second_socket)
+        first = Link(IDENTITY, first_peer)
+        second = Link(IDENTITY, second_peer)
         entered = asyncio.Event()
 
         async def heartbeat(message: WireMessage) -> WireMessage:
@@ -98,5 +99,62 @@ def test_shared_link_matches_nested_replies_refuses_items_and_fails_waiters_on_l
             await asyncio.gather(reading, return_exceptions=True)
             await first.wait_closed()
             await second.wait_closed()
+
+    asyncio.run(run())
+
+
+@pytest.mark.usefixtures("executor_transport_home")
+@pytest.mark.parametrize("reply", ["wrong_kind", "changed_identity"])
+def test_mac_refuses_invalid_hello_reply_before_reconciliation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reply: str
+) -> None:
+    """The service must validate hello before exposing the connection to any owner."""
+    from planner.executor import mac_service
+    from planner.executor.configuration import ExecutorPaths
+    from planner.executor.link import Link
+    from planner.executor.mac_service import MacService
+    from planner.executor.protocol import as_object
+
+    async def run() -> None:
+        service = MacService(
+            paths=ExecutorPaths(tmp_path / "executor"),
+            revision="a" * 40,
+            executor_id="test-executor",
+            panels_server_url="https://fixture.invalid",
+        )
+        disconnected = asyncio.Event()
+
+        class Peer(MessageStream):
+            async def send(self, message: WireMessage) -> None:
+                await super().send(message)
+                identity = as_object(service.identity)
+                kind = WireMessageKind.hello_accepted
+                if reply == "wrong_kind":
+                    kind = WireMessageKind.health
+                else:
+                    identity["connection_generation"] = 999
+                self.feed_data(encode_message(WireMessage(kind, message.request_id, identity)))
+
+        stream = Peer()
+
+        @asynccontextmanager
+        async def dial(*_: object) -> AsyncIterator[Link]:
+            link = Link(service.identity, stream)
+            try:
+                yield link
+            finally:
+                await link.wait_closed()
+                disconnected.set()
+
+        monkeypatch.setattr(mac_service, "dial_link", dial)
+        task = asyncio.create_task(service.run())
+        try:
+            await asyncio.wait_for(disconnected.wait(), 1)
+            assert service.connection.link is None
+            assert stream.is_closing()
+            assert [decode_message(body).kind for body in stream.sent] == [WireMessageKind.hello]
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(run())

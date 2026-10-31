@@ -9,12 +9,11 @@ from pathlib import Path
 import pytest
 
 from planner.execution_identity import ProtocolRefused
-from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
     IpcResponse,
-    OutboxEntry,
     ReceiptDisposition,
     encode_frame,
     read_typed_frame,

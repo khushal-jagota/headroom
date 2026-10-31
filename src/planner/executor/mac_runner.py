@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, Protocol, cast
 from uuid import uuid4
 
 from planner.conversation.backends.contracts import (
@@ -64,6 +64,7 @@ from planner.executor.files import (
 )
 from planner.executor.link_files import get_file, settled_io
 from planner.executor.mac_connection import MacConnection
+from planner.executor.mac_outbox import OutboxEntry
 from planner.executor.protocol import (
     LIVE_BACKEND_EVENT_METHODS,
     AnswerApplication,
@@ -84,8 +85,7 @@ from planner.executor.protocol import (
     FileScope,
     FileTransfer,
     JsonObject,
-    MacOutboxWriter,
-    OutboxEntry,
+    QueuedEnvelope,
     Quiescence,
     StartRun,
     Steer,
@@ -100,6 +100,14 @@ from planner.executor.protocol import (
 from planner.executor.skills import install_native_skill_snapshot, native_skill_home
 from planner.files.logic.paths import conversation_files_root
 from planner.workspace_localization import localize_workspace
+
+
+class MacOutboxWriter(Protocol):
+    """The runner produces durable output and counts items awaiting a receipt."""
+
+    def add(self, entry: OutboxEntry, *, ticket_id: str | None = None) -> QueuedEnvelope: ...
+
+    def pending_count(self) -> int: ...
 
 
 class _CommandAdmissionRefused(Exception):

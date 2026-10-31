@@ -21,7 +21,7 @@ from planner.executor.files import (
     safe_component,
 )
 from planner.executor.mac_connection import MacConnection
-from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.mac_runner import MacRunner, RunningChild
 from planner.executor.protocol import (
     AcceptanceReceipt,
@@ -34,7 +34,6 @@ from planner.executor.protocol import (
     IpcWritePayload,
     JsonObject,
     LiveReadRequest,
-    OutboxEntry,
     QueuedEnvelope,
     QuiescenceReceipt,
     QuiesceRequest,

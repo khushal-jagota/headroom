@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from tests.support.executor_control import MessageReader, deliver, message_link
+from tests.support.executor_control import MessageStream, deliver, message_link
 
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
@@ -23,10 +23,10 @@ async def stalled_send(*_: object) -> None:
 
 
 def peer() -> Any:
-    writer = Mock()
+    writer: Any = MessageStream()
     writer.send = AsyncMock()
-    writer.wait_closed = AsyncMock()
-    writer.is_closing.return_value = False
+    writer.close = Mock(wraps=writer.close)
+    writer.wait_closed = AsyncMock(wraps=writer.wait_closed)
     return writer
 
 
@@ -48,8 +48,8 @@ def test_absolute_request_deadline_covers_send_and_response(blocked: str) -> Non
         finally:
             if blocked == "lock":
                 link._lock.release()
-            cast_reader = link._reader
-            assert isinstance(cast_reader, MessageReader)
+            cast_reader = link._stream
+            assert isinstance(cast_reader, MessageStream)
             cast_reader.feed_eof()
             await link.wait_closed()
 

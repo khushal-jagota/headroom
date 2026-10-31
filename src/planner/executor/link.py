@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 import aiohttp
@@ -28,11 +29,8 @@ from planner.executor.configuration import (
     validate_server_url,
 )
 from planner.executor.protocol import (
-    ControlMessageReader,
-    ControlMessageWriter,
     ExecutorHealth,
     JsonObject,
-    WebSocketPeer,
     WireMessage,
     WireMessageKind,
     decode_message,
@@ -42,8 +40,60 @@ from planner.executor.protocol import (
 )
 
 
-class ServerWebSocketPeer:
+class ControlMessageStream(Protocol):
+    async def receive(self) -> WireMessage: ...
+    async def send(self, message: WireMessage) -> None: ...
+    def close(self) -> None: ...
+    async def wait_closed(self) -> None: ...
+    def is_closing(self) -> bool: ...
+
+
+class WebSocketStream(ABC):
+    """One bounded, validated control message per binary WebSocket message."""
+
+    def __init__(self) -> None:
+        self._closing: asyncio.Task[None] | None = None
+
+    @property
+    @abstractmethod
+    def closed(self) -> bool: ...
+
+    @abstractmethod
+    async def receive_bytes(self) -> bytes: ...
+
+    @abstractmethod
+    async def send_bytes(self, data: bytes) -> None: ...
+
+    @abstractmethod
+    async def aclose(self) -> None: ...
+
+    async def receive(self) -> WireMessage:
+        body = await self.receive_bytes()
+        if not body:
+            raise ConnectionError("executor WebSocket closed")
+        return decode_message(body)
+
+    async def send(self, message: WireMessage) -> None:
+        if self.is_closing():
+            raise ConnectionError("executor WebSocket closed")
+        await self.send_bytes(encode_message(message))
+
+    def is_closing(self) -> bool:
+        return self._closing is not None or self.closed
+
+    def close(self) -> None:
+        if self._closing is None:
+            self._closing = asyncio.create_task(self.aclose())
+
+    async def wait_closed(self) -> None:
+        self.close()
+        if self._closing is not None:
+            await self._closing
+
+
+class ServerWebSocketPeer(WebSocketStream):
     def __init__(self, socket: WebSocket) -> None:
+        super().__init__()
         self.socket = socket
         self._closed = False
 
@@ -51,7 +101,7 @@ class ServerWebSocketPeer:
     def closed(self) -> bool:
         return self._closed or self.socket.client_state is WebSocketState.DISCONNECTED
 
-    async def receive_bytes(self, max_bytes: int) -> bytes:
+    async def receive_bytes(self) -> bytes:
         try:
             message = await self.socket.receive()
         except (WebSocketDisconnect, RuntimeError):
@@ -61,7 +111,7 @@ class ServerWebSocketPeer:
             self._closed = True
             return b""
         data = message.get("bytes")
-        if not isinstance(data, bytes) or not data or len(data) > max_bytes:
+        if not isinstance(data, bytes) or not data or len(data) > MAX_ENVELOPE_BYTES:
             raise ProtocolRefused("invalid WebSocket binary message")
         return data
 
@@ -80,15 +130,16 @@ class ServerWebSocketPeer:
                 await asyncio.wait_for(self.socket.close(), HTTP_CLOSE_TIMEOUT_SECONDS)
 
 
-class ClientWebSocketPeer:
+class ClientWebSocketPeer(WebSocketStream):
     def __init__(self, socket: aiohttp.ClientWebSocketResponse) -> None:
+        super().__init__()
         self.socket = socket
 
     @property
     def closed(self) -> bool:
         return self.socket.closed
 
-    async def receive_bytes(self, max_bytes: int) -> bytes:
+    async def receive_bytes(self) -> bytes:
         try:
             message = await self.socket.receive()
         except (aiohttp.ClientError, OSError) as error:
@@ -104,7 +155,7 @@ class ClientWebSocketPeer:
         if message.type is not aiohttp.WSMsgType.BINARY:
             raise ProtocolRefused("expected WebSocket binary message")
         data = message.data
-        if not isinstance(data, bytes) or not data or len(data) > max_bytes:
+        if not isinstance(data, bytes) or not data or len(data) > MAX_ENVELOPE_BYTES:
             raise ProtocolRefused("invalid WebSocket binary message")
         return data
 
@@ -121,37 +172,6 @@ class ClientWebSocketPeer:
             await asyncio.wait_for(self.socket.close(), HTTP_CLOSE_TIMEOUT_SECONDS)
         except (aiohttp.ClientError, OSError) as error:
             raise ConnectionError("executor WebSocket failed") from error
-
-
-class ControlWebSocket:
-    """One bounded, validated control message per binary WebSocket message."""
-
-    def __init__(self, peer: WebSocketPeer) -> None:
-        self.peer = peer
-        self._closing: asyncio.Task[None] | None = None
-
-    async def receive(self) -> WireMessage:
-        body = await self.peer.receive_bytes(MAX_ENVELOPE_BYTES)
-        if not body:
-            raise ConnectionError("executor WebSocket closed")
-        return decode_message(body)
-
-    async def send(self, message: WireMessage) -> None:
-        if self.is_closing():
-            raise ConnectionError("executor WebSocket closed")
-        await self.peer.send_bytes(encode_message(message))
-
-    def is_closing(self) -> bool:
-        return self._closing is not None or self.peer.closed
-
-    def close(self) -> None:
-        if self._closing is None:
-            self._closing = asyncio.create_task(self.peer.aclose())
-
-    async def wait_closed(self) -> None:
-        self.close()
-        if self._closing is not None:
-            await self._closing
 
 
 def create_client_session() -> aiohttp.ClientSession:
@@ -199,7 +219,7 @@ class ExecutorAppClient:
         }
 
     @asynccontextmanager
-    async def websocket(self, path: str, max_bytes: int) -> AsyncIterator[ClientWebSocketPeer]:
+    async def websocket(self, path: str) -> AsyncIterator[ClientWebSocketPeer]:
         url = "wss" + self.server_url[5:] + path
         # Bound only connection establishment. Steady-state receives use heartbeat.
         async with asyncio.timeout(HTTP_CONNECT_TIMEOUT_SECONDS):
@@ -208,14 +228,14 @@ class ExecutorAppClient:
                 headers=self.headers(),
                 compress=0,
                 heartbeat=WS_HEARTBEAT_SECONDS,
-                max_msg_size=max_bytes + 1,
+                max_msg_size=MAX_ENVELOPE_BYTES + 1,
                 timeout=aiohttp.ClientWSTimeout(ws_close=HTTP_CLOSE_TIMEOUT_SECONDS),
             )
         peer = ClientWebSocketPeer(socket)
         try:
             yield peer
         finally:
-            await peer.aclose()
+            await peer.wait_closed()
 
     async def close(self) -> None:
         await asyncio.wait_for(self.session.close(), HTTP_CLOSE_TIMEOUT_SECONDS)
@@ -233,13 +253,12 @@ class Link:
     def __init__(
         self,
         identity: ExecutorIdentity,
-        reader: ControlMessageReader,
-        writer: ControlMessageWriter,
+        stream: ControlMessageStream,
         *,
         client: ExecutorAppClient | None = None,
     ) -> None:
         self.identity = identity
-        self._reader, self._writer, self._client = reader, writer, client
+        self._stream, self._client = stream, client
         self._lock = asyncio.Lock()
         self._pending: dict[str, asyncio.Future[WireMessage]] = {}
         self._handlers: dict[
@@ -264,12 +283,12 @@ class Link:
         return self._reading
 
     def is_closing(self) -> bool:
-        return self._down or self._writer.is_closing()
+        return self._down or self._stream.is_closing()
 
     def close(self) -> None:
         if not self._down:
             self._down = True
-            self._writer.close()
+            self._stream.close()
             if self._reading is not None and self._reading is not asyncio.current_task():
                 self._reading.cancel()
             for future in tuple(self._pending.values()):
@@ -278,7 +297,7 @@ class Link:
 
     async def wait_closed(self) -> None:
         self.close()
-        await self._writer.wait_closed()
+        await self._stream.wait_closed()
         if self._reading is not None:
             await asyncio.gather(self._reading, return_exceptions=True)
         # Admitted domain handlers settle under their owner, across reconnects.
@@ -308,7 +327,7 @@ class Link:
             if admit is not None and not admit():
                 return False
             try:
-                await self._writer.send(WireMessage(kind, request_id or uuid4().hex, payload))
+                await self._stream.send(WireMessage(kind, request_id or uuid4().hex, payload))
             except (ConnectionError, OSError):
                 self.close()
                 raise
@@ -335,13 +354,6 @@ class Link:
                 if not await self.tell(kind, payload, request_id=request_id, admit=admit):
                     raise ConnectionError("executor link unavailable")
                 response = await future
-            if kind is WireMessageKind.hello:
-                if (
-                    response.kind is not WireMessageKind.hello_accepted
-                    or parse_identity(response.payload) != self.identity
-                ):
-                    self.close()
-                    raise ProtocolRefused("handshake identity changed")
             if response.kind is WireMessageKind.error:
                 raise ValueError(str(response.payload))
             return response
@@ -381,7 +393,7 @@ class Link:
     async def _receive(self) -> None:
         try:
             while not self.is_closing():
-                message = await self._reader.receive()
+                message = await self._stream.receive()
                 if self.is_closing():
                     raise ConnectionError("executor generation revoked")
                 self.last_received_at_ms = now_ms()
@@ -426,9 +438,8 @@ async def dial_link(
     client = ExecutorAppClient(server_url, executor_id, identity, session_factory)
     link = None
     try:
-        async with client.websocket("/api/executor/connect", MAX_ENVELOPE_BYTES) as peer:
-            stream = ControlWebSocket(peer)
-            link = Link(identity, stream, stream, client=client)
+        async with client.websocket("/api/executor/connect") as stream:
+            link = Link(identity, stream, client=client)
             yield link
     finally:
         if link is not None:
@@ -441,16 +452,14 @@ async def dial_link(
 
 
 async def accept_link(
-    reader: ControlMessageReader,
+    stream: ControlMessageStream,
     admit: Callable[[ExecutorHealth, Link], Awaitable[ExecutorIdentity]],
-    *,
-    writer: ControlMessageWriter,
 ) -> Link:
     """Read and validate the handshake before giving a generation to the owner."""
     link = None
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-            hello = await reader.receive()
+            hello = await stream.receive()
             if hello.kind is not WireMessageKind.hello:
                 raise ProtocolRefused("executor handshake required")
             identity = parse_identity(hello.payload.get("identity"))
@@ -459,7 +468,7 @@ async def accept_link(
                 raise ProtocolRefused("identity coercion refused")
             if type(hello.payload.get("process_id")) is not int or health.process_id < 1:
                 raise ProtocolRefused("invalid executor process identity")
-            link = Link(identity, reader, writer)
+            link = Link(identity, stream)
             if await admit(health, link) != identity:
                 raise ProtocolRefused("handshake identity changed")
             if not await link.tell(
@@ -473,5 +482,5 @@ async def accept_link(
         if link is not None:
             link.close()
         else:
-            writer.close()
+            stream.close()
         raise

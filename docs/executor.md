@@ -610,7 +610,10 @@ After a VPS restart, that ask causes every saved old run to be stopped before fr
 including a child absent from the Mac's inventory.
 There is no fallback transport. Lost replies leave native effects unconfirmed rather than repeating them.
 
-Both ends use the same Link in `src/planner/executor/link.py`. It matches replies,
+Both ends use the same Link in `src/planner/executor/link.py`, with one stream
+for incoming and outgoing messages. The client and server WebSocket peers share
+message encoding, size limits, and closing behavior. The Mac service checks the
+hello reply and its identity before making the link available. Link matches replies,
 serializes sends, bounds messages, and fails waiting requests
 when that connection is lost. A request's deadline includes waiting to send. A durable
 request timeout closes only its own connection; a catalog read can time out without
@@ -627,6 +630,13 @@ dependent work. `protocol.py` holds the shared message shapes and codecs; execut
 identity types, turn tokens, and Ticket locales live in `execution_identity.py`,
 which imports neither conversation nor Ticket code. The Link does not own children,
 commands, the outbox, or database writes.
+
+Local interfaces live with their owners: inbox transactions and conversation intake
+in `vps_inbox.py`, run conversations in `vps_runs.py`, runner output in `mac_runner.py`,
+and queue entries and receipt lookups in `mac_outbox.py`. The VPS health view belongs
+to `vps_transport.py`; connection diagnostic categories belong to `diagnostics.py`.
+Answer commands carry their callback fields alongside the saved answer; the decoder
+does not reconstruct missing callback fields from an older wire format.
 
 Mac and VPS executor timestamps use the same wall-clock millisecond helper in
 `executor/clock.py`. Shared payload helpers in `protocol.py` encode objects and

@@ -22,11 +22,10 @@ from tests.support.executor_control import deliver, message_link
 from tests.unit.test_executor_request_deadlines import IDENTITY, peer
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
-from planner.executor.mac_outbox import DATABASE_NAME, MacOutbox
+from planner.executor.mac_outbox import DATABASE_NAME, MacOutbox, OutboxEntry
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
-    OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
     WireMessage,
@@ -114,7 +113,8 @@ def test_process_crash_before_or_after_add_commit(tmp_path: Path, commit: bool) 
 import os, sys
 from pathlib import Path
 from planner.executor.mac_outbox import MacOutbox
-from planner.executor.protocol import OutboxEntry, EnvelopeKind
+from planner.executor.mac_outbox import OutboxEntry
+from planner.executor.protocol import EnvelopeKind
 box = MacOutbox(Path(sys.argv[1]))
 if sys.argv[2] == 'False':
     box._db.execute("BEGIN IMMEDIATE")

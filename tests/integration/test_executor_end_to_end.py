@@ -75,20 +75,18 @@ from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import AskKind, AskReference, ExecutorIdentity
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.link import Link
+from planner.executor.link import ControlMessageStream, Link
+from planner.executor.mac_outbox import OutboxEntry
 from planner.executor.mac_service import MacService
 from planner.executor.protocol import (
     AcceptanceReceipt,
     CommandDisposition,
     ConnectionState,
-    ControlMessageReader,
-    ControlMessageWriter,
     DurableAnswer,
     EnvelopeKind,
     IpcOperation,
     IpcRequest,
     JsonObject,
-    OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
     WireMessage,
@@ -218,8 +216,8 @@ class CutReceiptEndpoint(VpsExecutor):
         self.input_cut_count = 0
         self.cut_prompt_frame = False
 
-    async def session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
-        original_receive = reader.receive
+    async def session(self, stream: ControlMessageStream) -> None:
+        original_receive = stream.receive
 
         async def receive() -> WireMessage:
             message = await original_receive()
@@ -232,8 +230,8 @@ class CutReceiptEndpoint(VpsExecutor):
                         self.cut_submission = envelope.submission_id
             return message
 
-        reader.receive = receive  # type: ignore[method-assign]
-        original = writer.send
+        stream.receive = receive  # type: ignore[method-assign]
+        original = stream.send
 
         async def send(message: WireMessage) -> None:
             if (
@@ -267,8 +265,8 @@ class CutReceiptEndpoint(VpsExecutor):
                 return
             await original(message)
 
-        writer.send = send  # type: ignore[method-assign]
-        await super().session(reader, writer)
+        stream.send = send  # type: ignore[method-assign]
+        await super().session(stream)
 
 
 def public_ask_id(ask: AskReference) -> str:
@@ -1317,7 +1315,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
         assert harness.mac.connection.link is not None
         try:
             if receipt_failure != "disconnect":
-                original_send = harness.endpoint.runs.link._writer.send
+                original_send = harness.endpoint.runs.link._stream.send
 
                 async def fail_receipt(message: WireMessage) -> None:
                     if (
@@ -1329,7 +1327,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                         return
                     await original_send(message)
 
-                monkeypatch.setattr(harness.endpoint.runs.link._writer, "send", fail_receipt)
+                monkeypatch.setattr(harness.endpoint.runs.link._stream, "send", fail_receipt)
                 if receipt_failure == "silent":
                     monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 0.2)
                     writer = harness.mac.connection.link
@@ -1848,7 +1846,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
     from uuid import uuid4
 
     from planner.execution_identity import ExecutorIdentity
-    from planner.executor.link import ControlWebSocket, ExecutorAppClient
+    from planner.executor.link import ExecutorAppClient
     from planner.executor.protocol import ExecutorHealth
 
     async def run() -> None:
@@ -1863,9 +1861,8 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
             client = ExecutorAppClient(
                 harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
             )
-            ws_context = client.websocket("/api/executor/connect", 1024 * 1024)
-            peer = await ws_context.__aenter__()
-            stream = ControlWebSocket(peer)
+            ws_context = client.websocket("/api/executor/connect")
+            stream = await ws_context.__aenter__()
             old = ExecutorHealth(
                 ExecutorIdentity(PROTOCOL_VERSION - 1, "a" * 40, 2, str(uuid4()), 1),
                 42,
@@ -1877,7 +1874,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
             payload = encode_value(old)
             assert isinstance(payload, dict)
             await stream.send(WireMessage(WireMessageKind.hello, "old_protocol", payload))
-            assert await asyncio.wait_for(peer.receive_bytes(1024), 1) == b""
+            assert await asyncio.wait_for(stream.receive_bytes(), 1) == b""
             await ws_context.__aexit__(None, None, None)
             await client.close()
             assert harness.endpoint.runs.identity == identity and harness.endpoint.runs.ready
@@ -1905,7 +1902,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             rejected = asyncio.Event()
             refusals: list[AcceptanceReceipt] = []
             generation, writer = harness.mac.identity, harness.endpoint.runs.link
-            send = harness.endpoint.runs.link._writer.send
+            send = harness.endpoint.runs.link._stream.send
 
             async def corrupt_ack(message: WireMessage) -> None:
                 if reject and message.kind is WireMessageKind.file_transfer:
@@ -1927,7 +1924,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                     refusals.append(TypeAdapter(AcceptanceReceipt).validate_python(message.payload))
                     rejected.set()
 
-            monkeypatch.setattr(harness.endpoint.runs.link._writer, "send", corrupt_ack)
+            monkeypatch.setattr(harness.endpoint.runs.link._stream, "send", corrupt_ack)
             ticket_id = next(iter(harness.mac.runner._children.values())).ticket_id
             assert ticket_id is not None
             artifact = harness.mac.paths.artifacts / ticket_id / "typed-ack.bin"
@@ -2007,7 +2004,7 @@ def test_input_descriptor_must_validate_before_provider_invocation(
                 ),
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
-            send = harness.endpoint.runs.link._writer.send
+            send = harness.endpoint.runs.link._stream.send
 
             async def corrupt(message: WireMessage) -> None:
                 if (
@@ -2023,7 +2020,7 @@ def test_input_descriptor_must_validate_before_provider_invocation(
                     )
                 await send(message)
 
-            monkeypatch.setattr(harness.endpoint.runs.link._writer, "send", corrupt)
+            monkeypatch.setattr(harness.endpoint.runs.link._stream, "send", corrupt)
             kept = await harness.endpoint.message_files.keep(
                 "c_scripted", b"input bytes", media_type="application/octet-stream"
             )
@@ -2292,7 +2289,7 @@ def test_stop_waits_for_queued_receipt_after_direct_result_and_reconnect(
         stopping: asyncio.Task[None] | None = None
         direct_result = asyncio.Event()
         assert harness.mac.connection.link is not None
-        writer = harness.mac.connection.link._writer
+        writer = harness.mac.connection.link._stream
         send = writer.send
 
         async def observe(message: WireMessage) -> None:
@@ -2579,7 +2576,7 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
                 decode_command_arguments(ChildOperation.cancel_running_turn, {}),
             )
             assert harness.mac.connection.link is not None
-            mac_send = harness.mac.connection.link._writer.send
+            mac_send = harness.mac.connection.link._stream.send
             # Commands use the shared send lock directly; observe at the writer boundary.
             writer = harness.endpoint.runs.link
             assert writer is not None
@@ -2624,7 +2621,7 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
 
             monkeypatch.setattr(harness.native, "cancel_running_turn", invoke, raising=False)
             monkeypatch.setattr(harness.mac, "_command", receive)
-            monkeypatch.setattr(harness.mac.connection.link._writer, "send", lose_result)
+            monkeypatch.setattr(harness.mac.connection.link._stream, "send", lose_result)
             monkeypatch.setattr(Link, "request", ask)
             if phase == "preparing":
                 locked = harness.mac.runner._children[reference.child_id].lock

@@ -40,9 +40,7 @@ def test_native_admission_and_generation_file_slots(
             production_client = ExecutorAppClient(harness.proxy.origin, "test-executor", identity)
             try:
                 with pytest.raises(aiohttp.ClientConnectorCertificateError):
-                    async with production_client.websocket(
-                        "/api/executor/connect", MAX_ENVELOPE_BYTES
-                    ):
+                    async with production_client.websocket("/api/executor/connect"):
                         pytest.fail("untrusted TLS certificate was accepted")
             finally:
                 await production_client.close()

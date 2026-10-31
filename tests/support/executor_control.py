@@ -9,40 +9,38 @@ from typing import cast
 from unittest.mock import patch
 
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.link import ControlWebSocket, Link
+from planner.executor.link import ControlMessageStream, Link, WebSocketStream
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.protocol import (
-    ControlMessageWriter,
     QueuedEnvelope,
     WireMessage,
     encode_message,
 )
 
 
-class BinaryPeer:
+class MessageStream(WebSocketStream):
     def __init__(self) -> None:
+        super().__init__()
         self.incoming: asyncio.Queue[bytes] = asyncio.Queue()
         self.sent: list[bytes] = []
-        self.closed = False
+        self._closed = False
 
-    async def receive_bytes(self, max_bytes: int) -> bytes:
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    async def receive_bytes(self) -> bytes:
         return await self.incoming.get()
 
     async def send_bytes(self, data: bytes) -> None:
         self.sent.append(data)
 
     async def aclose(self) -> None:
-        self.closed = True
-        self.incoming.put_nowait(b"")
-
-
-class MessageReader(ControlWebSocket):
-    def __init__(self) -> None:
-        self.binary_peer = BinaryPeer()
-        super().__init__(self.binary_peer)
+        self._closed = True
+        self.feed_eof()
 
     def feed_data(self, data: bytes) -> None:
-        self.binary_peer.incoming.put_nowait(data)
+        self.incoming.put_nowait(data)
 
     def feed_eof(self) -> None:
         self.feed_data(b"")
@@ -65,11 +63,11 @@ async def paused_outbox(outbox: MacOutbox) -> AsyncIterator[None]:
             release.set()
 
 
-def message_link(writer: object, identity: ExecutorIdentity) -> Link:
+def message_link(stream: ControlMessageStream, identity: ExecutorIdentity) -> Link:
     """Use the real matching and generation logic over the existing message double."""
-    return Link(identity, MessageReader(), cast(ControlMessageWriter, writer))
+    return Link(identity, stream)
 
 
 async def deliver(link: Link, message: WireMessage) -> None:
-    cast(MessageReader, link._reader).feed_data(encode_message(message))
+    cast(MessageStream, link._stream).feed_data(encode_message(message))
     await asyncio.sleep(0)

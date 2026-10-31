@@ -10,7 +10,7 @@ from starlette.responses import StreamingResponse
 
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import EXECUTOR_GENERATION_HEADER, EXECUTOR_INCARNATION_HEADER
-from planner.executor.link import ControlWebSocket, ServerWebSocketPeer
+from planner.executor.link import ServerWebSocketPeer
 from planner.executor.vps_transport import VpsExecutor
 
 
@@ -52,9 +52,9 @@ def build_executor_router() -> APIRouter:
             await socket.close(code=1008)
             return
         await socket.accept()
-        stream = ControlWebSocket(ServerWebSocketPeer(socket))
+        stream = ServerWebSocketPeer(socket)
         try:
-            await endpoint.session(stream, stream)
+            await endpoint.session(stream)
         finally:
             await stream.wait_closed()
 
