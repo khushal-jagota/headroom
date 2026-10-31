@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -46,7 +47,6 @@ from planner.worker_settings.contracts import (
 from planner.worker_types import store
 from planner.worker_types.configuration import (
     configured_worker_runtime_definitions,
-    load_worker_runtime_definitions,
 )
 
 router = APIRouter()
@@ -392,20 +392,14 @@ async def post_worker_type(
     record = dict(raw)
     skill = record.pop("skill", None)
     definition = store.definition_from_json(json.dumps(record))
-    if skill is not None:
-        if not isinstance(skill, dict):
-            raise PlannerError(ErrorCode.validation, "skill must be an object", {})
-        service.save_worker_type_skill(
-            conn,
-            definition.worker_profile.specialist_skill,
-            skill,
-            now=clk.now_unix(),
-            database_parent=_database_parent(config),
-        )
-    store.write_definition(conn, definition, now=clk.now_unix())
-    # A type that was just declared has to be one this process can run, at once.
-    load_worker_runtime_definitions(conn)
-    return cast(JsonDict, json.loads(store.definition_to_json(definition)))
+    if skill is not None and not isinstance(skill, dict):
+        raise PlannerError(ErrorCode.validation, "skill must be an object", {})
+    migrations = service.save_worker_type_definition(
+        conn, definition, skill, now=clk.now_unix(), database_parent=_database_parent(config)
+    )
+    result = cast(JsonDict, json.loads(store.definition_to_json(definition)))
+    result["migrations"] = [asdict(migration) for migration in migrations]
+    return result
 
 
 @router.patch("/workers/{worker_type}/requirements")

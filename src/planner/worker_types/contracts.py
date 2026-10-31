@@ -196,3 +196,15 @@ class WorkerTypeManifest(TypedDict):
     default_backend: str
     default_model: str
     default_reasoning_effort: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class TicketTypeMigration:
+    """A save receipt, retained by the caller with the amendment's evidence."""
+
+    ticket_id: str
+    title: str
+    old_stage: str
+    new_stage: str
+    old_ceiling: str
+    new_ceiling: str
