@@ -152,8 +152,6 @@ class MacOutbox:
         with self._lock:
             capture_lock = self._capture_locks[ticket_id]
         with capture_lock:
-            if entry.submission_id and self.lookup(entry.submission_id) is not None:
-                return self._add(entry)
             with self._lock:
                 self._capturing += 1
             try:
@@ -281,16 +279,6 @@ class MacOutbox:
         with self._lock:
             safe_component(entry.conversation_id)
             submission = safe_component(entry.submission_id or uuid4().hex)
-            previous = self.lookup(submission)
-            if previous is not None:
-                old = previous.envelope
-                if (old.conversation_id, old.kind, old.payload) != (
-                    entry.conversation_id,
-                    entry.kind,
-                    entry.payload,
-                ) or (snapshots and old.file_dependencies != tuple(s.manifest for s in snapshots)):
-                    raise ValueError("submission id reused with different content")
-                return old
             payload = {
                 "payload": entry.payload,
                 "files": encode_value(tuple(s.manifest for s in snapshots)),

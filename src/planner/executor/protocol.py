@@ -291,17 +291,10 @@ class CliWrite:
 
 
 @dataclass(frozen=True, slots=True)
-class QueuedCliResult:
-    submission_id: str
-    disposition: str = "queued"
-    acceptance: str = "unconfirmed"
-
-
-@dataclass(frozen=True, slots=True)
 class UnconfirmedCliResult:
     request_id: str
     submission_id: str
-    publication: Literal["unknown", "preparing", "queued", "acknowledged"]
+    publication: Literal["unknown", "preparing", "queued"]
     acceptance: Literal["unconfirmed"] = "unconfirmed"
 
 
@@ -676,7 +669,6 @@ class IpcResponse:
     request_id: str
     result: JsonObject | None
     error: JsonObject | None
-    queued: QueuedCliResult | None = None
     unconfirmed: UnconfirmedCliResult | None = None
 
 

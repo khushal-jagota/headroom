@@ -10,7 +10,7 @@ from click.testing import CliRunner
 
 from planner.cli import http
 from planner.cli.main import main
-from planner.executor.protocol import IpcOperation, IpcResponse, JsonObject, QueuedCliResult
+from planner.executor.protocol import IpcOperation, IpcResponse, JsonObject, UnconfirmedCliResult
 
 
 def test_worker_recap_queued_exits_three_before_domain_result(
@@ -25,14 +25,17 @@ def test_worker_recap_queued_exits_three_before_domain_result(
             "operation": "ticket.edit",
             "arguments": {"ticket_id": "t_example", "body": {"recap": "Keep this recap"}},
         }
-        return IpcResponse("request", None, None, QueuedCliResult("stable_submission"))
+        return IpcResponse(
+            "request", None, None, UnconfirmedCliResult("request", "stable_submission", "queued")
+        )
 
     monkeypatch.setattr("planner.executor.ipc_client.request", queued)
     result = CliRunner().invoke(main, ["worker", "recap", "--json"], input="Keep this recap")
     assert result.exit_code == 3
     assert json.loads(result.stdout) == {
+        "request_id": "request",
         "submission_id": "stable_submission",
-        "disposition": "queued",
+        "publication": "queued",
         "acceptance": "unconfirmed",
     }
     assert not result.stderr

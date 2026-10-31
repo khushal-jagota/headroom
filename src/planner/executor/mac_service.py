@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from uuid import uuid4
@@ -81,7 +82,7 @@ class MacService:
     async def _command(self, command: ChildCommand, link: Link) -> None:
         try:
             outcome = await self.runner.run(command)
-        except (OSError, ValueError):
+        except (OSError, ValueError, sqlite3.Error):
             # Required output may not have reached disk. Reconnect retries that
             # publication before answering the ask; it never repeats the provider call.
             link.close()

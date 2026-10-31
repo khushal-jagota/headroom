@@ -190,9 +190,11 @@ settle, even after a response deadline or caller disconnect.
 
 Use `panels executor retry SUBMISSION_ID` to inspect the original submission.
 Add `--json` for structured output. This command requires the original child's
-capability. It only observes existing work. It never captures artifacts, creates a
-replacement write, or requeues an acknowledged entry. The ordinary replay loop owns
-transport retries. Do not repeat the original write after an uncertain result.
+capability. It reports `preparing` immediately while publication is still running.
+Otherwise it looks up the saved entry without waiting for a receipt. It never
+captures artifacts, creates a replacement write, or requeues an acknowledged entry.
+The ordinary replay loop owns transport retries. Do not repeat the original write
+after an uncertain result.
 
 | Output | Evidence | Exit |
 | --- | --- | --- |
@@ -200,12 +202,11 @@ transport retries. Do not repeat the original write after an uncertain result.
 | `queued` | The original envelope is durable and pending. | 3 |
 | `unknown` | Response delivery failed, or no tracked task or retained journal entry proves the state. | 3 |
 
-Unconfirmed output carries the original submission identity. Structured uncertainty
-also carries the IPC request identity. The existing initial queued output retains
-its submission ID, disposition, and acceptance fields. A retry has a separate IPC
-request ID and retains its target submission ID. An exact observed receipt returns
-the original result or refusal. Confirmed agent writes retain that receipt only
-while the run remains alive. Stopping the run or reopening the outbox removes
+All unconfirmed output, including an initial queued write, carries the original
+submission ID, the IPC request ID, publication state, and unconfirmed acceptance.
+A retry has a separate IPC request ID and retains its target submission ID.
+An exact observed receipt returns the original result or refusal. Confirmed agent
+writes retain that receipt only while the run remains alive. Stopping the run or reopening the outbox removes
 confirmed rows. An unknown result never proves non-delivery.
 
 After an executor restart, an old capability can receive a canonical refusal. A

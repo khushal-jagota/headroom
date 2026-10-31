@@ -90,9 +90,6 @@ def test_capture_storage_errors_still_refuse_publication(
 def test_stable_payload_global_sequence_and_confirmed_cleanup(tmp_path: Path) -> None:
     outbox = MacOutbox(tmp_path / "outbox")
     first = outbox.add(entry())
-    assert outbox.add(entry()) == first
-    with pytest.raises(ValueError, match="different content"):
-        outbox.add(OutboxEntry("c_one", EnvelopeKind.cli_write, {"n": 2}, "write"))
     other = outbox.add(entry("other", "c_two"))
     assert other.sequence == first.sequence + 1
     outbox.acknowledge(receipt(first))
@@ -296,7 +293,6 @@ def test_refused_confirmation_is_available_to_later_retry_without_requeue(tmp_pa
         assert await outbox.wait_confirmed("write", 0) is None
         outbox.acknowledge(receipt(row, ReceiptDisposition.refused))
         assert await outbox.wait_confirmed("write", 0) == receipt(row, ReceiptDisposition.refused)
-        assert outbox.add(entry()) == row
         assert outbox.pending_count() == 0
         outbox.close()
 

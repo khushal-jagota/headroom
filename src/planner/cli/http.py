@@ -242,17 +242,6 @@ def executor_response(response: IpcResponse, as_json: bool) -> Any:
                 "Do not repeat the original write."
             )
         sys.exit(3)
-    if response.queued is not None:
-        payload = asdict(response.queued)
-        if as_json:
-            print(json.dumps(payload))
-        else:
-            print(
-                f"Queued {response.queued.submission_id}; VPS acceptance is unconfirmed. "
-                f"Inspect with panels executor retry {response.queued.submission_id}. "
-                "Do not repeat the original write."
-            )
-        sys.exit(3)
     if response.error is not None:
         _fail_response(httpx.Response(400), {"error": response.error}, as_json)
     if response.result is not None and "error" in response.result:
