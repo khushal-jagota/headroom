@@ -1069,11 +1069,12 @@ def gauge_visual_equivalence(browser, url):
     receipts = []
     recorder = """() => {
       const records = [];
-      const watched = new WeakSet();
+      const watched = new WeakMap();
       let phase = 'reveal';
       function watch(meter) {
         if (watched.has(meter)) return;
-        watched.add(meter);
+        const token = {};
+        watched.set(meter, token);
         const host = meter.closest('[data-chart-id]');
         if (!host) return;
         const manual = !!meter.closest('.manual-measurement');
@@ -1081,7 +1082,7 @@ def gauge_visual_equivalence(browser, url):
         records.push(record);
         const start = performance.now();
         function sample(now) {
-          if (!meter.isConnected) return;
+          if (!meter.isConnected || watched.get(meter) !== token) return;
           const fill = meter.querySelectorAll('path')[1];
           const readout = meter.nextElementSibling;
           const style = getComputedStyle(fill);
@@ -1101,6 +1102,10 @@ def gauge_visual_equivalence(browser, url):
         document.querySelectorAll('svg[role=meter]').forEach(meter => {
           watched.delete(meter); watch(meter);
         });
+      };
+      window.__gaugeReset = () => {
+        records.length = 0;
+        window.__gaugeArm('reveal');
       };
       new MutationObserver(() => document.querySelectorAll('svg[role=meter]')
         .forEach(watch)).observe(document, {childList:true,subtree:true});
@@ -1175,6 +1180,8 @@ def gauge_visual_equivalence(browser, url):
         try:
             for identity, support_id in (("cumulative_target", "support-manual-gauge"),
                                          ("readonly-gauge", "support-readonly-gauge")):
+                # Hash navigation can retain the document and its recorder.
+                page.evaluate("window.__gaugeReset?.()")
                 page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
                 chart = page.locator(f'[data-chart-id="{identity}"]')
                 meter = chart.get_by_role("meter")
@@ -1223,13 +1230,18 @@ def gauge_visual_equivalence(browser, url):
                     chart.get_by_role("button", name="+1", exact=True).click()
                     expect(chart.get_by_role("textbox")).to_have_attribute("data-reading", "9")
                 else:
-                    chart.get_by_role("button", name="Month", exact=True).click()
-                    expect(meter).to_have_attribute("aria-valuenow", "16")
+                    # The current preference starts at Month (16). Choose Week
+                    # (8) to exercise a real sweep and threshold change.
+                    chart.get_by_role("button", name="Week", exact=True).click()
+                    expect(meter).to_have_attribute("aria-valuenow", "8")
                 page.wait_for_timeout(settle_ms)
                 row["surfaces"][identity + ":updated"] = snapshot(chart)
-                row["motion"][identity] = page.evaluate("window.__gaugeEvidence")
+                row["motion"][identity] = page.evaluate(
+                    "keys => window.__gaugeEvidence.filter(record => keys.includes(record.chart))",
+                    [identity, support_id],
+                )
 
-            page.goto(url + "#/workspace", wait_until="domcontentloaded")
+            page.goto(url + "#/workspace/chief-of-staff", wait_until="domcontentloaded")
             for identity in ("cumulative_target", "readonly-gauge"):
                 chart = page.locator(f'[data-goal-card="{identity}"] [data-chart-id="{identity}"]')
                 expect(chart.get_by_role("meter")).to_be_visible()
