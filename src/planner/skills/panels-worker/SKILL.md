@@ -37,7 +37,11 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 
 - `panels worker propose <id>`, with the proposal text piped on stdin. A proposal does
   not carry the recap. Write the recap when you propose, and whenever what the Ticket is
-  waiting on has changed since you last wrote it.
+  waiting on has changed since you last wrote it. When the holder should scan the plan,
+  pipe one page instead of a long note. It is one JSON object with `kind` `headroom.page`,
+  `version` 1, a `title`, a `summary`, and `blocks`. Leave out colours and imports. A page
+  that leaves the kit is refused. The shape and a worked example are in `docs/proposal-pages.md`.
+  Sorting, selection, and which view is open stay on the screen. They are not stored.
 - `panels worker recap <id>`, with the recap text piped on stdin.
 - `panels ticket request-help [id]`, with the help message piped on stdin. The current ceiling holder receives it by default. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--manager <id>` only to select another recipient.
 

@@ -39,7 +39,7 @@ Copy uses employee, ceiling, and holder. The Worker is an employee taking the ta
 
 ## Goal pages and managed files
 
-Goal pages use the shared page kit for checklists, charts, tables, layouts, and text. They are dashboards for the user. Explicit display choices control what the page shows. See [Goals](goals.md).
+Goal pages use the shared page kit for checklists, charts, tables, layouts, and text. They are dashboards for the user. Explicit display choices control what the page shows. See [Goals](goals.md). A Ticket proposal can use the same kit when the Worker files a page instead of prose. See [Proposal pages](proposal-pages.md).
 
 Manager and goal artifacts use sibling roots. Manager files retain `files/sprint-items/<manager_id>/` and `/files/managers/` links. Goal files use `files/goals/<goal_id>/` and `/files/goals/` links. Their routes support reads, text writes, and deletion through the existing owner, Chief, or own-agent authority. Both use safe paths, symlink checks, media types, and `nosniff`.
 
@@ -49,4 +49,4 @@ Goal workspaces use the shared Artifacts catalog and preview frame. Completion, 
 
 `assets/tokens.css`, `assets/app.css`, [`DESIGN.md`](../DESIGN.md), and `web/src/components/` for the kit: `ScreenHeader`, `ListRow`, `StageMark`, `Button`, `SkeletonRegion`, and `web/src/components/conversation/`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-10-31._

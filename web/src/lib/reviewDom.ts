@@ -1,5 +1,6 @@
 import { reviewProposalIdentity, reviewProposalDetailMatches } from './navigation/presentation';
 import { renderMarkdownToElement, serializeMarkdownDomToSource } from './markdownPipeline';
+import { pageDocumentDigest, readStoredPage } from './pageKit';
 export function reviewDomMatches(root:HTMLElement,item:import('./types').NavigationReviewItem | null,count:number | null,waitingCount?:number | null):boolean {
   if (item) {
     const messageMatches=(message:import('./types').ReviewMessageItem)=>[...root.querySelectorAll('[data-review-card][data-review-item-type="message"][data-review-loaded="true"]')]
@@ -26,8 +27,16 @@ export function reviewProposalDomMatches(root:HTMLElement,item:import('./types')
     || root.getAttribute('data-proposal-identity')!==reviewProposalIdentity(item)) return false;
   const heading=root.closest('[data-review-ticket-card]') ?? root;
   if (heading.querySelector('.review-ticket-title [contenteditable]')?.textContent !== item.title) return false;
+  const proposal = detail.pending_proposal;
+  if (!proposal) return false;
+  const stored = readStoredPage(proposal.body);
+  if (stored.intent === "page") {
+    const page = root.querySelector<HTMLElement>("[data-approval-block] [data-page-document]");
+    return page?.getAttribute("data-page-digest") === pageDocumentDigest(proposal.body);
+  }
+  if (stored.intent === "invalid") return false;
   const editor=root.querySelector<HTMLElement>('[data-approval-block] [data-edit]');
-  return Boolean(editor && detail.pending_proposal
-    && serializeMarkdownDomToSource(editor)===serializeMarkdownDomToSource(renderMarkdownToElement(detail.pending_proposal.body)));
+  return Boolean(editor
+    && serializeMarkdownDomToSource(editor)===serializeMarkdownDomToSource(renderMarkdownToElement(proposal.body)));
 }
 

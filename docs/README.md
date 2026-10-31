@@ -15,6 +15,7 @@ The word list for Ticket, Stage, Review, Conversation, and the rest lives in [`C
 
 - [Tickets](tickets.md) — one bounded piece of work, its stages, and where it can run.
 - [Proposals and gates](proposals.md) — the single door that settles a stage and the ceiling that decides who must look.
+- [Proposal pages](proposal-pages.md) — a stage blank filed as a page, on the same kit a goal page uses.
 - [Worker types](worker-types.md) — the workflows Headroom ships, and where each one pulls a person in.
 - [Worker steps](worker-steps.md) — how a ready Ticket receives its next prompt, and why nothing watches the turn end.
 - [Schedules](schedules.md) — exact-time supply of ordinary Tickets.
@@ -52,4 +53,4 @@ The word list for Ticket, Stage, Review, Conversation, and the rest lives in [`C
 - [VPS](vps.md) — machine measurements, and the smaller status summary.
 - [Maintenance](maintenance.md) — diagnostic history, which waits for an explicit owner decision.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-10-31._

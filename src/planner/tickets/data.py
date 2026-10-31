@@ -34,6 +34,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
+from planner.page_kit.logic.validate import prepare_stored_text
 from planner.tickets import derivation, revision_feedback
 from planner.tickets.contracts import (
     EmployeeLaunchConfiguration,
@@ -507,13 +508,15 @@ def _seed_kickoff(
         return stage, {}, None
     # A stated ceiling past kickoff settles the kickoff on the spot: below the ceiling a
     # worker-owned Stage writes its field and moves on, and creation is that write.
+    # A page brief is the same document the proposal door accepts.
+    stored_brief = prepare_stored_text(brief, "proposal body")
     target = worker_type_definition.advance_target(stage) if settle else None
     if target is not None:
-        return target, {BRIEF_FIELD_ID: brief}, None
+        return target, {BRIEF_FIELD_ID: stored_brief}, None
     return (
         stage,
         {},
-        PendingTicketProposal(BRIEF_FIELD_ID, brief, principal_legacy_actor(principal), now),
+        PendingTicketProposal(BRIEF_FIELD_ID, stored_brief, principal_legacy_actor(principal), now),
     )
 
 
