@@ -125,8 +125,6 @@ def test_an_ordinary_steer_still_carries_its_sender_label(tmp_path: Path) -> Non
 
             assert isinstance(outcome, BackendSteerAccepted)
             assert outcome.composed_content_delivered is True
-            assert outcome.provider_submission is not None
-            assert outcome.provider_submission.observation_kind == "turn_steer_response"
             steered = scripted.sent("turn/steer")
             assert "owner" in json.dumps(steered["params"]["input"])
             assert "stop and summarize" in json.dumps(steered["params"]["input"])
@@ -472,11 +470,8 @@ def test_ordinary_start_needs_correlated_response(
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
             expected = PromptWriteFailed if respond == "never" else BackendPromptRejected
-            with pytest.raises(expected) as failure:
+            with pytest.raises(expected):
                 await scripted.write_prompt(1, text_message_content("exact provider token"))
-            if isinstance(failure.value, BackendPromptRejected):
-                assert failure.value.provider_submission is not None
-                assert failure.value.provider_submission.status == "rejected"
             assert scripted.sink.endings == []
 
     _run(exercise)

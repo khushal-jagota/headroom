@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 from planner.conversation.contracts import (
     AnswerFate,
     ComposerCatalogEntry,
-    ConversationBackendKey,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
@@ -44,7 +43,6 @@ from planner.conversation.events import (
     ConversationTurnEnding,
     PermissionAskOption,
     PlanEntry,
-    ProviderSubmissionFact,
     ToolCallStatus,
     UserInputAnswer,
     UserInputQuestion,
@@ -117,12 +115,6 @@ class DeliveryCancelled(RuntimeError):
 class BackendPromptRejected(BackendAdapterError):
     """The provider explicitly rejected this correlated prompt before admission."""
 
-    def __init__(
-        self, message: str, *, provider_submission: ProviderSubmissionFact | None = None
-    ) -> None:
-        super().__init__(message)
-        self.provider_submission = provider_submission
-
 
 class PermissionAnswerWriteFailed(BackendAdapterError):
     """The answer to a permission ask did not reach the backend's wire.
@@ -185,7 +177,6 @@ class BackendPromptAccepted:
     """
 
     composed_content_delivered: bool
-    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,7 +184,6 @@ class BackendSteerAccepted:
     """The provider admitted the message to the exact turn that the token names."""
 
     composed_content_delivered: bool = True
-    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,7 +191,6 @@ class BackendSteerRefused:
     """The adapter proved that the message was not admitted to the target turn."""
 
     refusal_reason: PromptDeliveryRefusalReason
-    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,17 +226,6 @@ class BackendUserInputRequest:
 
 
 class BackendEventSink(Protocol):
-    async def provider_selection_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        provider: ConversationBackendKey,
-        source_kind: str,
-        model: str,
-        child_lifetime: str,
-        reasoning_effort: str | None = None,
-    ) -> None: ...
-
     """How an adapter tells the core what its backend just did.
 
     Every turn fact carries the turn token it belongs to, because the core alone decides
@@ -663,15 +641,6 @@ class AgentMessageCompletedArguments:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ProviderSelectionReportedArguments:
-    provider: ConversationBackendKey
-    source_kind: str
-    model: str
-    child_lifetime: str
-    reasoning_effort: str | None = None
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
 class ToolCallStartedArguments:
     tool_call_id: str
     title: str
@@ -744,8 +713,7 @@ class ComposerCatalogReportedArguments:
 
 
 type DecodedBackendEventArguments = (
-    ProviderSelectionReportedArguments
-    | AgentMessageDeltaArguments
+    AgentMessageDeltaArguments
     | ModelThinkingHappenedArguments
     | AgentMessageCompletedArguments
     | ToolCallStartedArguments

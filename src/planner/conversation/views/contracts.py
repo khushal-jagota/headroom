@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Literal, NotRequired, TypedDict
 
 from planner.conversation.contracts import (
-    ConversationBackendKey,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
 )
@@ -19,7 +18,6 @@ from planner.conversation.events import (
     ConversationTurnEnding,
     PermissionAskOption,
     PlanEntry,
-    ProviderSubmissionFact,
     UserInputAnswer,
     UserInputQuestion,
 )
@@ -41,7 +39,6 @@ type ViewRowKind = Literal[
     "permission_ask",
     "user_input",
     "model_changed",
-    "provider_selection_reported",
     "token_usage",
     "context_compacted",
     "turn_ended",
@@ -79,7 +76,6 @@ class PromptRowBody(TypedDict):
     sender_label: str
     mode: PromptDeliveryMode
     sent_at_unix_milliseconds: int
-    provider_submission: ProviderSubmissionFact | None
 
 
 class RefusedPromptRowBody(TypedDict):
@@ -89,7 +85,6 @@ class RefusedPromptRowBody(TypedDict):
     reason: PromptDeliveryRefusalReason
     refusal_detail: str | None
     model_validation: CanonicalModelValidation | None
-    provider_submission: ProviderSubmissionFact | None
 
 
 class UndeliveredPromptRowBody(TypedDict):
@@ -150,16 +145,6 @@ class ModelRowBody(TypedDict):
     reasoning_effort: str | None
 
 
-class ProviderSelectionRowBody(TypedDict):
-    kind: Literal["provider_selection_reported"]
-    provider: ConversationBackendKey
-    source_kind: str
-    model: str
-    reasoning_effort: str | None
-    turn_number: int
-    child_lifetime: str
-
-
 class UsageRowBody(TypedDict):
     kind: Literal["token_usage"]
     input_tokens: int | None
@@ -189,7 +174,6 @@ type ViewRowBody = (
     | PermissionRowBody
     | UserInputRowBody
     | ModelRowBody
-    | ProviderSelectionRowBody
     | UsageRowBody
     | TurnEndingRowBody
     | MarkerRowBody

@@ -178,24 +178,6 @@ class _ObservingSink:
         self._sink = sink
         self._conversation = conversation
 
-    async def provider_selection_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        provider: ConversationBackendKey,
-        source_kind: str,
-        model: str,
-        child_lifetime: str,
-        reasoning_effort: str | None = None,
-    ) -> None:
-        await self._sink.provider_selection_reported(
-            turn_token,
-            provider=provider,
-            source_kind=source_kind,
-            model=model,
-            child_lifetime=child_lifetime,
-            reasoning_effort=reasoning_effort,
-        )
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         await self._sink.agent_message_delta(turn_token, text_delta)

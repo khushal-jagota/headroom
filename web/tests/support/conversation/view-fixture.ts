@@ -10,7 +10,7 @@ export function viewSnapshot(id:string,lens:ConversationViewLens,rows:FixtureEve
     if(row.kind==='message_to_owner'||row.kind==='agent_message'){
       if(lens==='focus'&&row.kind==='agent_message')continue;
       body={kind:'agent_message',content:[{piece:'text',text:String(row.payload.text??'')}],to_owner:row.kind==='message_to_owner'};
-    }else if(row.kind==='prompt')body={kind:'prompt',provider_submission:null,content:[{piece:'text',text:String(row.payload.text??'')}],sender_label:String(row.payload.sender_label??'owner'),mode:'queue',sent_at_unix_milliseconds:row.created_at};
+    }else if(row.kind==='prompt')body={kind:'prompt',content:[{piece:'text',text:String(row.payload.text??'')}],sender_label:String(row.payload.sender_label??'owner'),mode:'queue',sent_at_unix_milliseconds:row.created_at};
     else if(row.kind==='tool_call_started'){
       if(lens==='focus')continue;
       body={kind:'tool_call',tool_call_id:String(row.payload.tool_call_id),title:String(row.payload.title),tool_kind:String(row.payload.tool_kind),detail:null,started_detail:null,capped_detail_sequence:null,status:'running'};

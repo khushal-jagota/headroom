@@ -107,7 +107,6 @@ from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
-    ConversationBackendKey,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
@@ -117,7 +116,6 @@ from planner.conversation.events import (
     PermissionAskOption,
     PlanEntry,
     PlanEntryStatus,
-    ProviderSubmissionFact,
     ToolCallStatus,
     UserInputAnswer,
     UserInputOption,
@@ -547,11 +545,6 @@ class CodexAppServerBackendChild:
             self._reasoning_effort = reasoning_effort
         return BackendPromptAccepted(
             composed_content_delivered=not native_command,
-            provider_submission=(None if native_command else ProviderSubmissionFact(
-                provider=ConversationBackendKey.codex, status="accepted",
-                    observation_kind="turn_start_response",
-                correlation_id=turn.turn_id or "",
-            )),
         )
 
     async def steer(
@@ -635,11 +628,6 @@ class CodexAppServerBackendChild:
             return BackendSteerUncertain()
         return BackendSteerAccepted(
             composed_content_delivered=True,
-            provider_submission=ProviderSubmissionFact(
-                provider=ConversationBackendKey.codex, status="accepted",
-                    observation_kind="turn_steer_response",
-                correlation_id=captured_native_turn_id,
-            ),
         )
 
     async def cancel_running_turn(self) -> None:
@@ -1220,13 +1208,7 @@ class CodexAppServerBackendChild:
                 raise PromptWriteFailed(
                     "codex rejected start after provisional activity"
                 ) from rejected
-            raise BackendPromptRejected(
-                str(rejected), provider_submission=ProviderSubmissionFact(
-                    provider=ConversationBackendKey.codex, status="rejected",
-                    observation_kind="turn_start_error",
-                    correlation_id=rejected.request_id or str(turn.token.turn_number),
-                ),
-            ) from rejected
+            raise BackendPromptRejected(str(rejected)) from rejected
         except CodexAppServerError as failed:
             raise PromptWriteFailed(str(failed)) from failed
         try:

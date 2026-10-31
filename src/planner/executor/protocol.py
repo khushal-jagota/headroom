@@ -40,7 +40,6 @@ from planner.conversation.backends.contracts import (
     ModelThinkingHappenedArguments,
     PermissionAskRaisedArguments,
     PlanUpdatedArguments,
-    ProviderSelectionReportedArguments,
     TokenUsageReportedArguments,
     ToolCallFinishedArguments,
     ToolCallProgressArguments,
@@ -52,7 +51,7 @@ from planner.conversation.backends.contracts import (
     VendorSessionCursorReboundArguments,
 )
 from planner.conversation.contracts import PromptDeliveryMode, ResolvedConversationStart
-from planner.conversation.events import ProviderSubmissionFact, UserInputAnswer
+from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageContent
 from planner.execution_identity import (
     AskKind,
@@ -351,7 +350,6 @@ class BackendEventMethod(StrEnum):
     agent_message_delta = "agent_message_delta"
     model_thinking_happened = "model_thinking_happened"
     agent_message_completed = "agent_message_completed"
-    provider_selection_reported = "provider_selection_reported"
     tool_call_started = "tool_call_started"
     tool_call_progress = "tool_call_progress"
     tool_call_finished = "tool_call_finished"
@@ -804,8 +802,6 @@ def decode_event_arguments(event: BackendEvent) -> DecodedBackendEventArguments:
             return type_adapter(AgentMessageDeltaArguments).validate_python(event.arguments)
         case BackendEventMethod.model_thinking_happened:
             return type_adapter(ModelThinkingHappenedArguments).validate_python(event.arguments)
-        case BackendEventMethod.provider_selection_reported:
-            return type_adapter(ProviderSelectionReportedArguments).validate_python(event.arguments)
         case BackendEventMethod.agent_message_completed:
             return type_adapter(AgentMessageCompletedArguments).validate_python(event.arguments)
         case BackendEventMethod.tool_call_started:
@@ -839,15 +835,7 @@ def decode_event_arguments(event: BackendEvent) -> DecodedBackendEventArguments:
 def decode_prompt_result(result: JsonObject) -> BackendPromptAccepted:
     return BackendPromptAccepted(
         composed_content_delivered=bool(result["composed_content_delivered"]),
-        provider_submission=decode_provider_submission(result.get("provider_submission")),
     )
-
-
-def decode_provider_submission(raw: object) -> ProviderSubmissionFact | None:
-    """Historical outcomes remain readable without an invented provider fact."""
-    if raw is None:
-        return None
-    return type_adapter(ProviderSubmissionFact).validate_python(raw)
 
 
 def envelope_payload_digest(

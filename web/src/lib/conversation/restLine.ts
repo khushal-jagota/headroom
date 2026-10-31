@@ -279,7 +279,6 @@ export function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Hap
     case "permission_ask":
     case "user_input":
     case "plan_updated":
-    case "provider_selection_reported":
     case "model_changed":
     case "token_usage":
     case "context_compacted":

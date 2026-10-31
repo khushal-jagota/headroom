@@ -203,27 +203,6 @@ class NativeEventSink:
             return
         await self.registry.report_event(self.reference, method, turn, arguments)
 
-    async def provider_selection_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        provider: ConversationBackendKey,
-        source_kind: str,
-        model: str,
-        child_lifetime: str,
-        reasoning_effort: str | None = None,
-    ) -> None:
-        await self._report(
-            BackendEventMethod.provider_selection_reported,
-            turn_token,
-            {
-                "provider": provider,
-                "source_kind": source_kind,
-                "model": model,
-                "child_lifetime": child_lifetime,
-                "reasoning_effort": reasoning_effort,
-            },
-        )
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         await self._report(
@@ -1003,7 +982,6 @@ class MacRunner:
         child.model, child.reasoning_effort = model, effort
         return {
             "kind": "prompt_accepted",
-            "provider_submission": encode_value(result.provider_submission),
             "composed_content_delivered": result.composed_content_delivered,
         }
 
@@ -1031,16 +1009,12 @@ class MacRunner:
             return {
                 "kind": "steer_refused",
                 "refusal_reason": outcome.refusal_reason.value,
-                "provider_submission": encode_value(outcome.provider_submission),
             }
         return {
             "kind": "steer_accepted"
             if isinstance(outcome, BackendSteerAccepted)
             else "steer_uncertain",
             "composed_content_delivered": outcome.composed_content_delivered,
-            "provider_submission": encode_value(outcome.provider_submission)
-            if isinstance(outcome, BackendSteerAccepted)
-            else None,
         }
 
     async def _cancel_turn(self, child: RunningChild, command: ChildCommand) -> JsonObject:
@@ -1254,7 +1228,6 @@ class MacRunner:
                     {
                         "error_type": "BackendPromptRejected",
                         "error_message": str(error),
-                        "provider_submission": encode_value(error.provider_submission),
                     },
                 )
             except (_CommandAdmissionRefused, AdmissionRefused) as error:

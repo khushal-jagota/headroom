@@ -82,7 +82,6 @@ from planner.conversation.backends.contracts import (
     PlanUpdatedArguments,
     PromptWriteFailed,
     PromptWriteRefused,
-    ProviderSelectionReportedArguments,
     RetainedBackendChildFactory,
     RetainedBackendRun,
     SessionLoadFailed,
@@ -139,8 +138,6 @@ from planner.conversation.events import (
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
-    ProviderSelectionReportedEventPayload,
-    ProviderSubmissionFact,
     TokenUsageEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
@@ -417,7 +414,6 @@ class _PromptDeliveryAttempt:
     suppression_reason: str | None = None
     messages: tuple[_HeldPrompt, ...] = ()
     automatic_notice: bool = False
-    provider_submission: ProviderSubmissionFact | None = None
 
 
 type _BackendEventHandler = Callable[[], Coroutine[Any, Any, None]]
@@ -442,7 +438,6 @@ class _ConversationState:
     backend_event_pump: asyncio.Task[None] | None = None
     backend_event_in_progress: bool = False
     child_event_sink: object | None = None
-    child_reported_model: str | None = None
     settlement_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     steer_settlements: set[asyncio.Event] = field(default_factory=set)
     reserved_turn: _ReservedTurn | None = None
@@ -1779,7 +1774,6 @@ class SqliteProcessConversationSystem:
                     original_selection=delivery.original_selection,
                     refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
-                    provider_submission=delivery.provider_submission,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
                     owner_read_through_sequence=(
@@ -3335,7 +3329,6 @@ class SqliteProcessConversationSystem:
             original_selection=delivery.original_selection,
             refusal_detail=delivery.refusal_detail,
             composed_content_delivered=delivery.composed_content_delivered,
-            provider_submission=delivery.provider_submission,
             record_refusal=delivery.record_refusal,
             phase_when_not_started=_ConversationPhase.idle,
             owner_read_through_sequence=owner_read_through_sequence,
@@ -4204,7 +4197,6 @@ class SqliteProcessConversationSystem:
                 PromptDeliveryRefusalReason.backend_rejected_prompt,
                 record_refusal=True,
                 refusal_detail=str(rejected),
-                provider_submission=rejected.provider_submission,
             )
         except NeedsRebind as rebind:
             rebound = await self._rebind_and_write_prompt(
@@ -4238,7 +4230,6 @@ class SqliteProcessConversationSystem:
             messages=messages,
             automatic_notice=automatic_notice,
             composed_content_delivered=accepted.composed_content_delivered,
-            provider_submission=accepted.provider_submission,
         )
 
     async def _rebind_and_write_prompt(
@@ -4389,7 +4380,6 @@ class SqliteProcessConversationSystem:
                 PromptDeliveryRefusalReason.backend_rejected_prompt,
                 record_refusal=True,
                 refusal_detail=str(rejected),
-                provider_submission=rejected.provider_submission,
             )
         except PromptWriteFailed:
             raise
@@ -4403,7 +4393,6 @@ class SqliteProcessConversationSystem:
             reservation.prompt_accepted = True
         return _PromptDeliveryAttempt(
             composed_content_delivered=accepted.composed_content_delivered,
-            provider_submission=accepted.provider_submission,
             messages=messages,
             automatic_notice=automatic_notice,
         )
@@ -4426,7 +4415,6 @@ class SqliteProcessConversationSystem:
         reply_requested: bool,
         recovery_references: tuple[DeploymentRecoveryReference, ...],
         composed_content_delivered: bool,
-        provider_submission: ProviderSubmissionFact | None = None,
         canonical_validation: CanonicalModelValidation | None = None,
         original_selection: ModelSelection | None = None,
         refusal_detail: str | None = None,
@@ -4493,7 +4481,6 @@ class SqliteProcessConversationSystem:
                                 sender_label=sender_label,
                                 mode=mode,
                                 refusal_reason=refusal,
-                                provider_submission=provider_submission,
                                 refusal_detail=refusal_detail,
                                 model_validation=self._validation_json(canonical_validation),
                                 sender_message_id=sender_message_id,
@@ -4582,7 +4569,6 @@ class SqliteProcessConversationSystem:
                         state.record.conversation_id,
                         native_message_operation=native_message_operation,
                         prompt=PromptEventPayload(
-                            provider_submission=provider_submission,
                             recovery_references=recovery_references,
                             content=content,
                             sender_label=sender_label,
@@ -4863,7 +4849,6 @@ class SqliteProcessConversationSystem:
                     original_selection=delivery.original_selection,
                     refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
-                    provider_submission=delivery.provider_submission,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
                     also_delivered=rest,
@@ -4959,7 +4944,6 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 PromptEventPayload(
-                    provider_submission=outcome.provider_submission,
                     recovery_references=recovery_references,
                     content=content,
                     sender_label=sender_label,
@@ -5517,40 +5501,6 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
         return running
 
-    def _bind_provider_selection_report(
-        self,
-        state: _ConversationState,
-        running: _RunningTurn,
-        payload: ProviderSelectionReportedEventPayload,
-    ) -> ProviderSelectionReportedEventPayload:
-        basis = running.launch_validation
-        if basis is None or basis.launch_token is None:
-            return payload
-        return replace(
-            payload,
-            submitted_token=basis.launch_token,
-            requested_reasoning_effort=basis.selection.reasoning_effort,
-            blocks_submission=False,
-        )
-
-    async def _on_provider_selection_reported(
-        self,
-        state: _ConversationState,
-        turn_token: TurnToken,
-        payload: ProviderSelectionReportedEventPayload,
-        expected_sink: object | None = None,
-    ) -> None:
-        await self.take_backend_event(
-            turn_token,
-            ProviderSelectionReportedArguments(
-                provider=payload.provider,
-                source_kind=payload.source_kind,
-                model=payload.model,
-                reasoning_effort=payload.reasoning_effort,
-                child_lifetime=payload.child_lifetime,
-            ),
-            expected_sink=expected_sink,
-        )
 
     async def _on_token_usage_reported(
         self,
@@ -6107,11 +6057,6 @@ class SqliteProcessConversationSystem:
                 live = False
             if expected_sink is not None and state.child_event_sink is not expected_sink:
                 live = False
-            if (
-                isinstance(args, ProviderSelectionReportedArguments)
-                and args.provider != state.record.backend_key
-            ):
-                live = False
             if live and token is not None:
                 state.last_touched_monotonic = self._monotonic_now()
             payloads: tuple[ConversationEventPayload, ...] = ()
@@ -6140,7 +6085,6 @@ class SqliteProcessConversationSystem:
                 )
                 else None
             )
-            reported_payload = None
             if live:
                 if isinstance(args, ToolCallStartedArguments):
                     payloads = (
@@ -6161,25 +6105,6 @@ class SqliteProcessConversationSystem:
                     )
                 elif isinstance(args, PlanUpdatedArguments):
                     payloads = (PlanUpdatedEventPayload(entries=args.entries),)
-                elif (
-                    isinstance(args, ProviderSelectionReportedArguments)
-                    and token is not None
-                    and running is not None
-                    and args.provider == state.record.backend_key
-                ):
-                    reported_payload = self._bind_provider_selection_report(
-                        state,
-                        running,
-                        ProviderSelectionReportedEventPayload(
-                            args.provider,
-                            args.source_kind,
-                            args.model,
-                            args.reasoning_effort,
-                            token.turn_number,
-                            args.child_lifetime,
-                        ),
-                    )
-                    payloads = (reported_payload,)
                 elif isinstance(args, TokenUsageReportedArguments):
                     payloads = (
                         TokenUsageEventPayload(
@@ -6248,10 +6173,6 @@ class SqliteProcessConversationSystem:
                     live = False
 
             operations: list[PlainFieldMutation] = []
-            if reported_payload is not None:
-                operations.append(
-                    PlainFieldMutation(state, "child_reported_model", reported_payload.model)
-                )
             if predicted is not None:
                 operations.append(
                     PlainFieldMutation(
@@ -6677,34 +6598,6 @@ class _CoreBackendEventSink:
             )
         )
 
-    async def provider_selection_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        provider: ConversationBackendKey,
-        source_kind: str,
-        model: str,
-        child_lifetime: str,
-        reasoning_effort: str | None = None,
-    ) -> None:
-        async def record() -> None:
-            if self._state.child_event_sink is not self:
-                return
-            await self._system._on_provider_selection_reported(
-                self._state,
-                turn_token,
-                ProviderSelectionReportedEventPayload(
-                    provider,
-                    source_kind,
-                    model,
-                    reasoning_effort,
-                    turn_token.turn_number,
-                    child_lifetime,
-                ),
-                expected_sink=self,
-            )
-
-        self._enqueue(record)
 
     async def token_usage_reported(
         self,

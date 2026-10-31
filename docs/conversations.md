@@ -26,7 +26,7 @@ Model and reasoning changes ride the next message that is actually delivered. Br
 
 Send Message is the door for a person, Chief, a Manager, or a Worker addressing someone. It resolves the recipient’s current conversation, creating the link on first use, and records who sent it.
 
-The fate is about delivery, not about whether the model agreed.
+The fate is about delivery, not about whether the model agreed. A provider that explicitly rejects a prompt produces a visible refusal with its reason. Provider-reported model names and extra provider receipt fields are not stored in the notebook. Delivery acceptance, refusal and uncertainty still are.
 
 A saved model choice keeps its exact name and effort. Panels checks explicit model disables before sending. The provider can still refuse the prompt. Launch validation stores the choice, result, reason, action and launch token; it carries no catalog evidence or alias history. The composer shows the refusal without a separate validation panel.
 
@@ -87,4 +87,4 @@ The human’s message is a contained pill. The agent’s message is bare prose. 
 
 The contract is `src/planner/conversation/contracts.py`. The system and the three adapters live under `src/planner/conversation/`. Send Message is `src/planner/message_delivery/`. The pane is `web/src/components/conversation/`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-10-31._

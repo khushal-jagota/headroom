@@ -225,7 +225,6 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
         DecodedBackendEventArguments,
         PermissionAskRaisedArguments,
         PlanUpdatedArguments,
-        ProviderSelectionReportedArguments,
         TokenUsageReportedArguments,
         ToolCallFinishedArguments,
         ToolCallStartedArguments,
@@ -263,15 +262,6 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
                     )
                 )
                 sequence: tuple[tuple[BackendEventMethod, DecodedBackendEventArguments], ...] = (
-                    (
-                        BackendEventMethod.provider_selection_reported,
-                        ProviderSelectionReportedArguments(
-                            provider=state.record.backend_key,
-                            source_kind="response",
-                            model="reported-model",
-                            child_lifetime="test-child",
-                        ),
-                    ),
                     (
                         BackendEventMethod.tool_call_started,
                         ToolCallStartedArguments(

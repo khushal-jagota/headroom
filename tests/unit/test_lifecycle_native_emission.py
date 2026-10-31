@@ -147,7 +147,6 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
         PromptDeliveryMode,
         ResolvedConversationStart,
     )
-    from planner.conversation.events import ProviderSubmissionFact
     from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.execution_identity import ChildReference
@@ -163,12 +162,6 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
         reference = ChildReference("11111111-1111-4111-8111-111111111111", "native", "conversation")
         turn = TurnToken("conversation", 1)
         writes: list[TurnToken] = []
-        fact = ProviderSubmissionFact(
-            ConversationBackendKey.codex,
-            "rejected" if fate == "rejected" else "accepted",
-            "rpc_error" if fate == "rejected" else "turn/start",
-            "correlated-request",
-        )
 
         class Native:
             async def start(self, *args: object, **kwargs: object) -> None:
@@ -181,10 +174,8 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
                 if fate == "unknown":
                     raise PromptWriteFailed("acknowledgment missing after possible write")
                 if fate == "rejected":
-                    raise BackendPromptRejected(
-                        "provider refused request", provider_submission=fact
-                    )
-                return BackendPromptAccepted(True, provider_submission=fact)
+                    raise BackendPromptRejected("provider refused request")
+                return BackendPromptAccepted(True)
 
         native = Native()
         spool = MacOutbox(tmp_path / "spool")
@@ -235,12 +226,11 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
                     await write()
                 assert isinstance(uncertain.value, RemoteCommandUncertain)
             elif fate == "rejected":
-                with pytest.raises(BackendPromptRejected) as refused:
+                with pytest.raises(BackendPromptRejected, match="provider refused request"):
                     await write()
-                assert refused.value.provider_submission == fact
             else:
                 accepted = await write()
-                assert accepted.provider_submission == fact
+                assert accepted.composed_content_delivered is True
             command = commands[-1]
             recorded = registry._commands[command.command_id].outcome
             assert recorded is not None

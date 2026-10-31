@@ -67,7 +67,6 @@ def _run(exercise: Callable[[], Awaitable[None]], *, seconds: float = 30.0) -> N
 
 
 def _resolved_start(workspace: Path) -> ResolvedConversationStart:
-    from planner.conversation.contracts import ConversationBackendKey
 
     return ResolvedConversationStart(
         conversation_id="c",
@@ -85,17 +84,6 @@ def _resolved_start(workspace: Path) -> ResolvedConversationStart:
 class _RecordingSink:
     """Everything the adapter reported, for a test driving one child directly."""
 
-    async def provider_selection_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        provider: ConversationBackendKey,
-        source_kind: str,
-        model: str,
-        child_lifetime: str,
-        reasoning_effort: str | None = None,
-    ) -> None:
-        raise AssertionError("this provider does not report an applied selection")
 
     def __init__(self) -> None:
         self.deltas: list[str] = []
