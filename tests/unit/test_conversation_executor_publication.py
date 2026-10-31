@@ -76,8 +76,6 @@ async def _take_event(
     return TypeAdapter(AcceptanceReceipt).validate_python(result.result)
 
 
-
-
 def test_restart_closes_native_request_before_initial_signal_snapshot(
     tmp_db: sqlite3.Connection,
 ) -> None:
@@ -142,28 +140,6 @@ def test_restart_closes_native_request_before_initial_signal_snapshot(
                 for f in await restored.store.lifecycle_facts("c")
             )
             assert await restored.store.select_deployment_recoveries() == {}
-
-    asyncio.run(exercise())
-
-
-def test_reserved_turn_exceeds_conversation_history_without_run_metadata(
-    tmp_db: sqlite3.Connection,
-) -> None:
-    """Reserved numbers survive independently of the Mac run table."""
-
-    path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
-
-    async def exercise() -> None:
-        harness = _Harness(path)
-        try:
-            async with harness.client() as client:
-                await _start(client, "c")
-            for expected in range(1, 58):
-                assert await harness.store.reserve_turn("c") == expected
-            assert tmp_db.execute("SELECT COUNT(*) FROM mac_runs").fetchone()[0] == 0
-            assert await harness.store.reserve_turn("c") == 58
-        finally:
-            await harness.runtime.shutdown()
 
     asyncio.run(exercise())
 

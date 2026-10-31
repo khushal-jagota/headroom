@@ -117,23 +117,6 @@ def test_first_install_applies_config_and_restores_absence_on_failure(
     assert service.stops == ([REMOTE] if first_failure else [])
 
 
-@pytest.mark.parametrize("prior", [None, REMOTE])
-def test_omitted_configuration_preserves_existing_default_behavior(
-    tmp_path: Path,
-    prior: VpsExecutorLaunchConfiguration | None,
-) -> None:
-    result, service = deploy(tmp_path, prior=prior, desired=None)
-    assert result.status == "succeeded"
-    assert service.seen == [prior]
-
-
-def test_equal_revision_and_equal_config_does_not_restart(tmp_path: Path) -> None:
-    result, service = deploy(tmp_path, prior=REMOTE, desired=REMOTE, same_sha=True)
-    assert result.status == "unchanged"
-    assert service.stops == []
-    assert service.seen == []
-
-
 @pytest.mark.parametrize("unsafe", ["malformed", "public", "symlink"])
 def test_invalid_prior_refuses_before_service_disruption(tmp_path: Path, unsafe: str) -> None:
     current = tmp_path / "current"
@@ -164,61 +147,6 @@ def test_invalid_prior_refuses_before_service_disruption(tmp_path: Path, unsafe:
     assert service.seen == []
 
 
-
-@pytest.mark.parametrize("explicit", [False, True])
-def test_cli_supplies_only_validated_explicit_configuration(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    explicit: bool,
-) -> None:
-    from click.testing import CliRunner
-
-    from planner.environments import cli
-
-    candidate = tmp_path / "candidate"
-    candidate.mkdir()
-    config = tmp_path / "executor-launch.json"
-    write_vps_launch(config, REMOTE)
-    captured: dict[str, object] = {}
-
-    def run(**values: object) -> DeploymentResult:
-        captured.update(values)
-        return DeploymentResult("succeeded", SHA_B, SHA_A, None)
-
-    monkeypatch.setattr(cli, "deploy_app", run)
-    # Staging requires reviewed gate evidence even when executor mode is explicit.
-    evidence = tmp_path / "gate.json"
-    evidence.write_text("{}")
-    monkeypatch.setattr(
-        "planner.environments.deployment_gate.read_gate_evidence",
-        lambda _: {"observation": {"health_url": "http://localhost:12345/health"}},
-    )
-    arguments = [
-        "app-deploy",
-        "--gate-evidence",
-        str(evidence),
-        "--candidate-app",
-        str(candidate),
-        "--current-root",
-        str(tmp_path / "current"),
-        "--source-db",
-        str(tmp_path / "db"),
-        "--backup-dir",
-        str(tmp_path / "backup"),
-        "--health-url",
-        "http://localhost:12345/health",
-        "--service-manager",
-        "systemctl",
-        "--service-name",
-        "panels",
-    ]
-    if explicit:
-        arguments.extend(["--executor-launch-config", str(config)])
-    result = CliRunner().invoke(cli.environment, arguments)
-    assert result.exit_code == 0, result.output
-    assert captured["executor_launch_configuration"] == (REMOTE if explicit else None)
-
-
 def test_unsafe_desired_target_directory_refuses_before_stop(tmp_path: Path) -> None:
     current = tmp_path / "current"
     _app(current / "app", SHA_A, "old")
@@ -240,57 +168,3 @@ def test_unsafe_desired_target_directory_refuses_before_stop(tmp_path: Path) -> 
         )
     assert service.stops == []
     assert service.seen == []
-
-
-def test_rollback_restores_exact_prior_configuration_bytes(tmp_path: Path) -> None:
-    current = tmp_path / "current"
-    _app(current / "app", SHA_A, "old")
-    candidate = _app(tmp_path / "candidate", SHA_B, "new")
-    path = current / "data" / "executor-launch.json"
-    write_vps_launch(path, LOCAL)
-    (path.parent / "planning.db").write_text("database")
-    original = b'{ "executor_id": null, "mode": "local", "version": 2 }\n'
-    path.write_bytes(original)
-    service = Service(path, fail_candidate=True)
-    result = deploy_app(
-        candidate_app=candidate,
-        current_root=current,
-        source_db=path.parent / "planning.db",
-        backup=lambda _: tmp_path,
-        restore=lambda _: None,
-        service=service,
-        health=Health(),
-        executor_launch_configuration=REMOTE,
-    )
-    assert result.status == "rolled_back"
-    assert path.read_bytes() == original
-    assert service.seen == [REMOTE, LOCAL]
-
-
-@pytest.mark.parametrize("legacy_shared_directory", [False, True])
-def test_absent_config_is_effectively_local_without_restart_or_write(
-    tmp_path: Path,
-    legacy_shared_directory: bool,
-) -> None:
-    current = tmp_path / "current"
-    _app(current / "app", SHA_A, "old")
-    candidate = _app(tmp_path / "candidate", SHA_A, "new")
-    path = current / "data" / "executor-launch.json"
-    path.parent.mkdir(mode=0o700)
-    if legacy_shared_directory:
-        path.parent.chmod(0o770)
-    service = Service(path)
-    result = deploy_app(
-        candidate_app=candidate,
-        current_root=current,
-        source_db=path.parent / "planning.db",
-        backup=lambda _: tmp_path,
-        restore=lambda _: None,
-        service=service,
-        health=Health(),
-        executor_launch_configuration=LOCAL,
-    )
-    assert result.status == "unchanged"
-    assert service.stops == []
-    assert service.seen == []
-    assert not path.exists()

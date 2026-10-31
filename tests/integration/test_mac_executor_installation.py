@@ -41,13 +41,14 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
     }
 
     def pip(*arguments: str) -> None:
-        subprocess.run(
+        result = subprocess.run(
             [python, "-m", "pip", *arguments],
             env=clean_environment,
             text=True,
             capture_output=True,
-            check=True,
+            check=False,
         )
+        assert result.returncode == 0, result.stdout + result.stderr
 
     pip("install", "-r", str(source / "requirements-build.txt"))
     pip(

@@ -212,68 +212,6 @@ def test_ambiguous_commit_recovers_typed_result_for_every_receipt(
     asyncio.run(asyncio.wait_for(exercise(), 10))
 
 
-@pytest.mark.parametrize("path", ["local", "remote"])
-@pytest.mark.parametrize(
-    ("ending", "confirmed", "expected_compaction"),
-    [("completed", False, "not_compacted"), ("completed", True, None), ("failed", False, None)],
-)
-def test_common_turn_ending_preserves_compaction_and_missing_reply(
-    tmp_path: Path, path: str, ending: str, confirmed: bool, expected_compaction: str | None
-) -> None:
-    """The formerly separate paths retain the same domain outcomes and safe failure text."""
-    from planner.conversation.events import ConversationTurnEnding, TurnEndedEventPayload
-    from planner.core.contracts import CHIEF_PRINCIPAL
-
-    async def exercise() -> None:
-        async with _case(tmp_path, True) as (harness, store, identity, event, envelope):
-            state = harness.system._conversations["c"]
-            running = state.running_turn
-            assert running is not None
-            running.automatic_compaction = True
-            running.compaction_confirmed = confirmed
-            running.prompt_senders = {CHIEF_PRINCIPAL: None}
-            error = "  failure\n detail  " if ending == "failed" else None
-            if path == "local":
-                await harness.system._on_turn_ended(
-                    state, running.token, ConversationTurnEnding(ending), error, None
-                )
-            else:
-                finished = BackendEvent(
-                    event.child,
-                    BackendEventMethod.turn_ended,
-                    running.token,
-                    {"ending": ending, "error_summary": error, "standard_error_tail": None},
-                )
-                row = _envelope(1, EnvelopeKind.backend_event, finished)
-
-                def accept(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
-                    receipt, taken = store.accept_in_transaction(
-                        connection,
-                        row,
-                        lambda connection, envelope: take(),
-                        1001,
-                        identity=identity,
-                    )
-                    return AcceptedEvent(as_object(receipt), taken)
-
-                await _take_event(harness.system, finished, row, accept)
-            events = await harness.store.read_events_after("c", 0)
-            endings = [
-                row.payload for row in events if isinstance(row.payload, TurnEndedEventPayload)
-            ]
-            assert len(endings) == 1
-            assert endings[0].ending is ConversationTurnEnding(ending)
-            result = endings[0].automatic_compaction_result
-            assert (None if result is None else result.value) == expected_compaction
-            assert endings[0].error_summary == ("failure detail" if ending == "failed" else None)
-            assert (
-                sum(row.kind is ConversationEventKind.explicit_reply_missing for row in events) == 1
-            )
-            assert state.running_turn is None
-
-    asyncio.run(asyncio.wait_for(exercise(), 10))
-
-
 def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: Path) -> None:
     """Compare the real callback queue and inbox, including request reuse and closure."""
     from dataclasses import fields

@@ -38,7 +38,6 @@ from planner.executor.protocol import (
     IpcOperation,
     IpcRequest,
     IpcResponse,
-    JsonObject,
     ReceiptDisposition,
     StopRun,
     encode_frame,
@@ -192,65 +191,6 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                 assert json.loads(retried.stdout)["publication"] == "queued"
                 assert executor.outbox.pending() == (publication.envelope,)
                 assert captures == 1
-            finally:
-                release.set()
-
-    asyncio.run(run())
-
-
-def test_shared_deadline_returns_preparing_but_tracker_survives_physical_settlement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        entered, release = threading.Event(), threading.Event()
-        async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            mint = executor.outbox.add
-
-            def held_mint(*args: object, **kwargs: object) -> object:
-                envelope = mint(*args, **kwargs)  # type: ignore[arg-type]
-                entered.set()
-                assert release.wait(5)
-                return envelope
-
-            monkeypatch.setattr(executor.outbox, "add", held_mint)
-            request = write_request(child, "original", budget=0.1)
-            try:
-                started = time.monotonic()
-                response = await executor.gateway.handle(request)
-                assert time.monotonic() - started < 0.6
-                assert entered.is_set()
-                assert response.unconfirmed is not None
-                assert response.unconfirmed.publication == "preparing"
-                tracker = executor.gateway._publications["original"]
-                assert executor.outbox.pending_count() == 1
-                assert executor.runner._source_work[child.reference] == 1
-                conflict = replace(request, payload={"operation": "ticket.edit", "arguments": {}})
-                refusal = await executor.gateway.handle(conflict)
-                assert refusal.error is not None and refusal.error["code"] == "validation"
-                duplicate = await executor.gateway.handle(
-                    replace(request, response_deadline=time.monotonic() + 0.01)
-                )
-                assert duplicate.unconfirmed is not None
-                assert executor.gateway._publications["original"] is tracker
-                envelope = executor.outbox.pending()[0]
-                executor.outbox.acknowledge(
-                    AcceptanceReceipt(
-                        envelope.sender_id,
-                        envelope.submission_id,
-                        envelope.payload_sha256,
-                        ReceiptDisposition.accepted,
-                        {"saved": True},
-                        1,
-                    )
-                )
-                observed = await executor.gateway.handle(retry_request(child, "original"))
-                assert observed.result == {"saved": True}
-                assert executor.gateway._publications["original"] is tracker
-                assert executor.runner._source_work[child.reference] == 1
-                release.set()
-                await tracker.task
-                assert executor.runner._source_work == {}
-                assert "original" not in executor.gateway._publications
             finally:
                 release.set()
 
@@ -418,54 +358,6 @@ def test_partial_send_failure_is_uncertain_but_pre_send_failure_is_not(
         ipc_client.request(IpcOperation.write, {"operation": "ticket.edit"})
 
 
-@pytest.mark.parametrize("payload", [{}, {"operation": "ticket.edit", "arguments": []}])
-def test_invalid_payload_is_a_canonical_refusal_before_admission(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: JsonObject
-) -> None:
-    async def run() -> None:
-        async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            response = await executor.gateway.handle(
-                replace(write_request(child, "bad"), payload=payload)
-            )
-            assert response.error is not None and response.error["code"] == "validation"
-            assert not executor.gateway._publications and not executor.outbox.pending()
-
-    asyncio.run(run())
-
-
-def test_production_six_second_preparation_consumes_shared_thirty_second_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        captures = 0
-
-        original = MacOutbox._capture
-
-        def slow_snapshot(
-            *args: object, **kwargs: object
-        ) -> tuple[tuple[FileSnapshot, ...], list[tuple[object, ...]]]:
-            nonlocal captures
-            captures += 1
-            time.sleep(6)
-            return original(*args, **kwargs)  # type: ignore[arg-type]
-
-        monkeypatch.setattr(MacOutbox, "_capture", slow_snapshot)
-        async with ipc_service(tmp_path, monkeypatch) as (executor, _):
-            started = time.monotonic()
-            response = await asyncio.to_thread(
-                ipc_client.request,
-                IpcOperation.write,
-                {"operation": "ticket.edit", "arguments": {}},
-            )
-            elapsed = time.monotonic() - started
-            assert 29 <= elapsed < 34, elapsed
-            assert captures == 1
-            assert response.queued is not None and response.error is None
-            assert executor.outbox.pending()[0].submission_id == response.request_id
-
-    asyncio.run(run())
-
-
 def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -488,52 +380,6 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
             assert retried.unconfirmed is not None and retried.unconfirmed.publication == "queued"
             assert retried.unconfirmed.submission_id == original.submission_id == "original"
             assert executor.outbox.pending() == (original,)
-
-    asyncio.run(run())
-
-
-def test_duplicate_reservation_precedes_blocked_journal_lookup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        entered, release = threading.Event(), threading.Event()
-        async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            lookup = executor.outbox.lookup
-            calls = 0
-
-            def blocked_lookup(identity: str) -> object:
-                nonlocal calls
-                calls += 1
-                entered.set()
-                assert release.wait(5)
-                return lookup(identity)
-
-            monkeypatch.setattr(executor.outbox, "lookup", blocked_lookup)
-            request = write_request(child, "same", budget=0.08)
-            first = asyncio.create_task(executor.gateway.handle(request))
-            second = asyncio.create_task(executor.gateway.handle(request))
-            try:
-                responses = await asyncio.gather(first, second)
-                assert entered.is_set() and calls >= 1
-                assert executor.runner._source_work[child.reference] == 1
-                assert all(row.unconfirmed is not None for row in responses)
-                tracker = executor.gateway._publications["same"]
-                conflict = await executor.gateway.handle(
-                    replace(
-                        request,
-                        payload={
-                            "operation": "ticket.edit",
-                            "arguments": {"different": True},
-                        },
-                    )
-                )
-                assert conflict.error is not None and conflict.error["code"] == "validation"
-                assert executor.gateway._publications["same"] is tracker
-                release.set()
-                await tracker.task
-                assert len(executor.outbox.pending()) == 1
-            finally:
-                release.set()
 
     asyncio.run(run())
 

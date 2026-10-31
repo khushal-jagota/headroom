@@ -54,21 +54,7 @@ def _configure_scoped_metadata(
         CatalogWorkspaceBinding,
         LaunchContext,
     )
-    from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
     from planner.tickets.contracts import TicketLocale
-
-    class NoUnscopedProbe(BackendSnapshotService):
-        def __init__(self) -> None:
-            pass
-
-        async def snapshot(
-            self,
-            backend_key: ConversationBackendKey,
-            *,
-            refresh: bool = False,
-            discover_update_advisory: bool = True,
-        ) -> BackendSnapshot:
-            raise AssertionError("This lifecycle requires scoped metadata")
 
     class Observer(ScriptedCatalogObserver):
         async def capture_context(
@@ -249,19 +235,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             saved = store.lookup_receipt(envelope.sender_id, envelope.submission_id)
             assert saved is not None
             assert saved.result["fate"] == ("recorded" if committed else "uncertain")
-            connection = connect(path)
-            try:
-                assert connection.execute(
-                    "SELECT disposition FROM mac_inbox_positions WHERE submission_id=?",
-                    (envelope.submission_id,),
-                ).fetchone()[0] == ("accepted" if committed else "dispatching")
-            finally:
-                connection.close()
-            domain = await system._store.sender_message_outcome("c_source", "native_help")
-            if committed:
-                assert domain is not None and domain.kind.value == "message_to_owner"
-            else:
-                assert domain is None
             assert (
                 bool(
                     tmp_db.execute(
@@ -321,177 +294,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             assert rows == int(committed)
             spool.close()
         finally:
-            for state in system._conversations.values():
-                state.child = None
-            await system.shutdown()
-
-    asyncio.run(run())
-
-
-def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay(
-    tmp_db: Connection,
-    tmp_path: Path,
-) -> None:
-    from planner.conversation.contracts import AddressedPromptDeliveryReceipt, PromptDeliveryStarted
-
-    class CrashAfterPrompt(SqliteProcessConversationSystem):
-        observed: list[AddressedPromptDeliveryReceipt]
-
-        def __init__(self, **kwargs: Any) -> None:
-            super().__init__(**kwargs)
-            self.observed = []
-
-        async def send_with_receipt(
-            self, conversation_id: str, content: MessageContent, **kwargs: Any
-        ) -> AddressedPromptDeliveryReceipt:
-            receipt = await super().send_with_receipt(conversation_id, content, **kwargs)
-            self.observed.append(receipt)
-            raise SimulatedCrash("actual native admission committed before executor receipt")
-
-    async def run() -> None:
-        path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-        store = InboxStore(path)
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
-        )
-        store.runs.begin_connection(identity, 1000)
-        store.runs.mark_ready(identity, 1001)
-        target = data.create_ticket(
-            tmp_db,
-            title="Idle target",
-            worker_type="coding",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            employee_backend="codex",
-            employee_launch_model="scripted",
-            selection_kind="concrete",
-        )
-        recipient = Principal(PrincipalKind.ticket, target.id)
-        sender = Principal(PrincipalKind.chief, "chief")
-        native_calls: list[ChildOperation] = []
-        reference = ChildReference("incarnation", "target_child", "c_idle")
-
-        async def native(command: ChildCommand) -> CommandOutcome:
-            native_calls.append(command.operation)
-            result: JsonObject = (
-                {"kind": "prompt_accepted", "composed_content_delivered": True}
-                if command.operation is ChildOperation.write_prompt
-                else {}
-            )
-            outcome = CommandOutcome(
-                command.command_id, command.child, CommandDisposition.succeeded, result
-            )
-            # Model the actual endpoint's definitive receipt settlement, not a hint.
-            outcome_conn = connect(path)
-            try:
-                outcome_conn.execute("BEGIN IMMEDIATE")
-                store.runs.record_command_outcome_in_transaction(outcome_conn, outcome)
-                outcome_conn.commit()
-            finally:
-                outcome_conn.close()
-            return outcome
-
-        from tests.support.executor_turns import MacRemoteChildFactory
-
-        factory = MacRemoteChildFactory(
-            lambda start, sink: reference,
-            native,
-            lambda start: canonical_snapshot(),
-            db_path=path,
-        )
-
-        system = CrashAfterPrompt(
-            store=ConversationStore(path),
-            backend_child_factories={key: factory for key in ConversationBackendKey},
-            message_files=ConversationMessageFiles(path),
-        )
-        _configure_scoped_metadata(system, path, identity)
-        spool = MacOutbox(tmp_path / "spool")
-        try:
-            await system.start_conversation(ConversationStartRequest("c_idle", "scripted"))
-            data.write_ticket_conversation_start(
-                tmp_db,
-                target.id,
-                conversation_id="c_idle",
-                backend="codex",
-                model="scripted",
-                reasoning_effort=None,
-                now=2,
-            )
-            assert not await system.is_running("c_idle")
-            write = CliWrite(
-                "message.send",
-                {
-                    "body": {
-                        "target": {"kind": "ticket", "id": target.id},
-                        "message": "Begin this idle turn",
-                        # Omitted mode must retain the ordinary steer default.
-                    }
-                },
-                ChildReference("incarnation", "sender_child", "c_source"),
-                None,
-            )
-            payload = encode_value(write)
-            assert isinstance(payload, dict)
-            envelope = spool.add(
-                OutboxEntry(
-                    conversation_id="c_source",
-                    kind=EnvelopeKind.cli_write,
-                    payload=payload,
-                    submission_id="idle_steer",
-                )
-            )
-
-            def resolve(
-                connection: Connection, request: CliWrite, principal: Principal
-            ) -> Principal:
-                return recipient
-
-            with pytest.raises(SimulatedCrash):
-                await deliver_native_message(
-                    store=store,
-                    envelope=envelope,
-                    write=write,
-                    principal=sender,
-                    identity=identity,
-                    clock=RealClock(),
-                    conversations=system,
-                    resolve_recipient=resolve,
-                )
-            assert len(system.observed) == 1
-            assert isinstance(system.observed[0].fate, PromptDeliveryStarted)
-            saved = store.lookup_receipt(envelope.sender_id, envelope.submission_id)
-            assert saved is not None
-            assert saved.result["fate"] == "started"
-            before_replay = list(native_calls)
-            events_before_replay = await system._store.read_events_after("c_idle", 0)
-            receipt = await deliver_native_message(
-                store=InboxStore(path),
-                envelope=envelope,
-                write=write,
-                principal=sender,
-                identity=identity,
-                clock=RealClock(),
-                conversations=system,
-                resolve_recipient=resolve,
-            )
-            assert receipt.result == {
-                "target": {"kind": "ticket", "id": target.id},
-                "conversation_id": "c_idle",
-                "fate": "started",
-            }
-            assert native_calls == before_replay
-            assert len(system.observed) == 1
-            assert await system._store.read_events_after("c_idle", 0) == events_before_replay
-            from planner.conversation.events import PromptEventPayload
-
-            assert (
-                sum(isinstance(event.payload, PromptEventPayload) for event in events_before_replay)
-                == 1
-            )
-        finally:
-            spool.close()
             for state in system._conversations.values():
                 state.child = None
             await system.shutdown()

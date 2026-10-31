@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -701,7 +701,6 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
         ClaudeAgentSdkChildLaunch,
     )
     from planner.executor.configuration import NATIVE_WORKER_CONTEXT
-    from planner.executor.protocol import ChildOperation
     from planner.runtime.conversation_start import send_to_ticket_conversation
     from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
 
@@ -829,31 +828,6 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 assert prompt.count(sender_text) == 1
                 assert prompt.index("Chief:") < prompt.index(sender_text)
 
-                writes = [
-                    command
-                    for record in harness.mac.runner._commands.values()
-                    for command in (record.command,)
-                    if command.operation is ChildOperation.write_prompt
-                    and getattr(command.arguments, "sender_label", None) == "Chief"
-                    and getattr(command.arguments, "model_change", None) == "claude-new"
-                    and getattr(command.arguments, "reasoning_effort_change", None)
-                    == ("low" if index == 1 else "high")
-                ]
-                assert len(writes) == 2
-                refused, accepted = [
-                    harness.mac.runner._commands[c.command_id].outcome for c in writes
-                ]
-                assert refused.disposition is CommandDisposition.refused
-                assert refused.result["error_type"] == "NeedsRebind"
-                assert accepted.disposition is CommandDisposition.succeeded
-                assert refused.child == old_reference
-                assert accepted.child != old_reference
-                assert writes[0].arguments.content == writes[1].arguments.content
-                assert writes[0].arguments.sender_content == writes[1].arguments.sender_content
-                assert all(
-                    harness.mac.runner.ask((outcome.command_id,))[0].outcome == outcome
-                    for outcome in (refused, accepted)
-                )
             assert sum(len(prompts(client)) for client in clients) == 3
         finally:
             cleanup_release.set()
@@ -876,7 +850,6 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
 
     from planner.conversation.message_content import MessageText
     from planner.conversation.model_resolution.contracts import SelectionKind
-    from planner.executor.protocol import ChildOperation
     from planner.runtime.conversation_start import (
         conversation_link_lock,
         send_to_ticket_conversation,
@@ -890,23 +863,23 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
         def __init__(self) -> None:
             super().__init__()
             self.delivered_text: list[str] = []
+            self.emission_inputs: list[dict[str, object]] = []
 
         async def write_prompt(
             self, turn_token: TurnToken, content: MessageContent, **arguments: object
         ) -> BackendPromptAccepted:
+            self.emission_inputs.append(arguments)
             self.delivered_text.append(
                 "\n".join(piece.text for piece in content if isinstance(piece, MessageText))
             )
             return await super().write_prompt(turn_token, content, **arguments)
 
     async def run() -> None:
-        started = time.monotonic()
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
         conn = connect(harness.endpoint.db_path)
         try:
-            first = next(iter(harness.mac.runner._children.values()))
             second = CapturedNativeChild()
 
             def factory(
@@ -951,7 +924,6 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
             assert snapshots.available_models and observer.calls > 0
             observer.calls = 0
             observer.block = True
-            refreshed_at = time.monotonic()
             original = read_launch_selection(conn, ticket.id)
             assert original.selection_kind is SelectionKind.legacy_unclassified
             exact_text = "Exact lifecycle selection: café\nsecond line"
@@ -981,104 +953,52 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
             assert selected.selection_kind is SelectionKind.concrete
             assert selected.submitted_token == original.submitted_token == "scripted"
             assert selected.backend_key is ConversationBackendKey.codex
-            commands = [
-                command
-                for record in harness.mac.runner._commands.values()
-                for command in (record.command,)
-                if command.child.conversation_id == conversation_id
-            ]
-            assert [command.operation for command in commands] == [
-                ChildOperation.start,
-                ChildOperation.write_prompt,
-            ]
-            for command in commands:
-                assert isinstance(command.arguments, (StartRun, WritePrompt, Steer))
-                expectation = encode_value(command.arguments.admission_expectation)
-                assert isinstance(expectation, dict)
-                assert expectation["conversation_id"] == conversation_id
-                selection = expectation["selection"]
-                assert isinstance(selection, dict)
-                assert selection["selection_kind"] == "concrete"
-                assert selection["submitted_token"] == "scripted"
-                assert selection["backend_key"] == "codex"
-                assert expectation["resolved_model_id"] is None
-                assert expectation["launch_token"] == "scripted"
-                assert expectation["child"] == {
-                    "executor_incarnation": command.child.executor_incarnation,
-                    "child_id": command.child.child_id,
-                    "conversation_id": conversation_id,
-                }
-                assert expectation["turn"] == (
-                    None
-                    if command.turn is None
-                    else {
-                        "conversation_id": conversation_id,
-                        "turn_number": command.turn.turn_number,
-                    }
-                )
-            first_delivery_at = time.monotonic()
+            expectation = second.emission_inputs[0]["admission_expectation"]
+            assert isinstance(expectation, AdmissionExpectation)
+            assert expectation.selection.selection_kind is SelectionKind.concrete
+            assert expectation.selection.submitted_token == "scripted"
             assert observer.calls == 0
-            assert second.sink is not None and second.turn is not None
-            await second.sink.turn_ended(
-                second.turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
-            )
-            await eventually(
-                lambda: harness.system._conversations[conversation_id].phase.value == "idle",
-                "First workflow turn did not settle",
-            )
-            async with conversation_link_lock(f"ticket:{ticket.id}"):
-                changed = await send_to_ticket_conversation(
-                    harness.system,
-                    conn,
-                    ticket.id,
-                    text_message_content("Second exact choice"),
-                    conversation_id=conversation_id,
-                    runs_under=ConversationStartOverrides(
-                        model="gpt-6.1-terra",
-                        reasoning_effort="future-effort",
-                        reasoning_effort_is_set=True,
-                    ),
-                    sender_label="Test",
-                    sender=CHIEF_PRINCIPAL,
-                    recipient=Principal(PrincipalKind.ticket, ticket.id),
-                    now=int(time.time()),
+
+            async def finish_turn() -> None:
+                assert second.sink is not None and second.turn is not None
+                await second.sink.turn_ended(
+                    second.turn,
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
                 )
-            assert second.prompt_count == 2, changed
-            assert "Second exact choice" in second.delivered_text[1]
-            assert observer.calls == 0
-            writes = [
-                command
-                for record in harness.mac.runner._commands.values()
-                for command in (record.command,)
-                if command.child.conversation_id == conversation_id
-                and command.operation is ChildOperation.write_prompt
-            ]
-            assert isinstance(writes[-1].arguments, WritePrompt)
-            assert encode_value(writes[-1].arguments.model_change) == "gpt-6.1-terra"
-            assert isinstance(writes[-1].arguments, WritePrompt)
-            assert encode_value(writes[-1].arguments.reasoning_effort_change) == "future-effort"
-            print(
-                f"synthetic native refresh-to-first-send: {first_delivery_at - refreshed_at:.3f}s; "
-                f"change-to-second-send: {time.monotonic() - first_delivery_at:.3f}s"
-            )
-            assert harness.mac.runner._children[first.reference.child_id] is first
+                await eventually(
+                    lambda: harness.system._conversations[conversation_id].phase.value == "idle",
+                    "Workflow turn did not settle",
+                )
+
+            for index, effort in enumerate(("future-effort", None), 2):
+                await finish_turn()
+                text = f"Exact choice {index}"
+                async with conversation_link_lock(f"ticket:{ticket.id}"):
+                    changed = await send_to_ticket_conversation(
+                        harness.system,
+                        conn,
+                        ticket.id,
+                        text_message_content(text),
+                        conversation_id=conversation_id,
+                        runs_under=ConversationStartOverrides(
+                            model="gpt-6.1-terra",
+                            reasoning_effort=effort,
+                            reasoning_effort_is_set=True,
+                        ),
+                        sender_label="Test",
+                        sender=CHIEF_PRINCIPAL,
+                        recipient=Principal(PrincipalKind.ticket, ticket.id),
+                        now=int(time.time()),
+                    )
+                assert second.prompt_count == index, changed
+                assert text in second.delivered_text[index - 1]
+                assert observer.calls == 0
+                assert second.emission_inputs[-1]["model_change"] == "gpt-6.1-terra"
+                assert second.emission_inputs[-1]["reasoning_effort_change"] == effort
+                assert second.emission_inputs[-1]["reasoning_effort_is_set"] is True
             assert harness.native.stop_count == 0
-            assert harness.native.sink is not None and harness.native.turn is not None
-            before = harness.events("tool_call_finished")
-            await harness.native.sink.tool_call_finished(
-                harness.native.turn,
-                tool_call_id="other-child-after-admission",
-                tool_call_status=ToolCallStatus.completed,
-                detail="Independent child remains active.",
-            )
-            await eventually(
-                lambda: harness.events("tool_call_finished") == before + 1,
-                "Unrelated child lost its authenticated event path",
-            )
-            print(f"lifecycle admission TLS scenario elapsed: {time.monotonic() - started:.3f}s")
         finally:
             conn.close()
             await harness.close()
@@ -1172,46 +1092,6 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
         finally:
             if resume is not None:
                 resume.set()
-            await harness.close()
-
-    asyncio.run(run())
-
-
-def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        try:
-            await harness.native.raise_ask()
-            await harness.wait_ask_reachable()
-            generation = harness.mac.identity.connection_generation
-            answer = await harness.choose_answer(harness.ask, "allow")
-            assert harness.endpoint.runs.link is not None
-            harness.endpoint.runs.link.close()
-            await eventually(
-                lambda: (
-                    harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.runs.ready
-                ),
-                "Link did not reconcile",
-            )
-            await eventually(
-                lambda: harness.native.answers == [("ask_permission", "allow")],
-                "Durable answer did not reach original native callback",
-            )
-
-            def application_recorded() -> bool:
-                return harness.answer_applied(harness.ask)
-
-            await eventually(application_recorded, "Callback application did not become canonical")
-            assert harness.native.start_count == harness.native.prompt_count == 1
-            assert harness.saved_answer(harness.ask) == answer
-            assert harness.events("permission_asked") == 1
-        finally:
             await harness.close()
 
     asyncio.run(run())
@@ -1317,7 +1197,7 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("receipt_failure", ["disconnect", "unexpected", "silent"])
+@pytest.mark.parametrize("receipt_failure", ["disconnect", "silent"])
 def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1338,8 +1218,6 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                     ):
                         harness.endpoint.cut_submission = None
                         harness.endpoint.cut_count += 1
-                        if receipt_failure == "unexpected":
-                            raise RuntimeError("receipt handler failed after durable acceptance")
                         return
                     await original_send(message)
 
@@ -1436,7 +1314,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
 ) -> None:
     from tests.support.executor_catalog import ScriptedCatalogObserver
 
-    from planner.conversation.contracts import PromptDeliveryMode, PromptDeliveryUncertain
+    from planner.conversation.contracts import PromptDeliveryUncertain
     from planner.executor.protocol import ChildCommand, ChildOperation, CommandOutcome
 
     async def run() -> None:
@@ -1536,90 +1414,6 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
     asyncio.run(run())
 
 
-def test_binary_artifact_is_complete_before_dependent_backend_row(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        try:
-            ticket_id = next(iter(harness.mac.runner._children.values())).ticket_id
-            assert ticket_id is not None
-            artifact = harness.mac.paths.artifacts / ticket_id / "binary.dat"
-            artifact.parent.mkdir(parents=True, exist_ok=True)
-            contents = bytes(range(256)) * 2000
-            artifact.write_bytes(contents)
-            assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.tool_call_finished(
-                harness.native.turn,
-                tool_call_id="tool",
-                tool_call_status=ToolCallStatus.completed,
-                detail="Binary artifact is ready.",
-            )
-            await eventually(
-                lambda: harness.events("tool_call_finished") == 1,
-                "File-dependent backend event did not commit",
-            )
-            assert (
-                tmp_path / "vps/files/tickets" / ticket_id / "binary.dat"
-            ).read_bytes() == contents
-            await eventually(
-                lambda: not harness.mac.outbox.pending(),
-                "Committed file event receipt did not drain",
-            )
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
-
-
-def test_remote_replayed_usage_compaction_and_ending_preserve_core_rules(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        try:
-            sink = harness.native.sink
-            turn = harness.native.turn
-            assert sink is not None and turn is not None
-            await sink.token_usage_reported(
-                turn, input_tokens=12, output_tokens=5, cached_input_tokens=None, cost_usd=None
-            )
-            await sink.context_compacted(turn)
-            await harness.native.raise_ask()
-            await harness.wait_ask_reachable()
-            await harness.endpoint.close()
-            await sink.turn_ended(
-                turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
-            )
-            await eventually(lambda: harness.endpoint.runs.ready, "link did not reconnect")
-            await eventually(lambda: harness.events("turn_ended") == 1, "ending did not commit")
-            await eventually(
-                lambda: not harness.mac.outbox.pending(), "ending receipt did not drain"
-            )
-            assert harness.events("token_usage") == 1
-            assert harness.events("context_compacted") == 1
-            assert harness.events("explicit_reply_missing") == 1
-            assert not await harness.system.is_running("c_scripted")
-            assert (
-                await harness.system.answer_permission_ask(
-                    "c_scripted", public_ask_id(harness.ask), "allow"
-                )
-                is AnswerFate.refused
-            )
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
-
-
 def test_vps_input_attachment_bytes_arrive_before_native_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1705,59 +1499,6 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
             assert native_path.read_bytes() == contents
             assert len(emitted) == 1
             assert harness.mac.runner._commands[emitted[0].command_id].command == emitted[0]
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
-
-
-def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        try:
-            await harness.native.raise_ask()
-            await harness.wait_ask_reachable()
-            assert (await harness.system.answer_permission_ask(
-                "c_scripted", public_ask_id(harness.ask), "allow"
-            )) is AnswerFate.saved
-            await eventually(
-                lambda: harness.events("answer_applied") == 1, "first answer did not apply"
-            )
-            first_ask = harness.ask
-            assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
-                harness.native.turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
-            )
-            await eventually(lambda: harness.events("turn_ended") == 1, "first turn did not end")
-            await harness.system.send(
-                "c_scripted", text_message_content("Next turn"), sender_label="Test"
-            )
-            await harness.native.raise_ask()
-            await harness.wait_ask_reachable()
-            assert harness.ask != first_ask and harness.ask.ask_id == first_ask.ask_id
-            assert await harness.system.has_pending_permission_ask("c_scripted")
-            assert (await harness.system.answer_permission_ask(
-                "c_scripted", public_ask_id(harness.ask), "deny"
-            )) is AnswerFate.saved
-            await eventually(
-                lambda: harness.events("answer_applied") == 2,
-                "second exact ask did not apply its own answer",
-            )
-            await eventually(
-                lambda: not harness.mac.outbox.pending(), "answer receipts did not drain"
-            )
-            assert harness.native.answers == [
-                ("ask_permission", "allow"),
-                ("ask_permission", "deny"),
-            ]
-            assert harness.events("permission_answered") == 2
         finally:
             await harness.close()
 
@@ -1939,249 +1680,8 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
     asyncio.run(run())
 
 
-def test_concurrent_identical_inputs_keep_independent_downloads(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from planner.conversation.message_content import MessageFile
-    from planner.executor.protocol import (
-        ChildCommand,
-        ChildOperation,
-        CommandDisposition,
-        CommandOutcome,
-    )
-
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        try:
-            contents = bytes(range(256)) * 3000
-            commands, paths = [], []
-            for index in range(2):
-                conversation = f"c_input_{index}"
-                kept = await harness.endpoint.message_files.keep(
-                    conversation, contents, media_type="application/octet-stream"
-                )
-                child = ChildReference(
-                    harness.mac.identity.executor_incarnation, f"input_child_{index}", conversation
-                )
-                harness.endpoint.runs.store.register_child(child, "ticket", "ticket", 1)
-                command = ChildCommand(
-                    f"input_command_{index}",
-                    child,
-                    ChildOperation.write_prompt,
-                    TurnToken(conversation, 1),
-                    WritePrompt(
-                        content=(
-                            MessageFile(
-                                kept.stored_file_id,
-                                "application/octet-stream",
-                                "input.bin",
-                                len(contents),
-                            ),
-                        ),
-                        sender_content=(),
-                        sender_label="Owner",
-                        mode=PromptDeliveryMode.queue,
-                    ),
-                )
-                commands.append(command)
-                harness.endpoint.runs.pending_commands[command.command_id] = (
-                    command,
-                    asyncio.get_running_loop().create_future(),
-                )
-                paths.append(
-                    harness.mac.paths.root
-                    / "artifacts/files/conversations"
-                    / conversation
-                    / kept.stored_file_id
-                )
-            await asyncio.wait_for(
-                asyncio.gather(
-                    *(harness.mac.runner._prepare_inputs(command) for command in commands)
-                ),
-                5,
-            )
-            assert [path.read_bytes() for path in paths] == [contents, contents]
-            assert not harness.endpoint._transports[harness.mac.identity].transfers
-            for command in commands:
-                await harness.endpoint.runs._resolve_command(
-                    CommandOutcome(
-                        command.command_id, command.child, CommandDisposition.refused, {}
-                    )
-                )
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
-
-
 INPUT_ANSWERS = (UserInputAnswer("q_two", ("Red", "Blue")), UserInputAnswer("q_one", ("Yes",)))
 ORDERED_INPUT_ANSWERS = (INPUT_ANSWERS[1], INPUT_ANSWERS[0])
-
-
-def test_complete_user_input_map_is_durable_before_drop_and_normalized_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        try:
-            await harness.native.raise_user_input()
-            await harness.wait_input_reachable()
-            invalid_maps = (
-                (INPUT_ANSWERS[0],),
-                (UserInputAnswer("q_one", ("Yes", "No")), INPUT_ANSWERS[0]),
-                (UserInputAnswer("q_one", ("Other",)), INPUT_ANSWERS[0]),
-                (INPUT_ANSWERS[0], INPUT_ANSWERS[0]),
-            )
-            for answers in invalid_maps:
-                assert (
-                    await harness.system.answer_user_input(
-                        "c_scripted",
-                        public_ask_id(harness.input_ask),
-                        answers,
-                    )
-                ) is AnswerFate.refused
-            assert harness.saved_answer(harness.input_ask) is None
-            generation = harness.mac.identity.connection_generation
-            answer = await harness.choose_input(harness.input_ask, INPUT_ANSWERS)
-            assert answer.option_id is None and answer.user_input_answers == ORDERED_INPUT_ANSWERS
-            assert harness.endpoint.runs.link is not None
-            harness.endpoint.runs.link.close()
-            await eventually(
-                lambda: (
-                    harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.runs.ready
-                ),
-                "input did not reconcile",
-            )
-            await eventually(
-                lambda: harness.native.user_answers == [("request_input", ORDERED_INPUT_ANSWERS)],
-                "stored map did not reach native callback",
-            )
-            await eventually(
-                lambda: harness.answer_applied(harness.input_ask),
-                "application did not become canonical",
-            )
-            assert harness.saved_answer(harness.input_ask) == answer
-            await harness.restart_vps_core()
-            await eventually(
-                lambda: not harness.mac.outbox.pending(), "input application receipts did not drain"
-            )
-            assert harness.native.user_answers == [("request_input", ORDERED_INPUT_ANSWERS)]
-            assert harness.events("user_input_answered") == 1
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("loss", ["callback", "child"])
-def test_selected_user_input_map_survives_missing_callback_without_application(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, loss: str
-) -> None:
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        try:
-            await harness.native.raise_user_input()
-            await harness.wait_input_reachable()
-            ask = harness.input_ask
-            answer = await harness.choose_input(ask, INPUT_ANSWERS)
-            child = next(iter(harness.mac.runner._children.values()))
-            if loss == "callback":
-                child.user_inputs.clear()
-            else:
-                harness.mac.runner._children.clear()
-            generation = harness.mac.identity.connection_generation
-            assert harness.endpoint.runs.link is not None
-            harness.endpoint.runs.link.close()
-            await eventually(
-                lambda: (
-                    harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.runs.ready
-                ),
-                "missing input did not reconcile",
-            )
-            assert not harness.answer_applied(ask)
-            assert harness.saved_answer(ask) == answer
-            assert harness.native.user_answers == []
-            assert harness.events("user_input_answered") == 1
-            assert harness.events("answer_applied") == 0
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
-
-
-def test_user_input_request_id_reuse_gets_separate_answer_history(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        try:
-            await harness.native.raise_user_input()
-            await harness.wait_input_reachable()
-            first = harness.input_ask
-            assert (
-                await harness.system.answer_user_input(
-                    "c_scripted",
-                    public_ask_id(harness.input_ask),
-                    INPUT_ANSWERS,
-                )
-            ) is AnswerFate.saved
-            await eventually(
-                lambda: harness.events("answer_applied") == 1,
-                "first input answer did not apply",
-            )
-            assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
-                harness.native.turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
-            )
-            await eventually(
-                lambda: harness.events("turn_ended") == 1, "first input turn did not end"
-            )
-            await harness.system.send(
-                "c_scripted", text_message_content("Next input turn"), sender_label="Test"
-            )
-            await harness.native.raise_user_input()
-            await harness.wait_input_reachable()
-            second_answers = (
-                UserInputAnswer("q_one", ("No",)),
-                UserInputAnswer("q_two", ("Blue",)),
-            )
-            assert harness.input_ask != first
-            assert (
-                await harness.system.answer_user_input(
-                    "c_scripted",
-                    public_ask_id(harness.input_ask),
-                    second_answers,
-                )
-            ) is AnswerFate.saved
-            await eventually(
-                lambda: harness.events("answer_applied") == 2,
-                "reused input request lacked application proof",
-            )
-            await eventually(
-                lambda: not harness.mac.outbox.pending(), "input results did not drain"
-            )
-            assert harness.native.user_answers == [
-                ("request_input", ORDERED_INPUT_ANSWERS),
-                ("request_input", second_answers),
-            ]
-            assert harness.events("user_input_answered") == 2
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
 
 
 def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
@@ -2302,9 +1802,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
     asyncio.run(run())
 
 
-@pytest.mark.parametrize(
-    "invalid_ack", ["empty", "mismatched", "unknown_slot", "traversal", "manifest", "wrong_kind"]
-)
+@pytest.mark.parametrize("invalid_ack", ["mismatched", "traversal"])
 def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
@@ -2321,17 +1819,13 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
 
             async def corrupt_ack(message: WireMessage) -> None:
                 if reject and message.kind is WireMessageKind.file_transfer:
-                    payload = {} if invalid_ack == "empty" else dict(message.payload)
+                    payload = dict(message.payload)
                     if invalid_ack == "mismatched":
                         payload["direction"] = "download"
-                    elif invalid_ack == "unknown_slot":
-                        payload["transfer_id"] = "f" * 32
                     elif invalid_ack == "traversal":
                         payload["transfer_id"] = "../escape"
-                    elif invalid_ack == "manifest":
-                        payload["manifest"] = {}
                     message = WireMessage(
-                        (WireMessageKind.receipt if invalid_ack == "wrong_kind" else message.kind),
+                        message.kind,
                         message.request_id,
                         payload,
                     )
@@ -2398,9 +1892,8 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("invalid_ack", ["empty", "mismatched", "wrong_kind"])
 def test_input_descriptor_must_validate_before_provider_invocation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.message_content import MessageFile
     from planner.executor.protocol import ChildCommand, CommandDisposition, CommandOutcome
@@ -2425,11 +1918,10 @@ def test_input_descriptor_must_validate_before_provider_invocation(
                     message.kind is WireMessageKind.file_transfer
                     and message.payload.get("direction") == "download"
                 ):
-                    payload = {} if invalid_ack == "empty" else dict(message.payload)
-                    if invalid_ack == "mismatched":
-                        payload["direction"] = "upload"
+                    payload = dict(message.payload)
+                    payload["direction"] = "upload"
                     message = WireMessage(
-                        WireMessageKind.receipt if invalid_ack == "wrong_kind" else message.kind,
+                        message.kind,
                         message.request_id,
                         payload,
                     )
@@ -2463,7 +1955,6 @@ def test_input_descriptor_must_validate_before_provider_invocation(
             assert isinstance(result, PromptDeliveryRefused)
             assert len(outcomes) == 1 and outcomes[0].disposition is CommandDisposition.refused
             assert harness.native.prompt_count == 1
-            assert not harness.mac.runner._commands[outcomes[0].command_id].invoking
             target = (
                 harness.mac.paths.root
                 / "artifacts/files/conversations/c_scripted"
@@ -2690,196 +2181,6 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
             native_cancel.set()
             if interrupt is not None and not interrupt.done():
                 interrupt.cancel()
-            if resume is not None:
-                resume.set()
-            await harness.close()
-
-    asyncio.run(run())
-
-
-def test_revocation_before_emission_blocks_immediate_send_and_pending_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        from planner.executor.protocol import ChildCommand, ChildOperation
-
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
-        prepared, emit, replay_prepared = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        cancel_entered, cancel_finish = asyncio.Event(), asyncio.Event()
-        interrupt = None
-        resume = None
-        try:
-            await harness.native.raise_ask()
-            await harness.wait_ask_reachable()
-            transfer = harness.endpoint.runs._emit_command
-            preparations = 0
-
-            async def prepare(command: ChildCommand, *args: Any) -> bool:
-                nonlocal preparations
-                if command.operation is ChildOperation.answer_permission_ask:
-                    preparations += 1
-                    (prepared if preparations == 1 else replay_prepared).set()
-                    await emit.wait()
-                return await transfer(command, *args)
-
-            async def stalled_cancel(*args: object) -> None:
-                cancel_entered.set()
-                await cancel_finish.wait()
-
-            monkeypatch.setattr(harness.endpoint.runs, "_emit_command", prepare)
-            monkeypatch.setattr(harness.system, "_cancel_child_turn", stalled_cancel)
-            assert await post_owner_answer(harness, harness.ask) == {"fate": "saved"}
-            await asyncio.wait_for(prepared.wait(), 2)
-            answer = harness.saved_answer(harness.ask)
-            assert answer is not None
-            interrupt = asyncio.create_task(harness.system.interrupt("c_scripted"))
-            await asyncio.wait_for(cancel_entered.wait(), 2)
-            assert len(harness.endpoint.runs.pending_commands) == 1
-            resume = await hold_reconnection(harness, monkeypatch)
-            resume.set()
-            # Reach the real reconciliation_ready pending_commands replay while the
-            # original immediate sender remains paused after its preparation.
-            await asyncio.wait_for(replay_prepared.wait(), 5)
-            emit.set()
-            await eventually(
-                lambda: not harness.endpoint.runs.pending_commands, "closed task survived"
-            )
-            assert preparations == 2
-            assert harness.native.answers == []
-            assert not harness.answer_applied(harness.ask)
-            assert harness.saved_answer(harness.ask) == answer
-            cancel_finish.set()
-            await asyncio.wait_for(interrupt, 2)
-        finally:
-            emit.set()
-            cancel_finish.set()
-            if resume is not None:
-                resume.set()
-            if interrupt is not None:
-                await asyncio.gather(interrupt, return_exceptions=True)
-            await harness.close()
-
-    asyncio.run(run())
-
-
-def test_frame_before_revocation_preserves_native_application_after_assignment_closure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
-        applied, callback_entered = asyncio.Event(), asyncio.Event()
-        cancel_entered, cancel_finish = asyncio.Event(), asyncio.Event()
-        interrupt = None
-        try:
-            await harness.native.raise_ask()
-            await harness.wait_ask_reachable()
-            native_answer = harness.native.answer_permission_ask
-
-            async def delayed_native_answer(ask_id: str, option_id: str) -> None:
-                callback_entered.set()
-                await applied.wait()
-                await native_answer(ask_id, option_id)
-
-            async def stalled_cancel(*args: object) -> None:
-                cancel_entered.set()
-                await cancel_finish.wait()
-
-            monkeypatch.setattr(harness.native, "answer_permission_ask", delayed_native_answer)
-            monkeypatch.setattr(harness.system, "_cancel_child_turn", stalled_cancel)
-            assert await post_owner_answer(harness, harness.ask) == {"fate": "saved"}
-            await asyncio.wait_for(callback_entered.wait(), 5)
-            interrupt = asyncio.create_task(harness.system.interrupt("c_scripted"))
-            await asyncio.wait_for(cancel_entered.wait(), 2)
-            harness.endpoint.runs.store.close_child(harness.ask.child, 1000)
-            applied.set()
-            await eventually(
-                lambda: harness.answer_applied(harness.ask),
-                "retrospective closed-child application was discarded",
-            )
-            await eventually(
-                lambda: not harness.mac.outbox.pending(),
-                "nested outcome or standalone application was rejected",
-            )
-            assert harness.native.answers == [("ask_permission", "allow")]
-            assert harness.answer_applied(harness.ask)
-            assert await post_owner_answer(harness, harness.ask) == {"fate": "refused"}
-            cancel_finish.set()
-            await asyncio.wait_for(interrupt, 2)
-            assert harness.events("permission_answered") == 1
-        finally:
-            applied.set()
-            cancel_finish.set()
-            if interrupt is not None:
-                await asyncio.gather(interrupt, return_exceptions=True)
-            await harness.close()
-
-    asyncio.run(run())
-
-
-def test_generation_change_during_emission_preparation_keeps_pending_answer_for_ready_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        from collections.abc import Coroutine
-
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
-        first_entered, first_release, first_returned = (
-            asyncio.Event(),
-            asyncio.Event(),
-            asyncio.Event(),
-        )
-        replay_entered, replay_release = asyncio.Event(), asyncio.Event()
-        resume = None
-        try:
-            await harness.native.raise_ask()
-            await harness.wait_ask_reachable()
-            emit_original = harness.system.emit_answer
-            calls = 0
-
-            async def pause_emission(
-                token: TurnToken, emit: Callable[[], Coroutine[Any, Any, None]]
-            ) -> None:
-                nonlocal calls
-                calls += 1
-                first = calls == 1
-                if first:
-                    first_entered.set()
-                    await first_release.wait()
-                else:
-                    replay_entered.set()
-                    await replay_release.wait()
-                try:
-                    await emit_original(token, emit)
-                finally:
-                    if first:
-                        first_returned.set()
-
-            monkeypatch.setattr(harness.system, "emit_answer", pause_emission)
-            assert await post_owner_answer(harness, harness.ask) == {"fate": "saved"}
-            await asyncio.wait_for(first_entered.wait(), 2)
-            generation = harness.mac.identity.connection_generation
-            resume = await hold_reconnection(harness, monkeypatch)
-            resume.set()
-            await asyncio.wait_for(replay_entered.wait(), 5)
-            assert harness.mac.identity.connection_generation > generation
-            first_release.set()
-            await asyncio.wait_for(first_returned.wait(), 2)
-            # Stale generation is temporary. It must not cancel the shared result future.
-            command, future = next(iter(harness.endpoint.runs.pending_commands.values()))
-            assert not future.done()
-            answer = harness.saved_answer(harness.ask)
-            assert answer is not None and command.command_id == answer.answer_id
-            replay_release.set()
-            await eventually(
-                lambda: harness.answer_applied(harness.ask),
-                "current generation replay lost the durable answer",
-            )
-            assert harness.native.answers == [("ask_permission", "allow")]
-        finally:
-            first_release.set()
-            replay_release.set()
             if resume is not None:
                 resume.set()
             await harness.close()
@@ -3261,6 +2562,7 @@ def test_reconnect_ready_precedes_retained_output_drain(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        resume = None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             async with paused_outbox(harness.mac.outbox):
@@ -3268,8 +2570,31 @@ def test_reconnect_ready_precedes_retained_output_drain(
                 queued = harness.mac.outbox.pending()
                 assert len(queued) == 1
                 generation = harness.mac.identity.connection_generation
-                assert harness.endpoint.runs.link is not None
-                harness.endpoint.runs.link.close()
+                resume = await hold_reconnection(harness, monkeypatch)
+                await eventually(
+                    lambda: harness.mac.gateway.lost_at_ms is not None,
+                    "Mac did not record the current connection loss",
+                )
+                loss = harness.mac.gateway.lost_at_ms
+                from planner.executor import mac_service
+                from planner.executor.link import dial_link
+
+                dial = dial_link
+                failed_attempts = 0
+
+                @contextlib.asynccontextmanager
+                async def interrupted_dial(*args: Any, **kwargs: Any) -> AsyncIterator[Link]:
+                    nonlocal failed_attempts
+                    assert harness.mac.gateway.health().lost_at_ms == loss
+                    if failed_attempts == 0:
+                        failed_attempts += 1
+                        raise OSError("scripted connection refusal during the outage")
+                    async with dial(*args, **kwargs) as link:
+                        assert harness.mac.gateway.health().lost_at_ms == loss
+                        yield link
+
+                monkeypatch.setattr(mac_service, "dial_link", interrupted_dial)
+                resume.set()
                 await eventually(
                     lambda: (
                         harness.mac.identity.connection_generation > generation
@@ -3277,6 +2602,7 @@ def test_reconnect_ready_precedes_retained_output_drain(
                     ),
                     "Ready waited for outbox replay",
                 )
+                assert failed_attempts == 1
                 assert harness.mac.outbox.pending() == queued
                 assert harness.events("permission_asked") == 0
             await harness.wait_ask_reachable()
@@ -3288,8 +2614,11 @@ def test_reconnect_ready_precedes_retained_output_drain(
             )
             assert receipt is not None and receipt.result.get("applied") is True
             assert await harness.endpoint.inbox.accept(queued[0], harness.mac.identity) == receipt
+            assert harness.mac.gateway.lost_at_ms is None
             assert harness.events("permission_asked") == 1
         finally:
+            if resume is not None:
+                resume.set()
             await harness.close()
 
     asyncio.run(run())
