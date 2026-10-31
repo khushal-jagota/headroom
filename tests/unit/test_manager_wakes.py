@@ -20,6 +20,7 @@ from planner.conversation.contracts import (
     PromptDeliveryStarted,
 )
 from planner.conversation.events import (
+    AgentMessageEventPayload,
     ConversationTurnEnding,
     PromptDiscardedEventPayload,
     PromptEventPayload,
@@ -93,7 +94,10 @@ def _append_failed_turn(store: ConversationStore, conversation_id: str) -> None:
     asyncio.run(
         store.append_turn_ending(
             conversation_id,
-            (TurnEndedEventPayload(ConversationTurnEnding.failed, "provider unavailable"),),
+            (
+                AgentMessageEventPayload(text_message_content("progress before failure")),
+                TurnEndedEventPayload(ConversationTurnEnding.failed, "provider unavailable"),
+            ),
             agent_activity=True,
             automatic_compaction_confirmed=False,
             automatic_compaction_result=None,
@@ -132,7 +136,7 @@ def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
 
     row = _wake_rows(tmp_db)[0]
     assert (row["target_kind"], row["target_id"]) == (holder_kind, holder_id)
-    assert (row["source_conversation_id"], row["source_revision"]) == ("conv-failed", 1)
+    assert (row["source_conversation_id"], row["source_revision"]) == ("conv-failed", 2)
     assert "provider unavailable" in str(row["summary"])
 
 

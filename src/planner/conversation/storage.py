@@ -682,53 +682,46 @@ class ConversationStore:
         native_message_admission: NativeMessageAdmission | None = None,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
-        return await self._write(
-            self._append_event_sync,
+        written = await self.append_events(
             conversation_id,
-            payload,
-            agent_activity,
-            automatic_compaction_confirmed,
-            owner_read_through_sequence,
-            lifecycle,
+            (payload,),
+            agent_activity=agent_activity,
+            automatic_compaction_confirmed=automatic_compaction_confirmed,
+            owner_read_through_sequence=owner_read_through_sequence,
+            lifecycle=lifecycle,
             native_message_operation=native_message_operation,
             native_message_admission=native_message_admission,
         )
+        return written[0]
 
-    async def append_initial_shutdown_disposition(
+    async def append_events(
         self,
         conversation_id: str,
         payloads: tuple[ConversationEventPayload, ...],
-        lifecycle: tuple[LifecycleFact, ...],
+        *,
+        agent_activity: bool = False,
+        automatic_compaction_confirmed: bool = False,
+        automatic_compaction_result: AutomaticCompactionResult | None = None,
+        create_failure_notice: bool = False,
+        owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
+        native_message_operation: NativeMessageOperation | None = None,
+        native_message_admission: NativeMessageAdmission | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
-        """Commit the complete initial cancellation audit before settling its caller."""
+        """Commit one complete row batch and its related conversation facts."""
         return await self._write(
-            self._append_initial_shutdown_disposition_sync,
+            self._append_events_sync,
             conversation_id,
             payloads,
-            lifecycle,
+            agent_activity=agent_activity,
+            automatic_compaction_confirmed=automatic_compaction_confirmed,
+            automatic_compaction_result=automatic_compaction_result,
+            create_failure_notice=create_failure_notice,
+            owner_read_through_sequence=owner_read_through_sequence,
+            lifecycle=lifecycle,
+            native_message_operation=native_message_operation,
+            native_message_admission=native_message_admission,
         )
-
-    def _append_initial_shutdown_disposition_sync(
-        self,
-        conversation_id: str,
-        payloads: tuple[ConversationEventPayload, ...],
-        lifecycle: tuple[LifecycleFact, ...],
-    ) -> tuple[StoredConversationEvent, ...]:
-        with self._publication_connection() as (conn, admission):
-            try:
-                self._begin_validated_attention_write(conn, conversation_id)
-                self._apply_signal_mutation(conn, admission)
-                written = self.append_in_transaction(
-                    conn, conversation_id, payloads, lifecycle=lifecycle
-                )
-                self._record_signal_result(conn, written)
-                self._commit_rows(conn, payloads)
-            except BaseException as error:
-                self._invalidate_signal_failure(error)
-                if conn.in_transaction:
-                    conn.execute("ROLLBACK")
-                raise
-        return written
 
     async def admit_sender_messages(
         self,
@@ -897,15 +890,14 @@ class ConversationStore:
         lifecycle: tuple[LifecycleFact, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         """Atomically append silence markers followed by their turn ending."""
-        return await self._write(
-            self._append_turn_ending_sync,
+        return await self.append_events(
             conversation_id,
             payloads,
-            agent_activity,
-            automatic_compaction_confirmed,
-            automatic_compaction_result,
-            create_failure_notice,
-            lifecycle,
+            agent_activity=agent_activity,
+            automatic_compaction_confirmed=automatic_compaction_confirmed,
+            automatic_compaction_result=automatic_compaction_result,
+            create_failure_notice=create_failure_notice,
+            lifecycle=lifecycle,
         )
 
     async def advance_owner_read_through_sequence(
@@ -1201,72 +1193,6 @@ class ConversationStore:
                 self._commit_rows(conn, (), always_announce=True)
         return record
 
-    def _append_event_sync(
-        self,
-        conversation_id: str,
-        payload: ConversationEventPayload,
-        agent_activity: bool,
-        automatic_compaction_confirmed: bool,
-        owner_read_through_sequence: int | None,
-        lifecycle: tuple[LifecycleFact, ...] = (),
-        *,
-        native_message_operation: NativeMessageOperation | None = None,
-        native_message_admission: NativeMessageAdmission | None = None,
-    ) -> StoredConversationEvent:
-        with self._publication_connection() as (conn, admission):
-            try:
-                snapshot = self._begin_validated_attention_write(conn, conversation_id)
-                self._apply_signal_mutation(conn, admission)
-                written = self._insert_rows(
-                    conn,
-                    conversation_id,
-                    (payload,),
-                    lifecycle,
-                    native_message_operation=native_message_operation,
-                    native_message_admission=native_message_admission,
-                )
-                stored = written[0]
-                if agent_activity:
-                    conn.execute(
-                        "UPDATE conversations SET latest_agent_activity_at = ?, "
-                        "latest_agent_activity_sequence = ? WHERE conversation_id = ?",
-                        (stored.created_at, stored.sequence, conversation_id),
-                    )
-                if automatic_compaction_confirmed:
-                    conn.execute(
-                        "UPDATE conversations SET automatically_compacted_through_sequence = "
-                        "latest_agent_activity_sequence, "
-                        "automatic_compaction_attempted_through_sequence = "
-                        "latest_agent_activity_sequence WHERE conversation_id = ?",
-                        (conversation_id,),
-                    )
-                if owner_read_through_sequence is not None:
-                    conn.execute(
-                        "UPDATE conversations SET owner_read_through_sequence = "
-                        "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
-                        (owner_read_through_sequence, conversation_id),
-                    )
-                assert snapshot is not None
-                read_through = snapshot.owner_read_through_sequence
-                if owner_read_through_sequence is not None:
-                    read_through = max(read_through, owner_read_through_sequence)
-                result = advance_conversation_attention(
-                    snapshot,
-                    (payload,),
-                    owner_read_through_sequence=read_through,
-                    occurred_at=stored.created_at,
-                )
-                capture_conversation_attention(conn, conversation_id, stored.created_at, result)
-                self._participate_in_append(conn, conversation_id, written)
-                self._record_signal_result(conn, written[0])
-                self._commit_rows(conn, (payload,))
-            except BaseException as error:
-                self._invalidate_signal_failure(error)
-                if conn.in_transaction:
-                    conn.execute("ROLLBACK")
-                raise
-        return written[0]
-
     def _conversations_due_for_automatic_compaction_sync(
         self, due_at_or_before: int, activity_after: int
     ) -> tuple[str, ...]:
@@ -1372,62 +1298,37 @@ class ConversationStore:
                 raise
         return written
 
-    def _append_turn_ending_sync(
+    def _append_events_sync(
         self,
         conversation_id: str,
         payloads: tuple[ConversationEventPayload, ...],
+        *,
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool,
-        lifecycle: tuple[LifecycleFact, ...] = (),
+        owner_read_through_sequence: int | None,
+        lifecycle: tuple[LifecycleFact, ...],
+        native_message_operation: NativeMessageOperation | None,
+        native_message_admission: NativeMessageAdmission | None,
     ) -> tuple[StoredConversationEvent, ...]:
         with self._publication_connection() as (conn, admission):
             try:
-                snapshot = self._begin_validated_attention_write(conn, conversation_id)
+                self._begin_validated_attention_write(conn, conversation_id)
                 self._apply_signal_mutation(conn, admission)
-                written = self._insert_rows(conn, conversation_id, payloads, lifecycle)
-                ended = written[-1]
-                if create_failure_notice:
-                    ending_payload = ended.payload
-                    error_summary = getattr(ending_payload, "error_summary", None)
-                    self._create_ticket_failure_notice(
-                        conn,
-                        conversation_id=conversation_id,
-                        event_sequence=ended.sequence,
-                        error_summary=str(error_summary),
-                        now=ended.created_at,
-                    )
-                if agent_activity:
-                    conn.execute(
-                        "UPDATE conversations SET latest_agent_activity_at = ?, "
-                        "latest_agent_activity_sequence = ? WHERE conversation_id = ?",
-                        (ended.created_at, ended.sequence, conversation_id),
-                    )
-                if automatic_compaction_confirmed:
-                    conn.execute(
-                        "UPDATE conversations SET automatically_compacted_through_sequence = "
-                        "latest_agent_activity_sequence, "
-                        "automatic_compaction_attempted_through_sequence = "
-                        "latest_agent_activity_sequence WHERE conversation_id = ?",
-                        (conversation_id,),
-                    )
-                elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
-                    conn.execute(
-                        "UPDATE conversations SET "
-                        "automatic_compaction_attempted_through_sequence = "
-                        "latest_agent_activity_sequence WHERE conversation_id = ?",
-                        (conversation_id,),
-                    )
-                assert snapshot is not None
-                result = advance_conversation_attention(
-                    snapshot,
+                written = self.append_in_transaction(
+                    conn,
+                    conversation_id,
                     payloads,
-                    owner_read_through_sequence=snapshot.owner_read_through_sequence,
-                    occurred_at=ended.created_at,
+                    agent_activity=agent_activity,
+                    automatic_compaction_confirmed=automatic_compaction_confirmed,
+                    automatic_compaction_result=automatic_compaction_result,
+                    create_failure_notice=create_failure_notice,
+                    owner_read_through_sequence=owner_read_through_sequence,
+                    lifecycle=lifecycle,
+                    native_message_operation=native_message_operation,
+                    native_message_admission=native_message_admission,
                 )
-                capture_conversation_attention(conn, conversation_id, ended.created_at, result)
-                self._participate_in_append(conn, conversation_id, written)
                 self._record_signal_result(conn, written)
                 self._commit_rows(conn, payloads)
             except BaseException as error:
@@ -1859,7 +1760,7 @@ class ConversationStore:
 
     @contextmanager
     def _publication_connection(
-        self,
+        self, *, retain_failure: bool = False
     ) -> Iterator[tuple[sqlite3.Connection, SignalAdmission | None]]:
         conn = self._connect()
         closed = False
@@ -1876,7 +1777,7 @@ class ConversationStore:
                     conn,
                     mutation,
                     operation_id=operation_id,
-                    retain_failure=self._retained_signal_recording.get(),
+                    retain_failure=retain_failure or self._retained_signal_recording.get(),
                 )
                 binding = binder(conn, admission)
             with binding:
@@ -1977,9 +1878,8 @@ class ConversationStore:
             [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
         ],
         in_commit: CommitParticipant | None,
-        mutation: SignalRuntimeMutation | None,
     ) -> AcceptedEvent:
-        return await self._write(self._accept_executor_effect_sync, writer, in_commit, mutation)
+        return await self._write(self._accept_executor_effect_sync, writer, in_commit)
 
     def _accept_executor_effect_sync(
         self,
@@ -1987,62 +1887,34 @@ class ConversationStore:
             [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
         ],
         in_commit: CommitParticipant | None,
-        mutation: SignalRuntimeMutation | None,
     ) -> AcceptedEvent:
-        conn = self._connect()
-        try:
-            coordinator = self.signal_coordinator
-            admission = None
-            binding: AbstractContextManager[None] = nullcontext()
-            if coordinator is not None:
-                candidate = self._signal_attempt.get()
-                assert candidate is not None
-                admission = coordinator.prepare_mutation(
-                    conn,
-                    mutation,
-                    operation_id=candidate[1],
-                    retain_failure=True,
+        with self._publication_connection(retain_failure=True) as (conn, admission):
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                written: tuple[StoredConversationEvent, ...] = ()
+
+                def take() -> dict[str, JsonValue]:
+                    nonlocal written
+                    result, written = writer(conn)
+                    return result
+
+                outcome = (
+                    AcceptedEvent(take(), True) if in_commit is None else in_commit(conn, take)
                 )
-                assert self._bind_signal_admission is not None
-                binding = self._bind_signal_admission(conn, admission)
-            with binding:
-                try:
-                    conn.execute("BEGIN IMMEDIATE")
-                    written: tuple[StoredConversationEvent, ...] = ()
-
-                    def take() -> dict[str, JsonValue]:
-                        nonlocal written
-                        result, written = writer(conn)
-                        return result
-
-                    outcome = (
-                        AcceptedEvent(take(), True) if in_commit is None else in_commit(conn, take)
-                    )
-                    if not conn.in_transaction:
-                        raise RuntimeError(
-                            "commit participant committed the conversation transaction"
-                        )
-                    outcome = replace(outcome, written=written if outcome.taken else ())
-                    if outcome.taken and self.signal_coordinator is not None:
-                        assert admission is not None
-                        self.signal_coordinator.apply_mutation(conn, admission)
-                    self._record_signal_result(conn, outcome)
-                    if in_commit is None:
-                        self._commit_rows(conn, tuple(row.payload for row in outcome.written))
-                    else:
-                        conn.commit()
-                    return outcome
-                except BaseException:
-                    conn.rollback()
-                    raise
-        finally:
-            conn.close()
-
-    @staticmethod
-    def lifecycle_facts_in_transaction(
-        conn: sqlite3.Connection, conversation_id: str
-    ) -> tuple[LifecycleFact, ...]:
-        return read_facts(conn, conversation_id)
+                if not conn.in_transaction:
+                    raise RuntimeError("commit participant committed the conversation transaction")
+                outcome = replace(outcome, written=written if outcome.taken else ())
+                if outcome.taken:
+                    self._apply_signal_mutation(conn, admission)
+                self._record_signal_result(conn, outcome)
+                if in_commit is None:
+                    self._commit_rows(conn, tuple(row.payload for row in outcome.written))
+                else:
+                    conn.commit()
+                return outcome
+            except BaseException:
+                conn.rollback()
+                raise
 
     def append_in_transaction(
         self,
@@ -2054,9 +1926,12 @@ class ConversationStore:
         automatic_compaction_confirmed: bool = False,
         automatic_compaction_result: AutomaticCompactionResult | None = None,
         create_failure_notice: bool = False,
+        owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
+        native_message_operation: NativeMessageOperation | None = None,
+        native_message_admission: NativeMessageAdmission | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
-        """Canonical append under the executor receipt's existing write transaction.
+        """Canonical append under the caller's existing write transaction.
 
         The caller owns commit and publishes these rows only after it succeeds.
         """
@@ -2065,7 +1940,14 @@ class ConversationStore:
         if not payloads and not lifecycle:
             return ()
         snapshot = conversation_attention_snapshot(conn, conversation_id, transaction_open=True)
-        written = self._insert_rows(conn, conversation_id, payloads, lifecycle)
+        written = self._insert_rows(
+            conn,
+            conversation_id,
+            payloads,
+            lifecycle,
+            native_message_operation=native_message_operation,
+            native_message_admission=native_message_admission,
+        )
         if not written:
             self._participate_in_append(conn, conversation_id, written)
             return written
@@ -2099,11 +1981,20 @@ class ConversationStore:
                 error_summary=str(getattr(last.payload, "error_summary", None)),
                 now=last.created_at,
             )
+        if owner_read_through_sequence is not None:
+            conn.execute(
+                "UPDATE conversations SET owner_read_through_sequence = "
+                "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
+                (owner_read_through_sequence, conversation_id),
+            )
         if snapshot is not None:
+            read_through = snapshot.owner_read_through_sequence
+            if owner_read_through_sequence is not None:
+                read_through = max(read_through, owner_read_through_sequence)
             result = advance_conversation_attention(
                 snapshot,
                 payloads,
-                owner_read_through_sequence=snapshot.owner_read_through_sequence,
+                owner_read_through_sequence=read_through,
                 occurred_at=last.created_at,
             )
             capture_conversation_attention(conn, conversation_id, last.created_at, result)

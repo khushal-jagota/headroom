@@ -122,7 +122,7 @@ def test_preparation_kill_settles_sender_and_old_continuation_cannot_run_after_s
 
                 async def expose_first_failure(state: Any, operation: Any, **kwargs: Any) -> Any:
                     if (
-                        operation.func == system._store.append_initial_shutdown_disposition
+                        operation.func == system._store.append_events
                         and not failed
                     ):
                         # Expose this injected transaction failure instead of the ordinary

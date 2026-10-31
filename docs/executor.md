@@ -88,8 +88,11 @@ releases the VPS handle and leaves its Mac agent running; stopping requires the
 final ordered stop receipt. Local children stop when detached.
 
 The inbox joins the conversation's write transaction to record replay position and
-receipt. A stale event is accepted with `applied: false` and changes no conversation
-rows or live output. Agent writes use canonical writers. Before sending an
+receipt. The append is shared with local conversation rows and keeps activity,
+compaction, attention, failure wakes and turn/request state in that transaction.
+Only a newly accepted effect applies its live conversation change; replay and refusal
+keep their receipt without applying it again. A stale event is accepted with
+`applied: false` and changes no conversation rows or live output. Agent writes use canonical writers. Before sending an
 agent-authored message, the inbox records `dispatching`; a repeat without a known
 outcome returns uncertainty and sends nothing. There is no separate message ledger.
 

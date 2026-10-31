@@ -151,6 +151,7 @@ from planner.conversation.lifecycle import (
     LifecycleOperation,
     LifecycleStatus,
 )
+from planner.conversation.lifecycle_storage import read_facts
 from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.logic.addressed_reply import (
     with_authenticated_reply_directive,
@@ -1298,10 +1299,10 @@ class SqliteProcessConversationSystem:
             written = await self._persist(
                 state,
                 partial(
-                    self._store.append_initial_shutdown_disposition,
+                    self._store.append_events,
                     state.record.conversation_id,
                     tuple(payloads),
-                    lifecycle,
+                    lifecycle=lifecycle,
                 ),
             )
             self._take_in_written_rows(state, written)
@@ -4944,7 +4945,7 @@ class SqliteProcessConversationSystem:
             def write(
                 connection: sqlite3.Connection,
             ) -> tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]:
-                facts = self._store.lifecycle_facts_in_transaction(connection, turn.conversation_id)
+                facts = read_facts(connection, turn.conversation_id)
                 attempt = next(
                     (
                         fact
@@ -5018,7 +5019,7 @@ class SqliteProcessConversationSystem:
                 return {"recorded": True}, written
 
             result = await self._persist(
-                state, partial(self._store.accept_executor_effect, write, in_commit, None)
+                state, partial(self._store.accept_executor_effect, write, in_commit)
             )
             if result.taken:
                 self._take_in_written_rows(state, result.written)
@@ -5296,7 +5297,7 @@ class SqliteProcessConversationSystem:
 
             result = await self._persist(
                 state,
-                partial(self._store.accept_executor_effect, write, in_commit, mutation),
+                partial(self._store.accept_executor_effect, write, in_commit),
                 runtime_mutation=mutation,
             )
             written = result.written
