@@ -20,9 +20,9 @@ from planner.core.db import connect
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.files import (
     contained_path,
-    install_verified,
     directory_descriptor,
     file_digest,
+    install_verified,
     safe_component,
 )
 from planner.executor.link_files import settled_io

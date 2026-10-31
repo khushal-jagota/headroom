@@ -97,7 +97,7 @@ from planner.executor.protocol import (
     encode_value,
     type_adapter,
 )
-from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
+from planner.executor.skills import install_native_skill_snapshot
 from planner.workspace_localization import localize_workspace
 
 
@@ -759,7 +759,6 @@ class MacRunner:
             resolved, command.child, capability, args.workspace_home_relative
         )
         try:
-            validate_skill_snapshot(args.canonical_skill_snapshot)
             if self.paths is None:
                 raise ValueError("executor paths are required for canonical skills")
             if resolved.backend_key is ConversationBackendKey.codex:
