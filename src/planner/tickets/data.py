@@ -70,7 +70,7 @@ from planner.worker_types.configuration import (
     configured_worker_runtime_definitions,
     configured_worker_type_registry,
 )
-from planner.worker_types.contracts import BRIEF_FIELD_ID, WorkerTypeDefinition
+from planner.worker_types.contracts import BRIEF_FIELD_ID, TicketTypeMigration, WorkerTypeDefinition
 
 
 class _WorkerStepReadinessCheck(Protocol):
@@ -357,7 +357,9 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     worker_type = str(row["worker_type"])
     worker_type_definition = configured_worker_type_registry().require(worker_type)
     stage = str(row["stage"])
-    worker_type_definition.validate_ticket_position(stage, str(row["ceiling"]))
+    worker_type_definition.validate_ticket_position(
+        stage, str(row["ceiling"]), allow_historical_terminal_ceiling=True
+    )
     values = fields_codec.values_from_json(row["field_values"], worker_type_definition.field_ids())
     return Ticket(
         field_approvals=fields_codec.approvals_from_json(row["field_approvals"], values),
@@ -2108,3 +2110,31 @@ def set_ticket_backlog(
                 (int(is_backlogged), now, ticket_id),
             )
         return _load_ticket_for_write(conn, ticket_id)
+
+
+def apply_worker_type_migrations(
+    conn: sqlite3.Connection,
+    migrations: tuple[TicketTypeMigration, ...],
+    *,
+    definition: WorkerTypeDefinition,
+    now: int,
+) -> None:
+    """Apply an already validated amendment without settling fields or changing authority."""
+    if not conn.in_transaction:
+        raise RuntimeError("Worker type migrations require the definition save transaction")
+    for migration in migrations:
+        if (migration.old_stage, migration.old_ceiling) != (
+            migration.new_stage,
+            migration.new_ceiling,
+        ):
+            conn.execute(
+                "UPDATE tickets SET stage = ?, ceiling = ?, updated_at = ? WHERE id = ?",
+                (migration.new_stage, migration.new_ceiling, now, migration.ticket_id),
+            )
+        if migration.old_stage != migration.new_stage:
+            conn.execute(
+                "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ?",
+                (migration.ticket_id,),
+            )
+            revision_feedback.discard(conn, migration.ticket_id)
+        capture_ticket_attention(conn, migration.ticket_id, now, worker_type_definition=definition)

@@ -191,3 +191,36 @@ def test_skill_apply_sends_exact_reviewed_manifest(
     assert result.exit_code == 0, result.output
     assert skill_requests[0][:2] == ("POST", "/api/skills/apply")
     assert skill_requests[0][2]["json"] == manifest
+
+
+def test_worker_type_save_exposes_stage_and_ceiling_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipt = {
+        "ticket_id": "t_example",
+        "title": "Review preserved",
+        "old_stage": "needs_what_changes",
+        "new_stage": "needs_what_changes",
+        "old_ceiling": "needs_plan",
+        "new_ceiling": "needs_what_changes",
+    }
+
+    def request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+        assert method == "POST" and httpx.URL(url).path == "/api/worker-types"
+        return httpx.Response(
+            200,
+            json={"worker_type": "coding", "migrations": [receipt]},
+            request=httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr(httpx, "request", request)
+    runner = CliRunner()
+    result = runner.invoke(main, ["worker-type", "save"], input='{"worker_type":"coding"}')
+    assert result.exit_code == 0, result.output
+    assert "Review preserved: Stage needs_what_changes -> needs_what_changes" in result.stdout
+    assert "ceiling needs_plan -> needs_what_changes" in result.stdout
+    result_json = runner.invoke(
+        main, ["worker-type", "save", "--json"], input='{"worker_type":"coding"}'
+    )
+    assert result_json.exit_code == 0, result_json.output
+    assert json.loads(result_json.stdout)["migrations"] == [receipt]

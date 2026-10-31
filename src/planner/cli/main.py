@@ -891,7 +891,13 @@ def worker_type_save(as_json: bool) -> None:
         json_body=record,
         as_json=as_json,
     )
-    http.emit(data, as_json, f"{data['worker_type']} saved")
+    lines = [f"{data['worker_type']} saved"]
+    for migration in data.get("migrations", []):
+        lines.append(
+            f"{migration['title']}: Stage {migration['old_stage']} -> {migration['new_stage']}; "
+            f"ceiling {migration['old_ceiling']} -> {migration['new_ceiling']}"
+        )
+    http.emit(data, as_json, "\n".join(lines))
 
 
 @worker_type_group.command("skill")

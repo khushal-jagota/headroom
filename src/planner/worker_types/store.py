@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from planner.core.contracts import ErrorCode, PlannerError
@@ -18,6 +20,7 @@ from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
+    TicketTypeMigration,
     WorkerProfile,
     WorkerTypeDefinition,
 )
@@ -186,72 +189,88 @@ def read_definition(conn: sqlite3.Connection, worker_type: str) -> WorkerTypeDef
 # --- writing ------------------------------------------------------------------
 
 
-def _tickets_standing_on(
-    conn: sqlite3.Connection, worker_type: str, stages: frozenset[str]
-) -> tuple[str, ...]:
-    if not stages:
-        return ()
-    placeholders = ",".join("?" for _ in stages)
-    rows = conn.execute(
-        f"SELECT id FROM tickets WHERE worker_type = ? AND stage IN ({placeholders}) ORDER BY id",
-        (worker_type, *sorted(stages)),
-    ).fetchall()
-    return tuple(str(row["id"]) for row in rows)
+@contextmanager
+def definition_transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """Own the write lock, or keep this save atomic within its caller's transaction."""
+    nested = conn.in_transaction
+    conn.execute("SAVEPOINT worker_type_save" if nested else "BEGIN IMMEDIATE")
+    try:
+        yield
+        if nested:
+            conn.execute("RELEASE worker_type_save")
+        else:
+            conn.commit()
+    except BaseException:
+        if conn.in_transaction:
+            if nested:
+                conn.execute("ROLLBACK TO worker_type_save")
+                conn.execute("RELEASE worker_type_save")
+            else:
+                conn.rollback()
+        raise
 
 
-def _tickets_holding_fields(
-    conn: sqlite3.Connection, worker_type: str, fields: frozenset[str]
-) -> tuple[str, ...]:
-    if not fields:
-        return ()
-    holders: list[str] = []
-    for row in conn.execute(
-        "SELECT id, field_values FROM tickets WHERE worker_type = ? "
-        "AND stage != 'done' ORDER BY id",
-        (worker_type,),
-    ):
-        stored: Any = json.loads(str(row["field_values"]))
-        if not isinstance(stored, dict):
-            continue
-        if any(stored.get(field) for field in fields):
-            holders.append(str(row["id"]))
-    return tuple(holders)
-
-
-def _refuse_to_strand_tickets(
+def _plan_migrations(
     conn: sqlite3.Connection, previous: WorkerTypeDefinition, replacement: WorkerTypeDefinition
-) -> None:
-    """Refuse a rewrite that would leave an unfinished Ticket on a stage or field it lost.
+) -> tuple[TicketTypeMigration, ...]:
+    from planner.tickets.logic import fields_codec
+    from planner.worker_types.logic.migration import map_reference
 
-    A removed Stage leaves an unfinished Ticket without its current step. A removed
-    field hides text the unfinished Ticket still needs, although storage preserves it.
-    Refuse these changes and name the affected Tickets. Finished Tickets can retain
-    historical text outside the current definition.
-    """
-    lost_stages = frozenset(previous.stage_ids()) - frozenset(replacement.stage_ids())
-    stranded = _tickets_standing_on(conn, previous.worker_type, lost_stages)
-    if stranded:
-        raise PlannerError(
-            ErrorCode.validation,
-            "removing a Stage would strand unfinished Tickets",
+    results: list[TicketTypeMigration] = []
+    failures: list[dict[str, str]] = []
+    lost_fields = set(previous.field_ids()) - set(replacement.field_ids())
+    for row in conn.execute(
+        "SELECT id, title, stage, ceiling, field_values, pending_proposal, worker_step_claim "
+        "FROM tickets WHERE worker_type = ? ORDER BY id",
+        (previous.worker_type,),
+    ):
+        stage, ceiling = str(row["stage"]), str(row["ceiling"])
+        try:
+            if previous.is_terminal(stage):
+                if not replacement.is_known_stage(stage) or not replacement.is_terminal(stage):
+                    raise _fail("finished Ticket Stage must remain terminal", {})
+                continue
+            new_stage = map_reference(stage, previous, replacement)
+            new_ceiling = map_reference(ceiling, previous, replacement)
+            replacement.validate_ticket_position(new_stage, new_ceiling)
+            if replacement.is_terminal(new_stage):
+                raise _fail("migration cannot finish a Ticket", {})
+            values = fields_codec.values_from_json(row["field_values"], replacement.field_ids())
+            proposal = fields_codec.proposal_from_json(row["pending_proposal"])
+            fields_codec.validate_state(
+                values, proposal, new_stage, worker_type_definition=replacement
+            )
+            old_step = previous.stage_definition(stage)
+            new_step = replacement.stage_definition(new_stage)
+            changed_step = (
+                stage != new_stage
+                or ceiling != new_ceiling
+                or old_step.gating_field != new_step.gating_field
+                or old_step.ownership_mode != new_step.ownership_mode
+            )
+            if row["worker_step_claim"] == "out" and changed_step:
+                raise _fail("dispatched Worker must release its step before migration", {})
+            historical = fields_codec.stored_values_from_json(row["field_values"])
+            if changed_step or any(historical.get(field) for field in lost_fields):
+                results.append(
+                    TicketTypeMigration(
+                        str(row["id"]), str(row["title"]), stage, new_stage, ceiling, new_ceiling
+                    )
+                )
+        except PlannerError as exc:
+            failures.append(
+                {"ticket_id": str(row["id"]), "title": str(row["title"]), "reason": str(exc)}
+            )
+    if failures:
+        raise _fail(
+            "Worker type amendment cannot safely migrate Tickets",
             {
                 "worker_type": previous.worker_type,
-                "stages": sorted(lost_stages),
-                "tickets": list(stranded),
+                "tickets": [failure["ticket_id"] for failure in failures],
+                "failures": failures,
             },
         )
-    lost_fields = frozenset(previous.field_ids()) - frozenset(replacement.field_ids())
-    holders = _tickets_holding_fields(conn, previous.worker_type, lost_fields)
-    if holders:
-        raise PlannerError(
-            ErrorCode.validation,
-            "removing a field would discard text unfinished Tickets hold",
-            {
-                "worker_type": previous.worker_type,
-                "fields": sorted(lost_fields),
-                "tickets": list(holders),
-            },
-        )
+    return tuple(results)
 
 
 def write_definition(
@@ -259,32 +278,43 @@ def write_definition(
     definition: WorkerTypeDefinition,
     *,
     now: int,
-) -> None:
-    """Store one Worker type, or refuse it.
+) -> tuple[TicketTypeMigration, ...]:
+    """Store the definition and all backward migrations as one indivisible save.
 
-    The order matters: what is written has already passed the same rules the registry
-    applies, and has already been shown not to strand a Ticket in flight.
+    The outer transaction owner publishes the validated runtime registry after commit.
     """
-    validate_definition(
-        definition,
-        known_skills=skill_names(conn),
-        known_toolset_profiles=KNOWN_TOOLSET_PROFILES,
-    )
-    existing = conn.execute(
-        "SELECT definition_json FROM worker_types WHERE worker_type = ?",
-        (definition.worker_type,),
-    ).fetchone()
-    if existing is not None:
-        _refuse_to_strand_tickets(
-            conn, definition_from_json(str(existing["definition_json"])), definition
+    from planner.tickets.data import apply_worker_type_migrations
+    from planner.worker_types.configuration import build_worker_runtime_definitions
+
+    with definition_transaction(conn):
+        validate_definition(
+            definition,
+            known_skills=skill_names(conn),
+            known_toolset_profiles=KNOWN_TOOLSET_PROFILES,
         )
-    next_position = conn.execute(
-        "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM worker_types"
-    ).fetchone()["next"]
-    conn.execute(
-        "INSERT INTO worker_types (worker_type, position, definition_json, updated_at) "
-        "VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(worker_type) DO UPDATE SET definition_json = excluded.definition_json, "
-        "updated_at = excluded.updated_at",
-        (definition.worker_type, int(next_position), definition_to_json(definition), now),
-    )
+        existing = conn.execute(
+            "SELECT definition_json FROM worker_types WHERE worker_type = ?",
+            (definition.worker_type,),
+        ).fetchone()
+        migrations = (
+            ()
+            if existing is None
+            else _plan_migrations(
+                conn, definition_from_json(str(existing["definition_json"])), definition
+            )
+        )
+        next_position = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM worker_types"
+        ).fetchone()["next"]
+        conn.execute(
+            "INSERT INTO worker_types (worker_type, position, definition_json, updated_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(worker_type) DO UPDATE SET definition_json = excluded.definition_json, "
+            "updated_at = excluded.updated_at",
+            (definition.worker_type, int(next_position), definition_to_json(definition), now),
+        )
+        build_worker_runtime_definitions(
+            worker_type_definitions=read_definitions(conn), known_skills=skill_names(conn)
+        )
+        apply_worker_type_migrations(conn, migrations, definition=definition, now=now)
+    return migrations
