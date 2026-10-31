@@ -354,11 +354,6 @@ class MacOutbox:
                     "sha256=excluded.sha256",
                     updates,
                 )
-                if entry.kind is EnvelopeKind.child_stopped:
-                    self._db.execute(
-                        "DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL",
-                        (child_id,),
-                    )
                 envelope = self._envelope(
                     (
                         cursor.lastrowid,
