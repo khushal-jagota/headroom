@@ -8,8 +8,6 @@ import sqlite3
 import time
 from uuid import uuid4
 
-from pydantic import TypeAdapter
-
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
     BackendEventSink,
@@ -43,6 +41,7 @@ from planner.executor.protocol import (
     WithdrawCommands,
     WithdrawResult,
     encode_value,
+    type_adapter,
 )
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
@@ -297,7 +296,7 @@ class MacRuns:
                     or identity != self.identity
                 ):
                     raise ValueError("invalid withdrawal reply")
-                result = TypeAdapter(WithdrawResult).validate_python(response.payload)
+                result = type_adapter(WithdrawResult).validate_python(response.payload)
                 prompt_ids = set(command_ids) & self._prompt_command_ids
                 if prompt_ids <= set(result.withdrawn):
                     prompt_may_have_sent = False
@@ -602,7 +601,7 @@ class MacRuns:
             raise ConnectionError("reconnect generation changed")
         if response.kind is not WireMessageKind.reconnect_result:
             raise ValueError("reconnect ask refused")
-        result = TypeAdapter(ReconnectResult).validate_python(response.payload)
+        result = type_adapter(ReconnectResult).validate_python(response.payload)
         if result.identity != identity or tuple(x.command_id for x in result.commands) != tuple(
             pending
         ):

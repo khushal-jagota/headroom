@@ -9,8 +9,6 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import asdict
 from typing import Any, cast
 
-from pydantic import TypeAdapter
-
 from planner.conversation.backends.contracts import RetainedBackendRun, TurnToken
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
@@ -23,6 +21,7 @@ from planner.executor.protocol import (
     ConnectionState,
     EnvelopeKind,
     QueuedEnvelope,
+    type_adapter,
 )
 
 
@@ -35,7 +34,7 @@ def _record(value: Any) -> str:
 
 
 def _parse[T](model: type[T], value: str) -> T:
-    return TypeAdapter(model).validate_json(value)
+    return type_adapter(model).validate_json(value)
 
 
 def _invalid(message: str) -> PlannerError:
@@ -434,7 +433,7 @@ class ExecutorStore(VpsDatabase):
         # A malformed publication still needs a refusal receipt. Its child alone
         # is enough to fence cleanup, even when the rest cannot be decoded.
         try:
-            child = TypeAdapter(ChildReference).validate_python(child_payload)
+            child = type_adapter(ChildReference).validate_python(child_payload)
         except ValueError:
             return
         if (

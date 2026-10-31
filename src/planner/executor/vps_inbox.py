@@ -14,8 +14,6 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from pydantic import TypeAdapter
-
 from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
@@ -45,6 +43,7 @@ from planner.executor.protocol import (
     TransactionalWriter,
     as_object,
     decode_event_arguments,
+    type_adapter,
 )
 from planner.executor.store import ExecutorStore, VpsDatabase
 from planner.executor.vps_agent_writes import AgentWrites
@@ -89,7 +88,7 @@ class InboxStore(VpsDatabase):
 
     @staticmethod
     def _receipt(row: sqlite3.Row) -> AcceptanceReceipt:
-        return TypeAdapter(AcceptanceReceipt).validate_json(row["result_json"])
+        return type_adapter(AcceptanceReceipt).validate_json(row["result_json"])
 
     def accept(
         self,
@@ -289,7 +288,7 @@ class InboxStore(VpsDatabase):
             if not isinstance(child, dict):
                 ask = envelope.payload.get("ask")
                 child = ask.get("child") if isinstance(ask, dict) else None
-            reference = TypeAdapter(ChildReference).validate_python(child)
+            reference = type_adapter(ChildReference).validate_python(child)
             assignment = connection.execute(
                 "SELECT principal_kind,principal_id FROM executor_child_assignments "
                 "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
@@ -372,7 +371,7 @@ class MacInbox:
                     and previous.disposition is ReceiptDisposition.accepted
                 ):
                     await self.runs._resolve_command(
-                        TypeAdapter(CommandOutcome).validate_python(envelope.payload)
+                        type_adapter(CommandOutcome).validate_python(envelope.payload)
                     )
                 return previous
             return await self._apply_envelope(envelope, identity)
@@ -398,7 +397,7 @@ class MacInbox:
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
         if envelope.kind is EnvelopeKind.backend_event:
-            event = TypeAdapter(BackendEvent).validate_python(envelope.payload)
+            event = type_adapter(BackendEvent).validate_python(envelope.payload)
             await settled_io(self.runs.authority, event.child)
             if event.child.conversation_id != envelope.conversation_id:
                 raise ValueError("event conversation conflicts with envelope")
@@ -447,12 +446,12 @@ class MacInbox:
                             event.child, event.turn, decoded.request.request_id, AskKind.user_input
                         )
                     )
-            return TypeAdapter(AcceptanceReceipt).validate_python(result.result)
+            return type_adapter(AcceptanceReceipt).validate_python(result.result)
         if envelope.kind is EnvelopeKind.cli_write:
             return await self.agent_writes.accept(envelope, identity)
 
         if envelope.kind is EnvelopeKind.child_stopped:
-            outcome = TypeAdapter(CommandOutcome).validate_python(envelope.payload)
+            outcome = type_adapter(CommandOutcome).validate_python(envelope.payload)
             if outcome.child.conversation_id != envelope.conversation_id:
                 raise ValueError("command outcome conversation conflicts with envelope")
             await settled_io(self.runs.validate_stop, outcome, identity)
@@ -469,7 +468,7 @@ class MacInbox:
                 await self.runs._resolve_command(outcome, stop_proven=True)
             return receipt
         if envelope.kind is EnvelopeKind.answer_application:
-            application = TypeAdapter(AnswerApplication).validate_python(envelope.payload)
+            application = type_adapter(AnswerApplication).validate_python(envelope.payload)
             await settled_io(
                 self._require_application_assignment,
                 application,
@@ -488,7 +487,7 @@ class MacInbox:
                 )
                 return AcceptedEvent(as_object(receipt), taken)
 
-            return TypeAdapter(AcceptanceReceipt).validate_python(
+            return type_adapter(AcceptanceReceipt).validate_python(
                 (
                     await self.conversations.take_answer_application(
                         application.ask.turn,

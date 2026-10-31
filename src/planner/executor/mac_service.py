@@ -10,7 +10,6 @@ from typing import cast
 from uuid import uuid4
 
 import aiohttp
-from pydantic import TypeAdapter
 
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
@@ -41,6 +40,7 @@ from planner.executor.protocol import (
     WithdrawCommands,
     WithdrawResult,
     as_object,
+    type_adapter,
 )
 
 
@@ -154,19 +154,19 @@ class MacService:
                             },
                         )
                     if message.kind is WireMessageKind.withdraw:
-                        request = TypeAdapter(WithdrawCommands).validate_python(message.payload)
+                        request = type_adapter(WithdrawCommands).validate_python(message.payload)
                         return WireMessage(
                             WireMessageKind.withdraw_result,
                             message.request_id,
                             as_object(WithdrawResult(self.runner.withdraw_commands(request))),
                         )
                     if message.kind is WireMessageKind.command:
-                        command = TypeAdapter(ChildCommand).validate_python(message.payload)
+                        command = type_adapter(ChildCommand).validate_python(message.payload)
                         task = asyncio.create_task(self._command(command, link))
                         command_tasks.add(task)
                         task.add_done_callback(command_tasks.discard)
                     elif message.kind is WireMessageKind.reconnect_ask:
-                        ask = TypeAdapter(ReconnectAsk).validate_python(message.payload)
+                        ask = type_adapter(ReconnectAsk).validate_python(message.payload)
                         await self.runner.flush_command_output(ask.command_ids)
                         return WireMessage(
                             WireMessageKind.reconnect_result,

@@ -15,7 +15,6 @@ from typing import cast
 from uuid import uuid4
 
 import aiohttp
-from pydantic import TypeAdapter
 
 from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.admission.service import check_expectation
@@ -104,6 +103,7 @@ from planner.executor.protocol import (
     as_object,
     encode_backend_event,
     encode_value,
+    type_adapter,
 )
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
 from planner.tickets.contracts import TicketLocale
@@ -560,7 +560,7 @@ class MacRunner:
                     WireMessageKind.get_file,
                     as_object(FileDownloadRequest(command.command_id, stored_file_id)),
                 )
-                slot = TypeAdapter(FileTransfer).validate_python(response.payload)
+                slot = type_adapter(FileTransfer).validate_python(response.payload)
                 manifest = slot.manifest
                 if (
                     response.kind is not WireMessageKind.file_transfer
