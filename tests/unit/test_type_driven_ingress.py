@@ -192,7 +192,7 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(
         scoped = client.post(
             f"/api/tickets/{target}/accept/brief",
             json={
-                "next_ceiling": "needs_success_condition",
+                "next_ceiling": "needs_what_changes",
                 "next_holder": {"kind": "manager", "id": item["id"]},
             },
         )
@@ -295,7 +295,7 @@ def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> 
         assert "guidance" not in edited.json()
         accepted = client.post(
             path + "/accept/brief",
-            json={"next_ceiling": "needs_success_condition", "next_holder": OWNER},
+            json={"next_ceiling": "needs_what_changes", "next_holder": OWNER},
         )
         assert accepted.status_code == 200, accepted.json()
         _propose(client, ticket_id, "A current proposal")

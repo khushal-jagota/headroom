@@ -28,7 +28,7 @@ from planner.worker_types.configuration import (
     configured_worker_type_registry,
     load_worker_runtime_definitions,
 )
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import FieldDefinition, StageDefinition, WorkerTypeDefinition
 from planner.worker_types.store import (
     read_definition,
     write_definition,
@@ -292,7 +292,39 @@ def test_four_ticket_coding_amendment_copy_preserves_text_and_review_limit(
     database: sqlite3.Connection,
     tmp_path: Path,
 ) -> None:
-    original = read_definition(database, "coding")
+    current = read_definition(database, "coding")
+    # This regression copies a historical six-field type, not the current default.
+    original = replace(
+        current,
+        fields=(
+            current.fields[0],
+            FieldDefinition("success_condition", "Success Condition"),
+            current.fields[1],
+            FieldDefinition("plan", "Plan"),
+            *current.fields[2:],
+        ),
+        stages=(
+            current.stages[0],
+            StageDefinition(
+                "needs_success_condition",
+                "Success Condition",
+                "success_condition",
+                False,
+                StageOwnershipMode.worker,
+            ),
+            current.stages[1],
+            StageDefinition(
+                "needs_plan",
+                "Plan",
+                "plan",
+                False,
+                StageOwnershipMode.worker,
+            ),
+            *current.stages[2:],
+        ),
+    )
+    write_definition(database, original, now=0)
+    load_worker_runtime_definitions(database)
     ticket_ids = []
     for index in range(4):
         ticket = tickets_data.create_ticket(

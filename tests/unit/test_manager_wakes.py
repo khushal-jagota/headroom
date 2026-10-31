@@ -90,7 +90,7 @@ def _item_and_ticket(conn: Connection, clock: FakeClock) -> tuple[str, str]:
         worker_type="coding",
         brief="Start",
         manager_id=item.id,
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     return item.id, ticket.id
 
@@ -140,7 +140,7 @@ def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="coding",
             brief="Start",
-            stated_ceiling="needs_success_condition",
+            stated_ceiling="needs_what_changes",
         ).id
     tmp_db.execute(
         "UPDATE tickets SET ceiling_holder=? WHERE id=?",
@@ -195,7 +195,7 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     ).id
     if target_kind == "ticket":
         target_id = tickets_data.create_ticket(
@@ -206,7 +206,7 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="coding",
             brief="Start",
-            stated_ceiling="needs_success_condition",
+            stated_ceiling="needs_what_changes",
         ).id
     assert target_id is not None
     target = Principal(PrincipalKind(target_kind), target_id)
@@ -254,7 +254,7 @@ def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     target = tickets_data.create_ticket(
         tmp_db,
@@ -264,7 +264,7 @@ def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     _current_ticket_conversation(tmp_db, target.id, "conv-before-reset")
     wake_data.create_turn_failure_wake(
@@ -318,7 +318,7 @@ def test_busy_ticket_target_releases_batch_and_restart_recovery_is_target_agnost
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     target = tickets_data.create_ticket(
         tmp_db,
@@ -328,7 +328,7 @@ def test_busy_ticket_target_releases_batch_and_restart_recovery_is_target_agnost
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     _current_ticket_conversation(tmp_db, target.id, "conv-busy-ticket")
     wake_data.create_turn_failure_wake(
@@ -554,10 +554,10 @@ def test_moving_a_parked_proposal_wakes_the_new_manager_and_removes_old_authorit
         tickets_data.accept_proposal(
             tmp_db,
             ticket_id,
-            field="success_condition",
+            field="what_changes",
             principal=old_manager,
             now=4,
-            next_ceiling="needs_what_changes",
+            next_ceiling="needs_implementation",
             next_holder=old_manager,
         )
     assert forbidden.value.code is ErrorCode.agent_forbidden
@@ -864,7 +864,7 @@ def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batc
         worker_type="coding",
         brief="Start",
         manager_id=item_id,
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     wake_data.create_worker_error_wake(
         tmp_db,
@@ -1198,11 +1198,11 @@ def test_obsolete_sources_retire_before_batching_with_compared_facts(
         tickets_data.accept_proposal(
             tmp_db,
             ticket_id,
-            field="success_condition",
+            field="what_changes",
             principal=OWNER_PRINCIPAL,
             now=3,
             next_holder=OWNER_PRINCIPAL,
-            next_ceiling="needs_what_changes",
+            next_ceiling="needs_implementation",
         )
     elif change in ("reject", "resolve_transfer"):
         tickets_data.reject_proposal(

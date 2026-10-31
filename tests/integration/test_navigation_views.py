@@ -80,10 +80,12 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     conn.execute("BEGIN")
     add_parent(conn, "manager")
     add_ticket(conn, "blocker")
+    conn.execute("UPDATE tickets SET stage='needs_what_changes' WHERE id='blocker'")
     add_ticket(conn, "chief-ticket")
     conn.execute("UPDATE tickets SET manager_kind='manager',manager_id='manager' WHERE id='t'")
     conn.execute(
-        "UPDATE tickets SET conversation_id='c',stage='needs_plan' WHERE id='chief-ticket'"
+        "UPDATE tickets SET conversation_id='c',stage='needs_implementation' "
+        "WHERE id='chief-ticket'"
     )
     conn.execute("UPDATE tickets SET worker_step_claim='out' WHERE id IN ('t','chief-ticket')")
     conn.executemany("INSERT INTO ticket_blocks VALUES('blocker',?)", [("t",), ("chief-ticket",)])
@@ -160,7 +162,7 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     assert attention["attention"]["durable"]["last_turn_failed"] is True
     conn.execute("BEGIN")
     proposal = json.dumps(
-        {"field": "plan", "body": "Review", "proposed_by": "worker", "created_at": 1}
+        {"field": "implementation", "body": "Review", "proposed_by": "worker", "created_at": 1}
     )
     conn.execute(
         "UPDATE tickets SET pending_proposal=? WHERE id IN ('t','chief-ticket')", (proposal,)
@@ -180,8 +182,10 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
             "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
         ).fetchone()[0]
     )
-    plan_stage = next(stage for stage in definition["stages"] if stage["id"] == "needs_plan")
-    plan_stage["ownership_mode"] = "user"
+    implementation_stage = next(
+        stage for stage in definition["stages"] if stage["id"] == "needs_implementation"
+    )
+    implementation_stage["ownership_mode"] = "user"
     conn.execute(
         "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
         (json.dumps(definition),),
@@ -189,7 +193,7 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     conn.commit()
     memberships(grouping="assigned")
     conn.execute("BEGIN")
-    plan_stage["ownership_mode"] = "worker"
+    implementation_stage["ownership_mode"] = "worker"
     conn.execute(
         "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
         (json.dumps(definition),),

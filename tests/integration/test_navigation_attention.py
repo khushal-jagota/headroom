@@ -93,7 +93,7 @@ def prepared(tmp_path: Path) -> Iterator[Host]:
         conn.execute(
             "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,field_values,"
             "created_at,updated_at,conversation_id) "
-            "VALUES('t','Ticket','coding','codex','needs_plan','done','{}',0,0,'c')"
+            "VALUES('t','Ticket','coding','codex','needs_implementation','done','{}',0,0,'c')"
         )
         conn.execute("INSERT INTO ticket_conversations VALUES('h','t')")
         conn.commit()

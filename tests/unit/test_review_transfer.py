@@ -45,7 +45,7 @@ def _parked_ticket(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
         manager_id=manager_id,
         stated_holder=holder,
     )

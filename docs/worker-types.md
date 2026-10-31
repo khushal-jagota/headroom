@@ -8,7 +8,7 @@ The Ticket then owns its launch setup. Later edits to launch defaults affect fut
 
 Every shipped type starts at Brief and ends at Done, with a Consequences stage before Done. Consequences is where the applicable follow-through is proposed: merge, deploy, spawned Tickets, bookkeeping, a report. What sits between Brief and Consequences is the type’s own argument for how that kind of work should unfold.
 
-A stage marked worker-owned is the Worker’s to draft. A stage marked user-owned receives one automatic opening turn, then continues with the person in the same conversation until the gate is filled or the person completes it. See [Proposals and gates](proposals.md). The ceiling can still park a worker-owned stage. That is how a coding Ticket stops before Implementation even though every coding stage is worker-owned: set the ceiling on Plan.
+A stage marked worker-owned is the Worker’s to draft. A stage marked user-owned receives one automatic opening turn, then continues with the person in the same conversation until the gate is filled or the person completes it. See [Proposals and gates](proposals.md). The ceiling can still park a worker-owned stage. That is how a coding Ticket stops before Implementation even though every coding stage is worker-owned: set the ceiling on What Changes.
 
 Ten types ship. `probe` exists only in tests, with unfamiliar stage names, so a coding-shaped assumption fails loudly. `personal`, `planning-day`, `planning-midday-check`, and `planning-sprint` remain readable history. They cannot be created, and their schedules can only be disabled.
 
@@ -26,7 +26,7 @@ The save result contains each affected Ticket’s title, old and new stage, and 
 
 ## Coding
 
-Product and repository work. The ladder is Success Condition, What Changes, Plan, Implementation, Consequences. All of those stages are worker-owned. The usual way to keep a person in the loop is the ceiling: stop at the plan, or stop again before Consequences. Default launch is Codex, `gpt-5.6-sol`, medium. Skill: `panels-worker-coding`.
+Product and repository work. The ladder is Brief, What Changes, Implementation, Consequences, Done. All non-terminal stages are worker-owned. The usual way to keep a person in the loop is the ceiling: stop at What Changes, or stop again at Implementation before Consequences. Default launch is Codex, `gpt-5.6-sol`, medium. Skill: `panels-worker-coding`.
 
 ## General
 
