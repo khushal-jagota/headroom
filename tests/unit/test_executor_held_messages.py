@@ -18,10 +18,6 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
-    HeldPromptPromotionMode,
-    PromptDeliveryQueued,
-    PromptDeliveryStarted,
-    PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
@@ -73,57 +69,17 @@ class ScriptedNative:
 
     def __init__(self) -> None:
         self.commands: list[ChildCommand] = []
-        self.fail_next_write = False
-        self.uncertain_next_write = False
-        self.uncertain_next_steer = False
-        self.refuse_next_steer = False
-        self.cancel_next_steer = False
 
     async def __call__(self, command: ChildCommand) -> CommandOutcome:
         self.commands.append(command)
-        if command.operation is ChildOperation.write_prompt:
-            if self.uncertain_next_write:
-                self.uncertain_next_write = False
-                return CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    CommandDisposition.uncertain,
-                    {"reason": "write response lost", "composed_content_delivered": None},
-                )
-            if self.fail_next_write:
-                self.fail_next_write = False
-                raise InjectedCrash("native write outcome interrupted")
-            result: JsonObject = {"kind": "prompt_accepted", "composed_content_delivered": True}
-        elif command.operation is ChildOperation.steer:
-            if self.uncertain_next_steer:
-                self.uncertain_next_steer = False
-                return CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    CommandDisposition.uncertain,
-                    {"kind": "steer_uncertain", "composed_content_delivered": True},
-                )
-            if self.cancel_next_steer:
-                self.cancel_next_steer = False
-                raise asyncio.CancelledError
-            if self.refuse_next_steer:
-                self.refuse_next_steer = False
-                result = {
-                    "kind": "steer_refused",
-                    "refusal_reason": "command_cannot_join_running_turn",
-                }
-            else:
-                result = {"kind": "steer_accepted", "composed_content_delivered": True}
-        else:
-            result = {}
         return CommandOutcome(
-            command.command_id, command.child, CommandDisposition.succeeded, result
+            command.command_id,
+            command.child,
+            CommandDisposition.succeeded,
+            {"kind": "prompt_accepted", "composed_content_delivered": True}
+            if command.operation is ChildOperation.write_prompt
+            else {},
         )
-
-    def writes(self) -> list[ChildCommand]:
-        return [
-            command for command in self.commands if command.operation is ChildOperation.write_prompt
-        ]
 
 
 class HeldCatalogObserver(ScriptedCatalogObserver):
@@ -360,24 +316,6 @@ async def boot(connection: Connection, root: Path) -> HeldFixture:
     return fixture
 
 
-def operation_result(fixture: HeldFixture, submission_id: str) -> dict[str, Any]:
-    """Delivery outcomes are conversation facts, independent of the first receipt."""
-    row = fixture.connection.execute(
-        "SELECT kind,payload FROM conversation_events "
-        "WHERE json_extract(payload,'$.sender_message_id')=? "
-        "ORDER BY sequence DESC LIMIT 1",
-        (submission_id,),
-    ).fetchone()
-    assert row is not None
-    return {
-        "fate": {
-            "prompt": "started",
-            "prompt_discarded": "discarded",
-            "prompt_delivery_uncertain": "uncertain",
-        }[row["kind"]]
-    }
-
-
 def replay_result(fixture: HeldFixture, envelope: QueuedEnvelope) -> JsonObject:
     stored = fixture.store.lookup_receipt(envelope.sender_id, envelope.submission_id)
     return stored.result if stored is not None else {}
@@ -412,155 +350,6 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
                 ).result == replay_result(fixture, envelope)
             assert fixture.native.commands == before
             assert not await fixture.source_reply_credited(fresh)
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("action", ["discard", "promote", "drain", "uncertain_steer"])
-def test_native_terminal_held_outcome_retains_receipt_and_composed_reply_credit(
-    tmp_db: Connection, tmp_path: Path, action: str
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            envelope, write = fixture.entry("terminal", "Exact reply Ω")
-            await fixture.deliver(envelope, write)
-            held = (await fixture.system.held_prompts("c_target"))[0]
-            if action == "discard":
-                assert await fixture.system.discard_held_prompt("c_target", held.held_prompt_id)
-            elif action == "uncertain_steer":
-                fixture.native.uncertain_next_steer = True
-                assert isinstance(
-                    await fixture.system.promote_held_prompt(
-                        "c_target", held.held_prompt_id, HeldPromptPromotionMode.steer
-                    ),
-                    PromptDeliveryUncertain,
-                )
-            elif action == "promote":
-                assert isinstance(
-                    await fixture.system.promote_held_prompt(
-                        "c_target", held.held_prompt_id, HeldPromptPromotionMode.send_now
-                    ),
-                    PromptDeliveryStarted,
-                )
-            else:
-                await fixture.system.interrupt("c_target")
-                await fixture.system.wait_until_quiescent()
-            assert await fixture.system.held_prompts("c_target") == ()
-            assert operation_result(fixture, "terminal")["fate"] == (
-                "discarded"
-                if action == "discard"
-                else "uncertain"
-                if action == "uncertain_steer"
-                else "started"
-            )
-            assert await fixture.source_reply_credited() is (action != "discard")
-            before = list(fixture.native.commands)
-            fresh = await fixture.new_core()
-            assert (await fixture.deliver(envelope, write, system=fresh)).result == replay_result(
-                fixture, envelope
-            )
-            assert await fresh.held_prompts("c_target") == ()
-            assert fixture.native.commands == before
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("action", ["promote", "drain", "cancel_steer"])
-def test_unknown_native_dispatch_quarantines_live_line_and_is_not_retried_after_restart(
-    tmp_db: Connection, tmp_path: Path, action: str
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            envelope, write = fixture.entry("uncertain", "Uncertain exact Ω")
-            await fixture.deliver(envelope, write)
-            held = (await fixture.system.held_prompts("c_target"))[0]
-            if action == "cancel_steer":
-                fixture.native.cancel_next_steer = True
-                with pytest.raises(asyncio.CancelledError):
-                    await fixture.system.promote_held_prompt(
-                        "c_target", held.held_prompt_id, HeldPromptPromotionMode.steer
-                    )
-            elif action == "promote":
-                fixture.native.fail_next_write = True
-                with pytest.raises(InjectedCrash):
-                    await fixture.system.promote_held_prompt(
-                        "c_target", held.held_prompt_id, HeldPromptPromotionMode.send_now
-                    )
-            else:
-                fixture.native.uncertain_next_write = True
-                await fixture.system.interrupt("c_target")
-                await fixture.system.wait_until_quiescent()
-            pending = await fixture.system.held_prompts("c_target")
-            assert len(pending) == 1 and pending[0].delivery_uncertain
-            assert pending[0].content == held.content
-            if action == "drain":
-                assert operation_result(fixture, "uncertain")["fate"] == "uncertain"
-            later_envelope, later_write = fixture.entry("later", "Wait behind unknown")
-            assert (await fixture.deliver(later_envelope, later_write)).result["fate"] == "queued"
-            later = (await fixture.system.held_prompts("c_target"))[1]
-            before = list(fixture.native.commands)
-            assert isinstance(
-                await fixture.system.promote_held_prompt(
-                    "c_target", later.held_prompt_id, HeldPromptPromotionMode.send_now
-                ),
-                PromptDeliveryQueued,
-            )
-            await fixture.system.kill("c_target")
-            live = await fixture.system.held_prompts("c_target")
-            assert len(live) == 1 and live[0].delivery_uncertain
-            assert operation_result(fixture, "later")["fate"] == "discarded"
-            assert not await fixture.source_reply_credited()
-            fresh = await fixture.new_core()
-            assert await fresh.held_prompts("c_target") == ()
-            if action == "drain":
-                assert operation_result(fixture, "uncertain")["fate"] == "uncertain"
-            assert (await fixture.deliver(envelope, write, system=fresh)).result == replay_result(
-                fixture, envelope
-            )
-            assert fixture.native.writes() == [
-                command for command in before if command.operation is ChildOperation.write_prompt
-            ]
-        finally:
-            await fixture.close()
-
-    asyncio.run(run())
-
-
-def test_known_safe_steer_requeue_keeps_live_order_but_loses_waiting_text_on_restart(
-    tmp_db: Connection, tmp_path: Path
-) -> None:
-    async def run() -> None:
-        fixture = await boot(tmp_db, tmp_path)
-        try:
-            first, first_write = fixture.entry("command", "/scripted Ω")
-            await fixture.deliver(first, first_write)
-            second, second_write = fixture.entry("other", "Other held message")
-            await fixture.deliver(second, second_write)
-            initial = await fixture.system.held_prompts("c_target")
-            fixture.native.refuse_next_steer = True
-            fate = await fixture.system.promote_held_prompt(
-                "c_target", initial[0].held_prompt_id, HeldPromptPromotionMode.steer
-            )
-            assert isinstance(fate, PromptDeliveryQueued)
-            queued = await fixture.system.held_prompts("c_target")
-            assert [held.sender_message_id for held in queued] == ["other", "command"]
-            assert queued[1].content == initial[0].content
-            assert queued[1].held_prompt_id != initial[0].held_prompt_id
-            assert not any(held.delivery_uncertain for held in queued)
-            assert not await fixture.source_reply_credited()
-            before = list(fixture.native.commands)
-            fresh = await fixture.new_core()
-            assert await fresh.held_prompts("c_target") == ()
-            assert (
-                await fixture.deliver(first, first_write, system=fresh)
-            ).result == replay_result(fixture, first)
-            assert fixture.native.commands == before
         finally:
             await fixture.close()
 

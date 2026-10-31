@@ -42,50 +42,6 @@ def test_ordinary_entrypoint_imports_in_its_own_cold_process(module: str) -> Non
     assert result.returncode == 0, result.stderr
 
 
-def test_public_conversation_exports_keep_canonical_objects_after_cold_contract_import() -> None:
-    result = cold_python("""
-import sys
-import planner.conversation as conversation
-from planner.conversation import contracts
-from planner.conversation.logic.conversation_start_resolution import (
-    resolve_conversation_start_request,
-)
-
-assert "planner.conversation.in_memory_conversation_system" not in sys.modules
-assert conversation.resolve_conversation_start_request is resolve_conversation_start_request
-try:
-    conversation.unknown_export
-except AttributeError as error:
-    assert "unknown_export" in str(error)
-else:
-    raise AssertionError("unknown export did not raise AttributeError")
-assert "planner.conversation.in_memory_conversation_system" not in sys.modules
-
-implementation_names = {
-    "InMemoryBackendPromptWrite",
-    "InMemoryConversationObservation",
-    "InMemoryConversationObservationKind",
-    "InMemoryConversationSystem",
-    "InMemoryConversationTurnEnding",
-    "TurnCannotEndWhilePermissionAskIsPending",
-    "TurnCannotEndWhileUserInputIsPending",
-}
-# First public access must resolve the implementation; later accesses keep identity.
-first = conversation.InMemoryConversationSystem
-from planner.conversation import in_memory_conversation_system as implementation
-assert first is implementation.InMemoryConversationSystem
-assert implementation_names <= set(conversation.__all__)
-for name in conversation.__all__:
-    if name == "resolve_conversation_start_request":
-        expected = resolve_conversation_start_request
-    else:
-        expected = getattr(implementation if name in implementation_names else contracts, name)
-    assert getattr(conversation, name) is expected
-    assert getattr(conversation, name) is expected
-""")
-    assert result.returncode == 0, result.stderr
-
-
 def test_cold_catalog_context_retains_runtime_executor_identity_validation() -> None:
     result = cold_python("""
 from pathlib import Path

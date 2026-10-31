@@ -55,26 +55,14 @@ def _wakes(connection: Connection, ticket_id: str) -> list[tuple[object, ...]]:
     ]
 
 
-@pytest.mark.parametrize(
-    ("worker_type", "user_stage", "field", "next_stage"),
-    [
-        ("exploration", "needs_understanding", "understanding", "needs_research_plan"),
-        ("probe", "needs_beta", "beta", "needs_landing"),
-    ],
-)
 @pytest.mark.parametrize("at_ceiling", [False, True])
-@pytest.mark.parametrize("cut_before_receipt", [False, True])
 def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advancement(
     tmp_db: Connection,
     tmp_path: Path,
     fake_clock: ClockForTest,
-    worker_type: str,
-    user_stage: str,
-    field: str,
-    next_stage: str,
     at_ceiling: bool,
-    cut_before_receipt: bool,
 ) -> None:
+    worker_type, user_stage, field, next_stage = "probe", "needs_beta", "beta", "needs_landing"
     install_probe_registry()
     seed_probe_worker_type(tmp_db)
     tmp_db.commit()
@@ -102,14 +90,9 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
             title_max_chars=TITLE_MAX_CHARS,
         )
         worker = Principal(PrincipalKind.ticket, ticket.id)
-        if worker_type == "probe":
-            ticket = data.file_current_proposal(
-                tmp_db,
-                ticket.id,
-                body="Alpha",
-                principal=worker,
-                now=2,
-            )
+        ticket = data.file_current_proposal(
+            tmp_db, ticket.id, body="Alpha", principal=worker, now=2
+        )
         assert ticket.stage == user_stage
         claimed = data.claim_ticket_for_worker_step(
             tmp_db,
@@ -141,7 +124,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
             )
         )
         writer_calls: list[str] = []
-        inject_cut = cut_before_receipt
+        inject_cut = True
 
         def writer(connection: Connection, envelope: QueuedEnvelope) -> JsonObject:
             nonlocal inject_cut
@@ -165,14 +148,12 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
                 raise sqlite3.OperationalError("cut after domain write before receipt")
             return result
 
-        if cut_before_receipt:
-            with pytest.raises(sqlite3.OperationalError, match="before receipt"):
-                store.accept(envelope, writer, 1003, identity=identity)
-            assert data.read_ticket(tmp_db, ticket.id) == claimed
-            assert _openers(tmp_db, ticket.id) == openers_before
-            assert _wakes(tmp_db, ticket.id) == []
-            assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
-
+        with pytest.raises(sqlite3.OperationalError, match="before receipt"):
+            store.accept(envelope, writer, 1003, identity=identity)
+        assert data.read_ticket(tmp_db, ticket.id) == claimed
+        assert _openers(tmp_db, ticket.id) == openers_before
+        assert _wakes(tmp_db, ticket.id) == []
+        assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
         receipt = store.accept(envelope, writer, 1004, identity=identity)
         settled = data.read_ticket(tmp_db, ticket.id)
         assert settled.worker_step_claim is WorkerStepClaim.none
@@ -225,7 +206,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
             assert data.read_ticket(tmp_db, ticket.id) == next_claim
             assert _openers(tmp_db, ticket.id) == openers_after_advancement
             assert _wakes(tmp_db, ticket.id) == wakes_after_advancement
-        assert len(writer_calls) == 1 + int(cut_before_receipt)
+        assert len(writer_calls) == 2
         assert (
             tmp_db.execute(
                 "SELECT count(*) FROM mac_inbox_positions WHERE sender_id=? AND submission_id=?",

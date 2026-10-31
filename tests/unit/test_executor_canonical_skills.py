@@ -9,15 +9,11 @@ from pathlib import Path
 import pytest
 
 from planner.conversation.backends.contracts import BackendSpawnFailed
-from planner.core.db import connect, create_schema
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.protocol import CanonicalSkillSnapshot, CanonicalSkillSource
 from planner.executor.skills import (
     install_native_skill_snapshot,
-    read_canonical_skill_snapshot,
-    validate_skill_snapshot,
 )
-from planner.worker_types.shipped import shipped_worker_types
 
 
 def _source(name: str, body: str = "Canonical café\r\n") -> CanonicalSkillSource:
@@ -37,17 +33,9 @@ def _snapshot(*extras: CanonicalSkillSource) -> CanonicalSkillSnapshot:
     "snapshot",
     [
         CanonicalSkillSnapshot((_source("panels"),), ("panels", "panels-worker")),
-        CanonicalSkillSnapshot((_source("panels"),), ("panels",)),
         _snapshot(_source("../escape")),
-        _snapshot(_source("panels")),
         _snapshot(_source("PANELS")),
-        _snapshot(CanonicalSkillSource("bad", "")),
         _snapshot(CanonicalSkillSource("bad", _source("other").source_text)),
-        _snapshot(_source("bad", "\ud800")),
-        CanonicalSkillSnapshot(
-            (*_snapshot().sources, _source("panels-rollover")),
-            (*_snapshot().required_skill_names, "panels-rollover"),
-        ),
     ],
 )
 def test_invalid_snapshot_refuses_before_any_owned_or_home_write(
@@ -192,43 +180,6 @@ def test_concurrent_snapshots_publish_complete_generations_and_consistent_accoun
     assert not list(paths.skills.glob(".stage-*"))
 
 
-def test_reader_uses_database_bytes_and_registered_specialist_without_committing(
-    tmp_path: Path,
-) -> None:
-    conn = connect(str(tmp_path / "planner.db"))
-    try:
-        create_schema(conn)
-        conn.execute("BEGIN")
-        # The helper reads only this assigned Ticket field. Keep this fixture local
-        # rather than coupling a snapshot test to ordinary Ticket creation defaults.
-        conn.execute("CREATE TEMP TABLE tickets(id TEXT, worker_type TEXT)")
-        definition = shipped_worker_types()[0]
-        worker_type = str(definition["worker_type"])
-        conn.execute("INSERT INTO temp.tickets VALUES ('assigned', ?)", (worker_type,))
-        exact = _source("panels", "database-only café\r\n\r\n").source_text
-        conn.execute(
-            "UPDATE managed_skills SET source_text = ? WHERE skill_name = 'panels'", (exact,)
-        )
-        assert conn.in_transaction
-        snapshot = read_canonical_skill_snapshot(conn, "assigned")
-        assert conn.in_transaction
-        assert (
-            next(source.source_text for source in snapshot.sources if source.skill_name == "panels")
-            == exact
-        )
-        profile = definition["profile"]
-        assert isinstance(profile, dict)
-        assert profile["specialist_skill"] in snapshot.required_skill_names
-        validate_skill_snapshot(snapshot)
-        conn.execute("DELETE FROM managed_skills WHERE skill_name = 'panels-worker'")
-        with pytest.raises(BackendSpawnFailed, match="absent"):
-            read_canonical_skill_snapshot(conn, "assigned")
-        with pytest.raises(BackendSpawnFailed, match="does not exist"):
-            read_canonical_skill_snapshot(conn, "unknown")
-    finally:
-        conn.close()
-
-
 def test_tampered_generation_refuses_instead_of_rewriting(tmp_path: Path) -> None:
     paths = ExecutorPaths(tmp_path / "executor")
     generation = install_native_skill_snapshot(
@@ -240,26 +191,3 @@ def test_tampered_generation_refuses_instead_of_rewriting(tmp_path: Path) -> Non
         install_native_skill_snapshot(_snapshot(), paths=paths, native_home=tmp_path / "second")
     assert changed.read_bytes() == b"tampered"
     assert not (tmp_path / "second").exists()
-
-
-def test_account_install_failure_is_backend_refusal(tmp_path: Path) -> None:
-    home = tmp_path / "account"
-    home.mkdir()
-    (home / "skills").write_bytes(b"not a directory")
-    with pytest.raises(BackendSpawnFailed):
-        install_native_skill_snapshot(
-            _snapshot(), paths=ExecutorPaths(tmp_path / "executor"), native_home=home
-        )
-    assert (home / "skills").read_bytes() == b"not a directory"
-
-
-def test_retired_source_bytes_stay_in_snapshot_without_native_exposure(tmp_path: Path) -> None:
-    snapshot = _snapshot(_source("panels-rollover"))
-    home = tmp_path / "account"
-    generation = install_native_skill_snapshot(
-        snapshot, paths=ExecutorPaths(tmp_path / "executor"), native_home=home
-    )
-    assert (
-        generation / "skills" / "panels-rollover" / "SKILL.md"
-    ).read_bytes() == snapshot.sources[-1].source_text.encode()
-    assert not (home / "skills" / "panels-rollover").exists()

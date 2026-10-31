@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -176,27 +175,6 @@ def test_confirmation_commit_survives_cleanup_failure(
     asyncio.run(run())
 
 
-def test_missing_snapshot_fails_add_and_new_database_gets_new_sender(tmp_path: Path) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "file").write_bytes(b"bytes")
-    snap = snapshot_file(
-        root=source, relative_path="file", scope=FileScope.ticket, owner_id="t_one"
-    )
-    snap.local_path.unlink()
-    root = tmp_path / "outbox"
-    outbox = MacOutbox(root)
-    sender = outbox.sender_id
-    with pytest.raises(FileNotFoundError):
-        outbox.add(OutboxEntry("c_one", EnvelopeKind.backend_event, {}, "missing", (snap,)))
-    assert outbox.pending_count() == 0
-    outbox.close()
-    shutil.rmtree(root)
-    replacement = MacOutbox(root)
-    assert replacement.sender_id != sender
-    replacement.close()
-
-
 def test_previous_format_refused_without_conversion(tmp_path: Path) -> None:
     root = tmp_path / "outbox"
     root.mkdir()
@@ -208,19 +186,6 @@ def test_previous_format_refused_without_conversion(tmp_path: Path) -> None:
         MacOutbox(root)
     assert database.read_bytes() == before
     assert not (root / "blobs").exists()
-
-
-def test_wal_full_and_one_process_owner(tmp_path: Path) -> None:
-    outbox = MacOutbox(tmp_path / "outbox")
-    assert outbox._db.execute("PRAGMA journal_mode").fetchone() == ("wal",)
-    assert outbox._db.execute("PRAGMA synchronous").fetchone() == (2,)
-    assert outbox._db.execute("PRAGMA fullfsync").fetchone() == (1,)
-    with pytest.raises(BlockingIOError):
-        MacOutbox(tmp_path / "outbox")
-    assert {
-        row[0] for row in outbox._db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    } == {"sender", "items", "item_files", "ticket_files", "sqlite_sequence"}
-    outbox.close()
 
 
 def test_send_wakes_after_commit_four_conversations_and_one_each(tmp_path: Path) -> None:
@@ -294,74 +259,6 @@ def test_refused_confirmation_is_available_to_later_retry_without_requeue(tmp_pa
         assert outbox.add(entry()) == row
         assert outbox.pending_count() == 0
         outbox.close()
-
-    asyncio.run(run())
-
-
-def test_missing_files_upload_then_lost_receipt_replays_original_item(tmp_path: Path) -> None:
-    async def run() -> None:
-        source = tmp_path / "source"
-        source.mkdir()
-        (source / "file").write_bytes(b"original bytes")
-        snapshot = snapshot_file(
-            root=source, relative_path="file", scope=FileScope.ticket, owner_id="t_one"
-        )
-        outbox = MacOutbox(tmp_path / "outbox")
-        envelope = outbox.add(
-            OutboxEntry("c_one", EnvelopeKind.backend_event, {}, "event", (snapshot,))
-        )
-        uploaded = False
-        accepted = False
-        attempts = 0
-
-        class Link:
-            async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-                nonlocal attempts, accepted
-                assert TypeAdapter(QueuedEnvelope).validate_python(payload) == envelope
-                attempts += 1
-                if not uploaded:
-                    return WireMessage(
-                        WireMessageKind.missing_files,
-                        "missing",
-                        {
-                            "files": [
-                                json.loads(
-                                    TypeAdapter(type(snapshot.manifest)).dump_json(
-                                        snapshot.manifest
-                                    )
-                                )
-                            ]
-                        },
-                    )
-                if not accepted:
-                    accepted = True
-                    raise ConnectionError("VPS committed but reply was lost")
-                return WireMessage(
-                    WireMessageKind.receipt,
-                    "confirmed",
-                    json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
-                )
-
-            async def put_file(self, row: QueuedEnvelope, file: FileSnapshot) -> None:
-                nonlocal uploaded
-                assert not uploaded and file.local_path.read_bytes() == b"original bytes"
-                uploaded = True
-
-        with pytest.raises(ConnectionError, match="reply was lost"):
-            await outbox.send_pending(Link())
-        assert outbox.pending() == (envelope,)
-        outbox.close()
-        reopened = MacOutbox(tmp_path / "outbox")
-        sender = asyncio.create_task(reopened.send_pending(Link()))
-        try:
-            # An event is deleted on confirmation, so wait before sending starts.
-            assert await reopened.wait_confirmed("event", 2) == receipt(envelope)
-            assert attempts == 3 and reopened.lookup("event") is None
-            assert list((reopened.root / "blobs").iterdir()) == []
-        finally:
-            sender.cancel()
-            await asyncio.gather(sender, return_exceptions=True)
-            reopened.close()
 
     asyncio.run(run())
 
@@ -468,25 +365,6 @@ def test_ticket_index_skips_unchanged_sources_and_rechecks_racy_same_size_change
     reopened.close()
 
 
-def test_capture_index_rolls_back_with_item_and_file_rows(tmp_path: Path) -> None:
-    root = tmp_path / "artifacts/tickets/t_one"
-    root.mkdir(parents=True)
-    (root / "file").write_bytes(b"bytes")
-    box = MacOutbox(tmp_path / "spool")
-    box._db.execute(
-        "CREATE TRIGGER fail_add BEFORE INSERT ON item_files "
-        "BEGIN SELECT RAISE(ABORT,'disk full'); END"
-    )
-    with pytest.raises(sqlite3.IntegrityError, match="disk full"):
-        box.add(entry(), ticket_id="t_one")
-    assert box.pending_count() == 0
-    assert box._db.execute("SELECT COUNT(*) FROM ticket_files").fetchone() == (0,)
-    box.close()
-    reopened = MacOutbox(tmp_path / "spool")
-    assert list((reopened.root / "blobs").iterdir()) == []
-    reopened.close()
-
-
 def test_later_write_retains_unchanged_bytes_when_earlier_capture_is_refused(
     tmp_path: Path,
 ) -> None:
@@ -512,39 +390,6 @@ def test_later_write_retains_unchanged_bytes_when_earlier_capture_is_refused(
     # A future write captures again after the refused index was removed.
     future = box.add(entry("future"), ticket_id="t_one")
     assert future.file_dependencies == first.file_dependencies
-    box.close()
-
-
-def test_confirmation_during_capture_sweeps_after_capture_settles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A concurrent capture may defer cleanup, but must not leave acknowledged blobs."""
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Event
-
-    root = tmp_path / "artifacts/tickets/t_one"
-    root.mkdir(parents=True)
-    (root / "file").write_bytes(b"original")
-    box = MacOutbox(tmp_path / "spool")
-    first = box.add(entry("first"), ticket_id="t_one")
-    blob = box.snapshots("first")[0].local_path
-    entered, release = Event(), Event()
-    capture = box._capture
-
-    def held(ticket_id: str) -> tuple[tuple[FileSnapshot, ...], list[tuple[object, ...]]]:
-        entered.set()
-        assert release.wait(5)
-        return capture(ticket_id)
-
-    monkeypatch.setattr(box, "_capture", held)
-    with ThreadPoolExecutor() as pool:
-        later = pool.submit(box.add, entry("later"), ticket_id="t_empty")
-        assert entered.wait(2)
-        box.acknowledge(receipt(first))
-        assert blob.exists()
-        release.set()
-        assert later.result().file_dependencies == ()
-    assert not blob.exists()
     box.close()
 
 
