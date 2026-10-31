@@ -7,8 +7,6 @@ import json
 
 import click
 
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import executor_paths, validate_executor_launch
 from planner.executor.ipc_client import request
 from planner.executor.protocol import IpcOperation, QuiesceRequest, type_adapter
@@ -68,31 +66,11 @@ def health() -> None:
 
 
 @executor_group.command("quiesce")
-@click.option("--expected-incarnation", required=True)
-@click.option("--expected-generation", type=int, required=True)
-@click.option("--expected-revision", required=True)
-@click.option("--expected-pid", type=int, required=True)
 @click.option("--exit-when-ready", is_flag=True)
-def quiesce(
-    expected_incarnation: str,
-    expected_generation: int,
-    expected_revision: str,
-    expected_pid: int,
-    exit_when_ready: bool,
-) -> None:
-    expected = QuiesceRequest(
-        ExecutorIdentity(
-            PROTOCOL_VERSION,
-            expected_revision,
-            SPOOL_FORMAT_VERSION,
-            expected_incarnation,
-            expected_generation,
-        ),
-        expected_pid,
-        exit_when_ready,
-    )
+def quiesce(exit_when_ready: bool) -> None:
+    maintenance = QuiesceRequest(exit_when_ready)
     response = request(
-        IpcOperation.quiesce, type_adapter(QuiesceRequest).dump_python(expected, mode="json")
+        IpcOperation.quiesce, type_adapter(QuiesceRequest).dump_python(maintenance, mode="json")
     )
     if response.error is not None:
         raise click.ClickException(str(response.error))

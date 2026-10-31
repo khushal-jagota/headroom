@@ -138,20 +138,12 @@ class AgentGateway:
             )
 
     async def _quiesce(self, request: IpcRequest) -> IpcResponse:
-        expected = type_adapter(QuiesceRequest).validate_python(request.payload)
+        maintenance = type_adapter(QuiesceRequest).validate_python(request.payload)
         async with self._quiesce_lock:
-            if expected.expected_identity != self.identity or (
-                expected.expected_process_id != os.getpid()
-            ):
-                raise ValueError("quiesce identity changed; obtain fresh health")
             self._transport_admission_stopped = True
             await self._settle_catalogs()
             quiescence = await self.runner.quiesce()
-            if expected.expected_identity != self.identity or (
-                expected.expected_process_id != os.getpid()
-            ):
-                raise ValueError("quiesce identity changed while draining; obtain fresh health")
-            exit_committed = quiescence.ready and expected.exit_when_ready
+            exit_committed = quiescence.ready and maintenance.exit_when_ready
             if exit_committed:
                 self.exit_committed = True
                 self._stop.set()

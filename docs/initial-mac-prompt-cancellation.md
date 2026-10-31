@@ -369,17 +369,16 @@ Record the original test as canceled. Preserve its timeout and unknown effects. 
 ## Later Mac update, only after confirmed child stop
 
 Follow [the Mac installation procedure](mac-executor-installation.md) under its existing authority.
-Obtain fresh local health and process evidence. Do not reuse the historical incarnation, generation, revision, or PID as current inputs.
+Obtain fresh local health and process evidence. The quiesce command takes no expected
+identity arguments; its receipt identifies the process that handled it.
 
 ```sh
 PLAN_EXECUTOR_ROOT="$EXECUTOR_ROOT" "$INSTALLED_PANELS" executor quiesce \
-  --expected-incarnation "$OLD_INCARNATION" \
-  --expected-generation "$OLD_GENERATION" \
-  --expected-revision "$OLD_REVISION" --expected-pid "$OLD_PID" \
   --exit-when-ready > "$EVIDENCE/exit-receipt.json"
 ```
 
-Require matching identity, `exit_committed=true`, zero work counts, stopped admission, and observed process exit.
+Require `exit_committed=true`, zero work counts, stopped admission, and observed exit of the receipt's process.
+Check that no replacement executor is running before continuing.
 Only then run `launchctl bootout "$SERVICE"` and continue the existing compatible package procedure.
 If stop or quiescence remains uncertain, end the attempt. Do not force Mac exit or use bootout as shutdown.
 Keep the retained route until the Manager confirms that installed peers no longer depend on it.

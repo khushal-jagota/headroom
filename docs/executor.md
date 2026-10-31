@@ -484,14 +484,17 @@ or journal-format mismatch refuses work before replay.
 Opening an outbox checks its SQLite format version before changing it.
 An incompatible outbox needs explicit operator disposition before this version can run. This check
 does not grant authority to replace a process. An update or rollback still needs
-fresh identity-bound quiescence. Active work, callbacks, uncertain operations,
-unfinished native calls, or unaccepted entries prevent readiness. Quiescence
+a fresh quiescence receipt and observed exit of its process. Active work, callbacks,
+uncertain operations, unfinished native calls, or unaccepted entries prevent readiness. Quiescence
 closes admission for new commands and CLI writes first. It accounts for source
 writes already admitted, including publication that continues after caller
 cancellation. Once native work and callbacks are idle, it stops idle producers
 before it waits for the journal to drain. Final native events remain admitted
-and every unaccepted entry still blocks exit. Quiescence rechecks the process
-identity after awaited shutdown work.
+and every unaccepted entry still blocks exit. `panels executor quiesce` uses the
+owner-only socket without expected identity arguments. `--exit-when-ready` requests
+a clean exit only when all work has settled. The receipt identifies the current
+process; the operator checks its exit and the absence of a replacement before
+changing code.
 
 Each command has one typed set of inputs: start, write prompt, steer, cancel turn,
 answer permission, answer user input, or stop. JSON is decoded at the command boundary;
