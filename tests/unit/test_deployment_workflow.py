@@ -268,7 +268,21 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
     job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["adopt"]
     step = next(s for s in job["steps"] if s.get("name") == "Finalize owner adoption lifecycle")
     assert step["if"] == "${{ always() }}"
-    assert job["steps"][-1] is step
+    cleanup = next(s for s in job["steps"] if s.get("name") == "Remove adoption temporary state")
+    assert job["steps"].index(step) < job["steps"].index(cleanup)
+    # Exercise the harmful reorder too: cleanup removes the actual temporary
+    # environment, while the finalizer keeps its independent host/checkout runtime.
+    temporary = tmp_path / "disposable"
+    (temporary / "venv/bin").mkdir(parents=True)
+    (temporary / "venv/bin/python").symlink_to(sys.executable)
+    cleanup_env = os.environ | {
+        "PANELS_TEMP_ROOT": str(temporary),
+        "PANELS_CANDIDATE_SOURCE": str(temporary / "source"),
+        "PANELS_REHEARSAL": "false",
+    }
+    subprocess.run(["bash", "-euo", "pipefail", "-c", cleanup["run"]],
+                   env=cleanup_env, capture_output=True, text=True, check=True)
+    assert not temporary.exists()
     apply_failed = case in {
         "apply_failure", "health_failure", "recovery_failure", "cancelled",
         "replacement", "same_sha_stale", "replacement_no_lifecycle", "missing_receipt",
@@ -279,7 +293,8 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
             "PATH": str(tools) + os.pathsep + os.environ["PATH"],
             "FINALIZER_SERVING_SHA": sha,
             "PANELS_CURRENT_ROOT": str(root),
-            "PANELS_DEPLOY_VENV": str(Path(sys.executable).parent.parent),
+            "PANELS_DEPLOY_VENV": str(temporary / "venv"),
+            "GITHUB_WORKSPACE": str(WORKFLOW.parents[2]),
             "PANELS_DEPLOYMENT_ID": "123-1", "UPDATE_REQUEST_ID": "first",
             "UPDATE_APP_SHA": sha,
             "UPDATE_APPLY_OUTCOME": "failure" if apply_failed else "success",
@@ -344,3 +359,141 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
         assert "installed" in (recorded.detail or "")
     else:
         assert recorded.phase == "succeeded" and recorded.serving_sha == sha
+
+
+@pytest.mark.parametrize("target", [
+    "root", "candidate", "baseline", "hermes", "interpreter", "stdlib",
+])
+def test_cleanup_refuses_execution_path_alias_before_any_service_or_file_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str,
+) -> None:
+    import sys
+    import sysconfig
+    from types import SimpleNamespace
+
+    from scripts import deployment_rehearsal as helper
+
+    temporary = tmp_path / "temporary"
+    temporary.mkdir()
+    checkout = Path(helper.__file__).resolve().parents[1]
+    alias = tmp_path / "execution-alias"
+    protected = {
+        "interpreter": Path(sys.executable).resolve().parent,
+        "stdlib": Path(sysconfig.get_path("stdlib")).resolve(),
+    }.get(target, checkout)
+    alias.symlink_to(protected, target_is_directory=True)
+    values = {
+        "PANELS_TEMP_ROOT": str(temporary),
+        "PANELS_CANDIDATE_SOURCE": str(temporary / "source"),
+        "PANELS_REHEARSAL": "true",
+    }
+    if target in {"root", "interpreter", "stdlib"}:
+        values["PANELS_TEMP_ROOT"] = str(alias)
+    elif target == "candidate":
+        values["PANELS_CANDIDATE_SOURCE"] = str(alias)
+    elif target == "baseline":
+        (temporary / "baseline-source").symlink_to(checkout, target_is_directory=True)
+    else:
+        values["PANELS_REHEARSAL_HERMES_ROOT"] = str(alias)
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("cleanup performed an action before admission")
+
+    # Replace helper dependencies, not the process-wide modules used by pytest teardown.
+    monkeypatch.setattr(helper, "subprocess", SimpleNamespace(run=forbidden))
+    monkeypatch.setattr(helper, "shutil", SimpleNamespace(rmtree=forbidden))
+    try:
+        with pytest.raises(ValueError, match="overlaps finalizer execution path"):
+            helper.cleanup()
+        assert temporary.is_dir()
+    finally:
+        alias.unlink()
+        if (temporary / "baseline-source").is_symlink():
+            (temporary / "baseline-source").unlink()
+
+
+def test_rehearsal_cleanup_preserves_unretained_or_unfinished_outcome_evidence(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    from scripts.deployment_rehearsal import validate_cleanup
+
+    root = tmp_path / "rehearsal"
+    root.mkdir()
+    lifecycle = root / "lifecycle.json"
+    values = {
+        "PANELS_TEMP_ROOT": str(root), "PANELS_CANDIDATE_SOURCE": str(root / "source"),
+        "PANELS_REHEARSAL": "true", "PANELS_LIFECYCLE_PATH": str(lifecycle),
+        "PANELS_DEPLOYMENT_ID": "attempt", "PANELS_LIFECYCLE_START_OUTCOME": "success",
+    }
+    lifecycle.write_text(json.dumps({"phase": "app_healthy", "deployment_id": "attempt"}))
+    with pytest.raises(ValueError, match="diagnostics are not retained"):
+        validate_cleanup(values)
+    values["PANELS_PROOF_RETENTION_OUTCOME"] = "success"
+    with pytest.raises(ValueError, match="no terminal lifecycle outcome"):
+        validate_cleanup(values)
+    lifecycle.write_text(json.dumps({"phase": "succeeded", "deployment_id": "attempt"}))
+    validate_cleanup(values)
+    lifecycle.unlink()
+    with pytest.raises(ValueError, match="evidence is unavailable"):
+        validate_cleanup(values)
+    # A suite or failed setup that never attempted installation has no outcome to finalize.
+    values["PANELS_LIFECYCLE_START_OUTCOME"] = "skipped"
+    validate_cleanup(values)
+
+
+def test_lifecycle_finalizer_uses_isolated_checkout_source_and_reports_missing_source(
+    tmp_path: Path,
+) -> None:
+    import json
+    import shutil
+    import subprocess
+    import sys
+
+    from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+
+    store = DeploymentLifecycleStore(tmp_path / "lifecycle.json")
+    sha = "a" * 40
+    store.start("attempt", sha)
+    store.transition("attempt", "verifying")
+    store.transition("attempt", "app_healthy", serving_sha=sha)
+    launcher = WORKFLOW.parents[2] / "scripts/deployment_finalize.py"
+    command = [sys.executable, "-I", "-S", "-B", str(launcher), "lifecycle", "transition",
+               "--path", str(store.path), "--deployment-id", "attempt", "--phase", "succeeded"]
+    result = subprocess.run(command, capture_output=True, text=True, check=True, cwd=tmp_path)
+    assert json.loads(result.stdout)["phase"] == "succeeded"
+    # An empty checkout cannot silently use this test environment's installed planner.
+    empty = tmp_path / "empty/scripts"
+    empty.mkdir(parents=True)
+    shutil.copyfile(launcher, empty / launcher.name)
+    command[4] = str(empty / launcher.name)
+    result = subprocess.run(command, capture_output=True, text=True, cwd=tmp_path)
+    assert result.returncode != 0
+    assert "ModuleNotFoundError" in result.stderr
+
+
+def test_adoption_reporting_write_failure_is_observable_without_lifecycle_mutation(
+    tmp_path: Path,
+) -> None:
+    import json
+    import subprocess
+    import sys
+
+    root = tmp_path / "current"
+    data = root / "data"
+    data.mkdir(parents=True)
+    # The lock cannot be opened as a regular file. The finalizer must not report success.
+    (data / "owner-update-request.json.lock").mkdir()
+    launcher = WORKFLOW.parents[2] / "scripts/deployment_finalize.py"
+    result = subprocess.run([
+        sys.executable, "-I", "-S", "-B", str(launcher), "adoption", "--current-root", str(root),
+        "--request-id", "request", "--deployment-id", "attempt", "--app-sha", "a" * 40,
+        "--apply-outcome", "success", "--provision-outcome", "success",
+        "--published-route-outcome", "success", "--serving-sha", "a" * 40,
+    ], capture_output=True, text=True)
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["status"] == "uncertain"
+    assert not (data / "deployment-lifecycle.json").exists()

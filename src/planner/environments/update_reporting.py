@@ -68,13 +68,17 @@ def main() -> int:
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--serving-sha", default="")
     args = parser.parse_args()
+    exit_code = 0
     try:
         result = finalize(**vars(args))
+        if result["status"] == "uncertain":
+            exit_code = 1
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
         # Reporting cannot act on the service or replace missing evidence with a guess.
         result = {"status": "uncertain", "detail": f"Update report unavailable: {exc}"}
+        exit_code = 1
     print(json.dumps(result, sort_keys=True))
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

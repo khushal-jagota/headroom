@@ -51,8 +51,8 @@ class UpdateAdmissionMiddleware:
                 status_code=503,
                 content={
                     "detail": (
-                        "Normal work waits for the deployment runner. "
-                        "Recovery requires the owner if progress expires."
+                        "Installation is unconfirmed. Work remains paused. "
+                        "Chief review is required."
                     )
                 },
             )(scope, receive, send)

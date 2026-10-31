@@ -10,6 +10,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import sysconfig
 import time
 import urllib.error
 import urllib.request
@@ -271,9 +272,51 @@ def capture() -> None:
         verify_proof(gate, os.environ["PANELS_BASELINE_SHA"], os.environ["PANELS_REQUESTED_SHA"])
 
 
+def validate_cleanup(environment: dict[str, str]) -> None:
+    """Preserve finalizer execution files and evidence before any destructive action."""
+    root = Path(environment["PANELS_TEMP_ROOT"]).resolve()
+    checkout = Path(__file__).resolve().parents[1]
+    protected = (
+        checkout, Path(sys.executable).resolve(),
+        Path(sysconfig.get_path("stdlib")).resolve(),
+        Path(sysconfig.get_path("platstdlib")).resolve(),
+    )
+    targets = [root, Path(environment["PANELS_CANDIDATE_SOURCE"]).resolve()]
+    if environment.get("PANELS_REHEARSAL") == "true":
+        targets.append((root / "baseline-source").resolve())
+        if environment.get("PANELS_REHEARSAL_HERMES_ROOT"):
+            targets.append(Path(environment["PANELS_REHEARSAL_HERMES_ROOT"]).resolve())
+    for target in targets:
+        for execution_path in protected:
+            if target.is_relative_to(execution_path) or execution_path.is_relative_to(target):
+                raise ValueError(
+                    f"Cleanup refused: {target} overlaps finalizer execution path "
+                    f"{execution_path}. No service action or deletion occurred."
+                )
+    if environment.get("PANELS_REHEARSAL") != "true":
+        return
+    # Suites share this helper but never start a synthetic deployment lifecycle.
+    if environment.get("PANELS_PROOF_RETENTION_OUTCOME") != "success":
+        raise ValueError("Cleanup refused: publication diagnostics are not retained.")
+    lifecycle_path = Path(environment["PANELS_LIFECYCLE_PATH"])
+    start_outcome = environment.get("PANELS_LIFECYCLE_START_OUTCOME", "")
+    if lifecycle_path.exists() or start_outcome not in {"", "skipped"}:
+        try:
+            record = json.loads(lifecycle_path.read_text())
+            terminal = record["phase"] in {
+                "succeeded", "failed", "rolled_back", "cancelled", "unknown"
+            }
+            same_attempt = record["deployment_id"] == environment["PANELS_DEPLOYMENT_ID"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ValueError("Cleanup refused: lifecycle evidence is unavailable.") from exc
+        if not terminal or not same_attempt:
+            raise ValueError("Cleanup refused: this attempt has no terminal lifecycle outcome.")
+
+
 def cleanup() -> None:
     if "PANELS_TEMP_ROOT" not in os.environ:
         return
+    validate_cleanup(dict(os.environ))
     root = Path(os.environ["PANELS_TEMP_ROOT"])
     if os.environ.get("PANELS_REHEARSAL") == "true":
         require_rehearsal()

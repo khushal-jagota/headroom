@@ -1723,13 +1723,24 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         if not problem_only:
             # A live connection must still disclose an expired runner record. Then the
             # normal update controls return through the existing contentless change signal.
-            recovery = "Recovery required: the candidate did not complete its commit."
-            deployment.update(state="unknown", detail=recovery)
+            recovery = "Installation is unconfirmed. Work remains paused. Chief review is required."
+            deployment.update(state="unknown", detail=recovery, installation_confirmed=False)
             signal()
             expect(card.locator(".deployment-detail")).to_have_text(recovery)
-            expect(card.locator(".deployment-detail")).to_be_visible()
-            expect(card.get_by_text("Reconnecting", exact=True)).to_be_visible()
-            page.screenshot(path=str(evidence / "recovery-required.png"))
+            expect(card.locator(".deployment-detail")).to_have_count(1)
+            expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_be_visible()
+            page.screenshot(path=str(evidence / "installation-unconfirmed.png"))
+            installed = "The requested app is installed and available. Its final report is unconfirmed. No action is needed from you."
+            deployment.update(installation_confirmed=True, detail=installed,
+                              unknown_display_until="2099-01-01T00:00:00Z")
+            signal()
+            expect(card.locator(".deployment-detail")).to_have_text(installed)
+            expect(card.locator(".deployment-detail")).to_have_count(1)
+            page.screenshot(path=str(evidence / "installed-report-unconfirmed.png"))
+            deployment.update(unknown_display_until="2020-01-01T00:00:00Z")
+            signal()
+            expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_have_count(0)
+            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
             deployment.update(state="idle", detail=None)
             signal()
             expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
