@@ -42,6 +42,7 @@ from planner.executor.protocol import (
     TransactionalWriter,
     as_object,
     decode_event_arguments,
+    payload_child,
     type_adapter,
 )
 from planner.executor.store import ExecutorStore, VpsDatabase
@@ -276,11 +277,9 @@ class InboxStore(VpsDatabase):
         ):
             raise _invalid("Envelope digest does not match content")
         if check_files and envelope.file_dependencies:
-            child = envelope.payload.get("child")
-            if not isinstance(child, dict):
-                ask = envelope.payload.get("ask")
-                child = ask.get("child") if isinstance(ask, dict) else None
-            reference = type_adapter(ChildReference).validate_python(child)
+            reference = type_adapter(ChildReference).validate_python(
+                payload_child(envelope.payload)
+            )
             assignment = connection.execute(
                 "SELECT principal_kind,principal_id FROM executor_child_assignments "
                 "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "

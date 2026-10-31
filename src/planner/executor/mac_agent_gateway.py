@@ -142,7 +142,7 @@ class AgentGateway:
                     self._transport_admission_stopped = True
                     await self._settle_catalogs()
                     quiescence = await self.runner.quiesce()
-                    pending_transfers = self.runner._transfers + self.spool.transfers
+                    pending_transfers = self.runner._transfers
                     if pending_transfers:
                         quiescence = replace(
                             quiescence,

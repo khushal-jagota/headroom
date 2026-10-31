@@ -44,7 +44,6 @@ from planner.executor.protocol import (
     FileTransfer,
     JsonObject,
     OutboxEntry,
-    OutboxLink,
     OutboxRecord,
     QueuedEnvelope,
     ReceiptDisposition,
@@ -54,6 +53,7 @@ from planner.executor.protocol import (
     encode_message,
     encode_value,
     envelope_payload_digest,
+    payload_child,
     type_adapter,
 )
 
@@ -86,7 +86,6 @@ CREATE TABLE ticket_files (
 
 class MacOutbox:
     def __init__(self, root: Path) -> None:
-        self.transfers = 0
         self.root = root
         self._lock = threading.RLock()
         self._capture_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
@@ -112,6 +111,7 @@ class MacOutbox:
             existed = path.exists()
             db = sqlite3.connect(path, check_same_thread=False)
             self._database = db
+            db.row_factory = sqlite3.Row
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
             db.execute("PRAGMA fullfsync=ON")
@@ -169,8 +169,9 @@ class MacOutbox:
         snapshots: list[FileSnapshot] = []
         updates: list[tuple[object, ...]] = []
         checked_ns = time.time_ns()
-
-        def walk(folder: Path) -> None:
+        folders = [root] if root.exists() else []
+        while folders:
+            folder = folders.pop()
             try:
                 with directory_descriptor(folder), os.scandir(folder) as entries:
                     ordered = sorted(entries, key=lambda item: item.name)
@@ -178,96 +179,97 @@ class MacOutbox:
                 logging.getLogger(__name__).warning(
                     "Skipping unreadable artifact directory: %s", folder
                 )
-                return
+                continue
             for entry in ordered:
-                with ExitStack() as sources:
-                    relative = Path(entry.path).relative_to(root).as_posix()
-                    try:
-                        source = contained_path(root, relative)
-                        info = entry.stat(follow_symlinks=False)
-                        if not stat.S_ISDIR(info.st_mode) and not stat.S_ISREG(info.st_mode):
-                            raise ValueError("artifact is not regular file")
-                    except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
-                        logging.getLogger(__name__).warning(
-                            "Skipping unreadable artifact: %s", relative
-                        )
-                        continue
-                    if stat.S_ISDIR(info.st_mode):
-                        walk(source)
-                        continue
-                    with self._lock:
-                        previous = self._db.execute(
-                            "SELECT byte_count,modified_ns,sha256 FROM ticket_files "
-                            "WHERE ticket_id=? AND relative_path=?",
-                            (ticket_id, relative),
-                        ).fetchone()
-                        if previous is not None and previous[:2] == (
-                            info.st_size,
-                            info.st_mtime_ns,
-                        ):
-                            # Read both facts under one lock: a refusal invalidates the
-                            # index and must not slip between these two reads.
-                            waiting = self._db.execute(
-                                "SELECT 1 FROM item_files JOIN items USING(sequence) "
-                                "WHERE sha256=? AND receipt_json IS NULL LIMIT 1",
-                                (previous[2],),
-                            ).fetchone()
-                            if waiting:
-                                manifest = FileManifest(
-                                    FileScope.ticket, ticket_id, relative, previous[2], info.st_size
-                                )
-                                snapshots.append(FileSnapshot(manifest, self._blobs / previous[2]))
-                            continue
-                    try:
-                        incoming = sources.enter_context(regular_descriptor(source))
-                    except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
-                        logging.getLogger(__name__).warning(
-                            "Skipping unreadable artifact: %s", relative
-                        )
-                        continue
-                    temporary = self._blobs / (".tmp-" + uuid4().hex)
-                    try:
-                        with os.fdopen(
-                            os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
-                            "wb",
-                        ) as outgoing:
-                            before = os.fstat(incoming)
-                            sha256, count = copy_hashed(
-                                incoming, outgoing.fileno(), skip_unreadable_source=True
-                            )
-                            after = os.fstat(incoming)
-                            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-                                after.st_size,
-                                after.st_mtime_ns,
-                                after.st_ctime_ns,
-                            ) or count != after.st_size:
-                                logging.getLogger(__name__).warning(
-                                    "Skipping unreadable or changing artifact: %s", relative
-                                )
-                                continue
-                            outgoing.flush()
-                            fsync_file(outgoing.fileno())
-                        target = self._blobs / sha256
-                        if not target.exists():
-                            os.replace(temporary, target)
-                        fsync_directory(self._blobs)
-                        manifest = FileManifest(
-                            FileScope.ticket, ticket_id, relative, sha256, count
-                        )
-                        # A recent timestamp is deliberately not reusable on the next check.
-                        modified_ns = (
-                            -1
-                            if checked_ns - after.st_mtime_ns <= FILE_MODIFIED_WINDOW_NS
-                            else after.st_mtime_ns
-                        )
-                        updates.append((ticket_id, relative, count, modified_ns, sha256))
-                        snapshots.append(FileSnapshot(manifest, target))
-                    finally:
-                        temporary.unlink(missing_ok=True)
-
-        if root.exists():
-            walk(root)
+                relative = Path(entry.path).relative_to(root).as_posix()
+                try:
+                    source = contained_path(root, relative)
+                    info = entry.stat(follow_symlinks=False)
+                    if not stat.S_ISDIR(info.st_mode) and not stat.S_ISREG(info.st_mode):
+                        raise ValueError("artifact is not regular file")
+                except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
+                    logging.getLogger(__name__).warning(
+                        "Skipping unreadable artifact: %s", relative
+                    )
+                    continue
+                if stat.S_ISDIR(info.st_mode):
+                    folders.append(source)
+                elif captured := self._capture_file(ticket_id, relative, source, info, checked_ns):
+                    snapshot, update = captured
+                    snapshots.append(snapshot)
+                    if update is not None:
+                        updates.append(update)
         return tuple(snapshots), updates
+
+    def _capture_file(
+        self, ticket_id: str, relative: str, source: Path, info: os.stat_result, checked_ns: int
+    ) -> tuple[FileSnapshot, tuple[object, ...] | None] | None:
+        with self._lock:
+            previous = self._db.execute(
+                "SELECT byte_count,modified_ns,sha256 FROM ticket_files "
+                "WHERE ticket_id=? AND relative_path=?",
+                (ticket_id, relative),
+            ).fetchone()
+            if previous is not None and previous[:2] == (info.st_size, info.st_mtime_ns):
+                # A refusal invalidates the index; it must not slip between these reads.
+                waiting = self._db.execute(
+                    "SELECT 1 FROM item_files JOIN items USING(sequence) "
+                    "WHERE sha256=? AND receipt_json IS NULL LIMIT 1",
+                    (previous["sha256"],),
+                ).fetchone()
+                if waiting:
+                    manifest = FileManifest(
+                        FileScope.ticket, ticket_id, relative, previous["sha256"], info.st_size
+                    )
+                    return FileSnapshot(manifest, self._blobs / manifest.sha256), None
+                return None
+        with ExitStack() as sources:
+            try:
+                incoming = sources.enter_context(regular_descriptor(source))
+            except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
+                logging.getLogger(__name__).warning("Skipping unreadable artifact: %s", relative)
+                return None
+            temporary = self._blobs / (".tmp-" + uuid4().hex)
+            try:
+                with os.fdopen(
+                    os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
+                ) as outgoing:
+                    before = os.fstat(incoming)
+                    sha256, count = copy_hashed(
+                        incoming, outgoing.fileno(), skip_unreadable_source=True
+                    )
+                    after = os.fstat(incoming)
+                    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                        after.st_size,
+                        after.st_mtime_ns,
+                        after.st_ctime_ns,
+                    ) or count != after.st_size:
+                        logging.getLogger(__name__).warning(
+                            "Skipping unreadable or changing artifact: %s", relative
+                        )
+                        return None
+                    outgoing.flush()
+                    fsync_file(outgoing.fileno())
+                target = self._blobs / sha256
+                if not target.exists():
+                    os.replace(temporary, target)
+                fsync_directory(self._blobs)
+                manifest = FileManifest(FileScope.ticket, ticket_id, relative, sha256, count)
+                # A recent timestamp is deliberately not reusable on the next check.
+                modified_ns = (
+                    -1
+                    if checked_ns - after.st_mtime_ns <= FILE_MODIFIED_WINDOW_NS
+                    else after.st_mtime_ns
+                )
+                return FileSnapshot(manifest, target), (
+                    ticket_id,
+                    relative,
+                    count,
+                    modified_ns,
+                    sha256,
+                )
+            finally:
+                temporary.unlink(missing_ok=True)
 
     def _add(
         self,
@@ -286,10 +288,7 @@ class MacOutbox:
                     entry.conversation_id,
                     entry.kind,
                     entry.payload,
-                ) or (
-                    snapshots
-                    and old.file_dependencies != tuple(s.manifest for s in snapshots)
-                ):
+                ) or (snapshots and old.file_dependencies != tuple(s.manifest for s in snapshots)):
                     raise ValueError("submission id reused with different content")
                 return old
             payload = {
@@ -299,11 +298,8 @@ class MacOutbox:
             encoded = json.dumps(
                 payload, sort_keys=True, separators=(",", ":"), allow_nan=False
             ).encode()
-            child = entry.payload.get("child")
-            if not isinstance(child, dict):
-                ask = entry.payload.get("ask")
-                child = ask.get("child") if isinstance(ask, dict) else None
-            child_id = str(child.get("child_id", "")) if isinstance(child, dict) else ""
+            child = payload_child(entry.payload)
+            child_id = str(child.get("child_id", "")) if child is not None else ""
             with self._db:
                 cursor = self._db.execute(
                     "INSERT INTO items"
@@ -332,15 +328,9 @@ class MacOutbox:
                     updates,
                 )
                 envelope = self._envelope(
-                    (
-                        cursor.lastrowid,
-                        submission,
-                        entry.conversation_id,
-                        child_id,
-                        entry.kind.value,
-                        encoded,
-                        None,
-                    )
+                    self._db.execute(
+                        "SELECT * FROM items WHERE sequence=?", (cursor.lastrowid,)
+                    ).fetchone()
                 )
                 # Reject an unsendable item before acknowledging its durable addition.
                 encode_message(
@@ -353,32 +343,26 @@ class MacOutbox:
     def _object(value: object) -> JsonObject:
         return cast(JsonObject, type_adapter(JsonObject).validate_python(encode_value(value)))
 
-    def _envelope(self, row: tuple[object, ...]) -> QueuedEnvelope:
-        sequence, submission, conversation, _, kind, encoded, _ = row
-        assert (
-            isinstance(sequence, int)
-            and isinstance(submission, str)
-            and isinstance(conversation, str)
-        )
-        assert isinstance(kind, str) and isinstance(encoded, (bytes, str))
-        value = json.loads(encoded)
+    def _envelope(self, row: sqlite3.Row) -> QueuedEnvelope:
+        value = json.loads(row["payload_json"])
         files = type_adapter(tuple[FileManifest, ...]).validate_python(value["files"])
         payload: JsonObject = type_adapter(JsonObject).validate_python(value["payload"])
+        kind = EnvelopeKind(row["kind"])
         digest = envelope_payload_digest(
             payload,
             files,
             sender_id=self.sender_id,
-            conversation_id=conversation,
-            sequence=sequence,
-            submission_id=submission,
-            kind=EnvelopeKind(kind),
+            conversation_id=row["conversation_id"],
+            sequence=row["sequence"],
+            submission_id=row["submission_id"],
+            kind=kind,
         )
         return QueuedEnvelope(
             self.sender_id,
-            conversation,
-            sequence,
-            submission,
-            EnvelopeKind(kind),
+            row["conversation_id"],
+            row["sequence"],
+            row["submission_id"],
+            kind,
             payload,
             digest,
             files,
@@ -392,8 +376,8 @@ class MacOutbox:
             if row is None:
                 return None
             receipt = (
-                type_adapter(AcceptanceReceipt).validate_json(row[6])
-                if row[6] is not None
+                type_adapter(AcceptanceReceipt).validate_json(row["receipt_json"])
+                if row["receipt_json"] is not None
                 else None
             )
             return OutboxRecord(self._envelope(row), receipt)
@@ -446,14 +430,8 @@ class MacOutbox:
     def has_pending(self, conversation_id: str | None = None) -> bool:
         return self.pending_count(conversation_id) > 0
 
-    def snapshots(self, submission_id: str) -> tuple[FileSnapshot, ...]:
-        with self._lock:
-            row = self.lookup(submission_id)
-            if row is None or not row.pending:
-                raise FileNotFoundError(submission_id)
-            return tuple(
-                FileSnapshot(m, self._blobs / m.sha256) for m in row.envelope.file_dependencies
-            )
+    def snapshots(self, envelope: QueuedEnvelope) -> tuple[FileSnapshot, ...]:
+        return tuple(FileSnapshot(m, self._blobs / m.sha256) for m in envelope.file_dependencies)
 
     def acknowledge(self, receipt: AcceptanceReceipt) -> None:
         with self._lock:
@@ -514,21 +492,60 @@ class MacOutbox:
                 path.unlink()
         fsync_directory(self._blobs)
 
-    async def _send_one(self, link: OutboxLink, envelope: QueuedEnvelope) -> None:
+    async def _upload(
+        self, link: Link, envelope: QueuedEnvelope, snapshot: FileSnapshot
+    ) -> AcceptanceReceipt | None:
+        child = payload_child(envelope.payload)
+        if child is None:
+            raise ValueError("file upload lacks assigned child")
+        async with link.transfer_capacity():
+            request_id = uuid4().hex
+            try:
+                response = await link.request(
+                    WireMessageKind.put_file,
+                    {
+                        "manifest": as_object(snapshot.manifest),
+                        "child": child,
+                    },
+                    request_id=request_id,
+                )
+                slot = type_adapter(FileTransfer).validate_python(response.payload)
+                if (
+                    response.kind is not WireMessageKind.file_transfer
+                    or slot.direction != "upload"
+                    or slot.manifest != snapshot.manifest
+                ):
+                    raise ValueError("invalid upload transfer")
+                await put_file(link, slot, snapshot.local_path)
+            except ValueError as error:
+                if link.is_closing():
+                    raise ConnectionError("file generation changed") from error
+                # This item cannot use the descriptor. Answer its request and
+                # obtain a durable refusal without disturbing other conversations.
+                refused = await link.request(
+                    WireMessageKind.error,
+                    as_object(EnvelopeRefusal(envelope, str(error))),
+                    request_id=request_id,
+                )
+                if refused.kind is not WireMessageKind.receipt:
+                    raise ValueError("expected upload refusal receipt") from error
+                return type_adapter(AcceptanceReceipt).validate_python(refused.payload)
+            if link.is_closing():
+                raise ConnectionError("file generation changed")
+            return None
+
+    async def _send_one(self, link: Link, envelope: QueuedEnvelope) -> None:
         while True:
             response = await link.request(WireMessageKind.envelope, self._object(envelope))
             if response.kind is WireMessageKind.missing_files:
                 missing = type_adapter(tuple[FileManifest, ...]).validate_python(
                     response.payload.get("files")
                 )
-                snapshots = {
-                    s.manifest: s
-                    for s in await asyncio.to_thread(self.snapshots, envelope.submission_id)
-                }
+                snapshots = {s.manifest: s for s in self.snapshots(envelope)}
                 for manifest in missing:
                     if manifest not in snapshots:
                         raise ValueError("VPS requested a file outside this item")
-                    refusal = await link.put_file(envelope, snapshots[manifest])
+                    refusal = await self._upload(link, envelope, snapshots[manifest])
                     if refusal is not None:
                         await asyncio.to_thread(self.acknowledge, refusal)
                         return
@@ -539,9 +556,7 @@ class MacOutbox:
             await asyncio.to_thread(self.acknowledge, receipt)
             return
 
-    async def send_pending(self, link: OutboxLink | Link) -> None:
-        if isinstance(link, Link):
-            link = _OutboxDelivery(self, link)
+    async def send_pending(self, link: Link) -> None:
         self._loop = asyncio.get_running_loop()
         async with self._sending:
             tasks: dict[asyncio.Task[None], str] = {}
@@ -586,62 +601,3 @@ class MacOutbox:
                 self._database.close()
             self._process_lock.close()
         self._notify()
-
-
-class _OutboxDelivery:
-    def __init__(self, outbox: MacOutbox, link: Link) -> None:
-        self.outbox = outbox
-        self.link = link
-
-    async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-        return await self.link.request(kind, payload)
-
-    async def put_file(
-        self, envelope: QueuedEnvelope, snapshot: FileSnapshot
-    ) -> AcceptanceReceipt | None:
-        link = self.link
-        child = envelope.payload.get("child")
-        if child is None:
-            ask = cast(JsonObject, envelope.payload.get("ask", {}))
-            child = ask.get("child")
-        if child is None:
-            raise ValueError("file upload lacks assigned child")
-        self.outbox.transfers += 1
-        try:
-            async with link.transfer_capacity():
-                request_id = uuid4().hex
-                try:
-                    response = await link.request(
-                        WireMessageKind.put_file,
-                        {
-                            "manifest": as_object(snapshot.manifest),
-                            "child": child,
-                        },
-                        request_id=request_id,
-                    )
-                    slot = type_adapter(FileTransfer).validate_python(response.payload)
-                    if (
-                        response.kind is not WireMessageKind.file_transfer
-                        or slot.direction != "upload"
-                        or slot.manifest != snapshot.manifest
-                    ):
-                        raise ValueError("invalid upload transfer")
-                    await put_file(link, slot, snapshot.local_path)
-                except ValueError as error:
-                    if link.is_closing():
-                        raise ConnectionError("file generation changed") from error
-                    # This item cannot use the descriptor. Answer its request and
-                    # obtain a durable refusal without disturbing other conversations.
-                    refused = await link.request(
-                        WireMessageKind.error,
-                        as_object(EnvelopeRefusal(envelope, str(error))),
-                        request_id=request_id,
-                    )
-                    if refused.kind is not WireMessageKind.receipt:
-                        raise ValueError("expected upload refusal receipt") from error
-                    return type_adapter(AcceptanceReceipt).validate_python(refused.payload)
-                if link.is_closing():
-                    raise ConnectionError("file generation changed")
-                return None
-        finally:
-            self.outbox.transfers -= 1

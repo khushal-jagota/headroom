@@ -182,7 +182,7 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                 publication = await tracker.task
                 assert executor.runner._source_work == {}
                 assert captures == 1
-                snapshots = executor.outbox.snapshots(identity)
+                snapshots = executor.outbox.snapshots(publication.envelope)
                 assert snapshots[0].local_path.read_text() == "original bytes"
                 retried = await asyncio.to_thread(
                     CliRunner().invoke, executor_group, ["retry", identity, "--json"]
