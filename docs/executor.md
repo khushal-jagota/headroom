@@ -445,6 +445,11 @@ when the child is already absent. It queues its proof behind that output without
 waiting for earlier receipts. The VPS confirms the stop only when it accepts the
 ordered proof. Lost output keeps the stop uncertain.
 An old uncertain command always retains its first outcome. A failed cleanup keeps quarantine and blocks replacement.
+Idle retirement runs separately from the sweep, so a stop waiting for a lost link
+does not hold up maintenance of other conversations. Automatic compaction also
+runs separately after reserving its turn. Messages behind retirement wait for the
+ordered stop receipt, then resume from the held queue. A failed retirement still
+requires an explicit operation to retry; the sweep does not retry it.
 Claude cleanup retains the exact SDK client until disconnect succeeds.
 The adapter also retains the SDK process object and requires its exit before transport cleanup succeeds.
 An exception or cancellation preserves uncertainty and the cleanup identity, even if the SDK clears its own process field.
