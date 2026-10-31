@@ -20,7 +20,7 @@ from planner.conversation.deploy_interruptions.contracts import CapturedTurn, Ca
 from planner.conversation.deploy_interruptions.files import write_manifest
 from planner.conversation.lifecycle_storage import (
     acquire_runtime_ownership,
-    native_execution_is_unresolved,
+    retained_run_is_unresolved,
 )
 from planner.environments.interruption_capture_configuration import (
     INTERRUPTION_CAPTURE_BUDGET_SECONDS,
@@ -95,7 +95,7 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
     captured: list[CapturedTurn] = []
     for fact in facts:
         conversation_id = str(fact["conversation_id"])
-        if native_execution_is_unresolved(conn, conversation_id):
+        if retained_run_is_unresolved(conn, conversation_id):
             continue
         occurrence = (
             conn.execute(

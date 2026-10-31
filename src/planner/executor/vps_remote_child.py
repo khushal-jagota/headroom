@@ -197,7 +197,7 @@ class MacRemoteChild:
                 f"Canonical skill snapshot unavailable: {error}"
             ) from error
         relative_path = None
-        if resolved_start.workspace_path_policy == WorkspacePathPolicy.legacy_home_mapping:
+        if resolved_start.workspace_path_policy == WorkspacePathPolicy.home_relative:
             try:
                 relative = resolved_start.workspace_folder.resolve().relative_to(
                     Path.home().resolve()

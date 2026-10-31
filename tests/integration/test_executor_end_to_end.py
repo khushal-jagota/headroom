@@ -586,7 +586,7 @@ async def boot(
                 backend_key=backend_key,
                 reasoning_effort=reasoning_effort,
                 workspace_folder=root,
-                workspace_path_policy=WorkspacePathPolicy.native_absolute,
+                workspace_path_policy=WorkspacePathPolicy.absolute,
                 role_materials=ConversationRoleMaterials(
                     "A scripted test worker.",
                     (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", worker_ticket_id)),
@@ -1498,7 +1498,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
             assert not harness.answer_applied(ask)
             state = harness.system._conversations["c_scripted"]
             assert not state.child_is_quarantined
-            assert state.executor_child_reference is None
+            assert state.retained_child_reference is None
             assert harness.native.start_count == harness.native.prompt_count == 1
             delivery = await harness.system.send(
                 "c_scripted", text_message_content("Fresh"), sender_label="Test"

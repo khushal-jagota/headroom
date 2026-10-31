@@ -173,7 +173,7 @@ async def send_message(
     expects_reply: bool = True,
     system_message: bool = False,
     admission: MessageAdmission | None = None,
-    native_message_operation: NativeMessageOperation | None = None,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> MessageDeliveryResult:
     """Send one text message to one resolved Panels conversation owner.
 
@@ -237,7 +237,7 @@ async def send_message(
                 recipient=recipient,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                native_message_operation=native_message_operation,
+                recording_receipt=recording_receipt,
             )
         return MessageDeliveryResult(recipient, sending_into, MessageRecordedToOwner())
 
@@ -274,7 +274,7 @@ async def send_message(
                     recipient=recipient,
                     reply_requested=not system_message and expects_reply and not is_reply,
                     now=clock.now_unix(),
-                    native_message_operation=native_message_operation,
+                    recording_receipt=recording_receipt,
                 )
         elif recipient.kind is PrincipalKind.chief:
             async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):
@@ -310,7 +310,7 @@ async def send_message(
                     sender=sender,
                     recipient=recipient,
                     reply_requested=not system_message and expects_reply and not is_reply,
-                    native_message_operation=native_message_operation,
+                    recording_receipt=recording_receipt,
                 )
         elif recipient.kind is PrincipalKind.goal:
             from planner.goals.conversation import deliver_goal_message
@@ -376,7 +376,7 @@ async def send_message(
                         reply_requested=not system_message and expects_reply and not is_reply,
                         required_manager_id=item_id,
                         retain_created_conversation=retain_created_conversation,
-                        native_message_operation=native_message_operation,
+                        recording_receipt=recording_receipt,
                     )
                     if caller.kind is PrincipalKind.owner and (
                         (current is None and delivered.conversation_id is not None)
@@ -424,7 +424,7 @@ async def send_message(
         source_turn is not None
         and not isinstance(delivered.fate, (PromptDeliveryRefused, PromptDeliverySuppressed))
         and delivered.newly_accepted
-        and (native_message_operation is None or native_message_operation.composed_confirmed)
+        and (recording_receipt is None or recording_receipt.composed_confirmed)
     ):
         await conversations.record_explicit_reply(source_turn, recipient)
     return result

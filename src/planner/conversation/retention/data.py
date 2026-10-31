@@ -7,7 +7,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from planner.conversation.lifecycle_storage import native_execution_is_unresolved, read_facts
+from planner.conversation.lifecycle_storage import read_facts, retained_run_is_unresolved
 from planner.conversation.retention.contracts import (
     ConversationRetentionInput,
     ManagerOwner,
@@ -202,8 +202,9 @@ def build_report(
             0 if ack is None else int(ack[0]),
             linked_ticket_ids,
             read_facts(connection, conversation_id),
-            native_execution_is_unresolved(connection, conversation_id)
-            if revisions == {"mac_vps_execution"} else False,
+            retained_run_is_unresolved(connection, conversation_id)
+            if revisions == {"mac_vps_execution"}
+            else False,
         )
         decisions.append(classify_conversation(source, cutoff_unix=as_of_unix - RETENTION_SECONDS))
     return RetentionReport(

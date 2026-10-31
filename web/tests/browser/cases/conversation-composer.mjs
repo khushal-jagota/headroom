@@ -26,8 +26,8 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
     {enabled:true,model_id:"claude-sonnet-5-5",display_name:"Sonnet 5.5",selected_variant:"sonnet",version:[5,5],reasoning_effort_options:[]}
   ];
   const editorProof = new URLSearchParams(location.search).has("editor");
-  const workspace = {workspace_folder:"/fixture", workspace_path_policy:"native_absolute"} as any;
-  const shared = createQuery(() => ({...queries.ticketBackends("fixture", ["macos", "/fixture", "native_absolute"]), enabled:editorProof}), () => queryClient);
+  const workspace = {workspace_folder:"/fixture", workspace_path_policy:"absolute"} as any;
+  const shared = createQuery(() => ({...queries.ticketBackends("fixture", ["macos", "/fixture", "absolute"]), enabled:editorProof}), () => queryClient);
   let configuration = $state({employee_backend:"claude", employee_launch_model:"claude-opus-5-5", employee_launch_reasoning_effort:"high"});
   (window as any).__setupSaves = [];
   (window as any).__setupFail = false;
@@ -93,7 +93,7 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
     <div data-shared-picker>
       <UnifiedModelPicker view={sharedView} snapshots={shared.data ?? []} models={shared.data?.[0]?.available_models ?? []}
         backendEffortOptions={[]} onChooseBackend={() => {}} onChooseModel={() => {}}
-        onRetry={() => queryClient.fetchQuery({...queries.ticketBackends("fixture", ["macos", "/fixture", "native_absolute"], true), staleTime:0}).then(() => {})} />
+        onRetry={() => queryClient.fetchQuery({...queries.ticketBackends("fixture", ["macos", "/fixture", "absolute"], true), staleTime:0}).then(() => {})} />
     </div>
   {:else if pickerProof}
     <div class="picker-proof">

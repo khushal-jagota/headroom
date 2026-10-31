@@ -101,7 +101,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
             ),
             tmp_path,
             ConversationAccess.full,
-            workspace_path_policy=WorkspacePathPolicy.native_absolute,
+            workspace_path_policy=WorkspacePathPolicy.absolute,
         )
         try:
             await remote.start(resolved, vendor_session_cursor=None)

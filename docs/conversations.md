@@ -13,8 +13,10 @@ It commits the whole batch together with activity, compaction, owner read positi
 attention and any failure wake. The failure wake uses the last row's error text.
 Mac receipts join this same append inside their receipt transaction. A replay or
 refusal does not apply the live conversation change.
+The store calls this shared entry point `commit_backend_event`; local backend
+facts and Mac receipts use it alike.
 
-Live streaming text is shown while a turn runs and is not stored as notebook prose. Private reasoning is dropped. An open pane receives that live tail directly, so a running turn does not have to announce every token through the global change signal. Rows other screens depend on — delivered and refused prompts, asks, turn endings, model changes, messages to the owner — still announce themselves in the ordinary way.
+Live streaming text is shown while a turn runs and is not stored as notebook prose. A reserved turn stays hidden until its prompt is recorded and it becomes the running turn. Private reasoning is dropped. An open pane receives that live tail directly, so a running turn does not have to announce every token through the global change signal. Rows other screens depend on — delivered and refused prompts, asks, turn endings, model changes, messages to the owner — still announce themselves in the ordinary way.
 
 A message to the owner is a notebook row for Khushal. It does not invoke the backend. Editing a Ticket field, parking a proposal, or updating a recap in the database does not inform the Worker. Those become agent context only when a later prompt carries them.
 
@@ -51,7 +53,9 @@ Send Message is the door for a person, Chief, a Manager, or a Worker addressing 
 
 Panels keeps the admitted message together as it moves through sending, steering,
 waiting and recording. Its content, sender identity, address, requested model change
-and delivery receipt stay with it. The owner's read position is captured once when
+and `recording_receipt` stay with it. That receipt keeps reply credit and its
+transaction participant with the message until the notebook append.
+The owner's read position is captured once when
 the message enters the conversation; waiting does not mark later agent messages read.
 Several held messages can share a backend write while each keeps its own notebook row.
 

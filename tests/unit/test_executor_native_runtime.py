@@ -848,7 +848,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         workspace = mac_home / "projects" / "same-checkout"
         workspace.mkdir(parents=True)
         configured_workspace = vps_home / "projects" / "same-checkout"
-        if policy is WorkspacePathPolicy.native_absolute:
+        if policy is WorkspacePathPolicy.absolute:
             # An available mapped checkout must not mask accidental home translation.
             configured_workspace.mkdir(parents=True)
             workspace = configured_workspace
@@ -969,9 +969,9 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
 @pytest.mark.parametrize(
     ("policy", "relative"),
     [
-        (WorkspacePathPolicy.legacy_home_mapping, "projects/missing"),
-        (WorkspacePathPolicy.legacy_home_mapping, "../escape"),
-        (WorkspacePathPolicy.native_absolute, None),
+        (WorkspacePathPolicy.home_relative, "projects/missing"),
+        (WorkspacePathPolicy.home_relative, "../escape"),
+        (WorkspacePathPolicy.absolute, None),
     ],
 )
 def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(

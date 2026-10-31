@@ -78,4 +78,4 @@ def test_startup_restart_and_background_loops_never_expire_and_reconcile_offline
             )
             assert conn.execute(
                 "SELECT workspace_path_policy FROM conversations"
-            ).fetchall() == [("legacy_home_mapping",)]
+            ).fetchall() == [("home_relative",)]
