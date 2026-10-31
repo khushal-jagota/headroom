@@ -14,7 +14,6 @@ from typing import cast
 from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
-from planner.core.db import connect
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.clock import now_ms
 from planner.executor.files import (
@@ -62,17 +61,6 @@ class InboxStore(VpsDatabase):
     def __init__(self, db_path: str) -> None:
         super().__init__(db_path)
         self.runs = ExecutorStore(db_path)
-
-    def lookup_receipt(self, sender_id: str, submission_id: str) -> AcceptanceReceipt | None:
-        connection = connect(self.db_path)
-        try:
-            row = connection.execute(
-                "SELECT * FROM mac_inbox_positions WHERE sender_id=? AND submission_id=?",
-                (sender_id, submission_id),
-            ).fetchone()
-            return self._receipt(row) if row else None
-        finally:
-            connection.close()
 
     @staticmethod
     def _receipt(row: sqlite3.Row) -> AcceptanceReceipt:
@@ -139,6 +127,17 @@ class InboxStore(VpsDatabase):
             result,
             now_ms,
         )
+        self._write_position(connection, envelope, selected)
+        return selected, disposition is not ReceiptDisposition.refused
+
+    @staticmethod
+    def _write_position(
+        connection: sqlite3.Connection,
+        envelope: QueuedEnvelope,
+        receipt: AcceptanceReceipt,
+        *,
+        dispatching: bool = False,
+    ) -> None:
         connection.execute(
             "INSERT INTO mac_inbox_positions VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(sender_id,conversation_id) DO UPDATE SET "
@@ -149,11 +148,10 @@ class InboxStore(VpsDatabase):
                 envelope.conversation_id,
                 envelope.sequence,
                 envelope.submission_id,
-                disposition.value,
-                _record(selected),
+                "dispatching" if dispatching else receipt.disposition.value,
+                _record(receipt),
             ),
         )
-        return selected, disposition is not ReceiptDisposition.refused
 
     def file_target(self, manifest: FileManifest) -> Path:
         safe_component(manifest.owner_id)
@@ -197,7 +195,7 @@ class InboxStore(VpsDatabase):
                 os.fsync(parent)
 
     def preflight(
-        self, envelope: QueuedEnvelope, *, identity: ExecutorIdentity, check_files: bool = True
+        self, envelope: QueuedEnvelope, *, identity: ExecutorIdentity
     ) -> AcceptanceReceipt | None:
         """Validate prior result/order/files before a separately serialized native act.
 
@@ -205,7 +203,10 @@ class InboxStore(VpsDatabase):
         lock through native outcome recording and must preserve sender dedup IDs.
         """
         with self._transaction() as connection:
-            return self._preflight(connection, envelope, identity, check_files=check_files)
+            previous = self._prior_receipt(connection, envelope, identity)
+            if previous is None:
+                self._validate_envelope(connection, envelope)
+            return previous
 
     def _prior_receipt(
         self, connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
@@ -235,19 +236,6 @@ class InboxStore(VpsDatabase):
             stored.accepted_at_vps_ms,
         )
 
-    def _preflight(
-        self,
-        connection: sqlite3.Connection,
-        envelope: QueuedEnvelope,
-        identity: ExecutorIdentity,
-        *,
-        check_files: bool = True,
-    ) -> AcceptanceReceipt | None:
-        previous = self._prior_receipt(connection, envelope, identity)
-        if previous is None:
-            self._validate_envelope(connection, envelope, check_files=check_files)
-        return previous
-
     def _validate_envelope(
         self, connection: sqlite3.Connection, envelope: QueuedEnvelope, *, check_files: bool = True
     ) -> None:
@@ -265,18 +253,18 @@ class InboxStore(VpsDatabase):
             reference = type_adapter(ChildReference).validate_python(
                 payload_child(envelope.payload)
             )
-            assignment = connection.execute(
-                "SELECT principal_kind,principal_id FROM executor_child_assignments "
-                "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
-                "AND closed_at_ms IS NULL",
-                (reference.executor_incarnation, reference.child_id, reference.conversation_id),
-            ).fetchone()
+            assignment = self.runs.open_child_assignment(connection, reference)
+            if assignment is None and envelope.kind in (
+                EnvelopeKind.backend_event,
+                EnvelopeKind.cli_write,
+            ):
+                raise PlannerError(ErrorCode.agent_forbidden, "child has no VPS assignment", {})
             for manifest in envelope.file_dependencies:
                 self.file_target(manifest)
                 if (
                     reference.conversation_id != envelope.conversation_id
                     or assignment is None
-                    or tuple(assignment) != ("ticket", manifest.owner_id)
+                    or assignment != ("ticket", manifest.owner_id)
                 ):
                     raise _invalid("artifact belongs to another Ticket")
             missing = tuple(
@@ -338,9 +326,7 @@ class MacInbox:
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
         try:
-            previous = await settled_io(
-                partial(self.store.preflight, envelope, identity=identity, check_files=False)
-            )
+            previous = await settled_io(partial(self.store.preflight, envelope, identity=identity))
             if previous is not None:
                 if (
                     envelope.kind is EnvelopeKind.child_stopped
@@ -352,7 +338,13 @@ class MacInbox:
                         stop_proven=True,
                     )
                 return previous
-            return await self._apply_envelope(envelope, identity)
+            handler = {
+                EnvelopeKind.backend_event: self._apply_event,
+                EnvelopeKind.cli_write: self.agent_writes.accept,
+                EnvelopeKind.child_stopped: self._apply_stop,
+                EnvelopeKind.answer_application: self._apply_answer,
+            }[envelope.kind]
+            return await handler(envelope, identity)
         except PlannerError as error:
             refusal = error
         except (ValueError, KeyError, TypeError) as error:
@@ -371,110 +363,94 @@ class MacInbox:
             )
         )
 
-    async def _apply_envelope(
+    def _record_event(
+        self,
+        envelope: QueuedEnvelope,
+        identity: ExecutorIdentity,
+        connection: sqlite3.Connection,
+        take: EventTaken,
+    ) -> AcceptedEvent:
+        receipt, taken = self.store.accept_in_transaction(
+            connection,
+            envelope,
+            lambda conn, row: take(),
+            now_ms(),
+            identity=identity,
+        )
+        return AcceptedEvent(as_object(receipt), taken)
+
+    async def _apply_event(
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
-        if envelope.kind is EnvelopeKind.backend_event:
-            event = type_adapter(BackendEvent).validate_python(envelope.payload)
-            await settled_io(self.runs.authority, event.child)
-            if event.child.conversation_id != envelope.conversation_id:
-                raise ValueError("event conversation conflicts with envelope")
+        event = type_adapter(BackendEvent).validate_python(envelope.payload)
+        await settled_io(self.runs.authority, event.child)
+        if event.child.conversation_id != envelope.conversation_id:
+            raise ValueError("event conversation conflicts with envelope")
 
-            # Missing bytes are a transport request, before entering the conversation's
-            # recording boundary (which correctly fences real persistence failures).
-            await settled_io(partial(self.store.preflight, envelope, identity=identity))
-
-            def in_commit(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
-                def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-                    result = take()
-                    return result
-
-                receipt, taken = self.store.accept_in_transaction(
-                    connection,
-                    envelope,
-                    effect,
-                    now_ms(),
-                    identity=identity,
-                )
-                return AcceptedEvent(as_object(receipt), taken)
-
-            result = await self.conversations.take_backend_event(
-                event.turn,
-                decode_event_arguments(event),
-                in_commit=in_commit,
-                conversation_id=event.child.conversation_id,
+        decoded = decode_event_arguments(event)
+        result = await self.conversations.take_backend_event(
+            event.turn,
+            decoded,
+            in_commit=partial(self._record_event, envelope, identity),
+            conversation_id=event.child.conversation_id,
+        )
+        proxy = self.runs.children.get(event.child.child_id)
+        if result.taken and proxy is not None and event.turn is not None:
+            from planner.conversation.backends.contracts import (
+                PermissionAskRaisedArguments,
+                UserInputRequestedArguments,
             )
-            proxy = self.runs.children.get(event.child.child_id)
-            if result.taken and proxy is not None and event.turn is not None:
-                decoded = decode_event_arguments(event)
-                from planner.conversation.backends.contracts import (
-                    PermissionAskRaisedArguments,
-                    UserInputRequestedArguments,
-                )
 
-                if isinstance(decoded, PermissionAskRaisedArguments):
-                    proxy.observe_callback(
-                        AskReference(
-                            event.child, event.turn, decoded.ask.ask_id, AskKind.permission
-                        )
+            if isinstance(decoded, PermissionAskRaisedArguments):
+                proxy.observe_callback(
+                    AskReference(event.child, event.turn, decoded.ask.ask_id, AskKind.permission)
+                )
+            elif isinstance(decoded, UserInputRequestedArguments):
+                proxy.observe_callback(
+                    AskReference(
+                        event.child, event.turn, decoded.request.request_id, AskKind.user_input
                     )
-                elif isinstance(decoded, UserInputRequestedArguments):
-                    proxy.observe_callback(
-                        AskReference(
-                            event.child, event.turn, decoded.request.request_id, AskKind.user_input
-                        )
-                    )
-            return type_adapter(AcceptanceReceipt).validate_python(result.result)
-        if envelope.kind is EnvelopeKind.cli_write:
-            return await self.agent_writes.accept(envelope, identity)
-
-        if envelope.kind is EnvelopeKind.child_stopped:
-            outcome = type_adapter(CommandOutcome).validate_python(envelope.payload)
-            if outcome.child.conversation_id != envelope.conversation_id:
-                raise ValueError("command outcome conversation conflicts with envelope")
-            await settled_io(self.runs.validate_stop, outcome)
-            receipt = await settled_io(
-                partial(
-                    self.store.accept,
-                    envelope,
-                    lambda conn, row: cast(JsonObject, {"recorded": True}),
-                    now_ms(),
-                    identity=identity,
                 )
-            )
-            if receipt.disposition is ReceiptDisposition.accepted:
-                self.runs._resolve_command(outcome, stop_proven=True)
-            return receipt
-        if envelope.kind is EnvelopeKind.answer_application:
-            application = type_adapter(AnswerApplication).validate_python(envelope.payload)
-            await settled_io(
-                self._require_application_assignment,
-                application,
-                identity,
-                envelope.conversation_id,
-            )
-            await settled_io(partial(self.store.preflight, envelope, identity=identity))
+        return type_adapter(AcceptanceReceipt).validate_python(result.result)
 
-            def in_commit(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
-                receipt, taken = self.store.accept_in_transaction(
-                    connection,
-                    envelope,
-                    lambda conn, row: take(),
-                    now_ms(),
-                    identity=identity,
+    async def _apply_stop(
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+    ) -> AcceptanceReceipt:
+        outcome = type_adapter(CommandOutcome).validate_python(envelope.payload)
+        if outcome.child.conversation_id != envelope.conversation_id:
+            raise ValueError("command outcome conversation conflicts with envelope")
+        await settled_io(self.runs.validate_stop, outcome)
+        receipt = await settled_io(
+            partial(
+                self.store.accept,
+                envelope,
+                lambda conn, row: cast(JsonObject, {"recorded": True}),
+                now_ms(),
+                identity=identity,
+            )
+        )
+        if receipt.disposition is ReceiptDisposition.accepted:
+            self.runs._resolve_command(outcome, stop_proven=True)
+        return receipt
+
+    async def _apply_answer(
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+    ) -> AcceptanceReceipt:
+        application = type_adapter(AnswerApplication).validate_python(envelope.payload)
+        await settled_io(
+            self._require_application_assignment,
+            application,
+            identity,
+            envelope.conversation_id,
+        )
+        return type_adapter(AcceptanceReceipt).validate_python(
+            (
+                await self.conversations.take_answer_application(
+                    application.ask.turn,
+                    application.answer_id,
+                    application.ask.ask_id,
+                    application.ask.kind.value,
+                    partial(self._record_event, envelope, identity),
                 )
-                return AcceptedEvent(as_object(receipt), taken)
-
-            return type_adapter(AcceptanceReceipt).validate_python(
-                (
-                    await self.conversations.take_answer_application(
-                        application.ask.turn,
-                        application.answer_id,
-                        application.ask.ask_id,
-                        application.ask.kind.value,
-                        in_commit,
-                    )
-                ).result
-            )
-
-        raise ValueError("unknown executor envelope")
+            ).result
+        )

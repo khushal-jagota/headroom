@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from tests.support.executor_control import MessageReader
+from tests.support.executor_inbox import lookup_receipt
 
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 
@@ -87,7 +88,7 @@ def test_transient_storage_failure_has_no_receipt_and_retry_applies(store: Inbox
 
     with pytest.raises(sqlite3.OperationalError):
         store.accept(envelope(), fails, 1100, identity=IDENTITY)
-    assert store.lookup_receipt("sender", "conversation-1") is None
+    assert lookup_receipt(store, "sender", "conversation-1") is None
     assert store.accept(envelope(), effect, 1200, identity=IDENTITY).disposition == "accepted"
 
 
@@ -233,7 +234,7 @@ def test_postcommit_error_preserves_durable_effect_and_receipt(
             store.accept(row, effect, 123, identity=IDENTITY)
     assert raised.value is error
     assert calls == ["commit", "rollback"]
-    saved = store.lookup_receipt(row.sender_id, row.submission_id)
+    saved = lookup_receipt(store, row.sender_id, row.submission_id)
     assert saved is not None and saved.disposition is ReceiptDisposition.accepted
     assert store.accept(row, effect, 124, identity=IDENTITY) == saved
     connection = connect(store.db_path)

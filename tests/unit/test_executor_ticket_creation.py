@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from tests.support.executor_inbox import lookup_receipt
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import TurnToken
@@ -157,7 +158,7 @@ def test_receipt_insert_failure_rolls_back_the_real_creation_writer(
         asyncio.run(endpoint.inbox.accept(envelope, identity))
     assert resolver.calls == 0
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
-    assert endpoint.inbox.store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+    assert lookup_receipt(endpoint.inbox.store, envelope.sender_id, envelope.submission_id) is None
 
 
 def test_native_creation_unauthorized_child_refuses_before_metadata_and_replays(

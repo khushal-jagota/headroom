@@ -8,6 +8,7 @@ from sqlite3 import Connection
 from typing import Any
 
 import pytest
+from tests.support.executor_inbox import lookup_receipt
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.backends.contracts import TurnToken
@@ -37,8 +38,7 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     encode_value,
 )
-from planner.executor.vps_agent_writes import deliver_native_message
-from planner.executor.vps_inbox import InboxStore
+from planner.executor.vps_transport import VpsExecutor
 from planner.tickets import data
 
 
@@ -70,7 +70,8 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
 ) -> None:
     async def run() -> None:
         path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-        store = InboxStore(path)
+        endpoint = VpsExecutor(path, RealClock())
+        store = endpoint.inbox.store
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
         )
@@ -114,6 +115,7 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             backend_child_factories={key: factory for key in ConversationBackendKey},
             message_files=ConversationMessageFiles(path),
         )
+        endpoint.bind_conversations(system)
         system.crash_before_owner_record = not committed
         try:
             await system.start_conversation(
@@ -162,31 +164,9 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                     submission_id="native_help",
                 )
             )
-            resolutions: list[Principal] = []
-
-            def recipient(
-                connection: Connection, request: CliWrite, principal: Principal
-            ) -> Principal:
-                assert principal == sender
-                holder = data.read_ticket(connection, ticket.id).ceiling_holder
-                resolutions.append(holder)
-                return holder
-
-            async def deliver() -> object:
-                return await deliver_native_message(
-                    store=store,
-                    envelope=envelope,
-                    write=write,
-                    principal=sender,
-                    identity=identity,
-                    clock=RealClock(),
-                    conversations=system,
-                    resolve_recipient=recipient,
-                )
-
             with pytest.raises(SimulatedCrash):
-                await deliver()
-            saved = store.lookup_receipt(envelope.sender_id, envelope.submission_id)
+                await endpoint.inbox.accept(envelope, identity)
+            saved = lookup_receipt(store, envelope.sender_id, envelope.submission_id)
             assert saved is not None
             assert saved.result["fate"] == ("recorded" if committed else "uncertain")
             assert (
@@ -211,16 +191,9 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             system.crash = False
             system.crash_before_owner_record = False
             native_before = list(native_calls)
-            recovered = await deliver_native_message(
-                store=InboxStore(path),
-                envelope=envelope,
-                write=write,
-                principal=sender,
-                identity=identity,
-                clock=RealClock(),
-                conversations=system,
-                resolve_recipient=recipient,
-            )
+            recovered_endpoint = VpsExecutor(path, RealClock())
+            recovered_endpoint.bind_conversations(system)
+            recovered = await recovered_endpoint.inbox.accept(envelope, identity)
             assert recovered.disposition is (
                 ReceiptDisposition.accepted if committed else ReceiptDisposition.uncertain
             )
@@ -238,7 +211,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 )
                 is committed
             )
-            assert resolutions == [OWNER_PRINCIPAL]
             assert system.owner_deliveries == int(committed)
             assert native_calls == native_before
             rows = tmp_db.execute(

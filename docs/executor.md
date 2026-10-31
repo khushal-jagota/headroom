@@ -90,14 +90,19 @@ refused earlier event may be missing from the transcript; its receipt still reco
 the refusal, and it does not prevent retirement or a later Ticket restart.
 Local children stop when detached.
 
-The inbox joins the conversation's write transaction to record replay position and
-receipt. The append is shared with local conversation rows and keeps activity,
-compaction, attention, failure wakes and turn/request state in that transaction.
-Only a newly accepted effect applies its live conversation change; replay and refusal
-keep their receipt without applying it again. A stale event is accepted with
-`applied: false` and changes no conversation rows or live output. Agent writes use canonical writers. Before sending an
-agent-authored message, the inbox records `dispatching`; a repeat without a known
-outcome returns uncertainty and sends nothing. There is no separate message ledger.
+Every queued item enters the same inbox admission path. It checks the saved receipt,
+content hash and required files before choosing the event, stop, answer or agent-write
+handler. Missing bytes request an upload before a bad payload is refused.
+The inbox then joins the conversation's write transaction to record replay position
+and receipt, checking the connection generation and replay position again at commit.
+The append is shared with local conversation rows and keeps activity, compaction,
+attention, failure wakes and turn/request state in that transaction. Only a newly
+accepted effect applies its live conversation change; replay and refusal keep their
+receipt without applying it again. A stale event is accepted with `applied: false`
+and changes no conversation rows or live output. Agent writes use canonical writers.
+Before sending an agent-authored message, the inbox records `dispatching`; a repeat
+without a known outcome returns uncertainty and sends nothing. There is no separate
+message ledger.
 
 Code paths: `src/planner/conversation/`, `src/planner/executor/link.py`, `link_files.py`,
 `protocol.py`, `mac_runner.py`, `mac_outbox.py`, `mac_agent_gateway.py`, `mac_service.py`,
@@ -251,7 +256,10 @@ Every permanent refusal is a receipt. A refused queued Panels write also appears
 as a failed Panels tool row in its source transcript. Telling the running agent
 about that later refusal remains a follow-up; no database row is a prompt.
 A Mac-authored message records `dispatching` before calling its recipient. If a
-repeat finds that state without an outcome, it records `uncertain` and sends nothing.
+repeat finds that state without an outcome, it returns the reserved `uncertain` receipt
+and sends nothing. Reservations and final receipts use the same inbox position writer.
+A known delivery outcome commits with the recipient's conversation event, preserving
+the original target and reply credit even if the caller loses the result.
 
 Code paths: `src/planner/executor/mac_outbox.py`, `store.py`, `refusals.py`,
 `vps_agent_writes.py`, `mutations.py`, `ipc_client.py`, `src/planner/cli/http.py`.
