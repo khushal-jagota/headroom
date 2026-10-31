@@ -59,7 +59,7 @@ def store(tmp_path: Path) -> InboxStore:
     finally:
         connection.close()
     result = InboxStore(path)
-    result.runs.begin_connection(IDENTITY, 1000)
+    result.runs.begin_connection(IDENTITY)
     persist_pending_turn(result.runs, ASK)
     return result
 

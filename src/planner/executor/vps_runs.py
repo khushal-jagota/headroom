@@ -105,11 +105,9 @@ class MacRuns:
         return self.recover_child(reference)
 
     @staticmethod
-    def interrupt_after_restart(conn: sqlite3.Connection, at_ms: int) -> None:
+    def interrupt_after_restart(conn: sqlite3.Connection) -> None:
         conn.execute(
-            "UPDATE executor_connections SET connection_state='disconnected',lost_at_ms=? "
-            "WHERE active=1",
-            (at_ms,),
+            "UPDATE executor_connections SET connection_state='disconnected' WHERE active=1"
         )
         conn.execute("UPDATE mac_runs SET stop_state='stopping' WHERE stop_state='open'")
 
@@ -131,7 +129,7 @@ class MacRuns:
     async def admit(self, link: Link) -> None:
         identity = link.identity
         old_link = self.link
-        await settled_io(self.store.begin_connection, identity, now_ms())
+        await settled_io(self.store.begin_connection, identity)
         self.identity, self.link, self.ready = identity, link, False
         if old_link is not None:
             old_link.close()
@@ -171,7 +169,7 @@ class MacRuns:
         unknown = await self._reconnect(identity, link)
         if not await self._reconciliation_current(identity, link):
             return
-        await settled_io(self.store.mark_ready, identity, now_ms())
+        await settled_io(self.store.mark_ready, identity)
         if not await link.tell(
             WireMessageKind.reconciliation_ready,
             {"ready": True},
@@ -202,7 +200,7 @@ class MacRuns:
         if self.link is link:
             self.ready = False
             self.link = None
-            await settled_io(self.store.mark_lost, link.identity, now_ms())
+            await settled_io(self.store.mark_lost, link.identity)
 
     def _read_skill_snapshot(self, start: ResolvedConversationStart) -> CanonicalSkillSnapshot:
         environment = dict(

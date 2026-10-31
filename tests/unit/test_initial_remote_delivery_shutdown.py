@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from sqlite3 import Connection
+from sqlite3 import Connection, IntegrityError
 from typing import Any, cast
 
 import pytest
@@ -191,7 +191,7 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     endpoint = VpsExecutor(db_path, RealClock())
-    endpoint.inbox.store.runs.begin_connection(IDENTITY, 1)
+    endpoint.inbox.store.runs.begin_connection(IDENTITY)
     reference = ChildReference(IDENTITY.executor_incarnation, "closed-child", "closed-conversation")
     endpoint.inbox.store.runs.register_child(reference, "ticket", "closed-ticket", 1)
     command = ChildCommand(
@@ -251,33 +251,25 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
     asyncio.run(run())
 
 
-def test_retirement_rolls_back_run_and_assignment_together(
-    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_retirement_rolls_back_run_and_assignment_together(tmp_db: Connection) -> None:
     """Gap: a crash after stop must not retain authority beside retired metadata."""
-    from planner.executor.store import ExecutorStore
     from planner.executor.vps_inbox import InboxStore
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     reference = ChildReference("retired-incarnation", "retired-child", "c_atomic_retirement")
     executors = InboxStore(db_path)
     executors.runs.register_child(reference, "ticket", "retirement-ticket", 1)
-    close = ExecutorStore.close_child_in_transaction
-
-    def fail_after_close(
-        connection: Connection,
-        child: ChildReference,
-        now_ms: int,
-    ) -> None:
-        close(connection, child, now_ms)
-        raise RuntimeError("injected retirement failure")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(ExecutorStore, "close_child_in_transaction", staticmethod(fail_after_close))
-        with pytest.raises(RuntimeError, match="injected retirement failure"):
-            executors.runs.close_child(reference, 2)
+    tmp_db.execute(
+        "CREATE TRIGGER refuse_retirement BEFORE UPDATE ON executor_child_assignments "
+        "BEGIN SELECT RAISE(ABORT,'injected retirement failure'); END"
+    )
+    tmp_db.commit()
+    with pytest.raises(IntegrityError, match="injected retirement failure"):
+        executors.runs.close_child(reference, 2)
     assert not executors.runs.retained_runs()[0].retirement_confirmed
     assert executors.runs.child_assignment(reference) == ("ticket", "retirement-ticket")
+    tmp_db.execute("DROP TRIGGER refuse_retirement")
+    tmp_db.commit()
     executors.runs.close_child(reference, 3)
     assert executors.runs.retained_runs()[0].retirement_confirmed
     assert executors.runs.child_assignment(reference) is None
