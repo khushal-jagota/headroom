@@ -83,7 +83,7 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
         db.create_schema(conn)
         conn.execute("""INSERT INTO projects(id,name,created_at,updated_at)
             VALUES('retained-project','Retained project',1,1)""")
-        tables = ("projects",)
+        tables: tuple[str, ...] = ("projects",)
         if previous_head == "scalar_observation_coverage":
             tables += _seed_goals(conn)
         elif previous_head == "ticket_application_previews":
