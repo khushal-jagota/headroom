@@ -106,14 +106,7 @@ class MacOutbox:
                     raise ValueError("unsupported outbox format; rebuild the unshipped spool")
         elif root.exists() and any(p.name != "lock" for p in root.iterdir()):
             raise ValueError("unsupported outbox format; rebuild the unshipped spool")
-        missing: list[Path] = []
-        ancestor = root
-        while not ancestor.exists():
-            missing.append(ancestor)
-            ancestor = ancestor.parent
-        for directory in reversed(missing):
-            directory.mkdir(mode=0o700)
-            fsync_directory(directory.parent)
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._process_lock = (root / "lock").open("a+b")
         try:
             fcntl.flock(self._process_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
