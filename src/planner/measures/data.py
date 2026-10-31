@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
+from typing import cast
 
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.list_reads.contracts import ListPage
@@ -218,6 +219,37 @@ def read_observations(
         (measure_id, first_date, last_date),
     )
     return _hydrate_observations(conn, tuple(rows))
+
+
+def earliest_retained_date(conn: sqlite3.Connection, measure_id: str) -> str | None:
+    """Return the first retained observation or gap across a measure and its inputs."""
+    return cast(
+        str | None,
+        conn.execute(
+            "WITH RECURSIVE inputs(id) AS (SELECT ? UNION "
+            "SELECT input_measure_id FROM measure_dependencies "
+            "JOIN inputs ON measure_id=id) "
+            "SELECT MIN(date) FROM (SELECT date FROM measure_observations "
+            "WHERE measure_id IN inputs "
+            "UNION ALL SELECT date FROM measure_history_gaps WHERE measure_id IN inputs)",
+            (measure_id,),
+        ).fetchone()[0],
+    )
+
+
+def read_recorded_dates(
+    conn: sqlite3.Connection, measure_id: str, first_date: str, last_date: str
+) -> frozenset[str]:
+    """Return dates recorded for this measure itself, including explicit history gaps."""
+    return frozenset(
+        row[0]
+        for row in conn.execute(
+            "SELECT date FROM measure_observations WHERE measure_id=? AND date>=? AND date<=? "
+            "UNION SELECT date FROM measure_history_gaps "
+            "WHERE measure_id=? AND date>=? AND date<=?",
+            (measure_id, first_date, last_date, measure_id, first_date, last_date),
+        )
+    )
 
 
 def read_demanded(

@@ -31,6 +31,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.measure_sources.runtime import Runtime
+from planner.scheduled_tickets.registry import build_participants
 
 FIRST_TOKEN = "fixture-first-key"
 SECOND_TOKEN = "fixture-replacement-key"
@@ -141,7 +142,12 @@ def source_client(
         config,
         build_clock(config),
         lambda: connect(str(database)),
-        source_runtime_for_test=Runtime(),
+        slot_participants_for_test=lambda admission: build_participants(
+            config,
+            build_clock(config),
+            workspace_admission=admission,
+            source_runtime=Runtime(),
+        ),
         backend_child_factories_for_test={key: refuse_backend for key in ConversationBackendKey},
     )
     provider = Provider()

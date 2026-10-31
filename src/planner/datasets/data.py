@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from dataclasses import asdict
+from typing import cast
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.datasets.contracts import (
@@ -189,6 +190,16 @@ def commit_results(
         )
         count += len(result.rows)
     return count
+
+
+def earliest_retained_date(conn: sqlite3.Connection, dataset_id: str) -> str | None:
+    """Return the first retained result header, including an empty or unavailable result."""
+    return cast(
+        str | None,
+        conn.execute(
+            "SELECT MIN(date) FROM dataset_results WHERE dataset_id=?", (dataset_id,)
+        ).fetchone()[0],
+    )
 
 
 def read_values(conn: sqlite3.Connection, request: ReadDatasetsBody, *, now: int) -> DatasetsRead:

@@ -75,6 +75,7 @@ def request(item: Dataset, *, limit: int | None = None) -> ReadDatasetsBody:
 def test_fewer_empty_replay_and_other_dates_survive(tmp_db: Connection) -> None:
     item = dataset(tmp_db, source(tmp_db))
     run(tmp_db, item.source_id)
+    assert data.earliest_retained_date(tmp_db, item.id) is None
     before_version = tmp_db.execute(
         "SELECT revision FROM resource_source_versions "
         "WHERE source_kind='automatic-measures' AND source_id='all'"
@@ -101,6 +102,8 @@ def test_fewer_empty_replay_and_other_dates_survive(tmp_db: Connection) -> None:
     ]
     assert [value.date for value in values.missing_dates] == ["2026-10-27", "2026-10-28"]
     assert values.results[0].unavailable_reason is None
+    # The empty result header still anchors retained history before the next nonempty date.
+    assert data.earliest_retained_date(tmp_db, item.id) == "2026-10-25"
     assert values.results[1].provenance.source_id == item.source_id
     assert values.results[1].provenance.script_sha256 == "synthetic"
     assert values.sources[0].source_id == item.source_id

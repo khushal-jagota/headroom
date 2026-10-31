@@ -78,7 +78,6 @@ from planner.ideas.api import router as ideas_router
 from planner.managers.api import legacy_router as legacy_managers_router
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
-from planner.measure_sources.contracts import SourceRuntime
 from planner.measures.api import router as measures_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
@@ -96,6 +95,7 @@ from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
 from planner.runtime.workspaces import register_workspace_root
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
+from planner.scheduled_tickets.participants import SlotParticipantFactory
 from planner.server_lifecycle.runtime import application_runtime
 from planner.skill_sources import provision_workspace_skills
 from planner.skill_versions import (
@@ -179,7 +179,7 @@ def create_app(
     conn_factory: Callable[[], sqlite3.Connection],
     *,
     conversation_system_for_test: ConversationSystem | None = None,
-    source_runtime_for_test: SourceRuntime | None = None,
+    slot_participants_for_test: SlotParticipantFactory | None = None,
     backend_child_factories_for_test: Mapping[ConversationBackendKey, BackendChildFactory]
     | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
@@ -187,8 +187,8 @@ def create_app(
         Callable[[Config, str | None, str | None], VpsStatusSummary] | None
     ) = None,
 ) -> FastAPI:
-    if source_runtime_for_test is not None and not config.test_mode:
-        raise ValueError("source_runtime_for_test is accepted only in test mode")
+    if slot_participants_for_test is not None and not config.test_mode:
+        raise ValueError("slot_participants_for_test is accepted only in test mode")
     if conversation_system_for_test is not None and not config.test_mode:
         raise ValueError("conversation_system_for_test is accepted only in test mode")
     if backend_child_factories_for_test is not None and not config.test_mode:
@@ -319,25 +319,14 @@ def create_app(
                             before_readiness_poll=lambda: app.state.updates.dispatch_pending(),
                         )
 
-                    elif source_runtime_for_test is not None:
-                        from planner.core.loops import BackgroundLoops
-                        from planner.measure_sources.scheduling import SourceScheduleParticipant
-                        from planner.scheduled_tickets.runtime import ScheduledTicketLoop
+                    elif slot_participants_for_test is not None:
+                        from planner.core.loops import prepare_scheduled_loops
 
-                        loops = BackgroundLoops(
-                            shutdown_grace_seconds=float(config.shutdown_grace_seconds),
-                            scheduled_ticket_loop=ScheduledTicketLoop(
-                                config.db_path,
-                                clock,
-                                busy_timeout_ms=config.db_busy_timeout_ms,
-                                participants=(
-                                    SourceScheduleParticipant(
-                                        config, clock, source_runtime_for_test,
-                                        workspace_admission=conversation.system.workspace_admission,
-                                    ),
-                                ),
-                                workspace_admission=conversation.system.workspace_admission,
-                            ),
+                        loops = prepare_scheduled_loops(
+                            config,
+                            clock,
+                            workspace_admission=conversation.system.workspace_admission,
+                            participants_factory=slot_participants_for_test,
                         )
 
                     from planner.environments.vps_metrics.collectors import LinuxCollector

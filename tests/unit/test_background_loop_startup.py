@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import subprocess
 import sys
 import threading
+from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from time import monotonic
 from typing import Any, cast
@@ -13,11 +16,17 @@ from typing import Any, cast
 import pytest
 
 from planner.conversation.contracts import ConversationSystem
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import loops
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.db import connect, create_schema
+from planner.measure_sources.contracts import SourceRuntime
+from planner.measure_sources.scheduling import SourceScheduleParticipant
 from planner.runtime.lock import ensure_machine_lock
-from planner.scheduled_tickets.participants import SlotParticipant
+from planner.scheduled_tickets.contracts import ScheduledTicketOccurrence
+from planner.scheduled_tickets.participants import SlotParticipant, TicketScheduleParticipant
+from planner.scheduled_tickets.registry import build_participants
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 
 
@@ -34,6 +43,101 @@ def _assert_lock(path: str, *, held: bool) -> None:
         check=False,
     )
     assert result.returncode == (1 if held else 0), result.stderr.decode()
+
+
+def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_path: Path) -> None:
+    """The test seam runs both production participants under the actual barrier."""
+    cfg = load_config(
+        path=None,
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": str(tmp_path / "participants.db"),
+            "PLAN_CREDENTIAL_KEY_PATH": str(tmp_path / "secrets" / "key"),
+        },
+    )
+    with closing(connect(cfg.db_path)) as conn:
+        create_schema(conn)
+    clock = build_clock(cfg)
+    admission = WorkspaceAdmission()
+    factory_admissions: list[WorkspaceAdmission] = []
+    registered: tuple[SlotParticipant, ...] = ()
+    starts = [0, 0]
+    stops = [0, 0]
+    polls = [0, 0]
+    deadlines: list[float | None] = []
+    source_polled = threading.Event()
+
+    class TrackedParticipant:
+        def __init__(self, position: int, participant: SlotParticipant) -> None:
+            self.position = position
+            self.participant = participant
+
+        def start(self) -> None:
+            starts[self.position] += 1
+            self.participant.start()
+
+        def poll(
+            self, conn: sqlite3.Connection, *, local_now: datetime, now: int
+        ) -> list[ScheduledTicketOccurrence]:
+            assert admission.active
+            polls[self.position] += 1
+            result = self.participant.poll(conn, local_now=local_now, now=now)
+            if self.position == 1:
+                source_polled.set()
+            return result
+
+        def stop(self, *, deadline: float | None = None) -> None:
+            stops[self.position] += 1
+            deadlines.append(deadline)
+            self.participant.stop(deadline=deadline)
+
+    def participants_factory(actual: WorkspaceAdmission) -> tuple[SlotParticipant, ...]:
+        nonlocal registered
+        factory_admissions.append(actual)
+        registered = build_participants(
+            cfg,
+            clock,
+            workspace_admission=actual,
+            # No source definitions exist, so no runtime executes or requests data.
+            source_runtime=cast(SourceRuntime, object()),
+        )
+        return tuple(
+            TrackedParticipant(position, participant)
+            for position, participant in enumerate(registered)
+        )
+
+    owner = loops.prepare_scheduled_loops(
+        cfg, clock, workspace_admission=admission, participants_factory=participants_factory
+    )
+    assert factory_admissions == [admission]
+    assert len(registered) == 2
+    assert isinstance(registered[0], TicketScheduleParticipant)
+    assert isinstance(registered[1], SourceScheduleParticipant)
+    assert owner.worker_step_readiness_loop is None
+    assert owner.notification_loop is None and owner.manager_wake_loop is None
+    scheduler = owner.scheduled_ticket_loop
+    assert scheduler is not None
+
+    async def run() -> None:
+        owner.start(60)
+        deadline = monotonic() + 5
+        try:
+            assert await asyncio.to_thread(source_polled.wait, 2)
+            assert starts == [1, 1] and stops == [0, 0]
+        finally:
+            await owner.stop(deadline=deadline)
+        await owner.stop(deadline=deadline)
+        assert stops == [1, 1]
+        assert deadlines == [deadline, deadline]
+        assert scheduler._thread is None
+        assert not admission.active
+        # Closed admission blocks both participant polls, not only source execution.
+        assert admission.claim(lambda: None, idle=lambda: True, require_idle=True)
+        before = list(polls)
+        assert scheduler.poll_once() == []
+        assert polls == before
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("participant_fails", [False, True])

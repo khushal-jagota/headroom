@@ -8,6 +8,7 @@ from collections.abc import Callable
 from time import monotonic as _monotonic
 
 from planner.conversation.contracts import ConversationSystem
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import Config
@@ -15,6 +16,7 @@ from planner.manager_wakes.runtime import ManagerWakeLoop
 from planner.notifications.runtime import NotificationLoop
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
+from planner.scheduled_tickets.participants import SlotParticipant, SlotParticipantFactory
 from planner.scheduled_tickets.registry import build_participants
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 
@@ -122,6 +124,47 @@ class BackgroundLoops:
 _active: BackgroundLoops | None = None
 
 
+def _prepare_scheduled_loop(
+    config: Config,
+    clock: Clock,
+    *,
+    workspace_admission: WorkspaceAdmission | None,
+    participants: tuple[SlotParticipant, ...] | None = None,
+) -> ScheduledTicketLoop:
+    return ScheduledTicketLoop(
+        config.db_path,
+        clock,
+        busy_timeout_ms=config.db_busy_timeout_ms,
+        participants=(
+            build_participants(config, clock, workspace_admission=workspace_admission)
+            if participants is None
+            else participants
+        ),
+        workspace_admission=workspace_admission,
+    )
+
+
+def prepare_scheduled_loops(
+    config: Config,
+    clock: Clock,
+    *,
+    workspace_admission: WorkspaceAdmission,
+    participants_factory: SlotParticipantFactory,
+) -> BackgroundLoops:
+    """Compose explicit test participants without employee or model loops."""
+    if not config.test_mode:
+        raise ValueError("explicit participants are accepted only in test mode")
+    return BackgroundLoops(
+        shutdown_grace_seconds=float(config.shutdown_grace_seconds),
+        scheduled_ticket_loop=_prepare_scheduled_loop(
+            config,
+            clock,
+            workspace_admission=workspace_admission,
+            participants=participants_factory(workspace_admission),
+        ),
+    )
+
+
 def prepare_background_loops(
     config: Config,
     clock: Clock,
@@ -159,14 +202,9 @@ def prepare_background_loops(
         candidate_manager_wake_loop: ManagerWakeLoop | None = None
         candidate_unsubscribe: Callable[[], None] | None = None
         try:
-            candidate_schedule_loop = ScheduledTicketLoop(
-                config.db_path,
+            candidate_schedule_loop = _prepare_scheduled_loop(
+                config,
                 clock,
-                busy_timeout_ms=config.db_busy_timeout_ms,
-                participants=build_participants(
-                    config, clock,
-                    workspace_admission=getattr(conversation_system, "workspace_admission", None),
-                ),
                 workspace_admission=getattr(conversation_system, "workspace_admission", None),
             )
             candidate_loop = WorkerStepReadinessLoop(

@@ -34,6 +34,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.measure_sources.contracts import SourceRuntime
 from planner.runtime.workspaces import register_workspace_root, workspace_root_for_connection
+from planner.scheduled_tickets.registry import build_participants
 from planner.server_lifecycle import runtime as application_runtime
 
 
@@ -135,10 +136,17 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
         config,
         build_clock(config),
         conn_factory,
-        # No sources exist. This activates only the real source-loop composition;
-        # the inert runtime can never execute a script or make a request.
-        source_runtime_for_test=(
-            None if first_failure == "observer" else cast(SourceRuntime, object())
+        # No sources or Ticket schedules exist. The shared participants exercise
+        # real cleanup without any employee, script, or external request.
+        slot_participants_for_test=(
+            None
+            if first_failure == "observer"
+            else lambda admission: build_participants(
+                config,
+                build_clock(config),
+                workspace_admission=admission,
+                source_runtime=cast(SourceRuntime, object()),
+            )
         ),
     )
 
