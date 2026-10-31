@@ -3190,47 +3190,31 @@ class SqliteProcessConversationSystem:
         self,
         state: _ConversationState,
         reservation: _ReservedTurn,
-        refusal: PromptDeliveryRefusalReason | None,
+        delivery: _PromptDeliveryAttempt,
+        message: _Message,
         *,
-        content: MessageContent,
-        sender_label: str,
         mode: PromptDeliveryMode,
-        model_change: str | None,
-        reasoning_effort_change: str | None,
-        sender_message_id: str | None,
-        sent_at_unix_milliseconds: int | None,
-        sender: Principal | None,
-        recipient: Principal | None,
-        reply_requested: bool,
-        recovery_references: tuple[DeploymentRecoveryReference, ...],
-        composed_content_delivered: bool,
-        refusal_detail: str | None = None,
-        record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
         also_delivered: tuple[_Message, ...] = (),
-        owner_read_through_sequence: int | None = None,
-        acknowledge_owner_on_failure: bool = True,
-        reasoning_effort_is_set: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
     ) -> bool:
         """Turn a delivery that has happened, or failed to, into the record and the state.
 
         The rows are written before the turn is admitted, so nothing the backend says about
         this turn can be recorded ahead of the prompt that started it.
         """
-        reasoning_effort_is_set = reasoning_effort_is_set or any(
-            message.reasoning_effort_is_set for message in reservation.messages
+        reasoning_effort_is_set = message.reasoning_effort_is_set or any(
+            candidate.reasoning_effort_is_set for candidate in reservation.messages
         )
         async with state.lock:
             try:
                 if reservation.shutdown_owned:
                     return False
-                if refusal is not None:
+                if delivery.refusal_reason is not None:
                     refused_facts = (
                         _turn_fact(reservation.token, LifecycleStatus.unavailable),
                         _prompt_fact(reservation.token, LifecycleStatus.refused),
                     )
-                    if not record_refusal:
+                    if not delivery.record_refusal:
                         await self._persist(
                             state,
                             partial(
@@ -3239,28 +3223,28 @@ class SqliteProcessConversationSystem:
                                 refused_facts,
                             ),
                         )
-                    if record_refusal:
+                    if delivery.record_refusal:
                         await self._append_event(
                             state,
                             PromptDeliveryRefusedEventPayload(
-                                recovery_references=recovery_references,
-                                content=content,
-                                sender_label=sender_label,
+                                recovery_references=message.recovery_references,
+                                content=message.content,
+                                sender_label=message.sender_label,
                                 mode=mode,
-                                refusal_reason=refusal,
-                                refusal_detail=refusal_detail,
-                                sender_message_id=sender_message_id,
-                                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                                sender=sender,
-                                recipient=recipient,
+                                refusal_reason=delivery.refusal_reason,
+                                refusal_detail=delivery.refusal_detail,
+                                sender_message_id=message.sender_message_id,
+                                sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                                sender=message.sender,
+                                recipient=message.recipient,
                             ),
                             lifecycle=refused_facts,
                             owner_read_through_sequence=(
-                                owner_read_through_sequence
-                                if acknowledge_owner_on_failure
+                                message.owner_read_through_sequence
+                                if message.acknowledge_owner_on_failure
                                 else None
                             ),
-                            native_message_operation=native_message_operation,
+                            native_message_operation=message.native_message_operation,
                         )
                         for message in also_delivered:
                             # The others went to the same refused delivery, so each is
@@ -3272,8 +3256,8 @@ class SqliteProcessConversationSystem:
                                     content=message.content,
                                     sender_label=message.sender_label,
                                     mode=mode,
-                                    refusal_reason=refusal,
-                                    refusal_detail=refusal_detail,
+                                    refusal_reason=delivery.refusal_reason,
+                                    refusal_detail=delivery.refusal_detail,
                                     sender_message_id=message.sender_message_id,
                                     sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
                                     sender=message.sender,
@@ -3286,11 +3270,13 @@ class SqliteProcessConversationSystem:
 
                 carried_change: ModelChangedEventPayload | None = None
                 if (
-                    model_change is not None
-                    or reasoning_effort_change is not None
+                    message.model_change is not None
+                    or message.reasoning_effort_change is not None
                     or reasoning_effort_is_set
                 ):
-                    running_on = state.record.model if model_change is None else model_change
+                    running_on = (
+                        state.record.model if message.model_change is None else message.model_change
+                    )
                     if running_on is None:
                         # A change that does not name a model moves the one the record
                         # holds, and this row holds none. The same rows cannot start a
@@ -3300,8 +3286,9 @@ class SqliteProcessConversationSystem:
                         model=running_on,
                         reasoning_effort=(
                             state.record.reasoning_effort
-                            if reasoning_effort_change is None and not reasoning_effort_is_set
-                            else reasoning_effort_change
+                            if message.reasoning_effort_change is None
+                            and not reasoning_effort_is_set
+                            else message.reasoning_effort_change
                         ),
                     )
 
@@ -3311,10 +3298,14 @@ class SqliteProcessConversationSystem:
                     prompt_senders={
                         principal: None
                         for principal in (
-                            (sender if reply_requested and composed_content_delivered else None),
+                            (
+                                message.sender
+                                if message.reply_requested and delivery.composed_content_delivered
+                                else None
+                            ),
                             *(
                                 message.sender
-                                if message.reply_requested and composed_content_delivered
+                                if message.reply_requested and delivery.composed_content_delivered
                                 else None
                                 for message in also_delivered
                             ),
@@ -3331,22 +3322,22 @@ class SqliteProcessConversationSystem:
                     partial(
                         self._store.append_delivered_prompt,
                         state.record.conversation_id,
-                        native_message_operation=native_message_operation,
+                        native_message_operation=message.native_message_operation,
                         prompt=PromptEventPayload(
-                            recovery_references=recovery_references,
-                            content=content,
-                            sender_label=sender_label,
+                            recovery_references=message.recovery_references,
+                            content=message.content,
+                            sender_label=message.sender_label,
                             mode=mode,
-                            sender_message_id=sender_message_id,
-                            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                            sender=sender,
-                            recipient=recipient,
+                            sender_message_id=message.sender_message_id,
+                            sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                            sender=message.sender,
+                            recipient=message.recipient,
                         ),
                         lifecycle=(
                             _turn_fact(reservation.token, LifecycleStatus.running),
                             _prompt_fact(reservation.token, LifecycleStatus.started),
                         ),
-                        composed_content_delivered=composed_content_delivered,
+                        composed_content_delivered=delivery.composed_content_delivered,
                         model_change=carried_change,
                         extra_native_message_operations=tuple(
                             message.native_message_operation
@@ -3366,7 +3357,7 @@ class SqliteProcessConversationSystem:
                             )
                             for message in also_delivered
                         ),
-                        owner_read_through_sequence=owner_read_through_sequence,
+                        owner_read_through_sequence=message.owner_read_through_sequence,
                     ),
                     runtime_mutation=self._runtime_mutation(
                         state,
@@ -3407,8 +3398,8 @@ class SqliteProcessConversationSystem:
                 if owner_prompt_sequences:
                     read_through = (
                         max(owner_prompt_sequences)
-                        if owner_read_through_sequence is None
-                        else owner_read_through_sequence
+                        if message.owner_read_through_sequence is None
+                        else message.owner_read_through_sequence
                     )
                     state.record = replace(
                         state.record,
@@ -3612,37 +3603,26 @@ class SqliteProcessConversationSystem:
                 rest = tuple(surviving_rest)
             try:
                 started = await self._finalize_delivery(
-                    state,
-                    reservation,
-                    delivery.refusal_reason,
-                    content=held.content,
-                    sender_label=held.sender_label,
+                    state=state,
+                    reservation=reservation,
                     mode=PromptDeliveryMode.queue,
-                    model_change=held.model_change,
-                    reasoning_effort_change=held.reasoning_effort_change,
-                    sender_message_id=held.sender_message_id,
-                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
-                    sender=held.sender,
-                    recipient=held.recipient,
-                    reply_requested=held.reply_requested,
-                    recovery_references=held.recovery_references,
-                    refusal_detail=delivery.refusal_detail,
-                    composed_content_delivered=delivery.composed_content_delivered,
-                    record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
                     also_delivered=rest,
-                    owner_read_through_sequence=max(
-                        (
-                            message.owner_read_through_sequence
-                            for message in delivery.messages
-                            if message.sender is not None
-                            and message.sender.kind is PrincipalKind.owner
-                            and message.owner_read_through_sequence is not None
+                    message=replace(
+                        held,
+                        owner_read_through_sequence=max(
+                            (
+                                message.owner_read_through_sequence
+                                for message in delivery.messages
+                                if message.sender is not None
+                                and message.sender.kind is PrincipalKind.owner
+                                and message.owner_read_through_sequence is not None
+                            ),
+                            default=None,
                         ),
-                        default=None,
+                        acknowledge_owner_on_failure=True,
                     ),
-                    acknowledge_owner_on_failure=True,
-                    native_message_operation=held.native_message_operation,
+                    delivery=replace(delivery, record_refusal=True),
                 )
                 async with state.lock:
                     self._settle_held_deliveries(state, batch)
