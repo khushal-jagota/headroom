@@ -74,8 +74,8 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
         )
-        store.runs.begin_connection(identity, 1000)
-        store.runs.mark_ready(identity, 1001)
+        store.runs.begin_connection(identity)
+        store.runs.mark_ready(identity)
         ticket = data.create_ticket(
             tmp_db,
             title="Native message source",

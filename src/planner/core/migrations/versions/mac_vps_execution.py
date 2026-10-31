@@ -18,7 +18,6 @@ STATEMENTS = (
     """CREATE TABLE executor_connections (
         executor_incarnation TEXT PRIMARY KEY, connection_generation INTEGER NOT NULL,
         identity_json TEXT NOT NULL, connection_state TEXT NOT NULL,
-        observed_at_ms INTEGER NOT NULL, lost_at_ms INTEGER,
         active INTEGER NOT NULL CHECK(active IN (0,1)))""",
     "CREATE UNIQUE INDEX executor_one_active_connection ON executor_connections(active) WHERE active=1",
     """CREATE TABLE mac_inbox_positions (

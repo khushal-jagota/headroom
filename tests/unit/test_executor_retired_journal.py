@@ -64,8 +64,8 @@ def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> VpsE
     result.runs.identity = identity
     result.runs.link = message_link(Writer(), identity)
     result.runs.ready = True
-    result.runs.store.begin_connection(identity, 1)
-    result.runs.store.mark_ready(identity, 2)
+    result.runs.store.begin_connection(identity)
+    result.runs.store.mark_ready(identity)
     return result
 
 
@@ -130,7 +130,7 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
             ),
         ]
         kind, payload = bad_payloads[bad_case]
-        row = registry.spool.add(
+        row = registry.outbox.add(
             OutboxEntry(
                 conversation_id=start.child.conversation_id, kind=kind, payload=as_object(payload)
             )

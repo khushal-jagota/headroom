@@ -65,7 +65,7 @@ async def _case(
         state.executor_child_reference = child
         store = InboxStore(str(path))
         identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "proof", 1)
-        store.runs.begin_connection(identity, 1000)
+        store.runs.begin_connection(identity)
         store.runs.register_child(child, "chief", "chief", 1000)
         event = BackendEvent(
             child,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
@@ -162,19 +163,20 @@ def test_an_append_refreshes_an_attention_snapshot_made_stale_by_another_append(
         raced = False
 
         def snapshot_with_one_race(
-            conn: sqlite3.Connection, conversation_id: str
+            conn: sqlite3.Connection, conversation_id: str, *, transaction_open: bool = False
         ) -> ConversationAttentionSnapshot | None:
             nonlocal raced
-            snapshot = real_snapshot(conn, conversation_id)
+            snapshot = real_snapshot(conn, conversation_id, transaction_open=transaction_open)
             if not raced:
                 raced = True
-                competing_store._append_event_sync(
-                    conversation_id,
-                    AgentMessageEventPayload(content=text_message_content("first")),
-                    False,
-                    False,
-                    None,
-                )
+                with ThreadPoolExecutor(max_workers=1) as writer:
+                    writer.submit(
+                        asyncio.run,
+                        competing_store.append_event(
+                            conversation_id,
+                            AgentMessageEventPayload(content=text_message_content("first")),
+                        ),
+                    ).result()
             return snapshot
 
         monkeypatch.setattr(

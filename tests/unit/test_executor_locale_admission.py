@@ -86,18 +86,18 @@ def test_both_runtime_guards_use_current_reconciled_connection(
     ticket = mac_ticket(tmp_db)
     store = executor_store(tmp_db)
     if state != "absent":
-        store.runs.begin_connection(IDENTITY, 100)
+        store.runs.begin_connection(IDENTITY)
     if state not in ("absent", "reconciling"):
-        store.runs.mark_ready(IDENTITY, 101)
+        store.runs.mark_ready(IDENTITY)
     if state == "lost":
-        store.runs.mark_lost(IDENTITY, 102)
+        store.runs.mark_lost(IDENTITY)
     if state.startswith("replacement") or state == "old_socket_lost":
         replacement = replace(IDENTITY, connection_generation=2)
-        store.runs.begin_connection(replacement, 102)
+        store.runs.begin_connection(replacement)
         if state != "replacement_reconciling":
-            store.runs.mark_ready(replacement, 103)
+            store.runs.mark_ready(replacement)
         if state == "old_socket_lost":
-            store.runs.mark_lost(IDENTITY, 104)
+            store.runs.mark_lost(IDENTITY)
     if state == "inactive_ready_history":
         # A superseded process's persisted ready row is historical evidence.
         tmp_db.execute("UPDATE executor_connections SET active=0")
@@ -138,6 +138,6 @@ def test_both_runtime_guards_use_current_reconciled_connection(
 def test_local_locale_does_not_depend_on_remote_connection(tmp_db: Connection) -> None:
     assert locale_configuration.can_execute_locale(tmp_db, TicketLocale.vps)
     store = executor_store(tmp_db)
-    store.runs.begin_connection(IDENTITY, 100)
-    store.runs.mark_lost(IDENTITY, 101)
+    store.runs.begin_connection(IDENTITY)
+    store.runs.mark_lost(IDENTITY)
     assert locale_configuration.can_execute_locale(tmp_db, TicketLocale.vps)

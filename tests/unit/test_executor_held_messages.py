@@ -193,8 +193,8 @@ class HeldFixture:
 async def boot(connection: Connection, root: Path) -> HeldFixture:
     path = str(connection.execute("PRAGMA database_list").fetchone()[2])
     store = InboxStore(path)
-    store.runs.begin_connection(IDENTITY, 1000)
-    store.runs.mark_ready(IDENTITY, 1001)
+    store.runs.begin_connection(IDENTITY)
+    store.runs.mark_ready(IDENTITY)
     ticket = data.create_ticket(
         connection,
         title="Held source",

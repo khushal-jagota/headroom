@@ -68,7 +68,7 @@ def claude_registry(
 
     return MacRunner(
         incarnation=IDENTITY.executor_incarnation,
-        spool=MacOutbox(tmp_path / "spool"),
+        outbox=MacOutbox(tmp_path / "spool"),
         factory=factory,
         paths=ExecutorPaths(tmp_path / "executor"),
         message_files=ConversationMessageFiles(tmp_path / "unused.db"),
@@ -91,8 +91,8 @@ def test_claude_stop_result_controls_canonical_retirement(
     async def run() -> None:
         remote = endpoint(tmp_db)
         remote.runs.identity = IDENTITY
-        remote.runs.store.begin_connection(IDENTITY, 1)
-        remote.runs.store.mark_ready(IDENTITY, 2)
+        remote.runs.store.begin_connection(IDENTITY)
+        remote.runs.store.mark_ready(IDENTITY)
         registry, clients = claude_registry(tmp_path, monkeypatch)
         monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
         ticket = tickets.create_ticket(
@@ -112,10 +112,10 @@ def test_claude_stop_result_controls_canonical_retirement(
         async def send(command: ChildCommand) -> CommandOutcome:
             commands.append(command)
             outcome = await registry.run(command)
-            for envelope in cast(MacOutbox, registry.spool).pending():
+            for envelope in cast(MacOutbox, registry.outbox).pending():
                 receipt = await remote.inbox.accept(envelope, IDENTITY)
                 assert receipt.disposition is ReceiptDisposition.accepted
-                cast(MacOutbox, registry.spool).acknowledge(receipt)
+                cast(MacOutbox, registry.outbox).acknowledge(receipt)
             return outcome
 
         remote.runs.send_command = send  # type: ignore[method-assign]
@@ -201,6 +201,6 @@ def test_claude_stop_result_controls_canonical_retirement(
             await system.shutdown()
             if native is not None:
                 await native.stop()
-            cast(MacOutbox, registry.spool).close()
+            cast(MacOutbox, registry.outbox).close()
 
     asyncio.run(run())
