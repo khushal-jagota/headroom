@@ -356,10 +356,76 @@ class _Message:
         Stored outcomes and in-flight receipts retain the address and content. A held
         message also retains the requested model and effort until it is delivered.
         """
-        fields = ("content", "sender_label", "sender", "recipient", "recovery_references")
+        fields: tuple[str, ...] = (
+            "content",
+            "sender_label",
+            "sender",
+            "recipient",
+            "recovery_references",
+        )
         if isinstance(other, _Message):
             fields += ("model_change", "reasoning_effort_change", "reasoning_effort_is_set")
         return all(getattr(self, name) == getattr(other, name, None) for name in fields)
+
+
+def _prompt_row(message: _Message, mode: PromptDeliveryMode) -> PromptEventPayload:
+    return PromptEventPayload(
+        content=message.content,
+        sender_label=message.sender_label,
+        sender_message_id=message.sender_message_id,
+        sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+        sender=message.sender,
+        recipient=message.recipient,
+        recovery_references=message.recovery_references,
+        mode=mode,
+    )
+
+
+def _refused_row(
+    message: _Message,
+    mode: PromptDeliveryMode,
+    refusal_reason: PromptDeliveryRefusalReason,
+    refusal_detail: str | None = None,
+) -> PromptDeliveryRefusedEventPayload:
+    return PromptDeliveryRefusedEventPayload(
+        content=message.content,
+        sender_label=message.sender_label,
+        sender_message_id=message.sender_message_id,
+        sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+        sender=message.sender,
+        recipient=message.recipient,
+        recovery_references=message.recovery_references,
+        mode=mode,
+        refusal_reason=refusal_reason,
+        refusal_detail=refusal_detail,
+    )
+
+
+def _uncertain_row(
+    message: _Message, mode: PromptDeliveryMode
+) -> PromptDeliveryUncertainEventPayload:
+    return PromptDeliveryUncertainEventPayload(
+        content=message.content,
+        sender_label=message.sender_label,
+        sender_message_id=message.sender_message_id,
+        sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+        sender=message.sender,
+        recipient=message.recipient,
+        recovery_references=message.recovery_references,
+        mode=mode,
+    )
+
+
+def _discarded_row(message: _Message) -> PromptDiscardedEventPayload:
+    return PromptDiscardedEventPayload(
+        content=message.content,
+        sender_label=message.sender_label,
+        sender_message_id=message.sender_message_id,
+        sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+        sender=message.sender,
+        recipient=message.recipient,
+        recovery_references=message.recovery_references,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -840,17 +906,7 @@ class SqliteProcessConversationSystem:
                 async with state.lock:
                     await self._append_event(
                         state,
-                        PromptDeliveryRefusedEventPayload(
-                            recovery_references=recovery_references,
-                            content=content,
-                            sender_label=sender_label,
-                            mode=mode,
-                            refusal_reason=fate.refusal_reason,
-                            sender_message_id=sender_message_id,
-                            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                            sender=sender,
-                            recipient=recipient,
-                        ),
+                        _refused_row(message, mode=mode, refusal_reason=fate.refusal_reason),
                         owner_read_through_sequence=(
                             owner_read_through_sequence if acknowledge_owner_on_failure else None
                         ),
@@ -1190,27 +1246,9 @@ class SqliteProcessConversationSystem:
                 for message in reservation.messages:
                     payload: ConversationEventPayload
                     if suppressed:
-                        payload = PromptDiscardedEventPayload(
-                            content=message.content,
-                            sender_label=message.sender_label,
-                            sender_message_id=message.sender_message_id,
-                            sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                            sender=message.sender,
-                            recipient=message.recipient,
-                            recovery_references=message.recovery_references,
-                            suppression_reason="conversation_killed",
-                        )
+                        payload = _discarded_row(message, suppression_reason="conversation_killed")
                     else:
-                        payload = PromptDeliveryUncertainEventPayload(
-                            content=message.content,
-                            sender_label=message.sender_label,
-                            mode=reservation.mode,
-                            sender_message_id=message.sender_message_id,
-                            sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                            sender=message.sender,
-                            recipient=message.recipient,
-                            recovery_references=message.recovery_references,
-                        )
+                        payload = _uncertain_row(message, mode=reservation.mode)
                     existing = (
                         await self._store.sender_message_outcome(
                             state.record.conversation_id, message.sender_message_id
@@ -1684,15 +1722,7 @@ class SqliteProcessConversationSystem:
                 self._publish_held_prompts_changed(state)
                 await self._append_event(
                     state,
-                    PromptDiscardedEventPayload(
-                        recovery_references=held.recovery_references,
-                        content=held.content,
-                        sender_label=held.sender_label,
-                        sender_message_id=held.sender_message_id,
-                        sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
-                        sender=held.sender,
-                        recipient=held.recipient,
-                    ),
+                    _discarded_row(held),
                     native_message_operation=held.native_message_operation,
                 )
                 return True
@@ -2413,16 +2443,7 @@ class SqliteProcessConversationSystem:
             for message in messages:
                 await self._append_event(
                     state,
-                    PromptDeliveryUncertainEventPayload(
-                        content=message.content,
-                        sender_label=message.sender_label,
-                        mode=reservation.mode,
-                        sender_message_id=message.sender_message_id,
-                        sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                        sender=message.sender,
-                        recipient=message.recipient,
-                        recovery_references=message.recovery_references,
-                    ),
+                    _uncertain_row(message, mode=reservation.mode),
                     lifecycle=(_prompt_fact(reservation.token, LifecycleStatus.unknown),),
                     native_message_operation=message.native_message_operation,
                 )
@@ -2561,18 +2582,7 @@ class SqliteProcessConversationSystem:
                 partial(
                     self._store.admit_sender_messages,
                     state.record.conversation_id,
-                    tuple(
-                        PromptDiscardedEventPayload(
-                            recovery_references=m.recovery_references,
-                            content=m.content,
-                            sender_label=m.sender_label,
-                            sender_message_id=m.sender_message_id,
-                            sent_at_unix_milliseconds=m.sent_at_unix_milliseconds,
-                            sender=m.sender,
-                            recipient=m.recipient,
-                        )
-                        for m in messages
-                    ),
+                    tuple(_discarded_row(m) for m in messages),
                     lifecycle_if_all_suppressed=lifecycle_if_all_suppressed,
                 ),
             )
@@ -2686,16 +2696,7 @@ class SqliteProcessConversationSystem:
                     for index, message in enumerate(recovery_messages):
                         await self._append_event(
                             state,
-                            PromptDeliveryUncertainEventPayload(
-                                content=message.content,
-                                sender_label=message.sender_label,
-                                mode=mode,
-                                sender_message_id=message.sender_message_id,
-                                sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                                sender=message.sender,
-                                recipient=message.recipient,
-                                recovery_references=message.recovery_references,
-                            ),
+                            _uncertain_row(message, mode=mode),
                             lifecycle=(
                                 _turn_fact(turn_token, LifecycleStatus.unavailable),
                                 _prompt_fact(turn_token, LifecycleStatus.unknown),
@@ -3063,17 +3064,11 @@ class SqliteProcessConversationSystem:
                     if delivery.record_refusal:
                         await self._append_event(
                             state,
-                            PromptDeliveryRefusedEventPayload(
-                                recovery_references=message.recovery_references,
-                                content=message.content,
-                                sender_label=message.sender_label,
+                            _refused_row(
+                                message,
                                 mode=mode,
                                 refusal_reason=delivery.refusal_reason,
                                 refusal_detail=delivery.refusal_detail,
-                                sender_message_id=message.sender_message_id,
-                                sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                                sender=message.sender,
-                                recipient=message.recipient,
                             ),
                             lifecycle=refused_facts,
                             owner_read_through_sequence=(
@@ -3088,17 +3083,11 @@ class SqliteProcessConversationSystem:
                             # refused in its own right and its sender is told so.
                             await self._append_event(
                                 state,
-                                PromptDeliveryRefusedEventPayload(
-                                    recovery_references=message.recovery_references,
-                                    content=message.content,
-                                    sender_label=message.sender_label,
+                                _refused_row(
+                                    message,
                                     mode=mode,
                                     refusal_reason=delivery.refusal_reason,
                                     refusal_detail=delivery.refusal_detail,
-                                    sender_message_id=message.sender_message_id,
-                                    sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                                    sender=message.sender,
-                                    recipient=message.recipient,
                                 ),
                                 native_message_operation=message.native_message_operation,
                             )
@@ -3160,16 +3149,7 @@ class SqliteProcessConversationSystem:
                         self._store.append_delivered_prompt,
                         state.record.conversation_id,
                         native_message_operation=message.native_message_operation,
-                        prompt=PromptEventPayload(
-                            recovery_references=message.recovery_references,
-                            content=message.content,
-                            sender_label=message.sender_label,
-                            mode=mode,
-                            sender_message_id=message.sender_message_id,
-                            sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                            sender=message.sender,
-                            recipient=message.recipient,
-                        ),
+                        prompt=_prompt_row(message, mode=mode),
                         lifecycle=(
                             _turn_fact(reservation.token, LifecycleStatus.running),
                             _prompt_fact(reservation.token, LifecycleStatus.started),
@@ -3182,17 +3162,7 @@ class SqliteProcessConversationSystem:
                             if message.native_message_operation is not None
                         ),
                         extra_prompts=tuple(
-                            PromptEventPayload(
-                                recovery_references=message.recovery_references,
-                                content=message.content,
-                                sender_label=message.sender_label,
-                                mode=mode,
-                                sender_message_id=message.sender_message_id,
-                                sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                                sender=message.sender,
-                                recipient=message.recipient,
-                            )
-                            for message in also_delivered
+                            _prompt_row(message, mode=mode) for message in also_delivered
                         ),
                         owner_read_through_sequence=message.owner_read_through_sequence,
                     ),
@@ -3529,16 +3499,7 @@ class SqliteProcessConversationSystem:
         if isinstance(outcome, BackendSteerAccepted):
             await self._append_event(
                 state,
-                PromptEventPayload(
-                    recovery_references=message.recovery_references,
-                    content=message.content,
-                    sender_label=message.sender_label,
-                    mode=PromptDeliveryMode.steer,
-                    sender_message_id=message.sender_message_id,
-                    sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                    sender=message.sender,
-                    recipient=message.recipient,
-                ),
+                _prompt_row(message, mode=PromptDeliveryMode.steer),
                 native_message_admission=NativeMessageAdmission(
                     fate, getattr(outcome, "composed_content_delivered", False) is True
                 ),
@@ -3566,16 +3527,8 @@ class SqliteProcessConversationSystem:
         if isinstance(outcome, BackendSteerRefused):
             await self._append_event(
                 state,
-                PromptDeliveryRefusedEventPayload(
-                    recovery_references=message.recovery_references,
-                    content=message.content,
-                    sender_label=message.sender_label,
-                    mode=PromptDeliveryMode.steer,
-                    refusal_reason=outcome.refusal_reason,
-                    sender_message_id=message.sender_message_id,
-                    sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                    sender=message.sender,
-                    recipient=message.recipient,
+                _refused_row(
+                    message, mode=PromptDeliveryMode.steer, refusal_reason=outcome.refusal_reason
                 ),
                 lifecycle=(
                     () if attempt is None else (replace(attempt, status=LifecycleStatus.refused),)
@@ -3596,16 +3549,7 @@ class SqliteProcessConversationSystem:
         assert isinstance(outcome, BackendSteerUncertain)
         await self._append_event(
             state,
-            PromptDeliveryUncertainEventPayload(
-                recovery_references=message.recovery_references,
-                content=message.content,
-                sender_label=message.sender_label,
-                mode=PromptDeliveryMode.steer,
-                sender_message_id=message.sender_message_id,
-                sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
-                sender=message.sender,
-                recipient=message.recipient,
-            ),
+            _uncertain_row(message, mode=PromptDeliveryMode.steer),
             native_message_admission=NativeMessageAdmission(
                 fate, outcome.composed_content_delivered is True
             ),
