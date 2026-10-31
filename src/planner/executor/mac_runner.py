@@ -25,12 +25,8 @@ from planner.conversation.backends.contracts import (
     PermissionAskRaised,
     PromptWriteRefused,
     SessionLoadFailed,
-    ToolCallFinished,
-    ToolCallProgress,
-    ToolCallStarted,
     TurnEnded,
     TurnToken,
-    UserInputFailed,
     UserInputRequested,
 )
 from planner.conversation.contracts import (
@@ -52,7 +48,6 @@ from planner.executor.configuration import (
     EXECUTOR_CAPABILITY_ENV,
     EXECUTOR_CHILD_ID_ENV,
     EXECUTOR_ROOT_ENV,
-    MAX_TOOL_DETAIL_CHARACTERS,
     NATIVE_SKILLS_DIR_ENV,
     NATIVE_WORKER_CONTEXT,
     ExecutorPaths,
@@ -64,9 +59,9 @@ from planner.executor.files import (
 )
 from planner.executor.link_files import get_file, settled_io
 from planner.executor.mac_connection import MacConnection
+from planner.executor.mac_event_sink import NativeEventSink
 from planner.executor.mac_outbox import OutboxEntry
 from planner.executor.protocol import (
-    LIVE_BACKEND_EVENT_METHODS,
     AnswerApplication,
     AnswerPermission,
     AnswerUserInput,
@@ -157,26 +152,6 @@ class RunningChild:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     model: str | None = None
     reasoning_effort: str | None = None
-
-
-class NativeEventSink:
-    def __init__(self, runner: MacRunner, reference: ChildReference) -> None:
-        self.runner = runner
-        self.reference = reference
-
-    async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
-        if isinstance(
-            event, (ToolCallStarted, ToolCallProgress, ToolCallFinished, UserInputFailed)
-        ):
-            if event.detail is not None:
-                event = replace(event, detail=event.detail[:MAX_TOOL_DETAIL_CHARACTERS])
-        method, arguments = encode_backend_event(event)
-        if method in LIVE_BACKEND_EVENT_METHODS:
-            await self.runner._send_live_event(
-                BackendEvent(self.reference, method, turn, arguments)
-            )
-            return
-        await self.runner.report_event(self.reference, turn, event)
 
 
 @dataclass

@@ -27,7 +27,6 @@ from planner.core.db import connect
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.clock import now_ms
 from planner.executor.link_files import settled_io
-from planner.executor.mutations import write_ticket_mutation
 from planner.executor.protocol import (
     AcceptanceReceipt,
     CliWrite,
@@ -38,10 +37,89 @@ from planner.executor.protocol import (
 )
 from planner.message_delivery import api, service
 from planner.message_delivery.contracts import MessageDeliveryMode
+from planner.tickets import actions, views
 
 if TYPE_CHECKING:
     from planner.executor.vps_inbox import InboxStore
     from planner.executor.vps_runs import MacRuns
+    from planner.tickets.contracts import ReviewTransferNotice
+
+
+def write_ticket_mutation(
+    connection: sqlite3.Connection,
+    write: CliWrite,
+    principal: Principal,
+    clock: Clock,
+    *,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
+) -> JsonObject:
+    """Effect and receipt use the caller's open transaction; no native I/O here."""
+    from planner.tickets.api import write_create_ticket, write_patch_ticket
+
+    args = write.arguments
+    body = args.get("body")
+    if not isinstance(body, dict):
+        raise PlannerError(ErrorCode.validation, "ticket mutation needs a body", {})
+    if write.operation == "feedback.use":
+        from planner.feedback.api import write_use_feedback
+
+        return write_use_feedback(body, connection, clock, RequestContext(principal))
+    if write.operation in ("ticket.block", "ticket.unblock"):
+        from planner.membership.collections import ENTRIES, MembershipWrite
+        from planner.membership.contracts import Collection
+
+        ticket_id = args.get("ticket_id")
+        blocker_id = args.get("blocker_id")
+        if not isinstance(ticket_id, str) or not isinstance(blocker_id, str):
+            raise PlannerError(ErrorCode.validation, "blocker IDs must be text", {})
+        entry = ENTRIES[Collection.blockers]
+        membership = MembershipWrite(
+            conn=connection,
+            principal=principal,
+            container_id=ticket_id,
+            member_id=blocker_id,
+            now=clock.now_unix(),
+            admit=partial(entry.rule, connection, RequestContext(principal), ticket_id, blocker_id),
+        )
+        (entry.add if write.operation == "ticket.block" else entry.remove)(membership)
+        return {
+            "collection": "blockers",
+            "container_id": ticket_id,
+            "member_id": blocker_id,
+            "ok": True,
+        }
+    if write.operation == "ticket.create":
+        return write_create_ticket(
+            body,
+            connection,
+            RequestContext(principal),
+            clock,
+        )
+    ticket_id = args.get("ticket_id")
+    if not isinstance(ticket_id, str):
+        raise PlannerError(ErrorCode.validation, "ticket mutation needs ticket_id", {})
+    if write.operation == "ticket.propose":
+        if principal != Principal(PrincipalKind.ticket, ticket_id):
+            raise PlannerError(
+                ErrorCode.agent_forbidden, "only the Ticket's Worker can propose", {}
+            )
+        text = body.get("body")
+        if not isinstance(text, str):
+            raise PlannerError(ErrorCode.validation, "proposal body must be text", {})
+        ticket = actions.file_current_proposal(
+            connection, ticket_id, body=text, ctx=RequestContext(principal), clock=clock
+        )
+        return views.ticket_json(ticket, clock.now_unix())
+    if write.operation == "ticket.edit":
+        return write_patch_ticket(
+            ticket_id,
+            body,
+            connection,
+            RequestContext(principal),
+            clock,
+            review_transfer_notices=review_transfer_notices,
+        )
+    raise PlannerError(ErrorCode.validation, "unsupported transactional executor mutation", {})
 
 
 class AgentWrites:
@@ -61,7 +139,6 @@ class AgentWrites:
         principal = await settled_io(self.runs.authority, write.child)
         if write.operation in ("message.send", "ticket.request_help"):
             return await self._deliver_message(envelope, write, principal, identity)
-        from planner.tickets.contracts import ReviewTransferNotice
         from planner.tickets.review_transfer import notify_review_transfers
 
         notices: list[ReviewTransferNotice] = []

@@ -209,8 +209,7 @@ def _fail_response(resp: httpx.Response, data: Any, as_json: bool) -> NoReturn:
 def _executor_send(
     method: str, path: str, *, as_json: bool, json_body: Any, params: dict[str, Any] | None
 ) -> Any:
-    from planner.executor.ipc_client import request
-    from planner.executor.mutations import cli_mutation
+    from planner.executor.ipc_client import cli_mutation, request
     from planner.executor.protocol import IpcOperation
 
     try:

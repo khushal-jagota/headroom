@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import socket
 import time
+from typing import Any
 from uuid import uuid4
 
 from planner.executor.configuration import (
@@ -27,6 +29,33 @@ from planner.executor.protocol import (
     encode_frame,
     type_adapter,
 )
+
+
+def cli_mutation(method: str, path: str, body: Any) -> tuple[str, JsonObject]:
+    """Translate a supported CLI route into a registry operation, never a proxy route."""
+    if method == "POST" and path == "/api/feedback/use":
+        return "feedback.use", {"body": body}
+    blocker = re.fullmatch(r"/api/collections/blockers/([^/]+)/([^/]+)", path)
+    if blocker and method in ("PUT", "DELETE"):
+        return "ticket.block" if method == "PUT" else "ticket.unblock", {
+            "ticket_id": blocker[1],
+            "blocker_id": blocker[2],
+            "body": {},
+        }
+    if method == "POST" and path == "/api/tickets":
+        return "ticket.create", {"body": body}
+    proposal = re.fullmatch(r"/api/tickets/([^/]+)/propose", path)
+    patch = re.fullmatch(r"/api/tickets/([^/]+)", path)
+    if method == "POST" and proposal:
+        return "ticket.propose", {"ticket_id": proposal[1], "body": body}
+    if method == "PATCH" and patch:
+        return "ticket.edit", {"ticket_id": patch[1], "body": body}
+    if method == "POST" and path == "/api/messages/send":
+        return "message.send", {"body": body}
+    help_match = re.fullmatch(r"/api/tickets/([^/]+)/request-help", path)
+    if method == "POST" and help_match:
+        return "ticket.request_help", {"ticket_id": help_match[1], "body": body}
+    raise ValueError(f"This executor does not support {method} {path}")
 
 
 def request(operation: IpcOperation, payload: JsonObject) -> IpcResponse:
