@@ -446,7 +446,7 @@ def make_core(endpoint: VpsExecutor) -> SqliteProcessConversationSystem:
         message_files=ConversationMessageFiles(endpoint.db_path),
     )
     # All transport fixtures are native. Local discovery is never called here.
-    system._catalog_endpoint = endpoint.catalog
+    system.configure_machine_catalog(endpoint.catalog)
     return system
 
 
@@ -535,14 +535,14 @@ async def boot(
         panels_server_url=proxy.origin,
         session_factory=proxy.session_factory,
     )
-    from tests.support.executor_catalog import ScriptedCatalogObserver
+    from tests.support.executor_catalog import ScriptedBackendSnapshots
 
-    observer = ScriptedCatalogObserver(lambda: mac.identity)
+    observer = ScriptedBackendSnapshots(lambda: mac.identity)
     observer.model = model
     if backend_key is ConversationBackendKey.claude:
         observer.models = (model, "claude-new")
     observer.efforts = ("low", "medium", "high", "xhigh", "max")
-    mac.catalog._catalog_observer = observer
+    mac.catalog.snapshots = observer
 
     def factory(
         resolved: ResolvedConversationStart, capability: str, child: ChildReference
@@ -1002,15 +1002,12 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
             from planner.runtime.conversation_start import resolve_ticket_launch_selection
 
             _, binding = resolve_ticket_launch_selection(conn, ticket)
-            from tests.support.executor_catalog import ScriptedCatalogObserver
+            from tests.support.executor_catalog import ScriptedBackendSnapshots
 
-            observer = harness.mac.catalog._catalog_observer
-            assert isinstance(observer, ScriptedCatalogObserver)
-            snapshots = await harness.system.destination_backend_snapshot(
-                ConversationBackendKey.codex,
-                binding,
-                "macos",
-                refresh=True,
+            observer = harness.mac.catalog.snapshots
+            assert isinstance(observer, ScriptedBackendSnapshots)
+            snapshots = await harness.endpoint.catalog.snapshot(
+                ConversationBackendKey.codex, refresh=True
             )
             assert snapshots.available_models and observer.calls > 0
             observer.calls = 0
@@ -1399,7 +1396,7 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
 def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from tests.support.executor_catalog import ScriptedCatalogObserver
+    from tests.support.executor_catalog import ScriptedBackendSnapshots
 
     from planner.conversation.contracts import PromptDeliveryUncertain
     from planner.executor.protocol import ChildCommand, ChildOperation, CommandOutcome
@@ -1449,9 +1446,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
                 panels_server_url=harness.proxy.origin,
                 session_factory=harness.proxy.session_factory,
             )
-            replacement.catalog._catalog_observer = ScriptedCatalogObserver(
-                lambda: replacement.identity
-            )
+            replacement.catalog.snapshots = ScriptedBackendSnapshots(lambda: replacement.identity)
             replacement.runner.factory = old_mac.runner.factory
             harness.mac = replacement
             harness.task = asyncio.create_task(replacement.run())
@@ -1576,9 +1571,9 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
             await asyncio.wait_for(first_chunk.wait(), 2)
             assert harness.endpoint.runs.link is not None
             control = await harness.endpoint.runs.link.request(
-                WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
+                WireMessageKind.catalog_request, {"backend_key": "codex", "refresh": False}
             )
-            assert control.kind is WireMessageKind.health
+            assert control.kind is WireMessageKind.catalog_response
             result = await asyncio.wait_for(sending, 5)
             assert harness.native.prompt_count == 2, repr(result)
             assert asyncio.get_running_loop().time() - started > 0.15
@@ -1926,9 +1921,9 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             assert harness.mac.identity == generation and harness.endpoint.runs.link is writer
             assert harness.endpoint.runs.link is not None
             control = await harness.endpoint.runs.link.request(
-                WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
+                WireMessageKind.catalog_request, {"backend_key": "codex", "refresh": False}
             )
-            assert control.kind is WireMessageKind.health
+            assert control.kind is WireMessageKind.catalog_response
             reject = False
             await harness.native.sink.tool_call_finished(
                 harness.native.turn,
@@ -2021,9 +2016,9 @@ def test_input_descriptor_must_validate_before_provider_invocation(
             assert not target.exists()
             assert harness.endpoint.runs.link is not None
             control = await harness.endpoint.runs.link.request(
-                WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
+                WireMessageKind.catalog_request, {"backend_key": "codex", "refresh": False}
             )
-            assert control.kind is WireMessageKind.health
+            assert control.kind is WireMessageKind.catalog_response
         finally:
             await harness.close()
 
@@ -2389,103 +2384,71 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """TLS metadata reads share transport safely and allocate no child/journal work."""
-    import time
+    """A timed-out machine read preserves the live child and the offline saved list."""
+    from tests.support.executor_catalog import ScriptedBackendSnapshots
 
-    from tests.support.executor_catalog import ScriptedCatalogObserver
-
-    from planner.conversation.contracts import WorkspacePathPolicy
-    from planner.conversation.model_resolution.contracts import (
-        CatalogExpectedContext,
-        CatalogObservation,
-        CatalogRequest,
-        CatalogUnavailable,
-        CatalogWorkspaceBinding,
-        ValidationReason,
-    )
-    from planner.executor import catalog_relay as mac_module
-    from planner.executor import catalog_relay as vps_module
+    from planner.executor import catalog_relay
 
     async def run() -> None:
-        started = time.monotonic()
         harness = await boot(tmp_path, monkeypatch)
-        assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
         try:
-            assert harness.endpoint.runs.identity is not None
-            identity = harness.endpoint.runs.identity
+            source = harness.mac.catalog.snapshots
+            assert isinstance(source, ScriptedBackendSnapshots)
+            for backend in ConversationBackendKey:
+                listed = await harness.endpoint.catalog.snapshot(backend, refresh=True)
+                assert listed.available_models[0].model_id == source.model
+            first = await harness.endpoint.catalog.snapshot(
+                ConversationBackendKey.codex, refresh=True
+            )
+            assert first.available_models[0].model_id == source.model
+            assert first.default_model_id == source.model
+            assert first.default_reasoning_effort == "medium"
             writer = harness.endpoint.runs.link
-            observer = ScriptedCatalogObserver(lambda: harness.mac.identity)
-            harness.mac.catalog._catalog_observer = observer
-            request = CatalogRequest(
-                ConversationBackendKey.codex,
-                CatalogExpectedContext(
-                    identity,
-                    CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.native_absolute, None),
-                ),
+            starts = harness.native.start_count
+            prompts = harness.native.prompt_count
+            source.block = True
+            monkeypatch.setattr(catalog_relay, "CATALOG_TIMEOUT_SECONDS", 0.05)
+            retained = await harness.endpoint.catalog.snapshot(
+                ConversationBackendKey.codex, refresh=True
             )
-            children_before = tuple(harness.mac.runner._children)
-            commands_before = tuple(harness.mac.runner._commands)
-            starts_before = harness.native.start_count
-            prompts_before = harness.native.prompt_count
-            journal_additions: list[EnvelopeKind] = []
-            mint = harness.mac.outbox.add
-
-            def count_journal(entry: Any, **arguments: Any) -> QueuedEnvelope:
-                journal_additions.append(entry.kind)
-                return mint(entry, **arguments)
-
-            monkeypatch.setattr(harness.mac.outbox, "add", count_journal)
-            result = await harness.endpoint.catalog.observe_catalog(
-                request, attempt_id="connected-first"
-            )
-            assert isinstance(result, CatalogObservation)
-            assert result.rows[0].submitted_token == "gpt-scripted"
-            assert result.evidence.context.executor_identity == identity
-            assert result.evidence.context.workspace == request.expected_context.workspace
-            assert result.evidence.attempt_id == "connected-first"
-            assert result.evidence.observed_at == observer.observed_at
-
-            # A still-running scripted child shares this real authenticated link.
-            observer.block = True
-            monkeypatch.setattr(vps_module, "CATALOG_TIMEOUT_SECONDS", 0.05)
-            monkeypatch.setattr(mac_module, "CATALOG_TIMEOUT_SECONDS", 0.2)
-            timed_out = await harness.endpoint.catalog.observe_catalog(
-                request, attempt_id="connected-second"
-            )
-            assert isinstance(timed_out, CatalogUnavailable)
-            assert timed_out.reason is ValidationReason.timeout
-            await asyncio.wait_for(observer.cancelled.wait(), 2)
-            await eventually(
-                lambda: not harness.mac.catalog._catalog_tasks, "Catalog cleanup did not settle"
-            )
-            assert tuple(harness.mac.runner._children) == children_before
-            assert tuple(harness.mac.runner._commands) == commands_before
-            assert harness.native.start_count == starts_before
-            assert harness.native.prompt_count == prompts_before
-            assert journal_additions == []
-            assert harness.endpoint.runs.identity == identity
+            assert retained == first
             assert harness.endpoint.runs.link is writer and harness.endpoint.runs.ready
-            assert harness.mac.identity == identity
-            assert harness.native.stop_count == 0
-
-            # The native child emits after the timeout. The event crosses the
-            # registry, spool, authenticated transport and canonical VPS writer.
-            assert harness.native.sink is not None and harness.native.turn is not None
-            before = harness.events("tool_call_finished")
-            await harness.native.sink.tool_call_finished(
-                harness.native.turn,
-                tool_call_id="after-catalog-timeout",
-                tool_call_status=ToolCallStatus.completed,
-                detail="Transport remains active.",
-            )
+            assert harness.native.start_count == starts
+            assert harness.native.prompt_count == prompts
+            source.block = False
+            source.model = "reconnected-model"
+            assert writer is not None
+            writer.close()
             await eventually(
-                lambda: harness.events("tool_call_finished") == before + 1,
-                "Child event did not reach VPS after catalog timeout",
+                lambda: harness.endpoint.runs.ready
+                and harness.endpoint.runs.link is not writer
+                and all(
+                    (saved := harness.endpoint.catalog.retained(backend)) is not None
+                    and saved.available_models[0].model_id == "reconnected-model"
+                    for backend in ConversationBackendKey
+                ),
+                "Reconnect did not refresh the machine lists",
             )
-            assert journal_additions == [EnvelopeKind.backend_event]
-            assert harness.endpoint.runs.identity == identity and harness.endpoint.runs.ready
-            print(f"catalog TLS scenario elapsed: {time.monotonic() - started:.3f}s")
+            first = await harness.endpoint.catalog.snapshot(ConversationBackendKey.codex)
+            # A new Mac process may have only an incomplete first read. The VPS
+            # still owns the last complete list across that process boundary.
+            source.complete = False
+            source.model = "partial-model"
+            partial = await harness.endpoint.catalog.snapshot(
+                ConversationBackendKey.codex, refresh=True
+            )
+            assert partial.available_models == first.available_models
+            assert partial.default_model_id == first.default_model_id
+            # A new VPS reader has only SQLite, no in-memory copy or connected Mac.
+            from planner.executor.catalog_relay import VpsCatalogRelay
+            from planner.executor.vps_runs import MacRuns
+
+            another_mac = VpsCatalogRelay(MacRuns(harness.endpoint.db_path), machine_id="other-mac")
+            assert not (await another_mac.snapshot(ConversationBackendKey.codex)).available_models
+            offline = VpsCatalogRelay(MacRuns(harness.endpoint.db_path))
+            saved = await offline.snapshot(ConversationBackendKey.codex)
+            assert saved.available_models == first.available_models
+            assert saved.default_model_id == first.default_model_id
         finally:
             await harness.close()
 

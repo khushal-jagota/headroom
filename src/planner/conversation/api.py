@@ -105,6 +105,7 @@ from planner.conversation.runtime_composition import (
 )
 from planner.conversation.snapshot import (
     BackendSnapshot,
+    BackendSnapshotService,
     BackendUpdateResult,
 )
 from planner.conversation.storage import (
@@ -802,110 +803,38 @@ async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, An
     return {"backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots]}
 
 
-def _backend_ticket_arguments(
+@router.post("/backends")
+async def read_scoped_backends(
     raw: dict[str, Any],
-    conn: Any,
-    ctx: RequestContext,
-) -> tuple[Any, dict[str, Any]]:
+    runtime: Runtime,
+    ctx: Ctx,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Read the models of the Ticket's machine, including its last offline copy."""
     from planner.core import authority
     from planner.core.errors import ErrorCode, PlannerError
     from planner.tickets import data as ticket_data
-
-    ticket_id = raw.get("ticket_id")
-    from planner.conversation.contracts import require_conversation_backend_key
-    from planner.conversation.model_resolution.contracts import SelectionKind
     from planner.tickets.contracts import TicketLocale
-    from planner.tickets.validation.data import read_launch_selection
 
-    allowed = {
-        "ticket_id",
-        "locale",
-        "employee_backend",
-        "employee_launch_model",
-        "employee_launch_reasoning_effort",
-        "selection_kind",
-    }
-    if set(raw) - allowed:
-        raise PlannerError(ErrorCode.validation, "unknown backend scope field", {})
-    if not isinstance(ticket_id, str) or not ticket_id.strip():
-        raise PlannerError(ErrorCode.validation, "invalid ticket_id", {})
-    for key, value in raw.items():
-        if key == "employee_launch_reasoning_effort" and value is None:
-            continue
-        if not isinstance(value, str) or not value.strip():
-            raise PlannerError(ErrorCode.validation, f"invalid {key}", {})
-    authority.require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id))
-    ticket = ticket_data.read_ticket(conn, ticket_id)
-    prior = None if ticket.employee_launch_model is None else read_launch_selection(conn, ticket_id)
-    backend = raw.get("employee_backend", ticket.employee_backend)
-    model = raw.get("employee_launch_model", ticket.employee_launch_model)
-    effort = raw.get("employee_launch_reasoning_effort", ticket.employee_launch_reasoning_effort)
-    changed = backend != ticket.employee_backend or model != ticket.employee_launch_model
-    try:
-        destination = TicketLocale(raw.get("locale", ticket.locale))
-        require_conversation_backend_key(backend)
-        requested_kind = SelectionKind(raw["selection_kind"]) if "selection_kind" in raw else None
-    except ValueError as error:
-        raise PlannerError(ErrorCode.validation, "invalid backend scope selection", {}) from error
-    kind = (
-        requested_kind
-        if requested_kind is not None
-        else prior.selection_kind
-        if prior is not None and not changed
-        else SelectionKind.legacy_unclassified
-    )
-    return ticket, {
-        "locale": destination,
-        "employee_backend": backend,
-        "employee_launch_model": model,
-        "employee_launch_reasoning_effort": effort,
-        "selection_kind": kind,
-    }
-
-
-@router.post("/backends")
-async def read_scoped_backends(
-    raw: dict[str, Any], runtime: Runtime, ctx: Ctx, refresh: bool = False,
-) -> dict[str, Any]:
-    """Read the existing snapshot contract in a canonically authorized destination."""
-    from planner.runtime.conversation_start import (
-        resolve_ticket_launch_selection,
-        workspace_for_project,
-    )
-    from planner.tickets.api import resolve_ticket_creation_selection
-    from planner.tickets.locale_configuration import LOCALE_SUPPORTED_BACKENDS
-
+    if (
+        set(raw) != {"ticket_id"}
+        or not isinstance(raw["ticket_id"], str)
+        or not raw["ticket_id"].strip()
+    ):
+        raise PlannerError(ErrorCode.validation, "ticket_id is required", {})
     with closing(connect(runtime.database_path)) as conn:
-        if "ticket_id" in raw:
-            ticket, arguments = _backend_ticket_arguments(raw, conn, ctx)
-            selection, workspace = resolve_ticket_launch_selection(conn, ticket, **arguments)
-        else:
-            selection, project_id = resolve_ticket_creation_selection(
-                raw, conn, principal=ctx.principal,
-            )
-            folder, policy = workspace_for_project(conn, selection.destination, project_id)
-            from planner.conversation.contracts import ConversationStartRequest
-            from planner.conversation.logic.conversation_start_resolution import (
-                resolve_conversation_start_request,
-            )
-            from planner.runtime.conversation_start import workspace_binding_from_start
+        authority.require_above_or_self(conn, ctx.principal, authority.ticket(raw["ticket_id"]))
+        ticket = ticket_data.read_ticket(conn, raw["ticket_id"])
+    from planner.conversation.model_resolution.contracts import RemoteCatalogSource
 
-            values = resolve_conversation_start_request(ConversationStartRequest(
-                conversation_id="configuration", backend_key=selection.backend_key,
-                model=selection.submitted_token, workspace_folder=folder,
-                workspace_path_policy=policy,
-            ))
-            workspace = workspace_binding_from_start(values, selection.destination)
-        async def snapshot(backend: ConversationBackendKey) -> BackendSnapshot:
-            if backend is ConversationBackendKey.hermes:
-                return await runtime.backend_snapshots.snapshot(backend, refresh=refresh)
-            return await runtime.system.destination_backend_snapshot(
-                backend, workspace, selection.destination.value, refresh=refresh,
-            )
-        snapshots = await asyncio.gather(*(
-            snapshot(ConversationBackendKey(backend))
-            for backend in LOCALE_SUPPORTED_BACKENDS[selection.destination]
-        ))
+    source: RemoteCatalogSource | BackendSnapshotService | None = runtime.backend_snapshots
+    if ticket.locale is TicketLocale.macos:
+        source = runtime.system.machine_catalog
+    if source is None:
+        raise PlannerError(ErrorCode.validation, "The selected machine is unavailable", {})
+    snapshots = await asyncio.gather(
+        *(source.snapshot(backend, refresh=refresh) for backend in ConversationBackendKey)
+    )
     return {"backends": [_snapshot_json(item, runtime.backend_state) for item in snapshots]}
 
 
@@ -975,7 +904,6 @@ async def start_backend_sign_in(
     sign-in comes back instead, because a code nobody will honour is worse than no code.
     """
     service = _sign_in_service(runtime, backend_key)
-    runtime.backend_snapshots.clear_destination_snapshots(backend_key)
     try:
         return _sign_in_json(await service.start())
     except CodexSignInUnavailable as would_not_start:
@@ -1002,7 +930,6 @@ async def cancel_backend_sign_in(
 ) -> dict[str, Any]:
     """End this sign-in. A session id that is not the one in force is refused as stale."""
     service = _sign_in_service(runtime, backend_key)
-    runtime.backend_snapshots.clear_destination_snapshots(backend_key)
     try:
         return _sign_in_json(await service.cancel(session_id))
     except UnknownSignInSession as stale:
@@ -1565,8 +1492,9 @@ def _snapshot_json(
                 "model_id": model.model_id,
                 "display_name": model.display_name,
                 "selected_variant": model.selected_variant,
+                "version": model.version,
                 "resolved_model_id": model.resolved_model_id,
-                        "detail": model.detail,
+                "detail": model.detail,
                 "reasoning_effort_options": (
                     list(model.reasoning_effort_options)
                     if model.reasoning_effort_options is not None

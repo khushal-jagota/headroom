@@ -7,18 +7,12 @@ from typing import Any
 import pytest
 from tests.unit.test_conversation_system import _FakeBackendChild, _Harness
 from tests.unit.test_current_model_resolution import (
-    ScopedCatalogue,
-    context,
-    observation,
-    row,
     setup,
 )
 
 from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
-from planner.conversation.contracts import ConversationBackendKey as Backend
 from planner.conversation.contracts import (
     PromptDeliveryUncertain,
-    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     PromptDeliveryRefusedEventPayload,
@@ -26,7 +20,7 @@ from planner.conversation.events import (
     PromptEventPayload,
 )
 from planner.conversation.message_content import text_message_content
-from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, SelectionKind
+from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect
 from planner.runtime import conversation_start
@@ -39,12 +33,8 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
     monkeypatch: pytest.MonkeyPatch,
     case: str,
 ) -> None:
-    binding = CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None)
-    launch = context(workspace=binding, localized_workspace_folder=tmp_path)
-    source = ScopedCatalogue(observation((row(),), launch=launch))
-    service, _, path = setup(tmp_path, source)
+    service, _, path = setup(tmp_path)
     harness = _Harness(path)
-    harness.system.configure_destination_validation(source)
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
     original = _FakeBackendChild.write_prompt
     entered = asyncio.Event()
@@ -70,15 +60,6 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
     monkeypatch.setattr(_FakeBackendChild, "write_prompt", write)
 
     async def exercise() -> None:
-        refreshed = await harness.system.destination_backend_snapshot(
-            Backend.codex,
-            binding,
-            "vps",
-            refresh=True,
-        )
-        assert refreshed.available_models and len(source.calls) == 1
-        source.calls.clear()
-        source.fail = True
         conn = connect(str(path))
         try:
             ticket = tickets.create_ticket(
@@ -142,7 +123,6 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
                     assert any(
                         isinstance(e.payload, PromptDeliveryUncertainEventPayload) for e in events
                     )
-            assert source.calls == []
         finally:
             conn.close()
             await harness.system.shutdown()

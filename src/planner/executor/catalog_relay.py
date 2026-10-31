@@ -1,192 +1,63 @@
-"""Read-only provider catalog relays for the VPS and Mac peers."""
+"""Machine model lists over the existing link; the VPS owns the last saved copy."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import replace
-from pathlib import Path
-from typing import TYPE_CHECKING, cast
-from uuid import uuid4
+from typing import TYPE_CHECKING
 
-from planner.conversation.contracts import (
-    WorkspacePathPolicy,
-)
-from planner.conversation.model_resolution.contracts import (
-    CatalogObservation,
-    CatalogRequest,
-    CatalogResponse,
-    CatalogResult,
-    CatalogUnavailable,
-    CorrectiveAction,
-    LaunchContext,
-    ProviderCatalogObserver,
-    ValidationReason,
-)
+from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
+from planner.core.db import connect
 from planner.core.task_settlement import wait_for_settlement
-from planner.execution_identity import (
-    ExecutorIdentity,
-    parse_identity,
-)
-from planner.executor.configuration import (
-    CATALOG_CANCEL_TIMEOUT_SECONDS,
-    CATALOG_TIMEOUT_SECONDS,
-    MAX_CATALOG_OBSERVATIONS,
-)
+from planner.execution_identity import ExecutorIdentity
+from planner.executor.configuration import CATALOG_TIMEOUT_SECONDS
 from planner.executor.link import Link
-from planner.executor.protocol import (
-    ClockSample,
-    JsonObject,
-    WireMessage,
-    WireMessageKind,
-    as_object,
-    encode_value,
-    type_adapter,
-)
-from planner.tickets.contracts import TicketLocale
+from planner.executor.protocol import WireMessage, WireMessageKind, as_object, type_adapter
 
 if TYPE_CHECKING:
     from planner.executor.vps_runs import MacRuns
 
 
 class MacCatalogRelay:
-    def __init__(self, server_url: str, observer: ProviderCatalogObserver | None = None) -> None:
-        self.server_url = server_url
-        self._catalog_observer = observer
-        self._catalog_tasks: dict[str, tuple[CatalogRequest, Link, asyncio.Task[None]]] = {}
+    def __init__(self, snapshots: BackendSnapshotService | None = None) -> None:
+        self.snapshots = snapshots or BackendSnapshotService(machine_catalog=True)
+        self._tasks: set[asyncio.Task[None]] = set()
 
     def handle(self, message: WireMessage, link: Link, *, admit: Callable[[], bool]) -> None:
-        # Metadata never enters the child registry or the durable journal.
-        try:
-            request = type_adapter(CatalogRequest).validate_json(
-                json.dumps(message.payload), strict=True
-            )
-            context = message.payload["expected_context"]
-            assert isinstance(context, dict)
-            identity = parse_identity(context.get("executor_identity"))
-        except (ValueError, TypeError, KeyError):
+        if not admit():
             return
-        if (
-            identity != link.identity
-            or request.expected_context.executor_identity != identity
-            or not admit()
-        ):
-            return
-        workspace = request.expected_context.workspace
-        if workspace.workspace_path_policy is WorkspacePathPolicy.native_absolute:
-            if (
-                workspace.workspace_home_relative is not None
-                or not workspace.workspace_folder.is_absolute()
-            ):
-                return
-        elif workspace.workspace_home_relative is not None:
-            relative = Path(workspace.workspace_home_relative)
-            if relative.is_absolute() or ".." in relative.parts:
-                return
-        existing = self._catalog_tasks.get(message.request_id)
-        if message.kind is WireMessageKind.catalog_cancel:
-            if existing is not None and existing[0] == request and existing[1] is link:
-                # Repeated cancellation must not interrupt physical cleanup.
-                if not existing[2].cancelling():
-                    existing[2].cancel()
-            return
-        if existing is not None or not admit():
-            return
-        if len(self._catalog_tasks) >= MAX_CATALOG_OBSERVATIONS:
-            # The caller's bounded read yields unresolved evidence. No queue can
-            # reserve unbounded tasks while an earlier probe physically settles.
-            return
-        writer = link
-        deadline = asyncio.get_running_loop().time() + CATALOG_TIMEOUT_SECONDS
-        task = asyncio.create_task(
-            self._catalog(message, request, identity, writer, deadline, admit)
-        )
-        self._catalog_tasks[message.request_id] = (request, writer, task)
 
-        def settled(completed: asyncio.Task[None]) -> None:
-            current = self._catalog_tasks.get(message.request_id)
-            if current is not None and current[2] is completed:
-                self._catalog_tasks.pop(message.request_id, None)
-            if not completed.cancelled():
-                completed.exception()
-
-        task.add_done_callback(settled)
-
-    async def _catalog(
-        self,
-        message: WireMessage,
-        request: CatalogRequest,
-        identity: ExecutorIdentity,
-        writer: Link,
-        deadline: float,
-        admit: Callable[[], bool],
-    ) -> None:
-        observer = self._catalog_observer
-        if observer is None or (
-            hasattr(observer, "executor_identity") and observer.executor_identity != identity
-        ):
-            from planner.conversation.model_resolution.observer import ProductionCatalogObserver
-
-            observer = ProductionCatalogObserver(
-                destination=TicketLocale.macos,
-                panels_server_url=self.server_url,
-                executor_identity=identity,
-            )
-            self._catalog_observer = observer
-        owner = asyncio.current_task()
-        assert owner is not None
-
-        async def observe() -> CatalogResult:
-            return await observer.observe(
-                request.backend_key,
-                workspace=request.expected_context.workspace,
-                attempt_id=message.request_id,
-                deadline=deadline,
-            )
-
-        work = asyncio.create_task(observe())
-        try:
+        async def reply() -> None:
             try:
-                async with asyncio.timeout_at(deadline):
-                    result = await asyncio.shield(work)
-            except BaseException as error:
-                work.cancel()
-                await wait_for_settlement(work)
-                if isinstance(error, asyncio.CancelledError):
-                    raise
-                result = CatalogUnavailable(
-                    backend_key=request.backend_key,
-                    destination=TicketLocale.macos,
-                    attempted_context=None,
-                    reason=ValidationReason.timeout
-                    if isinstance(error, TimeoutError)
-                    else ValidationReason.catalog_unavailable,
-                    corrective_action=CorrectiveAction.refresh_catalog,
-                    detail="The destination catalog observation did not complete.",
-                    observed_at=int(time.time()),
-                    retained_evidence=None,
+                raw_backend = message.payload["backend_key"]
+                if not isinstance(raw_backend, str):
+                    return
+                backend = ConversationBackendKey(raw_backend)
+                snapshot = await self.snapshots.snapshot(
+                    backend,
+                    refresh=message.payload.get("refresh") is True,
+                    discover_update_advisory=False,
                 )
-            # A catalog result has no authority after cancellation or generation
-            # replacement. In particular, never write through self._send here.
-            async with asyncio.timeout(CATALOG_CANCEL_TIMEOUT_SECONDS):
-                await writer.tell(
+                await link.tell(
                     WireMessageKind.catalog_response,
-                    as_object(CatalogResponse(request.backend_key, identity, result)),
+                    as_object(snapshot),
                     request_id=message.request_id,
-                    admit=lambda: admit() and not owner.cancelling(),
+                    admit=admit,
                 )
-        except (ConnectionError, OSError, ValueError, TimeoutError):
-            # A read-only failure does not disturb a shared execution connection.
-            return
-        finally:
-            if not work.done():
-                work.cancel()
-            await wait_for_settlement(work)
+            except (ConnectionError, OSError, ValueError, TypeError, KeyError):
+                # An optional read must not disturb the shared execution link.
+                return
+
+        task = asyncio.create_task(reply())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def settle(self) -> None:
-        tasks = tuple(task for _, _, task in self._catalog_tasks.values())
+        tasks = tuple(self._tasks)
         for task in tasks:
             if not task.cancelling():
                 task.cancel()
@@ -195,18 +66,16 @@ class MacCatalogRelay:
 
 
 class VpsCatalogRelay:
-    def __init__(self, runs: MacRuns) -> None:
+    def __init__(self, runs: MacRuns, *, machine_id: str = "macos") -> None:
         self.runs = runs
-        self.clock_sample: ClockSample | None = None
-        self._tasks: set[asyncio.Task[None]] = set()
+        self.machine_id = machine_id
+        self._tasks: dict[
+            ConversationBackendKey, tuple[bool, asyncio.Task[BackendSnapshot]]
+        ] = {}
 
     @property
     def identity(self) -> ExecutorIdentity | None:
         return self.runs.identity
-
-    @property
-    def link(self) -> Link | None:
-        return self.runs.link
 
     @property
     def ready(self) -> bool:
@@ -215,239 +84,137 @@ class VpsCatalogRelay:
     def owns_conversation(self, conversation_id: str) -> bool:
         return self.runs.owns_conversation(conversation_id)
 
-    async def close(self) -> None:
-        for task in tuple(self._tasks):
-            task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+    def retained(self, backend_key: ConversationBackendKey) -> BackendSnapshot | None:
+        # Panels currently has one configured Mac. Its process incarnation changes
+        # on restart, whereas this copy belongs to the machine, including offline.
+        with closing(connect(self.runs.db_path)) as conn:
+            row = conn.execute(
+                "SELECT snapshot_json FROM machine_backend_snapshots "
+                "WHERE machine_id=? AND backend_key=?",
+                (self.machine_id, backend_key.value),
+            ).fetchone()
+        return None if row is None else type_adapter(BackendSnapshot).validate_json(row[0])
 
-    async def observe_catalog(
-        self,
-        request: CatalogRequest,
-        *,
-        attempt_id: str,
-        deadline: float | None = None,
-    ) -> CatalogResult:
-        """Read scoped metadata without child authority or transport timeout effects."""
-        identity, writer = self.identity, self.link
-        failure_reason = ValidationReason.catalog_unavailable
-        if not attempt_id:
-            raise ValueError("catalog attempt ID must be nonempty")
-        if (
-            identity is None
-            or writer is None
-            or not self.ready
-            or request.expected_context.executor_identity != identity
-        ):
-            return self._catalog_failure(request, ValidationReason.offline)
-        request_id = str(uuid4())
-        expires = asyncio.get_running_loop().time() + CATALOG_TIMEOUT_SECONDS
-        if deadline is not None:
-            expires = min(expires, deadline)
-        completed = False
+    async def snapshot(
+        self, backend_key: ConversationBackendKey, *, refresh: bool = False
+    ) -> BackendSnapshot:
+        kept = self.retained(backend_key)
+        if not self.runs.ready or self.runs.link is None:
+            answer = self._answer(backend_key, kept)
+            return replace(answer, diagnoses=(*answer.diagnoses, "The Mac is offline."))
+        active = self._tasks.get(backend_key)
+        if active is not None and refresh and not active[0]:
+            # An ordinary version check may return the Mac's cached list. Refresh
+            # still needs a forced read after that check settles.
+            try:
+                await asyncio.shield(active[1])
+            except asyncio.CancelledError:
+                if not active[1].cancelled():
+                    raise
+            active = self._tasks.get(backend_key)
+            if active is not None and active[1].done():
+                active = None
+        pending = None if active is None else active[1]
+        if pending is None:
+            pending = asyncio.create_task(self._read(backend_key, refresh=refresh))
+            self._tasks[backend_key] = (refresh, pending)
+            pending.add_done_callback(self._discard)
+        # Ordinary picker reads keep the last copy readable while the Mac checks
+        # its version/backstop. Cold reads and explicit Refresh wait for the answer.
+        if kept is not None and not refresh:
+            return kept
         try:
-            async with asyncio.timeout_at(expires):
-                response = await writer.request(
-                    WireMessageKind.catalog_request,
-                    _object(request),
-                    request_id=request_id,
-                    timeout=max(0, expires - asyncio.get_running_loop().time()),
-                    close_on_timeout=False,
-                    admit=lambda: self.link is writer and self.identity == identity and self.ready,
-                )
-                if self.link is not writer or self.identity != identity or not self.ready:
-                    raise ConnectionError("catalog generation changed")
-                if response.kind is not WireMessageKind.catalog_response:
-                    raise ValueError("unexpected catalog reply")
-                self._catalog_raw_identities(response.payload)
-                parsed = type_adapter(CatalogResponse).validate_json(
-                    json.dumps(response.payload), strict=True
-                )
-                if parse_identity(response.payload.get("executor_identity")) != identity:
-                    raise ValueError("catalog reply identity changed")
-                failure_reason = ValidationReason.context_changed
-                if (
-                    parsed.backend_key != request.backend_key
-                    or parsed.executor_identity != identity
-                ):
-                    raise ValueError("catalog reply backend changed")
-                result = self._catalog_result(parsed.result, request, request_id, attempt_id)
-                completed = True
-                return result
-        except TimeoutError:
-            failure_reason = ValidationReason.timeout
-        except (ConnectionError, OSError):
-            failure_reason = ValidationReason.offline
-        except (ValueError, TypeError, KeyError):
-            pass
-        finally:
-            if not completed:
-                # Cancellation is a bounded read-only frame on the original
-                # writer. A lost frame leaves the native deadline in force.
-                task = asyncio.create_task(
-                    self._cancel_catalog(
-                        request_id,
-                        request,
-                        identity,
-                        writer,
-                    )
-                )
-                self._tasks.add(task)
-                task.add_done_callback(self._tasks.discard)
-        return self._catalog_failure(request, failure_reason)
+            return await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            if pending.cancelled():
+                return self._answer(backend_key, self.retained(backend_key))
+            raise
 
-    def _catalog_failure(
-        self, request: CatalogRequest, reason: ValidationReason
-    ) -> CatalogUnavailable:
-        return CatalogUnavailable(
-            backend_key=request.backend_key,
-            destination=TicketLocale.macos,
-            attempted_context=None,
-            reason=reason,
-            corrective_action=CorrectiveAction.reconnect_destination
-            if reason is ValidationReason.offline
-            else CorrectiveAction.refresh_catalog,
-            detail="The destination catalog could not be verified.",
-            observed_at=int(time.time()),
-            retained_evidence=None,
-        )
+    async def _read(self, backend_key: ConversationBackendKey, *, refresh: bool) -> BackendSnapshot:
+        writer, identity = self.runs.link, self.runs.identity
+        if writer is None:
+            return self._answer(backend_key, self.retained(backend_key))
+        try:
+            response = await writer.request(
+                WireMessageKind.catalog_request,
+                {"backend_key": backend_key.value, "refresh": refresh},
+                timeout=CATALOG_TIMEOUT_SECONDS,
+                close_on_timeout=False,
+                admit=lambda: self.runs.link is writer and self.runs.ready,
+            )
+            snapshot = type_adapter(BackendSnapshot).validate_json(json.dumps(response.payload))
+            if (
+                response.kind is not WireMessageKind.catalog_response
+                or snapshot.backend_key is not backend_key
+            ):
+                raise ValueError("unexpected machine snapshot")
+            if self.runs.link is writer and self.runs.identity == identity and self.runs.ready:
+                previous = self.retained(backend_key)
+                if (
+                    previous is not None
+                    and previous.models_complete
+                    and not snapshot.models_complete
+                ):
+                    snapshot = replace(
+                        snapshot,
+                        available_models=previous.available_models,
+                        reasoning_effort_options=previous.reasoning_effort_options,
+                        default_model_id=previous.default_model_id,
+                        default_reasoning_effort=previous.default_reasoning_effort,
+                        models_complete=True,
+                    )
+                with closing(connect(self.runs.db_path)) as conn:
+                    conn.execute(
+                        "INSERT INTO machine_backend_snapshots VALUES (?,?,?) "
+                        "ON CONFLICT(machine_id,backend_key) DO UPDATE "
+                        "SET snapshot_json=excluded.snapshot_json "
+                        "WHERE snapshot_json != excluded.snapshot_json",
+                        (self.machine_id, backend_key.value, json.dumps(as_object(snapshot))),
+                    )
+                    conn.commit()
+                return snapshot
+        except (TimeoutError, ConnectionError, OSError, ValueError):
+            pass
+        return self._answer(backend_key, self.retained(backend_key))
 
     @staticmethod
-    def _catalog_raw_identities(payload: JsonObject) -> None:
-        # Existing ExecutorIdentity predates extra="forbid". Validate the raw
-        # dictionaries before a dataclass parser can discard an unknown field.
-        parse_identity(payload.get("executor_identity"))
-        result = payload.get("result")
-        if not isinstance(result, dict):
-            raise ValueError("catalog result must be an object")
-        contexts: list[object] = []
-        if result.get("kind") == "observation":
-            evidence = result.get("evidence")
-            if not isinstance(evidence, dict):
-                raise ValueError("catalog evidence must be an object")
-            contexts.append(evidence.get("context"))
-        elif result.get("kind") == "unavailable":
-            if result.get("attempted_context") is not None:
-                contexts.append(result["attempted_context"])
-            retained = result.get("retained_evidence")
-            if retained is not None:
-                if not isinstance(retained, dict):
-                    raise ValueError("retained catalog evidence must be an object")
-                contexts.append(retained.get("context"))
-        for context in contexts:
-            if not isinstance(context, dict):
-                raise ValueError("catalog context must be an object")
-            parse_identity(context.get("executor_identity"))
-            generation = context.get("account_generation")
-            if generation is not None:
-                if (
-                    not isinstance(generation, dict)
-                    or set(generation) != {"account_id", "last_refresh"}
-                    or any(type(value) is not str or not value for value in generation.values())
-                ):
-                    raise ValueError("invalid catalog account generation fields")
-
-    def _catalog_context(self, context: LaunchContext, request: CatalogRequest) -> None:
-        if (
-            context.backend_key != request.backend_key
-            or context.destination is not TicketLocale.macos
-            or context.executor_identity != request.expected_context.executor_identity
-            or context.workspace != request.expected_context.workspace
-            or not context.localized_workspace_folder.is_absolute()
-        ):
-            raise ValueError("catalog context differs from request")
-        # Nested identity uses the same strict field and version validation as hello.
-        if parse_identity(_object(context.executor_identity)) != self.identity:
-            raise ValueError("catalog nested identity differs from connection")
-        workspace = context.workspace
-        from planner.conversation.contracts import WorkspacePathPolicy
-
-        if workspace.workspace_path_policy is WorkspacePathPolicy.native_absolute:
-            if workspace.workspace_home_relative is not None:
-                raise ValueError("native catalog workspace cannot use home mapping")
-        elif workspace.workspace_home_relative is not None:
-            relative = Path(workspace.workspace_home_relative)
-            if relative.is_absolute() or ".." in relative.parts:
-                raise ValueError("unsafe catalog workspace mapping")
-
-    def _catalog_result(
-        self, result: CatalogResult, request: CatalogRequest, request_id: str, attempt_id: str
-    ) -> CatalogResult:
-        if isinstance(result, CatalogObservation):
-            self._catalog_context(result.evidence.context, request)
-            if result.evidence.attempt_id != request_id:
-                raise ValueError("catalog attempt differs from request")
-            uncertainty: float | None = None
-            sample = self.clock_sample
-            if sample is not None and result.evidence.clock_uncertainty_seconds is not None:
-                lower = sample.mac_sent_at_ms - sample.vps_received_at_ms
-                upper = sample.mac_received_at_ms - sample.vps_sent_at_ms
-                if (
-                    sample.vps_received_at_ms >= sample.vps_sent_at_ms
-                    and sample.mac_sent_at_ms >= sample.mac_received_at_ms
-                    and lower <= upper
-                ):
-                    uncertainty = (
-                        result.evidence.clock_uncertainty_seconds
-                        + max(abs(lower), abs(upper)) / 1000
-                        + 1.0
-                    )
-            return replace(
-                result,
-                evidence=replace(
-                    result.evidence,
-                    attempt_id=attempt_id,
-                    clock_uncertainty_seconds=uncertainty,
-                ),
-            )
-        if (
-            result.backend_key != request.backend_key
-            or result.destination is not TicketLocale.macos
-        ):
-            raise ValueError("catalog failure differs from request")
-        if result.attempted_context is not None:
-            self._catalog_context(result.attempted_context, request)
-        if result.retained_evidence is not None:
-            self._catalog_context(result.retained_evidence.context, request)
-        return result
-
-    async def _cancel_catalog(
-        self,
-        request_id: str,
-        request: CatalogRequest,
-        identity: ExecutorIdentity,
-        writer: Link,
-    ) -> None:
-        try:
-            async with asyncio.timeout(CATALOG_CANCEL_TIMEOUT_SECONDS):
-                await writer.tell(
-                    WireMessageKind.catalog_cancel,
-                    _object(request),
-                    request_id=request_id,
-                    admit=lambda: self.link is writer and self.identity == identity and self.ready,
-                )
-        except (ConnectionError, OSError, ValueError, TimeoutError):
-            pass
-
-    async def _measure_clock(self) -> None:
-        identity, writer = self.identity, self.link
-        if writer is None:
-            return
-        sent = time.time_ns() // 1_000_000
-        response = await writer.request(
-            WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": sent}}
-        )
-        if self.identity != identity or self.link is not writer:
-            return
-        self.clock_sample = ClockSample(
-            sent,
-            int(cast(int, response.payload["mac_received_at_ms"])),
-            int(cast(int, response.payload["mac_sent_at_ms"])),
-            time.time_ns() // 1_000_000,
+    def _answer(
+        backend_key: ConversationBackendKey, kept: BackendSnapshot | None
+    ) -> BackendSnapshot:
+        return kept or BackendSnapshot(
+            backend_key,
+            False,
+            None,
+            None,
+            None,
+            (),
+            (),
+            None,
+            None,
+            None,
+            ("No model list has been read from the Mac yet.",),
         )
 
+    def connected(self) -> None:
+        async def refresh(backend: ConversationBackendKey) -> BackendSnapshot:
+            return await self._read(backend, refresh=True)
 
-def _object(value: object) -> JsonObject:
-    encoded = encode_value(value)
-    if not isinstance(encoded, dict):
-        raise ValueError("expected object")
-    return encoded
+        for backend in ConversationBackendKey:
+            # A replaced generation's result cannot overwrite the new connection.
+            previous = self._tasks.get(backend)
+            if previous is not None:
+                previous[1].cancel()
+            task = asyncio.create_task(refresh(backend))
+            self._tasks[backend] = (True, task)
+            task.add_done_callback(self._discard)
+
+    def _discard(self, completed: asyncio.Task[BackendSnapshot]) -> None:
+        for backend, pending in tuple(self._tasks.items()):
+            if pending[1] is completed:
+                self._tasks.pop(backend)
+
+    async def close(self) -> None:
+        tasks = tuple(task for _, task in self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

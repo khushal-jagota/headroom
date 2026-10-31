@@ -34,7 +34,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import Any, Final, Protocol
 
 import anyio
 import httpx
@@ -55,27 +55,7 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
     CodexModelCatalogUnavailable,
     probe_codex_model_catalog,
 )
-from planner.conversation.backends.probe_lifetime import owned_probe
 from planner.conversation.contracts import ConversationBackendKey
-
-if TYPE_CHECKING:
-    from planner.conversation.model_resolution.contracts import (
-        CatalogResult,
-        CatalogWorkspaceBinding,
-    )
-    from planner.execution_identity import ExecutorIdentity
-
-
-@dataclass(frozen=True, slots=True)
-class BackendSnapshotScope:
-    """Destination configuration belongs to one workspace, account and runtime owner."""
-
-    backend_key: ConversationBackendKey
-    destination: str
-    workspace: CatalogWorkspaceBinding
-    executor_identity: ExecutorIdentity | None = None
-    account_generation: CodexLoginGeneration | None = None
-
 
 # How codex and claude are asked what they can be run as. Named as parameters because
 # asking spawns a child: a test describes the answer instead of spawning one.
@@ -95,6 +75,8 @@ UPDATE_COMMAND_TIMEOUT_SECONDS: Final = 600.0
 # How much of a failed command's output is kept. Enough to see what went wrong, not enough
 # to be a log file in a browser.
 UPDATE_OUTPUT_TAIL_MAXIMUM_CHARACTERS: Final = 10_000
+
+MACHINE_CATALOG_BACKSTOP_SECONDS: Final = 12 * 60 * 60
 
 VERSION_ARGUMENTS: Final = ("--version",)
 
@@ -158,6 +140,7 @@ class BackendModel:
     detail: str | None = None
     reasoning_effort_options: tuple[str, ...] | None = None
     selected_variant: str | None = None
+    version: tuple[int, ...] = ()
     resolved_model_id: str | None = None
 
 
@@ -202,7 +185,6 @@ class BackendSnapshot:
     update_advisory: BackendUpdateAdvisory | None
     diagnoses: tuple[str, ...]
     models_complete: bool = False
-    catalog_account_generation: CodexLoginGeneration | None = None
 
 
 class BackendUpdateOutcome(StrEnum):
@@ -360,7 +342,7 @@ class SubprocessBackendProbeEnvironment:
                 raise
 
         try:
-            return await owned_probe(operation, timeout_seconds=timeout_seconds)
+            return await asyncio.wait_for(operation(), timeout=timeout_seconds)
         except TimeoutError:
             return CommandOutcome(
                 -1, "", f"{argv[0]} did not answer within {timeout_seconds:g}s"
@@ -641,16 +623,16 @@ async def _claude_catalog(request: _CatalogRequest) -> _CatalogAnswer:
             ),
         )
     return _CatalogAnswer(
-        complete=catalog.complete,
+        complete=True,
         models=tuple(
             BackendModel(
-                model_id=model.model_id,
+                model_id=model.resolved_model_id,
                 display_name=model.display_name,
                 detail=f"{model.model_id} → {model.resolved_model_id}",
                 resolved_model_id=model.resolved_model_id,
                 reasoning_effort_options=model.reasoning_effort_options,
             )
-            for model in catalog.models if not getattr(model, "hidden", False)
+            for model in catalog.models
         ),
         reasoning_effort_options=catalog.reasoning_effort_options
         or _CLAUDE_FALLBACK_REASONING_EFFORT_OPTIONS,
@@ -758,7 +740,7 @@ async def _codex_catalog(request: _CatalogRequest) -> _CatalogAnswer:
                 display_name=model.display_name,
                 reasoning_effort_options=model.reasoning_effort_options,
             )
-            for model in catalog.models if not getattr(model, "hidden", False)
+            for model in catalog.models
         ),
         reasoning_effort_options=catalog.reasoning_effort_options,
         default_model_id=catalog.default_model_id,
@@ -1033,24 +1015,6 @@ def read_codex_login_standing(
     return CodexLoginStanding(stored=stored, rejected=rejected)
 
 
-def read_backend_identity_status(
-    backend_key: ConversationBackendKey,
-    outcome: CommandOutcome,
-    *,
-    codex_login: CodexLoginStanding | None = None,
-    now: datetime | None = None,
-) -> BackendIdentityStatus:
-    """Project the existing local identity parser without leaking provider output."""
-    reader = _BACKEND_PROBE_RECIPES[backend_key].read_identity
-    if reader is None:
-        return BackendIdentityStatus.unknown
-    return reader(_IdentityRequest(
-        outcome=outcome,
-        codex_login=codex_login,
-        now=now if now is not None else datetime.now(UTC),
-    )).status
-
-
 async def probe_backend(
     backend_key: ConversationBackendKey,
     environment: BackendProbeEnvironment,
@@ -1154,16 +1118,20 @@ async def probe_backend(
 def _model_metadata(
     backend_key: ConversationBackendKey, models: tuple[BackendModel, ...]
 ) -> tuple[BackendModel, ...]:
-    from planner.conversation.model_resolution.logic.variants import recognize_variant
+    from planner.conversation.model_resolution.logic.variants import (
+        numerical_version,
+        recognize_variant,
+    )
 
     entries: list[BackendModel] = []
     for model in models:
-        recognized = recognize_variant(backend_key, model.model_id)
+        recognized = recognize_variant(backend_key, model.resolved_model_id or model.model_id)
         variant = None if recognized is None else recognized.name
         entries.append(
             replace(
                 model,
                 selected_variant=variant,
+                version=numerical_version(model.resolved_model_id or model.model_id),
                 resolved_model_id=model.resolved_model_id or model.model_id,
             )
         )
@@ -1294,13 +1262,16 @@ class BackendSnapshotService:
         claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
         remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
         now: Callable[[], datetime] | None = None,
+        machine_catalog: bool = False,
     ) -> None:
+        self._machine_catalog = machine_catalog
+        self._probed_at: dict[ConversationBackendKey, datetime] = {}
         self._environment = environment or SubprocessBackendProbeEnvironment()
         self._now = now or (lambda: datetime.now(UTC))
         self._codex_model_catalog_probe = codex_model_catalog_probe
         self._claude_model_catalog_probe = claude_model_catalog_probe
         self._remembered_codex_login_rejection = remembered_codex_login_rejection
-        self._snapshots: dict[ConversationBackendKey | BackendSnapshotScope, BackendSnapshot] = {}
+        self._snapshots: dict[ConversationBackendKey, BackendSnapshot] = {}
         # What the kept codex card was probed against, read at the instant it was probed.
         # A card is kept because probing costs subprocesses and the machine rarely changes
         # — but a login is the one thing here that changes without the machine changing,
@@ -1311,7 +1282,7 @@ class BackendSnapshotService:
         # A probe is shared only with another reader of the same backend. Independent
         # backends use separate CLIs and catalogues, so one slow child must not hold the
         # others behind it.
-        self._snapshot_locks: dict[ConversationBackendKey | BackendSnapshotScope, asyncio.Lock] = {
+        self._snapshot_locks: dict[ConversationBackendKey, asyncio.Lock] = {
             backend_key: asyncio.Lock() for backend_key in ConversationBackendKey
         }
         # One lock per backend, held for a whole update rather than for a probe. Reading a
@@ -1322,106 +1293,8 @@ class BackendSnapshotService:
             backend_key: asyncio.Lock() for backend_key in ConversationBackendKey
         }
 
-    def clear_destination_snapshots(
-        self, backend_key: ConversationBackendKey | None = None,
-    ) -> None:
-        """Forget suggestions when the existing runtime owner or sign-in lifecycle changes."""
-        for scope in tuple(self._snapshot_locks):
-            if isinstance(scope, BackendSnapshotScope) and (
-                backend_key is None or scope.backend_key == backend_key
-            ):
-                self._snapshots.pop(scope, None)
-                self._snapshot_locks.pop(scope, None)
-
-    def retained_destination(self, scope: BackendSnapshotScope) -> BackendSnapshot | None:
-        """Read already retained suggestions without observation or a freshness gate."""
-        return self._snapshots.get(scope)
-
-    async def destination_snapshot(
-        self,
-        scope: BackendSnapshotScope,
-        *,
-        observe: Callable[[], Awaitable[CatalogResult]],
-        is_current: Callable[[], Awaitable[bool]],
-        refresh: bool = False,
-    ) -> BackendSnapshot:
-        """Coalesce one scoped refresh and retain a complete list through partial failure."""
-        from planner.conversation.model_resolution.contracts import (
-            CatalogObservation,
-            PrerequisiteStatus,
-        )
-
-        empty = BackendSnapshot(
-            scope.backend_key, False, None, None, None, (), (), None, None, None, (),
-        )
-        if not await is_current():
-            return empty
-        kept = self._snapshots.get(scope)
-        if kept is not None and not refresh:
-            return kept
-        lock = self._snapshot_locks.setdefault(scope, asyncio.Lock())
-        waiting = lock.locked()
-        async with lock:
-            if waiting:
-                return self._snapshots.get(scope, empty) if await is_current() else empty
-            # Another request that held this lock already supplied this refresh.
-            latest = self._snapshots.get(scope)
-            if latest is not None and latest is not kept:
-                return latest
-            try:
-                result = await observe()
-            except Exception:  # noqa: BLE001 - optional suggestions retain their previous list
-                return self._snapshots.get(scope, empty) if await is_current() else empty
-            if not await is_current() or self._snapshot_locks.get(scope) is not lock:
-                return empty
-            if not isinstance(result, CatalogObservation):
-                return self._snapshots.get(scope, empty)
-            context = result.evidence.context
-            if (
-                context.backend_key != scope.backend_key
-                or context.destination.value != scope.destination
-                or context.workspace != scope.workspace
-                or context.executor_identity != scope.executor_identity
-                or (scope.account_generation is not None
-                    and context.account_generation != scope.account_generation)
-            ):
-                return empty
-            latest = self._snapshots.get(scope)
-            if (not result.complete and latest is not None and latest.models_complete
-                    and latest.catalog_account_generation == context.account_generation):
-                return latest
-            models = _model_metadata(scope.backend_key, tuple(
-                BackendModel(
-                    row.submitted_token,
-                    display_name=row.display_name,
-                    reasoning_effort_options=row.supported_reasoning_efforts,
-                    resolved_model_id=row.resolved_model_id,
-                )
-                for row in result.rows if not row.hidden
-            ))
-            snapshot = BackendSnapshot(
-                backend_key=scope.backend_key,
-                installed=result.installation is PrerequisiteStatus.available,
-                executable_path=None,
-                version=context.executable_version,
-                identity=BackendIdentity({
-                    PrerequisiteStatus.available: BackendIdentityStatus.authenticated,
-                    PrerequisiteStatus.unavailable: BackendIdentityStatus.unauthenticated,
-                    PrerequisiteStatus.unknown: BackendIdentityStatus.unknown,
-                }[result.credentials]),
-                available_models=models,
-                reasoning_effort_options=tuple(dict.fromkeys(
-                    effort for model in models for effort in model.reasoning_effort_options or ()
-                )),
-                default_model_id=None,
-                default_reasoning_effort=None,
-                update_advisory=None,
-                diagnoses=(),
-                models_complete=result.complete,
-                catalog_account_generation=context.account_generation,
-            )
-            self._snapshots[scope] = snapshot
-            return snapshot
+    def retained(self, backend_key: ConversationBackendKey) -> BackendSnapshot | None:
+        return self._snapshots.get(backend_key)
 
     async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
         return tuple(
@@ -1442,7 +1315,24 @@ class BackendSnapshotService:
     ) -> BackendSnapshot:
         # A forced advisory refresh keeps the last complete card readable. An ordinary
         # reader never waits behind remote work when this process already has an answer.
-        stale = self._codex_login_has_moved(backend_key)
+        login_moved = self._codex_login_has_moved(backend_key)
+        stale = False if self._machine_catalog else login_moved
+        if self._machine_catalog and not refresh:
+            previous = self._snapshots.get(backend_key)
+            if previous is not None:
+                stale = (
+                    self._now() - self._probed_at[backend_key]
+                ).total_seconds() >= MACHINE_CATALOG_BACKSTOP_SECONDS
+                if backend_key is not ConversationBackendKey.hermes:
+                    executable = self._environment.executable_path(str(backend_key))
+                    version = None
+                    if executable is not None:
+                        outcome = await self._environment.run(
+                            (executable, *VERSION_ARGUMENTS),
+                            timeout_seconds=VERSION_PROBE_TIMEOUT_SECONDS,
+                        )
+                        version = parse_version(outcome.standard_output + outcome.standard_error)
+                    stale = stale or version != previous.version
         if not refresh and not stale:
             kept = self._snapshots.get(backend_key)
             if kept is not None:
@@ -1477,30 +1367,43 @@ class BackendSnapshotService:
             )
             if codex_login is not None:
                 latest_login = read_codex_login_standing(self._remembered_codex_login_rejection)
-                if (latest_login.everything_a_card_reads(now=self._now())
-                        != codex_login.everything_a_card_reads(now=reading_at)):
-                    return replace(probed, identity=None, available_models=(),
-                                   reasoning_effort_options=(), default_model_id=None,
-                                   default_reasoning_effort=None, models_complete=False)
+                if latest_login.everything_a_card_reads(
+                    now=self._now()
+                ) != codex_login.everything_a_card_reads(now=reading_at):
+                    return replace(
+                        probed,
+                        identity=None,
+                        available_models=(),
+                        reasoning_effort_options=(),
+                        default_model_id=None,
+                        default_reasoning_effort=None,
+                        models_complete=False,
+                    )
             if stale and not refresh and probed.update_advisory is None:
-                # This probe happened because the login moved, not because anybody asked
-                # for update discovery, so it carries no advisory. Dropping the one the
+                # This automatic read was not asked for update discovery, so it carries
+                # no advisory. Dropping the one the
                 # kept card had would make the Update button vanish for a reason that has
                 # nothing to do with updates.
                 kept_advisory = self._snapshots.get(backend_key)
                 if kept_advisory is not None and kept_advisory.update_advisory is not None:
                     probed = replace(probed, update_advisory=kept_advisory.update_advisory)
             previous = self._snapshots.get(backend_key)
-            if (not stale and previous is not None
-                    and previous.models_complete and not probed.models_complete):
+            if (
+                not login_moved
+                and previous is not None
+                and previous.models_complete
+                and not probed.models_complete
+            ):
                 probed = replace(
-                    probed, available_models=previous.available_models,
+                    probed,
+                    available_models=previous.available_models,
                     reasoning_effort_options=previous.reasoning_effort_options,
                     default_model_id=previous.default_model_id,
                     default_reasoning_effort=previous.default_reasoning_effort,
                     models_complete=True,
                 )
             self._snapshots[backend_key] = probed
+            self._probed_at[backend_key] = reading_at
             if backend_key is ConversationBackendKey.codex and codex_login is not None:
                 self._codex_card_was_probed_against = codex_login.everything_a_card_reads(
                     now=reading_at

@@ -12,6 +12,9 @@ branch_labels = None
 depends_on = None
 
 STATEMENTS = (
+    """CREATE TABLE machine_backend_snapshots (
+        machine_id TEXT NOT NULL, backend_key TEXT NOT NULL, snapshot_json TEXT NOT NULL,
+        PRIMARY KEY(machine_id, backend_key))""",
     """CREATE TABLE executor_connections (
         executor_incarnation TEXT PRIMARY KEY, connection_generation INTEGER NOT NULL,
         identity_json TEXT NOT NULL, connection_state TEXT NOT NULL,

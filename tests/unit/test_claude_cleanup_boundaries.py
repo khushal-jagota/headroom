@@ -11,7 +11,6 @@ from typing import cast
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
 from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
-from tests.support.executor_catalog import ScriptedCatalogObserver
 from tests.unit.test_executor_native_runtime import (
     canonical_snapshot,
 )
@@ -33,8 +32,6 @@ from planner.conversation.contracts import (
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
-    CatalogObservation,
-    CatalogRequest,
     SelectionKind,
 )
 from planner.conversation.storage import ConversationStore
@@ -103,8 +100,6 @@ def test_claude_stop_result_controls_canonical_retirement(
         remote.runs.store.begin_connection(IDENTITY, 1)
         remote.runs.store.mark_ready(IDENTITY, 2)
         registry, clients = claude_registry(tmp_path, monkeypatch)
-        observer = ScriptedCatalogObserver(lambda: IDENTITY)
-        observer.model = "test"
         monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
         ticket = tickets.create_ticket(
             tmp_db,
@@ -119,16 +114,6 @@ def test_claude_stop_result_controls_canonical_retirement(
             locale=TicketLocale.macos,
         )
 
-        async def observe(request: CatalogRequest, *, attempt_id: str) -> CatalogObservation:
-            assert request.expected_context.executor_identity == IDENTITY
-            return await observer.observe(
-                request.backend_key,
-                workspace=request.expected_context.workspace,
-                attempt_id=attempt_id,
-                deadline=30,
-            )
-
-        monkeypatch.setattr(remote.catalog, "observe_catalog", observe)
         commands: list[ChildCommand] = []
 
         async def send(command: ChildCommand) -> CommandOutcome:
@@ -147,7 +132,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             backend_child_factories=dict.fromkeys(ConversationBackendKey, remote.runs),
             message_files=ConversationMessageFiles(remote.db_path),
         )
-        system.configure_destination_validation(observer, endpoint=remote.catalog)
+        system.configure_machine_catalog(remote.catalog)
         remote.bind_conversations(system)
         native: ClaudeAgentSdkBackendChild | None = None
         original_disconnect = None

@@ -134,16 +134,6 @@ class FileTransfer:
     manifest: FileManifest
 
 
-@dataclass(frozen=True, slots=True)
-class ClockSample:
-    """NTP-style exchange; Unix milliseconds on each host, no zero uncertainty."""
-
-    vps_sent_at_ms: int
-    mac_received_at_ms: int
-    mac_sent_at_ms: int
-    vps_received_at_ms: int
-
-
 class ConnectionState(StrEnum):
     disconnected = "disconnected"
     reconciling = "reconciling"
@@ -628,7 +618,6 @@ class WireMessageKind(StrEnum):
     read_response = "read_response"
     catalog_request = "catalog_request"
     catalog_response = "catalog_response"
-    catalog_cancel = "catalog_cancel"
     health = "health"
     error = "error"
 

@@ -16,15 +16,13 @@ from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
-from typing import Never, cast
+from typing import cast
 
 import pytest
-from tests.support.executor_catalog import ScriptedCatalogObserver
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.contracts import (
-    ConversationBackendKey,
     ConversationStartRequest,
     ConversationSystem,
     HeldPrompt,
@@ -38,7 +36,6 @@ from planner.conversation.message_content import MessageContent, text_message_co
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
     CatalogWorkspaceBinding,
-    LaunchContext,
     ModelSelection,
     SelectionKind,
 )
@@ -58,7 +55,7 @@ from planner.runtime.worker_step_readiness_loop import (
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback, worker_restart
-from planner.tickets.contracts import Ticket, TicketLocale, TicketStatus, WorkerStepClaim
+from planner.tickets.contracts import Ticket, TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
@@ -69,44 +66,9 @@ TODAY_DAY_ID = "day_2026-07-06"
 # --- the world under test ------------------------------------------------------
 
 
-class _VpsCatalogObserver(ScriptedCatalogObserver):
-    """Scoped local metadata only; provider execution remains the in-memory control.
-
-    These original tests own claims and delivery fates. Production validation still
-    runs through ModelResolutionService; actual provider admission is separately
-    exercised by the actual-System lifecycle tests and connected native proof.
-    """
-
-    async def capture_context(
-        self,
-        backend_key: ConversationBackendKey,
-        *,
-        workspace: CatalogWorkspaceBinding,
-    ) -> LaunchContext:
-        return LaunchContext(
-            "readiness-fixture-context",
-            TicketLocale.vps,
-            backend_key,
-            None,
-            workspace,
-            workspace.workspace_folder,
-            "fixture-cli",
-            "1",
-            "fixture-settings",
-            None,
-        )
-
-
-def _no_native_identity() -> Never:
-    raise AssertionError("local readiness metadata must not request native identity")
-
-
 class _ScopedMetadataConversationSystem(InMemoryConversationSystem):
     def __init__(self, db_path: str, clock: TestClock) -> None:
         super().__init__()
-        self.observer = _VpsCatalogObserver(_no_native_identity)
-        self.observer.model = "gpt-6.1-sol"
-        self.observer.observed_at = clock.now_unix() - 1
         self.db_path = db_path
 
     async def validate_launch_selection(

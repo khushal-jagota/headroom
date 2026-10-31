@@ -13,24 +13,15 @@ from pathlib import Path
 import pytest
 from tests.unit.test_conversation_system import _Harness
 
-from planner.conversation.backends.codex_app_server.login import CodexLoginGeneration
 from planner.conversation.contracts import ConversationBackendKey as Backend
 from planner.conversation.contracts import (
     WorkspacePathPolicy,
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.model_resolution.contracts import (
-    CatalogEvidenceReference,
-    CatalogObservation,
-    CatalogRow,
-    CatalogUnavailable,
     CatalogWorkspaceBinding,
-    CorrectiveAction,
-    LaunchContext,
     ModelSelection,
-    PrerequisiteStatus,
     SelectionKind,
-    ValidationReason,
     ValidationState,
 )
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
@@ -76,73 +67,6 @@ def workspace() -> CatalogWorkspaceBinding:
     return CatalogWorkspaceBinding(Path("/workspace"), WorkspacePathPolicy.native_absolute, None)
 
 
-def context(**changes: object) -> LaunchContext:
-    base = LaunchContext(
-        context_ref="context-1",
-        destination=TicketLocale.vps,
-        backend_key=Backend.codex,
-        executor_identity=None,
-        workspace=workspace(),
-        localized_workspace_folder=Path("/workspace"),
-        executable_identity="/owned/codex:inode-1",
-        executable_version="1",
-        provider_scope="scope-1",
-        account_generation=CodexLoginGeneration("account-1", "refresh-1"),
-    )
-    return replace(base, **changes)  # type: ignore[arg-type]
-
-
-def row(
-    token: str = "gpt-6-sol",
-    *,
-    kind: SelectionKind = SelectionKind.concrete,
-    target: str | None = None,
-    efforts: tuple[str, ...] | None = ("high",),
-    **changes: object,
-) -> CatalogRow:
-    base = CatalogRow(
-        token,
-        kind,
-        target if target is not None else token,
-        token,
-        efforts,
-        False,
-        True,
-        token if kind is SelectionKind.concrete else None,
-        "page-1",
-    )
-    return replace(base, **changes)  # type: ignore[arg-type]
-
-
-def observation(
-    rows: tuple[CatalogRow, ...] = (),
-    *,
-    launch: LaunchContext | None = None,
-    attempt: str = "attempt-1",
-    stamp: int = 1000,
-    revision: str = "1",
-    **changes: object,
-) -> CatalogObservation:
-    evidence = CatalogEvidenceReference(
-        "observation-" + revision,
-        revision,
-        launch or context(),
-        stamp,
-        attempt,
-        0.0,
-    )
-    base = CatalogObservation(
-        evidence,
-        rows,
-        True,
-        False,
-        True,
-        PrerequisiteStatus.available,
-        PrerequisiteStatus.available,
-    )
-    return replace(base, **changes)  # type: ignore[arg-type]
-
-
 def selection(
     token: str = "gpt-6-sol",
     kind: SelectionKind = SelectionKind.concrete,
@@ -153,55 +77,7 @@ def selection(
     return replace(base, **changes)  # type: ignore[arg-type]
 
 
-class ScopedCatalogue:
-    def __init__(self, value: CatalogObservation) -> None:
-        self.value = value
-        self.current_context = value.evidence.context
-        self.calls: list[str] = []
-        self.gate: asyncio.Event | None = None
-        self.fail = False
-        self.changed_after_observation: LaunchContext | None = None
-
-    async def capture_context(
-        self, backend_key: Backend, *, workspace: CatalogWorkspaceBinding
-    ) -> LaunchContext:
-        return self.current_context
-
-    async def observe(
-        self,
-        backend_key: Backend,
-        *,
-        workspace: CatalogWorkspaceBinding,
-        attempt_id: str,
-        deadline: float,
-    ) -> CatalogObservation | CatalogUnavailable:
-        self.calls.append(attempt_id)
-        if self.gate is not None:
-            await self.gate.wait()
-        if self.fail:
-            return CatalogUnavailable(
-                backend_key,
-                self.current_context.destination,
-                self.current_context,
-                ValidationReason.catalog_unavailable,
-                CorrectiveAction.refresh_catalog,
-                "Scripted failure",
-                1000,
-                self.value.evidence,
-            )
-        if self.changed_after_observation is not None:
-            self.current_context = self.changed_after_observation
-        evidence = replace(
-            self.value.evidence,
-            attempt_id=attempt_id,
-            observation_id="observation-" + attempt_id,
-        )
-        return replace(self.value, evidence=evidence)
-
-
-def setup(
-    tmp_path: Path, source: ScopedCatalogue | None = None
-) -> tuple[BackendSnapshotService, None, Path]:
+def setup(tmp_path: Path) -> tuple[BackendSnapshotService, None, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "models.db"
     conn = connect(str(path))
@@ -401,18 +277,9 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
     from planner.worker_types.configuration import configured_worker_type_registry
 
     stamp = int(time.time())
-    binding = CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None)
-    source = ScopedCatalogue(
-        observation(
-            launch=context(workspace=binding, localized_workspace_folder=tmp_path), stamp=stamp
-        )
-    )
-    source.fail = True
-    service, _, path = setup(tmp_path, source)
-    monkeypatch.setattr(service, "_now", time.time)
+    service, _, path = setup(tmp_path)
     harness = _Harness(path)
     harness.clock.now = float(stamp)
-    harness.system.configure_destination_validation(source)
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
 
     async def exercise() -> None:
@@ -462,8 +329,6 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
             actual = harness.backend(current.conversation_id)
             assert actual.model == current.employee_launch_model
             assert len(actual.writes) == 1
-            if backend is Backend.hermes:
-                assert source.calls == []
         finally:
             conn.close()
             await harness.system.shutdown()
@@ -491,33 +356,9 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
     from planner.tickets.validation.data import read_launch_selection
 
     stamp = int(time.time())
-    binding = CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None)
-    launch = context(
-        backend_key=Backend.claude, workspace=binding, localized_workspace_folder=tmp_path
-    )
-    alias = CatalogRow(
-        "fable",
-        SelectionKind.provider_alias,
-        "claude-fable-1",
-        "Fable",
-        ("high",),
-        False,
-        True,
-        None,
-        "provider",
-    )
-    concrete = replace(
-        alias,
-        selection_kind=SelectionKind.concrete,
-        resolved_model_id="fable",
-        identity_preserving_launch_token="fable",
-    )
-    source = ScopedCatalogue(observation((alias,), launch=launch, stamp=stamp))
-    service, catalogue_store, path = setup(tmp_path, source)
-    monkeypatch.setattr(service, "_now", time.time)
+    service, _, path = setup(tmp_path)
     harness = _Harness(path)
     harness.clock.now = float(stamp)
-    harness.system.configure_destination_validation(source)
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
 
     async def exercise() -> None:
@@ -548,20 +389,6 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
                     )
                 conversation_id = first.conversation_id
                 assert conversation_id is not None
-            # The provider now advertises this exact token as concrete. Conflicting
-            # simultaneous alias/concrete rows are deliberately refused by the contract.
-            source.value = replace(
-                source.value,
-                rows=(concrete,),
-                evidence=replace(
-                    source.value.evidence,
-                    observation_id="explicit-concrete-receipt",
-                    observation_revision="2",
-                ),
-            )
-            await harness.system.destination_backend_snapshot(
-                Backend.claude, binding, "vps", refresh=True
-            )
             body = OwnerSendBody(
                 content=[SentTextPiece(piece="text", text="Explicit concrete choice")],
                 model="fable",

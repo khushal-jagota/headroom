@@ -192,7 +192,6 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
 
         writer = peer()
         writer.send = AsyncMock(side_effect=setup_generation)
-        monkeypatch.setattr(endpoint.catalog, "_measure_clock", AsyncMock())
         try:
             with pytest.raises(OSError, match="service cleanup failed"):
                 await endpoint._session(reader, writer)
@@ -203,9 +202,7 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
             assert endpoint.runs.link is None and not endpoint.runs.ready
         finally:
             root.cleanup()
-            for task in tuple(endpoint.catalog._tasks):
-                task.cancel()
-            await asyncio.gather(*endpoint.catalog._tasks, return_exceptions=True)
+            await endpoint.catalog.close()
 
     asyncio.run(run())
 
