@@ -27,12 +27,12 @@ def test_context_is_finite_and_never_exposes_custom_names_or_messages() -> None:
     for _ in range(100):
         diagnostics.report(
             SecretCredentialName("secret credential"),
-            phase=ConnectionPhase.transport_open,
+            phase=ConnectionPhase.hello,
             origin=ConnectionFailureOrigin.session,
         )
     assert lines == [
         "executor connection failure: connection_or_protocol",
-        "executor connection failure: connection_or_protocol phase=transport_open"
+        "executor connection failure: connection_or_protocol phase=hello"
         " origin=session exception=other",
     ]
     for error in (

@@ -325,7 +325,7 @@ file bytes after confirmation. Incompatible outbox formats require explicit
 operator disposition; they are never converted silently.
 
 Generation loss closes admission before cleanup waits. Filesystem work can outlive logical failure or cancellation.
-The transfer retains its files, descriptors, and capacity until that work settles. Cleanup never deletes a resource that admitted work still uses.
+One generation object owns its private temporary directory, upload records and admitted file work. It retains files, descriptors, and capacity until that work settles, even if cleanup is cancelled. Cleanup then removes its temporary directory.
 Ordinary account access stays intact. Accepted bytes remain protected by receiver verification and atomic publication.
 
 Stored conversation input files are hashed in place, then copied once into the
@@ -613,7 +613,9 @@ replacement connection. Item validation returns a refusal while leaving other wo
 connected. Unreadable messages and protocol mismatches close the connection.
 
 File bytes use `link_files.py`, with bounded HTTP streaming and length and hash
-checks. Reservations belong to one connection generation. The domain code still
+checks. The VPS creates the generation's file storage as soon as the initial
+handshake is accepted; there is no separate file-opening exchange. Reservations
+belong to that admitted connection generation. The domain code still
 checks which child may send or receive each file, and installs files before accepting
 dependent work. `protocol.py` holds the shared message shapes and codecs; execution
 identity types, turn tokens, and Ticket locales live in `execution_identity.py`,

@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import tempfile
-from collections.abc import Callable
 from functools import partial
-from pathlib import Path
 from typing import Any, cast
 
 from starlette.types import ASGIApp
@@ -18,11 +15,9 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import Clock
 from planner.core.contracts import PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.task_settlement import wait_for_settlement
 from planner.execution_identity import (
     ChildReference,
     ExecutorIdentity,
-    parse_identity,
 )
 from planner.executor.catalog_relay import VpsCatalogRelay
 from planner.executor.clock import now_ms
@@ -61,10 +56,6 @@ from planner.executor.vps_inbox import MacInbox, MissingFiles
 from planner.executor.vps_runs import MacRuns
 
 
-def _generation_root() -> tempfile.TemporaryDirectory[str]:
-    return tempfile.TemporaryDirectory(prefix="panels-executor-")
-
-
 class VpsExecutor:
     """Compose VPS owners and adapt app transport frames to their typed inputs."""
 
@@ -80,13 +71,8 @@ class VpsExecutor:
         self.observed_at_ms: int | None = None
         self._last_contact_at_ms: int | None = None
         self.lost_at_ms: int | None = None
-        self._transports: dict[ExecutorIdentity, GenerationTransfers] = {}
-        self._transport_roots: dict[ExecutorIdentity, tempfile.TemporaryDirectory[str]] = {}
-        self._upload_transfers: dict[
-            tuple[ExecutorIdentity, str], tuple[str, FileUploadRequest]
-        ] = {}
+        self.transfers: dict[ExecutorIdentity, GenerationTransfers] = {}
         self._transport_lock = asyncio.Lock()
-        self._receiver_work: dict[ExecutorIdentity, set[asyncio.Task[object]]] = {}
 
     def bind_conversations(self, conversations: SqliteProcessConversationSystem) -> None:
         self.conversations = conversations
@@ -106,7 +92,7 @@ class VpsExecutor:
             await self.runs.link_down(writer)
         await self.runs.close()
         await self.catalog.close()
-        for identity in tuple(self._transports):
+        for identity in tuple(self.transfers):
             await self._close_transport(identity)
         if writer is not None:
             await writer.wait_closed()
@@ -114,13 +100,7 @@ class VpsExecutor:
     @property
     def last_contact_at_ms(self) -> int | None:
         link = self.runs.link
-        if link is not None and link.last_received_at_ms is not None:
-            return link.last_received_at_ms
-        return self._last_contact_at_ms
-
-    @last_contact_at_ms.setter
-    def last_contact_at_ms(self, value: int | None) -> None:
-        self._last_contact_at_ms = value
+        return link.last_received_at_ms if link is not None else self._last_contact_at_ms
 
     def health(self) -> ExecutorHealthRead:
         return {
@@ -138,7 +118,7 @@ class VpsExecutor:
             "reconciliation_ready": self.runs.ready,
         }
 
-    async def _session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
+    async def session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
         link: Link | None = None
         admitted: Link | None = None
 
@@ -152,7 +132,6 @@ class VpsExecutor:
                 self.process_id = health.process_id
                 self.observed_at_ms = now_ms()
                 self.lost_at_ms = None
-                self.last_contact_at_ms = now_ms()
             if old_identity is not None:
                 await self._close_transport(old_identity)
             if self.runs.link is not candidate:
@@ -165,8 +144,10 @@ class VpsExecutor:
             identity = link.identity
             if self.runs.link is not link:
                 return
+            self.transfers[identity] = GenerationTransfers(
+                identity, lambda: self.runs.identity == identity and self.runs.link is link
+            )
             for kind in (
-                WireMessageKind.transport_open,
                 WireMessageKind.reconciliation_ready,
                 WireMessageKind.live_backend_event,
                 WireMessageKind.envelope,
@@ -216,38 +197,10 @@ class VpsExecutor:
     ) -> None:
         if self.runs.link is not writer or self.runs.identity != identity:
             return
-        self.last_contact_at_ms = now_ms()
         try:
             response_kind = WireMessageKind.error
             result: JsonObject
-            if message.kind is WireMessageKind.transport_open:
-                async with self._transport_lock:
-                    if (
-                        identity in self._transports
-                        or parse_identity(message.payload.get("identity")) != identity
-                    ):
-                        raise ValueError("duplicate or stale transport generation")
-                    root = _generation_root()
-                    root_path = Path(root.name)
-                    service = GenerationTransfers(
-                        identity,
-                        root_path / "s",
-                        lambda: self.runs.identity == identity and self.runs.link is writer,
-                    )
-                    try:
-                        await settled_io(self.runs.store.verify_connection, identity)
-                    except BaseException:
-                        await service.close()
-                        root.cleanup()
-                        raise
-                    self._transports[identity] = service
-                    self._transport_roots[identity] = root
-
-                    result, response_kind = (
-                        {},
-                        WireMessageKind.transport_opened,
-                    )
-            elif message.kind is WireMessageKind.reconciliation_ready:
+            if message.kind is WireMessageKind.reconciliation_ready:
                 await self.runs.link_up(writer, message.request_id)
                 self.catalog.connected()
                 return
@@ -357,12 +310,13 @@ class VpsExecutor:
 
         await settled_io(authorize)
         # The request ID identifies only this reservation, not another conversation's bytes.
-        for key, (request_id, upload) in tuple(self._upload_transfers.items()):
-            if key[0] == identity and request_id == message.request_id:
+        service = self.transfers[identity]
+        for transfer_id, (request_id, upload) in tuple(service.uploads.items()):
+            if request_id == message.request_id:
                 if upload.child != child or upload.manifest not in envelope.file_dependencies:
                     raise ValueError("upload refusal does not belong to this item")
-                self._upload_transfers.pop(key)
-                self._transports[identity].release(key[1])
+                service.uploads.pop(transfer_id)
+                service.release(transfer_id)
         lock = self.inbox._conversation_locks.setdefault(envelope.conversation_id, asyncio.Lock())
         async with lock:
             return await self.inbox._record_refusal(
@@ -372,7 +326,7 @@ class VpsExecutor:
     async def _file(
         self, message: WireMessage, identity: ExecutorIdentity
     ) -> tuple[JsonObject, WireMessageKind]:
-        service = self._transports.get(identity)
+        service = self.transfers.get(identity)
         if service is None:
             raise ValueError("file generation unavailable")
         if message.kind is WireMessageKind.put_file:
@@ -380,7 +334,7 @@ class VpsExecutor:
             await settled_io(self.inbox.authorize_upload, upload)
             await settled_io(self.runs.store.verify_connection, identity)
             slot = service.create_upload(upload.manifest)
-            self._upload_transfers[identity, slot.transfer_id] = message.request_id, upload
+            service.uploads[slot.transfer_id] = message.request_id, upload
             return as_object(slot), WireMessageKind.file_transfer
         request = type_adapter(FileDownloadRequest).validate_python(message.payload)
         pending = self.runs.pending_commands.get(request.command_id)
@@ -424,8 +378,8 @@ class VpsExecutor:
         return as_object(slot), WireMessageKind.file_transfer
 
     async def store_upload(self, identity: ExecutorIdentity, transfer_id: str) -> None:
-        service = self._transports.get(identity)
-        pending = self._upload_transfers.pop((identity, transfer_id), None)
+        service = self.transfers.get(identity)
+        pending = service.uploads.pop(transfer_id, None) if service is not None else None
         if service is None or pending is None:
             raise ValueError("unknown file upload")
         _, upload = pending
@@ -433,56 +387,13 @@ class VpsExecutor:
             await settled_io(self.runs.store.verify_connection, identity)
             await settled_io(self.inbox.authorize_upload, upload)
             source = service.upload_path(transfer_id)
-            await self._receive_work(identity, self.inbox.store_upload, upload, source)
+            await service.run_guarded(self.inbox.store_upload, upload, source)
             await settled_io(self.runs.store.verify_connection, identity)
         finally:
             service.release(transfer_id)
 
-    async def _receive_work[**P](
-        self,
-        generation: ExecutorIdentity,
-        operation: Callable[P, None],
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> None:
-        # Cancellation cannot terminate a filesystem thread. Keep its source and
-        # generation directory alive until the admitted operation has settled.
-        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
-        pending = self._receiver_work.setdefault(generation, set())
-        pending.add(task)
-        try:
-            await asyncio.shield(task)
-        except BaseException:
-            await wait_for_settlement(task)
-            raise
-        finally:
-            pending.discard(task)
-            if not pending:
-                self._receiver_work.pop(generation, None)
-
     async def _close_transport(self, identity: ExecutorIdentity) -> None:
-        # Take ownership before yielding: replacement and old-session cleanup can
-        # arrive together, but only one owns this service and its directory.
-        service = self._transports.pop(identity, None)
-        root = self._transport_roots.pop(identity, None)
-        work = tuple(self._receiver_work.get(identity, ()))
-
-        async def cleanup() -> None:
-            try:
-                for task in work:
-                    await wait_for_settlement(task)
-                if service is not None:
-                    await service.close()
-            finally:
-                for key in tuple(self._upload_transfers):
-                    if key[0] == identity:
-                        self._upload_transfers.pop(key)
-                if root is not None:
-                    root.cleanup()
-
-        closing = asyncio.create_task(cleanup())
-        try:
-            await asyncio.shield(closing)
-        except BaseException:
-            await wait_for_settlement(closing)
-            raise
+        # Replacement and old-session cleanup race; take ownership before yielding.
+        service = self.transfers.pop(identity, None)
+        if service is not None:
+            await service.close()

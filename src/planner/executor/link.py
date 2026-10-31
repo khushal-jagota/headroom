@@ -248,7 +248,7 @@ class Link:
         self._work: set[asyncio.Task[None]] = set()
         self._reading: asyncio.Task[None] | None = None
         self._down = False
-        self.last_received_at_ms: int | None = None
+        self.last_received_at_ms = now_ms()
         self._capacity = asyncio.Semaphore(MAX_TRANSFERS)
 
     def on(

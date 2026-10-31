@@ -91,7 +91,7 @@ def test_contact_is_receipt_not_handshake_and_retains_history_after_loss(
     async def run() -> None:
         reader = MessageReader()
         reader.feed_data(encode_message(_hello()))
-        task = asyncio.create_task(endpoint._session(reader, cast(Any, Writer())))
+        task = asyncio.create_task(endpoint.session(reader, cast(Any, Writer())))
         while endpoint.runs.link is None:
             await asyncio.sleep(0)
         assert endpoint.observed_at_ms == endpoint.last_contact_at_ms == 100
@@ -130,7 +130,7 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
             reader = MessageReader()
             reader.feed_data(encode_message(_hello()))
             writer = Writer()
-            task = asyncio.create_task(endpoint._session(reader, cast(Any, writer)))
+            task = asyncio.create_task(endpoint.session(reader, cast(Any, writer)))
             while endpoint.runs.link is None:
                 await asyncio.sleep(0)
             tick[0] = 200
@@ -144,11 +144,12 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
                     cast(ExecutorIdentity, endpoint.runs.identity), connection_generation=2
                 )
                 reader.feed_data(encode_message(WireMessage(WireMessageKind.error, "old", {})))
+                tick[0] = 300
             else:
                 malformed = b'{"kind":"invented","request_id":"bad","payload":{}}'
                 reader.feed_data(struct.pack("!I", len(malformed)) + malformed)
             await task
-            assert endpoint.last_contact_at_ms == 100
+            assert endpoint.health()["last_contact_at_ms"] == (200 if superseded else 100)
             assert writer.closed
 
     asyncio.run(run())

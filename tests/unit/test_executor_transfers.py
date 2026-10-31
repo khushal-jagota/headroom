@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
@@ -27,10 +27,9 @@ def _manifest(data: bytes) -> FileManifest:
     )
 
 
-def _service(root: Path, valid: Callable[[], bool] = lambda: True) -> GenerationTransfers:
+def _service(valid: Callable[[], bool] = lambda: True) -> GenerationTransfers:
     return GenerationTransfers(
         ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "executor", 1),
-        root,
         valid,
     )
 
@@ -39,7 +38,7 @@ def test_download_copy_survives_source_handle_mutation_and_rejects_corruption(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
-        service = _service(tmp_path / "transfers")
+        service = _service()
         source = tmp_path / "source"
         source.write_bytes(b"original")
         manifest = _manifest(b"original")
@@ -57,7 +56,7 @@ def test_download_copy_survives_source_handle_mutation_and_rejects_corruption(
                 await service.create_download_async(FileSnapshot(manifest, source))
         assert len(service.transfers) == 1
         await service.close()
-        assert not list(service.root.iterdir())
+        assert not service.root.exists()
 
     asyncio.run(exercise())
 
@@ -77,7 +76,7 @@ def test_snapshot_copy_cancellation_drains_thread_before_shutdown(
     monkeypatch.setattr("planner.executor.link_files.copy_verified", paused_copy)
 
     async def exercise() -> None:
-        service = _service(tmp_path / "transfers")
+        service = _service()
         source = tmp_path / "source"
         source.write_bytes(b"test")
         transfer = asyncio.create_task(
@@ -96,6 +95,65 @@ def test_snapshot_copy_cancellation_drains_thread_before_shutdown(
             with pytest.raises(asyncio.CancelledError):
                 await transfer
             await shutdown
-        assert not service.transfers and not list(service.root.iterdir())
+        assert not service.transfers and not service.root.exists()
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_upload_install_and_close_keep_source_until_thread_settles(
+    tmp_path: Path,
+) -> None:
+    started, finish = threading.Event(), threading.Event()
+    installed = tmp_path / "installed"
+
+    def install(source: Path) -> None:
+        started.set()
+        assert finish.wait(5)
+        installed.write_bytes(source.read_bytes())
+
+    async def exercise() -> None:
+        service = _service()
+        slot = service.create_upload(_manifest(b"complete"))
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield b"complete"
+
+        await service.upload(slot.transfer_id, chunks())
+        source = service.upload_path(slot.transfer_id)
+        copying = asyncio.create_task(service.run_guarded(install, source))
+        assert await asyncio.to_thread(started.wait, 2)
+        copying.cancel()
+        closing = asyncio.create_task(service.close())
+        await asyncio.sleep(0)
+        closing.cancel()
+        try:
+            await asyncio.sleep(0)
+            assert not copying.done() and not closing.done()
+            assert source.read_bytes() == b"complete"
+        finally:
+            finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await copying
+            with pytest.raises(asyncio.CancelledError):
+                await closing
+        assert installed.read_bytes() == b"complete"
+        assert not service.root.exists()
+        with pytest.raises(ValueError, match="generation revoked"):
+            await service.run_guarded(install, source)
+
+    asyncio.run(exercise())
+
+
+def test_failed_slot_cleanup_still_removes_generation_directory() -> None:
+    async def exercise() -> None:
+        service = _service()
+        slot = service.create_upload(_manifest(b"complete"))
+        # A damaged reservation must not strand the generation's private directory.
+        reservation = service.root / slot.transfer_id
+        reservation.unlink()
+        reservation.mkdir()
+        with pytest.raises(OSError):
+            await service.close()
+        assert not service.root.exists()
 
     asyncio.run(exercise())
