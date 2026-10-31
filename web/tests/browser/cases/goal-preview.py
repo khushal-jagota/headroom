@@ -1143,6 +1143,71 @@ def gauge_visual_equivalence(browser, url):
               pointerEvents:getComputedStyle(readout).pointerEvents} : null};
         }""")
 
+    def capture_geometry(chart):
+        return chart.evaluate("""node => {
+          const rect = element => {
+            if (!element) return null;
+            const box = element.getBoundingClientRect();
+            return {x:box.x,y:box.y,width:box.width,height:box.height};
+          };
+          const matrix = element => {
+            const value = element?.getScreenCTM();
+            return value ? Object.fromEntries(['a','b','c','d','e','f']
+              .map(key => [key,value[key]])) : null;
+          };
+          const meter = node.querySelector('svg[role=meter]');
+          const fill = meter?.querySelectorAll('path')[1];
+          return {chart:rect(node),visual:rect(meter?.parentElement),
+            meter:rect(meter),readout:rect(meter?.nextElementSibling),
+            input:rect(node.querySelector('input')),svgCTM:matrix(meter),
+            fillCTM:matrix(fill),transform:getComputedStyle(node).transform,
+            devicePixelRatio,viewport:{width:innerWidth,height:innerHeight},
+            windowScroll:{x:scrollX,y:scrollY}};
+        }""")
+
+    def capture(page, chart, name):
+        # Existing inspection helpers prove dismissal when the fade starts.
+        # Capture only after that fade finishes, so a tooltip cannot ghost into
+        # the paired image. Keep raw captures and their exact crop provenance.
+        chart.scroll_into_view_if_needed()
+        # Scrolling can put the figure under a stationary desktop pointer.
+        # Leave through the real pointer path before waiting for its fade.
+        page.mouse.move(0, 0)
+        tooltip = chart.locator('[role="tooltip"]')
+        if tooltip.count():
+            expect(tooltip).to_have_attribute("aria-hidden", "true")
+            expect(tooltip).to_have_css("opacity", "0")
+        frames = ("() => new Promise(resolve => requestAnimationFrame("
+                  "() => requestAnimationFrame(resolve)))")
+        page.evaluate(frames)
+        record = {"raw": {"before": capture_geometry(chart)}}
+        chart.screenshot(path=str(output / f"{name}.png"))
+        record["raw"]["after"] = capture_geometry(chart)
+        original_style = chart.get_attribute("style")
+        before = record["raw"]["after"]
+        assert before["transform"] == "none", before
+        origin = before["chart"]
+        dx, dy = round(origin["x"]) - origin["x"], round(origin["y"]) - origin["y"]
+        assert abs(dx) <= .5 and abs(dy) <= .5, (dx, dy)
+        record["translation"] = {"x": dx, "y": dy}
+        try:
+            chart.evaluate("""(node, delta) => {
+              node.style.transform = `translate(${delta.x}px, ${delta.y}px)`;
+            }""", {"x": dx, "y": dy})
+            page.evaluate(frames)
+            record["aligned"] = {"before": capture_geometry(chart)}
+            chart.screenshot(path=str(output / f"{name}-aligned.png"))
+            record["aligned"]["after"] = capture_geometry(chart)
+        finally:
+            chart.evaluate("""(node, value) => {
+              if (value === null) node.removeAttribute('style');
+              else node.setAttribute('style', value);
+            }""", original_style)
+            page.evaluate(frames)
+        assert chart.get_attribute("style") == original_style
+        record["restored"] = capture_geometry(chart)
+        return record
+
     for phone, reduced in ((False, False), (False, True), (True, False), (True, True)):
         mode = f"{'phone' if phone else 'desktop'}-{'reduced' if reduced else 'normal'}"
         context = browser.new_context(
@@ -1173,7 +1238,7 @@ def gauge_visual_equivalence(browser, url):
         readonly["page"]["blocks"] = [{**readonly["primary_chart"],
             "id": "support-readonly-gauge", "placement": "supporting"}]
         page.route("**/api/**", fixture.respond)
-        row = {"mode": mode, "surfaces": {}, "motion": {}, "focus": {}}
+        row = {"mode": mode, "surfaces": {}, "motion": {}, "focus": {}, "captures": {}}
         receipts.append(row)
         errors = []
         page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
@@ -1205,7 +1270,9 @@ def gauge_visual_equivalence(browser, url):
                         desktop_inspection(page, chart, figure)
                     row["focus"][identity] = figure.get_attribute("aria-label")
                 if output:
-                    chart.screenshot(path=str(output / f"{mode}-{identity}-normal.png"))
+                    row["captures"][identity + ":normal"] = capture(
+                        page, chart, f"{mode}-{identity}-normal"
+                    )
 
                 support = page.locator(f'[data-chart-id="{support_id}"]')
                 if phone:
@@ -1219,7 +1286,9 @@ def gauge_visual_equivalence(browser, url):
                 page.wait_for_timeout(settle_ms)
                 row["surfaces"][identity + ":support-expanded"] = snapshot(support)
                 if output:
-                    support.screenshot(path=str(output / f"{mode}-{identity}-support.png"))
+                    row["captures"][identity + ":support-expanded"] = capture(
+                        page, support, f"{mode}-{identity}-support"
+                    )
                 if phone:
                     page.set_viewport_size({"width": 320, "height": 844})
                     row["surfaces"][identity + ":narrow320"] = snapshot(support)
@@ -1249,7 +1318,9 @@ def gauge_visual_equivalence(browser, url):
                 page.wait_for_timeout(settle_ms)
                 row["surfaces"][identity + ":small"] = snapshot(chart)
                 if output:
-                    chart.screenshot(path=str(output / f"{mode}-{identity}-small.png"))
+                    row["captures"][identity + ":small"] = capture(
+                        page, chart, f"{mode}-{identity}-small"
+                    )
             assert errors == [], errors
             row["errors"] = errors
         finally:
