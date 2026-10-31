@@ -41,6 +41,7 @@ from planner.core.db import (
 )
 from planner.core.read_connections import ReadConnections
 from planner.core.transaction_guards import GuardRegistration, register_transaction_guard
+from planner.credentials.requests import data as credential_request_data
 
 
 def _managed(connection: sqlite3.Connection) -> ChangeSignallingConnection:
@@ -193,6 +194,9 @@ class ConversationRuntime:
         A tail is idle nearly all the time and only ends when its browser leaves, so a
         server that waited for them to finish on their own would never finish at all.
         """
+        from planner.credentials.requests.service import finish_operations
+
+        await finish_operations(self)
         self.live_tail.close_all_subscriptions()
         await self.system.shutdown()
         self.reads.close()
@@ -215,6 +219,8 @@ def build_conversation_runtime(
     store = ConversationStore(
         db_path,
         busy_timeout_ms=db_busy_timeout_ms,
+        event_participant=credential_request_data.observe_events,
+        startup_participant=credential_request_data.reconcile_deliveries,
         signal_coordinator=None if signal_composition is None else signal_composition.coordinator,
         bind_signal_admission=None if signal_composition is None else bind_admission,
         runtime_reconciliation_admission=(

@@ -7,7 +7,7 @@ Databases that ran those migrations must be rebuilt.
 from alembic import op
 
 revision = "mac_vps_execution"
-down_revision = "ticket_application_previews"
+down_revision = "goals_staging_reconciliation"
 branch_labels = None
 depends_on = None
 

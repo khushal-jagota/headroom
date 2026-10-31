@@ -139,27 +139,21 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
 )
 def test_review_projection_upgrade_resets_old_cursors_without_granting_authority(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     revision: str,
     schema_version: int,
     projection_version: int,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Installed older Review memberships must reset without granting current authority."""
     path = tmp_path / "review-upgrade.db"
-    # This synthetic rewind owns staging's Review projection, before the
-    # Mac/VPS schema is installed. It must not mislabel a final feature schema.
-    with monkeypatch.context() as staging:
-        _migration_tree_through(tmp_path, staging, "video_upload_ledger")
+    # Build the physical ancestor schema and retain the usual seeded runtime
+    # publication. Restamping HEAD would replay table-creating migrations twice.
+    with monkeypatch.context() as patch:
+        _migration_tree_through(tmp_path, patch, revision)
         with current_navigation_database(path) as conn:
             before = snapshot(conn)
+            assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == revision
             conn.execute("BEGIN")
-            # Rewind only this empty synthetic table with the Review source branch.
-            # Its migration descends from Review, so an applied marker would skip
-            # the projection upgrade that this fixture must exercise.
-            count = conn.execute("SELECT COUNT(*) FROM conversation_video_uploads").fetchone()[0]
-            assert count == 0
-            conn.execute("DROP TABLE conversation_video_uploads")
-            conn.execute("UPDATE alembic_version SET version_num=?", (revision,))
             conn.execute("UPDATE navigation_meta SET schema_version=?", (schema_version,))
             conn.execute(
                 "UPDATE navigation_view_meta SET projection_version=?,"

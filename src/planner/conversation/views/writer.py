@@ -213,7 +213,9 @@ def _append(
             group_key,
             sequence,
         )
-        if effect.lookup_kind is not None and not effect.settlement:
+        if effect.lookup_kind is not None and (
+            not effect.settlement or effect.lookup_kind == "credential_request"
+        ):
             _lookup(conn, conversation_id, effect.lookup_kind, effect.lookup_id, sequence, turn_key)
 
     if effect.row_kind is not None or matched is not None:

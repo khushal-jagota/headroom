@@ -5,7 +5,8 @@
   /** One composer and viewport survive movement between the reserved dock and full conversation. */
   import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
   import {progressFor,restFor} from '../../lib/conversation/view/presentation';
-  import { tick, type Snippet } from "svelte";
+  import { tick, setContext, type Snippet } from "svelte";
+  import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import TaskProgress from "./TaskProgress.svelte";
@@ -112,7 +113,7 @@
     reconcileLocalSend?: (messageId: string) => Promise<boolean>;
     transcriptLoading?: boolean;
     conversationId: string;
-    roleLabel?: "Worker" | "Manager" | "Chief";
+    roleLabel?: "Worker" | "Manager" | "Chief" | "Goal";
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
      *  is not one existing, so only whoever has read the record can say. */
@@ -207,6 +208,9 @@
     onNewConversation?: () => void;
   } = $props();
 
+  setContext(CREDENTIAL_REQUEST_READ_ONLY, () => readOnly);
+  const credentialDrafts = $derived.by(() => { conversationId; return new Map() as CredentialRequestDrafts; });
+  setContext(CREDENTIAL_REQUEST_DRAFTS, () => credentialDrafts);
   let placementReady = $state(false);
   let entryPresentationPending = $state(true);
   let paneElement = $state<HTMLDivElement | null>(null);

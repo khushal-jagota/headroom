@@ -38,7 +38,7 @@ bubble-less assistant, recessed composer).
 
 4. **One accent, one meaning.** `--accent-bright` means *needs the human* — a pending
    approval, a required action. Never decorative. If the accent is everywhere it says nothing; that
-   is why it stays out of the conversation thread and shows up on the gate.
+   is why it stays out of ordinary agent prose and shows up on the gate and on the enabled Send control.
 
 5. **Asymmetry carries meaning.** Different things look different. The human's message is a
    contained pill; the agent's is bare prose. The gate is the accent; settled state is quiet. Don't
@@ -62,8 +62,8 @@ bubble-less assistant, recessed composer).
    (`--font-ui`). Hierarchy comes from size, weight, spacing, and emphasis. Former
    serif text keeps its larger 18px prose, 28px display, and 30px hero sizes.
    Smaller body text uses 15px and section titles use 20px. Code, diffs, tool output,
-   and `code`, `pre`, `kbd`, and `samp` retain monospace because alignment carries meaning. No italics except
-   input placeholders.
+   and `code`, `pre`, `kbd`, and `samp` retain monospace because alignment carries meaning. Italics are for
+   input placeholders and the quiet line on a Manager page.
 
 10. **Depth is rationed to the ask.** The one raised approval surface earns a top highlight
     and a long soft shadow, with the accent Approve glowing beneath.

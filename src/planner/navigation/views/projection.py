@@ -134,7 +134,9 @@ def _members(
                     )
                 )
 
-            if kind == "manager":
+            if kind == "goal" and value["active"]:
+                add("goals", None, rank=int(value["created_at"]), title_key=b"")
+            elif kind == "manager":
                 add(
                     "settled" if value["settled"] else "rail_parents",
                     None,
@@ -231,7 +233,7 @@ def _members(
                 # One canonical address per owner/conversation. Preserve current-first order.
                 add("unread", None, rank=-int(value["current"]), title_key=b"")
                 owner = (str(value["owner_kind"]), str(value["owner_id"]))
-                if owner[0] == "ticket":
+                if owner[0] in ("ticket", "goal"):
                     add("unread", owner, rank=-int(value["current"]), title_key=b"")
                 owner_value = record(conn, owner) or {}
                 if (
@@ -302,7 +304,7 @@ def update(
                     "SELECT kind,id FROM navigation_view_index WHERE conversation_id=?", (identity,)
                 )
             )
-        if kind in ("ticket", "manager", "chief"):
+        if kind in ("ticket", "manager", "chief", "goal"):
             affected.update(
                 (r[0], r[1])
                 for r in conn.execute(
@@ -380,7 +382,7 @@ def update(
         for candidate in (old, new):
             if (
                 candidate
-                and candidate[0] in ("ticket", "manager", "chief", "address")
+                and candidate[0] in ("ticket", "manager", "chief", "goal", "address")
                 and candidate[3]
             ):
                 pointer_ids.add(candidate[3])
@@ -451,7 +453,7 @@ def update(
         ).fetchone()
         references = conn.execute(
             "SELECT count(*) FROM navigation_view_index WHERE conversation_id=? "
-            "AND kind IN ('chief','ticket','manager')",
+            "AND kind IN ('chief','ticket','manager','goal')",
             (identity,),
         ).fetchone()[0]
         current = conn.execute(

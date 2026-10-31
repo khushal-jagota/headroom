@@ -6,6 +6,7 @@
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
   import { rowForBody } from '../../../lib/conversation/view/presentation';
   import ConversationTranscript from '../ConversationTranscript.svelte';
+  import ConversationCredentialRequestCard from '../ConversationCredentialRequestCard.svelte';
   import ToolCallRow from '../ToolCallRow.svelte';
   import type { BackendModel } from '../../../lib/conversation/wire';
   import type { SvelteMap, SvelteSet } from 'svelte/reactivity';
@@ -59,6 +60,8 @@
 <SkeletonRegion shape="block" loading={row === null && !error} loadingText="Loading conversation detail…">
 {#if row?.kind==='tool_call' && reader.lens==='full'}
   <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow {activityUncertain} row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
+{:else if row?.kind==='credential_request'}
+  <ConversationCredentialRequestCard request={row.request}/>
 {:else if row!==null}
   {#key presentationAttempt}
   <ConversationTranscript {activityUncertain} rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>

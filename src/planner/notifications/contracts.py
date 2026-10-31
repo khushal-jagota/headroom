@@ -86,6 +86,9 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
         ("awaiting_reply", "awaiting_answer", "errored"),
     ),
     NotificationSubject(
+        "goals", "Goals", PrincipalKind.goal, ("awaiting_reply", "awaiting_answer", "errored")
+    ),
+    NotificationSubject(
         MANAGER_NOTIFICATION_SUBJECT_KEY,
         "Managers",
         PrincipalKind.manager,

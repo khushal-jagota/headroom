@@ -80,7 +80,7 @@ def test_actual_creation_route_preserves_offline_explicit_effort(
 
     service, _, path = setup(tmp_path)
     harness = _Harness(path)
-    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda conn: tmp_path)
     app = FastAPI()
     app.state.conversation_system = harness.system
     request = Request({"type": "http", "app": app})
@@ -136,7 +136,7 @@ def test_explicit_default_effort_reaches_the_provider_on_the_next_send(
 
     _, _, path = setup(tmp_path)
     harness = _Harness(path)
-    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda conn: tmp_path)
 
     async def exercise() -> None:
         conn = connect(str(path))
@@ -258,7 +258,7 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
     service, _, path = setup(tmp_path)
     harness = _Harness(path)
     harness.clock.now = float(stamp)
-    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda conn: tmp_path)
 
     async def exercise() -> None:
         conn = connect(str(path))

@@ -23,7 +23,7 @@ def test_http_scoped_read_exact_write_and_retired_corrections(
 ) -> None:
     from planner.runtime import conversation_start
 
-    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda conn: tmp_path)
     db_path = str(tmp_path / "configuration.db")
     with closing(connect(db_path)) as conn:
         create_schema(conn)

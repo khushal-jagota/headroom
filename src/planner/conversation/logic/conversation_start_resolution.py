@@ -2,13 +2,33 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from planner.conversation.contracts import (
     FLOOR_DEFAULT_ACCESS,
     FLOOR_DEFAULT_BACKEND_KEY,
     FLOOR_DEFAULT_WORKSPACE_FOLDER,
+    ConversationRoleMaterials,
     ConversationStartRequest,
     ResolvedConversationStart,
 )
+
+
+def bind_conversation_origin(
+    materials: ConversationRoleMaterials | None, conversation_id: str
+) -> ConversationRoleMaterials | None:
+    """Give every employee child its exact immutable Panels conversation identity."""
+    if materials is None:
+        return None
+    variables = tuple(
+        (name, value)
+        for name, value in materials.identity_environment_variables
+        if name != "PLAN_CONVERSATION_ID"
+    )
+    return replace(
+        materials,
+        identity_environment_variables=variables + (("PLAN_CONVERSATION_ID", conversation_id),),
+    )
 
 
 def resolve_conversation_start_request(
@@ -54,7 +74,7 @@ def resolve_conversation_start_request(
         ),
         model=model,
         reasoning_effort=request.reasoning_effort,
-        role_materials=request.role_materials,
+        role_materials=bind_conversation_origin(request.role_materials, conversation_id),
         workspace_folder=workspace_folder,
         workspace_path_policy=request.workspace_path_policy,
         access=FLOOR_DEFAULT_ACCESS if request.access is None else request.access,

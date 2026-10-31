@@ -27,6 +27,7 @@ from planner.conversation.backends.contracts import (
 from planner.conversation.contracts import (
     AnswerFate,
     ConversationBackendKey,
+    ConversationRoleMaterials,
     ConversationStartRequest,
 )
 from planner.conversation.events import (
@@ -42,7 +43,10 @@ from planner.core.config import Config, load_config
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.measure_sources.runtime import Runtime
+from planner.scheduled_tickets.registry import build_participants
 from planner.server_lifecycle.application import ChangeStreamClosingServer
+from planner.tickets import data as ticket_data
 
 
 class ScriptedChild:
@@ -190,6 +194,12 @@ def build_app(config: Config) -> FastAPI:
         build_clock(config),
         lambda: connect(config.db_path),
         backend_child_factories_for_test={key: make_child for key in ConversationBackendKey},
+        slot_participants_for_test=lambda admission: build_participants(
+            config,
+            build_clock(config),
+            workspace_admission=admission,
+            source_runtime=Runtime(),
+        ),
     )
     install_connected_controls(app, config.db_path)
     from tests.e2e.ticket_model_controls import install_ticket_model_controls
@@ -197,7 +207,10 @@ def build_app(config: Config) -> FastAPI:
     install_ticket_model_controls(app)
 
     @app.post("/api/test/signals/{conversation_id}/start")
-    async def start(conversation_id: str) -> dict[str, bool]:
+    async def start(
+        conversation_id: str, body: dict[str, str] | None = None,
+    ) -> dict[str, bool]:
+        ticket_id = (body or {}).get("ticket_id")
         system = app.state.conversation.system
         store = app.state.conversation.store
         if await store.read_conversation(conversation_id) is None:
@@ -205,8 +218,22 @@ def build_app(config: Config) -> FastAPI:
                 ConversationStartRequest(
                     conversation_id=conversation_id,
                     model="gpt-6.1-sol",
+                    role_materials=(
+                        None if ticket_id is None else ConversationRoleMaterials(
+                            role_text="Bounded synthetic Ticket worker for the browser proof.",
+                            identity_environment_variables=(
+                                ("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket_id),
+                            ),
+                        )
+                    ),
                 )
             )
+        if ticket_id is not None:
+            with closing(connect(config.db_path)) as conn:
+                ticket_data.write_ticket_conversation_start(
+                    conn, ticket_id, conversation_id=conversation_id, backend="codex",
+                    model="gpt-6.1-sol", reasoning_effort=None, now=build_clock(config).now_unix(),
+                )
         await system.send(
             conversation_id,
             text_message_content("Bounded proof turn"),

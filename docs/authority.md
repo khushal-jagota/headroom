@@ -23,6 +23,8 @@ Retired planning types keep their history. They do not regain a shared-plan writ
 
 A Ticket proposes, recaps, and asks for help. A Manager writes its goal, recap, and artifacts. Those are the principal acting as itself. The chain does not decide them. Proposing is the Ticket speaking about its own work. Nobody, including Khushal, proposes on a Ticket’s behalf.
 
+A goal agent acts on its own goal, page, completion, active state, and managed files. Source and measurement permissions remain separate. A goal stands above no Ticket and cannot hold a Ticket review. Goal agents ask Chief to route Ticket work.
+
 ## The re-parent exception
 
 No principal may move a Ticket out of its chain except Khushal and Chief. Changing the Manager changes who stands above the Ticket. At the moment of the call the Ticket really is below the Manager trying to hand it away, so the ordinary rule would allow the handoff. The exception exists so authority cannot be given away by the person who currently holds it. A Ticket cannot set its own Manager either. Being the Ticket does not include choosing who stands above you.

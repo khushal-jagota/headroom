@@ -39,6 +39,7 @@ from planner.conversation.message_content import (
     message_content_json_entries,
 )
 from planner.core.contracts import Principal, PrincipalKind
+from planner.credentials.requests.contracts import CredentialRequestRowBody
 
 
 class ConversationEventKind(StrEnum):
@@ -50,6 +51,7 @@ class ConversationEventKind(StrEnum):
     live tail frame, which is not a row.
     """
 
+    credential_request = "credential_request"
     prompt = "prompt"
     prompt_delivery_refused = "prompt_delivery_refused"
     prompt_delivery_uncertain = "prompt_delivery_uncertain"
@@ -515,8 +517,17 @@ class TurnEndedEventPayload:
     automatic_compaction_result: AutomaticCompactionResult | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CredentialRequestEventPayload:
+    """A metadata-only snapshot of one durable credential request."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.credential_request
+    request: CredentialRequestRowBody
+
+
 type ConversationEventPayload = (
-    PromptEventPayload
+    CredentialRequestEventPayload
+    | PromptEventPayload
     | PromptDeliveryRefusedEventPayload
     | PromptDeliveryUncertainEventPayload
     | PromptDiscardedEventPayload
@@ -611,6 +622,8 @@ def conversation_event_payload_from_canonical_json(
 
 def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
     match payload:
+        case CredentialRequestEventPayload():
+            return {"request": payload.request}
         case PromptEventPayload():
             return {
                 **message_content_json_entries(payload.content),
@@ -992,6 +1005,10 @@ def _payload_from_json_object(
                     if isinstance(question_id, str) and isinstance(answer, dict)
                 ),
             )
+        case ConversationEventKind.credential_request:
+            from planner.credentials.requests.logic.validation import decode_snapshot
+
+            return CredentialRequestEventPayload(decode_snapshot(stored["request"]))
         case ConversationEventKind.user_input_failed:
             return UserInputFailedEventPayload(
                 request_id=_text(stored, "request_id"),

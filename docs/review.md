@@ -12,7 +12,7 @@ When the queue is exhausted, Review settles. The screen says whether anything st
 
 If the navigation index is not yet trustworthy, Review says it is unavailable rather than showing an empty queue that might be a lie.
 
-Messages on a Ticket drop out of Review when that Ticket is Done or backlogged. Settlement of a Manager does not hide its approvals or its messages.
+Messages on a Ticket drop out of Review when that Ticket is Done or backlogged. A settled Manager’s own unread conversation drops out of Review as well. Approvals on that Manager’s Tickets stay in the queue, and so do that Manager’s Ticket messages, under the same Done and backlog rules.
 
 ## What feeds Review, and what Review feeds
 

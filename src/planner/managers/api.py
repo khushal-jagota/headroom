@@ -206,7 +206,9 @@ async def get_item_conversation_start_values(item_id: str, conn: DbConn, ctx: Ct
     Manager reading its own start values, exactly as before.
     """
     require_above_or_self(conn, ctx.principal, authority.manager(item_id))
-    values = conversation_start.manager_resolve(managers_data.read_manager(conn, item_id).item)
+    values = conversation_start.manager_resolve(
+        conn, managers_data.read_manager(conn, item_id).item
+    )
     return {
         "backend_key": values.backend_key.value,
         "model": values.model,

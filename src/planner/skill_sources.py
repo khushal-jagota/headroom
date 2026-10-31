@@ -6,7 +6,10 @@ packaged tree here is only what a database with no skills in it is seeded from.
 
 from __future__ import annotations
 
+import errno
+import os
 import shutil
+import stat
 from pathlib import Path
 from typing import Final
 
@@ -27,6 +30,60 @@ RETIRED_PANELS_SKILL_NAMES: Final = frozenset(
 def panels_skill_root() -> Path:
     """Return packaged defaults.  This tree is never a live authority."""
     return Path(__file__).resolve().parent / "skills"
+
+
+def provision_workspace_skills(
+    workspace_root: Path | str, configured_database_parent: Path | str
+) -> Path:
+    """Expose managed skills without replacing any workspace-owned entry.
+
+    Directory descriptors keep exclusive creation within the checked real parent.
+    A concurrent creator is accepted only when it creates the same allowed shape.
+    """
+    source_root = managed_skills_home(configured_database_parent).resolve(strict=True)
+    workspace = Path(workspace_root)
+    parent = workspace / ".agents"
+    target = parent / SKILLS_DIR_NAME
+
+    def conflict(path: Path) -> FileExistsError:
+        return FileExistsError(
+            f"workspace skills conflict at {path}; expected {target} to link to {source_root} "
+            "through a real .agents directory"
+        )
+
+    with_parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    workspace_fd = os.open(workspace, with_parent_flags)
+    try:
+        try:
+            os.mkdir(".agents", dir_fd=workspace_fd)
+        except FileExistsError:
+            pass
+        try:
+            parent_fd = os.open(".agents", with_parent_flags, dir_fd=workspace_fd)
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                raise conflict(parent) from exc
+            raise
+        try:
+            try:
+                os.symlink(source_root, SKILLS_DIR_NAME, dir_fd=parent_fd)
+            except FileExistsError:
+                # Never unlink or overwrite, even for a dangling or invalid symlink.
+                existing = os.stat(SKILLS_DIR_NAME, dir_fd=parent_fd, follow_symlinks=False)
+                if not stat.S_ISLNK(existing.st_mode):
+                    raise conflict(target) from None
+                link = Path(os.readlink(SKILLS_DIR_NAME, dir_fd=parent_fd))
+                try:
+                    resolved = (link if link.is_absolute() else parent / link).resolve(strict=True)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    raise conflict(target) from exc
+                if resolved != source_root:
+                    raise conflict(target) from None
+        finally:
+            os.close(parent_fd)
+    finally:
+        os.close(workspace_fd)
+    return source_root
 
 
 def provision_native_backend_skills(

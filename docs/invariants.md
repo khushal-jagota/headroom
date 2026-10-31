@@ -12,7 +12,7 @@ Workers propose. The proposal resolver settles the current stage’s text and ad
 
 ## The claim starts work and does not watch it
 
-Readiness takes one worker-step claim, sends the opener, and stops. Started, queued, and injected are success. A refusal gives the claim back. An uncertain delivery leaves the claim errored until someone restarts the Worker. Nothing listens for the turn to end. The Ticket moves again when a proposal is filed or a parked proposal is decided.
+Readiness takes one worker-step claim, sends the opener, and stops. Started, queued, and injected are success. On a worker-owned stage the claim stays out until a proposal is filed or a parked proposal is decided. On a user-owned opener the claim returns as soon as that send is accepted, and the recorded opener fact is what stops a second automatic prompt. A refusal or a suppressed send gives the claim back and forgets a tentative opener. An uncertain delivery leaves the claim errored until someone restarts the Worker. Nothing listens for the turn to end. The stage moves when a proposal is filed or a parked proposal is decided.
 
 The claim is the only control fact the Ticket stores. Liveness is a separate question, answered by asking the conversation whether a turn is running.
 
@@ -36,7 +36,7 @@ A conversation runs Hermes, Codex, or Claude. Untrusted names are refused at one
 
 ## The accent means a person is needed
 
-One accent color, currently the soft steel in `assets/tokens.css`, means needs the human: a gate, an approval, a required action. It is not decoration, and it stays out of ordinary conversation prose. Conversation keeps one human pill and bare agent prose. The approval surface is the one raised control.
+One accent color, currently the soft steel in `assets/tokens.css`, means needs the human: a gate, an approval, a required action, and the enabled Send control. It is not decoration, and it stays out of ordinary agent prose. A selected row is a sunken surface, not the accent. Conversation keeps one human pill and bare agent prose. The approval surface is the one raised control.
 
 ## The skill row is the instruction
 

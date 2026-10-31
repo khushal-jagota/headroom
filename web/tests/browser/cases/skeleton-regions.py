@@ -2,9 +2,203 @@
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 from playwright.sync_api import expect
+
+
+def checklist_header_and_presentations(page):
+    # One existing component host isolates header hits and recursive presentation.
+    # Opposite edge midpoints test whitespace inside the rounded header target.
+    checklist = page.locator('[data-checklist-fixture] [data-block="checklist"]')
+    page.emulate_media(reduced_motion="no-preference")
+    for variant in ("empty", "partial", "complete"):
+        page.evaluate(
+            "window.__checklist(false);window.__checklistVariant("
+            + json.dumps(variant)
+            + ");window.__checklist(true)"
+        )
+        toggle = checklist.locator('[data-checklist-toggle]')
+        expect(toggle).to_have_count(1)
+        expect(toggle).to_have_accessible_name('Hide checklist')
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        expect(checklist.get_by_role('progressbar')).to_have_count(1)
+        assert (
+            toggle.locator('button,input,[contenteditable],h1,h2,h3,[role=progressbar]').count()
+            == 0
+        )
+        target = toggle.get_attribute('aria-controls')
+        assert target and checklist.locator('[id="' + target + '"]').count() == 1
+        box = toggle.bounding_box()
+        assert box and box['width'] > 200 and box['height'] >= 40, box
+        toggle.click(position={'x': 2, 'y': box['height'] / 2})
+        expect(toggle).to_have_accessible_name('Show checklist')
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        expect(checklist.locator('[data-checklist-body]')).to_have_attribute('aria-hidden', 'true')
+        expect(checklist.get_by_role('checkbox')).to_have_count(0)
+        toggle.click(position={'x': box['width'] - 2, 'y': box['height'] / 2})
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        toggle.focus()
+        toggle.press('Space')
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        expect(toggle).to_be_focused()
+        toggle.press('Enter')
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        if variant == 'complete':
+            checklist.get_by_role('button', name='2 completed', exact=True).click()
+            expect(
+                checklist.get_by_role('list', name='Completed items').get_by_role('checkbox')
+            ).to_have_count(2)
+    page.evaluate("window.__checklist(false);window.__checklistVariant('partial');window.__checklistOptions(true);window.__checklist(true)")
+    expect(checklist).to_have_attribute('data-presentation', 'normal')
+    expect(checklist.get_by_role('checkbox', name='Publish', exact=True)).to_be_visible()
+    page.evaluate("window.__checklistOptions(true,false,'small')")
+    expect(checklist).to_have_attribute('data-presentation', 'small')
+    expect(checklist.get_by_role('checkbox', name='Publish', exact=True)).to_be_visible()
+    page.evaluate("window.__checklist(false);window.__checklistOptions(false,true);window.__checklist(true)")
+    expect(checklist).to_have_attribute('data-presentation', 'small')
+    publish = checklist.get_by_role('checkbox', name='Publish', exact=True)
+    publish.focus()
+    # A responsive collapse must not strand focus in an inert body.
+    page.evaluate("window.__checklistOptions(true,true)")
+    expect(checklist).to_have_attribute('data-presentation', 'smallest')
+    expect(checklist.locator('[data-checklist-toggle]')).to_be_focused()
+    checklist.locator('[data-checklist-toggle]').click()
+    expect(checklist).to_have_attribute('data-presentation', 'small')
+    expect(publish).to_be_visible()
+    page.evaluate("window.__checklist(false);window.__nestedChecklists(true)")
+    nested = page.locator('[data-nested-checklists] [data-block="checklist"]')
+    expect(nested).to_have_count(4)
+    for item in nested.all():
+        expect(item).to_have_attribute('data-presentation', 'smallest')
+        expect(item.get_by_role('checkbox')).to_have_count(0)
+        item.locator('[data-checklist-toggle]').click()
+        expect(item).to_have_attribute('data-presentation', 'small')
+        expect(item.get_by_role('checkbox')).to_be_visible()
+        expect(item.get_by_role('textbox')).to_have_count(0)
+    page.evaluate("window.__nestedChecklists(false);window.__checklistOptions(false)")
+
+
+def checklist_saved_mount_and_motion(page):
+    # The existing native host catches transient outro DOM, which settled-state
+    # component tests cannot see. Both first mount and remount use accepted data.
+    for reduced in ("no-preference", "reduce"):
+        page.emulate_media(reduced_motion=reduced)
+        for complete in (False, True):
+            page.evaluate("window.__checklistSaved(" + str(complete).lower() + ")")
+            for _ in range(2):
+                frames = page.evaluate(
+                    """async complete => {
+                  const frames=[];
+                  const sample=()=>frames.push([...document.querySelectorAll(
+                    '[data-checklist-fixture] [aria-label="Open items"] [data-step]')]
+                    .map(node=>node.dataset.step));
+                  window.__checklist(true); sample();
+                  for(let n=0;n<5;n++){await new Promise(requestAnimationFrame);sample();}
+                  return frames;
+                }""",
+                    complete,
+                )
+                expected = [] if complete else ["publish"]
+                assert all(frame == expected for frame in frames), (reduced, complete, frames)
+                page.evaluate("window.__checklist(false)")
+
+    page.emulate_media(reduced_motion="no-preference")
+    page.evaluate("window.__checklistSaved(false);window.__checklist(true)")
+    checklist = page.locator("[data-checklist-fixture]")
+    publish = checklist.locator('[data-step="publish"]')
+    publish.get_by_role("checkbox").click()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    # A real edit retains the struck row before the normal delayed disclosure.
+    expect(publish).to_have_class(re.compile(".*struck.*"))
+    expect(publish).to_be_visible()
+    assert (
+        publish.locator(".title-text").evaluate("node => getComputedStyle(node).transitionDuration")
+        != "0s"
+    )
+    expect(checklist.get_by_role("button", name="2 completed", exact=True)).to_be_visible()
+    expect(publish).to_have_count(0)
+    checklist.get_by_role("button", name="2 completed", exact=True).click()
+    checklist.get_by_role("list", name="Completed items").get_by_role(
+        "checkbox", name="Publish", exact=True
+    ).click()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(publish.get_by_role("checkbox")).to_have_attribute("aria-checked", "false")
+    page.emulate_media(reduced_motion="reduce")
+    page.wait_for_function("document.querySelector('[data-checklist-fixture] .reduced')")
+    assert (
+        publish.locator(".title-text").evaluate("node => getComputedStyle(node).transitionDuration")
+        == "0s"
+    )
+    publish.get_by_role("checkbox").click()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(publish).to_have_count(0)
+    page.evaluate("window.__checklist(false);window.__checklistSaved(false)")
+
+
+def checklist_save_feedback(page):
+    # Reuse this component host and browser. No backend is needed to reject a save.
+    page.evaluate("window.__checklist(true)")
+    checklist = page.locator('[data-checklist-fixture]')
+    progress = checklist.get_by_role('progressbar')
+    publish = (
+        checklist.get_by_role('list', name='Open items').get_by_role('checkbox', name='Publish')
+    )
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    publish.click()
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    expect(checklist.locator('[data-block=checklist]')).not_to_have_attribute(
+        'data-complete', 'true'
+    )
+    assert 'All 2 items done.' not in checklist.inner_text()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(false)")
+    expect(publish).to_have_attribute('aria-checked', 'false')
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    expect(checklist.get_by_role('alert')).to_contain_text('Save rejected')
+    expect(checklist.get_by_role('heading', name='Delivery', exact=True)).to_be_visible()
+    assert 'All 2 items done.' not in checklist.inner_text()
+    checklist.get_by_role('button', name='Retry save').click()
+    expect(checklist.get_by_role('alert')).to_have_count(0)
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(progress).to_have_attribute('aria-valuenow', '2')
+    expect(checklist.locator('[data-block=checklist]')).to_have_attribute('data-complete', 'true')
+    expect(checklist.get_by_role('heading', name='Delivery complete', exact=True)).to_be_visible()
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    expect(checklist.get_by_role('status')).to_have_text('All 2 items done.')
+    # An accepted uncheck reopens the checklist through the same writer queue.
+    checklist.get_by_role('button', name='2 completed', exact=True).click()
+    (
+        checklist.get_by_role('list', name='Completed items')
+        .get_by_role('checkbox', name='Publish').click()
+    )
+    expect(progress).to_have_attribute('aria-valuenow', '2')
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    expect(publish).to_have_attribute('aria-checked', 'false')
+    # Equal first/last intents must not let an old rejection clear the last click.
+    publish.click()
+    publish.click()
+    publish.click()
+    for _ in range(2):
+        page.wait_for_function("typeof window.__checklistReply === 'function'")
+        page.evaluate("window.__checklistReply(false)")
+        expect(checklist.get_by_role('alert')).to_have_count(0)
+        expect(publish).to_have_attribute('aria-checked', 'true')
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(progress).to_have_attribute('aria-valuenow', '2')
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    page.evaluate("window.__checklist(false)")
 
 
 def run(browser, urls):
@@ -23,6 +217,15 @@ def run(browser, urls):
     assert page.locator('[data-fixed] [role=status]').inner_text() == "Loading document"
     assert page.evaluate("!window.__status.closest('[aria-busy=true]')")
     page.emulate_media(reduced_motion="reduce")
+    checklist_started = time.monotonic()
+    checklist_header_and_presentations(page)
+    checklist_saved_mount_and_motion(page)
+    page.emulate_media(reduced_motion="reduce")
+    checklist_save_feedback(page)
+    print(
+        f"checklist save feedback: passed ({time.monotonic() - checklist_started:.2f}s)",
+        flush=True,
+    )
     page.evaluate("window.__load(false)")
     page.wait_for_function("!document.querySelector('.skeleton')")
     page.emulate_media(reduced_motion="no-preference")

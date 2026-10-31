@@ -348,8 +348,15 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
     # The historical phase above proves the legacy occurrence fallback. A current
     # runtime requires the complete supported schema, including native execution
     # evidence and persisted workspace policy. Upgrade before constructing it.
+    # This two-column table is legacy epoch evidence, not an initialized Signal
+    # producer. Keep it out of migrations that reinstall producer-owned triggers.
+    conn.execute("DROP TABLE signal_publication_meta")
+    conn.commit()
     monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
     create_schema(conn)
+    conn.execute("CREATE TABLE signal_publication_meta(singleton INTEGER, runtime_epoch TEXT)")
+    conn.execute("INSERT INTO signal_publication_meta VALUES (1,'legacy-epoch')")
+    conn.commit()
     conn.close()
 
     async def exercise() -> None:

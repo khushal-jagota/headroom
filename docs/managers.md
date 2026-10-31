@@ -10,7 +10,7 @@ Assignment, ceiling holder, and Chief’s global reach are three different facts
 
 The goal is why the Manager exists. A non-blank goal can start the Manager conversation as a queued message. That message does not create a reply debt. The recap is the current status line. A new recap replaces the old one. The owner and the Manager may edit both. Cards show the recap. An empty recap falls back to the child count. It does not fall back to the goal. Chief has a recap and no goal band.
 
-Settlement is an owner-only control on an ordinary Manager. It changes presentation: the Manager leaves the active rail and can be reopened from Settled. It does not stop Workers, hide approvals, block messages, or complete children. Settled is the right destination for new work to avoid. Existing work may continue. Unread conversations can still surface. Chief cannot be settled, and Chief cannot settle anyone. The settle writer checks for the owner directly, which is tighter than the usual “Chief stands above everything” rule.
+Settlement is an owner-only control on an ordinary Manager. It changes presentation: the Manager leaves the active rail and can be reopened from Settled. Workers keep running, Ticket approvals stay in Review, and messages can still be sent. The settled Manager’s own unread conversation leaves Review. Ticket messages under that Manager stay eligible until the Ticket is Done or backlogged. Children are not completed. Settled is the right destination for new work to avoid. Existing work may continue. Chief cannot be settled, and Chief cannot settle anyone. The settle writer checks for the owner directly, which is tighter than the usual “Chief stands above everything” rule.
 
 ## Children
 

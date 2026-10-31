@@ -8,6 +8,8 @@ import uuid
 from typing import Any, cast
 
 from planner.core.ticket_blocks import LIVE_BLOCKER_PREDICATE
+from planner.goals.contracts import PageDocument
+from planner.goals.logic.completion import effective_completion
 from planner.managers.data import manager_agent_key
 from planner.navigation.contracts import (
     PREPARED_SCHEMA_VERSION,
@@ -43,6 +45,7 @@ SOURCES: dict[str, tuple[str, str | None]] = {
     "worker_types": ("worker_type", "worker_type,definition_json"),
     "chief_settings": ("employee_id", "employee_id,label"),
     "agents": ("agent_key", None),
+    "goals": ("id", None),
     "ticket_conversations": ("conversation_id", None),
     "ticket_blocks": ("blocked_ticket_id", None),
     "conversations": (
@@ -124,6 +127,10 @@ def _priority_source_shape(conn: sqlite3.Connection) -> bool:
 
 def _install_source_triggers(conn: sqlite3.Connection) -> None:
     for table, (column, update_columns) in SOURCES.items():
+        if table == "goals" and not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goals'"
+        ).fetchone():
+            continue
         for operation in ("INSERT", "UPDATE", "DELETE"):
             conn.execute(f"DROP TRIGGER IF EXISTS navigation_{table}_{operation.lower()}")
             clause = operation
@@ -287,6 +294,8 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
             (manager_agent_key(identity, conn),),
         ):
             roots.add(("conversation", str(row[0])))
+    elif table == "goals":
+        roots.add(("goal", identity))
     elif table == "projects":
         roots.add(("project", identity))
     elif table == "worker_types":
@@ -299,6 +308,8 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
     elif table == "agents":
         if identity == "chief_of_staff":
             roots.add(("chief", "chief"))
+        elif identity.startswith("goal_"):
+            roots.add(("goal", identity.removeprefix("goal_")))
         elif identity.startswith(("manager_", "sprint_item_supervisor_")):
             roots.add(
                 (
@@ -499,6 +510,33 @@ def _derive(
         ).fetchone()
         value["conversation_id"] = None if conv is None else conv[0]
         records.append(_record(kind, identity, value))
+    elif kind == "goal":
+        deps.add(("goals", identity))
+        deps.add(("agents", "goal_" + identity))
+        found = rows(
+            conn,
+            "SELECT * FROM goals WHERE id=?",
+            (identity,),
+        )
+        if found:
+            goal = found[0]
+            value = {
+                "title": goal["title"],
+                "active": bool(goal["active"]),
+                "completed": effective_completion(
+                    bool(goal["completed"]),
+                    cast(PageDocument, json.loads(goal["page"])),
+                    # Navigation rebuilds also run before this column's migration.
+                    goal.get("primary_checklist_block_id"),
+                ),
+                "created_at": goal["created_at"],
+                "updated_at": goal["updated_at"],
+            }
+            linked = conn.execute(
+                "SELECT conversation_id FROM agents WHERE agent_key=?", ("goal_" + identity,)
+            ).fetchone()
+            value["conversation_id"] = None if linked is None else linked[0]
+            records.append(_record(kind, identity, value))
     elif kind == "project":
         deps.add(("projects", identity))
         version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
@@ -599,6 +637,18 @@ def _derive(
                     "parent_kind": None,
                     "parent_id": None,
                 }
+            elif key.startswith("goal_"):
+                owner = key.removeprefix("goal_")
+                deps.add(("goals", owner))
+                if conn.execute("SELECT 1 FROM goals WHERE id=?", (owner,)).fetchone():
+                    addresses[("goal", owner)] = {
+                        "owner_kind": "goal",
+                        "owner_id": owner,
+                        "conversation_id": identity,
+                        "current": True,
+                        "parent_kind": None,
+                        "parent_id": None,
+                    }
             elif key.startswith(("manager_", "sprint_item_supervisor_")):
                 owner = key.removeprefix("manager_").removeprefix("sprint_item_supervisor_")
                 deps.add(("managers", owner))
@@ -635,6 +685,21 @@ def _derive(
                     ("manager", owner),
                     {
                         "owner_kind": "manager",
+                        "owner_id": owner,
+                        "conversation_id": identity,
+                        "current": False,
+                        "parent_kind": None,
+                        "parent_id": None,
+                    },
+                )
+        if values.get("PLAN_ACTOR") == "goal" and values.get("PLAN_GOAL_ID"):
+            owner = values["PLAN_GOAL_ID"]
+            deps.add(("goals", owner))
+            if conn.execute("SELECT 1 FROM goals WHERE id=?", (owner,)).fetchone():
+                addresses.setdefault(
+                    ("goal", owner),
+                    {
+                        "owner_kind": "goal",
                         "owner_id": owner,
                         "conversation_id": identity,
                         "current": False,
@@ -896,6 +961,8 @@ def rebuild(conn: sqlite3.Connection) -> None:
             roots.add((kind, identity))
             if kind == "manager":
                 roots.add(("totals", "manager:" + identity))
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='goals'").fetchone():
+        roots.update(("goal", str(row[0])) for row in conn.execute("SELECT id FROM goals"))
     definitions: dict[str, WorkerTypeDefinition] = {}
     ticket_owners = _ticket_owners_by_conversation(conn)
     for root in sorted(roots, key=lambda key: (key[0] == "totals", key)):

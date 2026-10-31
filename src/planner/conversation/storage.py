@@ -81,6 +81,7 @@ from planner.conversation.lifecycle_storage import (
     read_facts,
     validate_runtime_ownership,
 )
+from planner.conversation.logic.conversation_start_resolution import bind_conversation_origin
 from planner.conversation.publication.coordinator import (
     SignalAdmission,
     SignalPublicationCoordinator,
@@ -90,7 +91,12 @@ from planner.conversation.views.writer import append_projection
 from planner.core.commit_capture import register_capture_task, run_in_capture_thread
 from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
-from planner.core.db import commit_without_change_signal, connect
+from planner.core.db import (
+    ChangeSignallingConnection,
+    commit_without_change_signal,
+    connect,
+    transaction_control_guard,
+)
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
     ConversationAttentionSnapshot,
@@ -183,7 +189,7 @@ class ConversationRecord:
             backend_key=self.backend_key,
             model=self.model,
             reasoning_effort=self.reasoning_effort,
-            role_materials=role_materials,
+            role_materials=bind_conversation_origin(role_materials, self.conversation_id),
             workspace_folder=self.workspace_folder,
             workspace_path_policy=self.workspace_path_policy,
             access=self.access,
@@ -219,6 +225,15 @@ class ConversationStore:
         integer_now: Callable[[], int] = lambda: int(time.time()),
         busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MILLISECONDS,
         transaction_participant: ConversationTransactionParticipant | None = None,
+        event_participant: Callable[
+            [sqlite3.Connection, str, tuple[ConversationEventPayload, ...]],
+            tuple[ConversationEventPayload, ...],
+        ]
+        | None = None,
+        startup_participant: Callable[
+            [sqlite3.Connection], dict[str, tuple[ConversationEventPayload, ...]]
+        ]
+        | None = None,
         signal_coordinator: SignalPublicationCoordinator | None = None,
         bind_signal_admission: Callable[[sqlite3.Connection, object], AbstractContextManager[None]]
         | None = None,
@@ -246,6 +261,8 @@ class ConversationStore:
         )
         self._db_path = db_path
         self._transaction_participant = transaction_participant
+        self._event_participant = event_participant
+        self._startup_participant = startup_participant
         self._integer_now = integer_now
         self._busy_timeout_ms = busy_timeout_ms
         self._write_operations: set[asyncio.Task[object]] = set()
@@ -320,6 +337,11 @@ class ConversationStore:
                 LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
                 guard=self._transaction_control_guard,
             )
+        if self._startup_participant is not None:
+            with transaction_control_guard(cast(ChangeSignallingConnection, conn)):
+                recovered_events = self._startup_participant(conn)
+            for conversation_id, payloads in recovered_events.items():
+                self._insert_rows(conn, conversation_id, payloads)
         commit_without_change_signal(conn)
 
     async def bind_interruption_delivery(
@@ -668,6 +690,35 @@ class ConversationStore:
 
     async def read_conversation(self, conversation_id: str) -> ConversationRecord | None:
         return await asyncio.to_thread(self._read_conversation_sync, conversation_id)
+
+    async def transact_events[T](
+        self,
+        conversation_id: str,
+        operation: Callable[[sqlite3.Connection], tuple[T, tuple[ConversationEventPayload, ...]]],
+    ) -> tuple[T, tuple[StoredConversationEvent, ...]]:
+        """Commit a synchronous domain mutation and its conversation events together."""
+
+        def write() -> tuple[T, tuple[StoredConversationEvent, ...]]:
+            with self._publication_connection() as (conn, admission):
+                try:
+                    snapshot = self._begin_validated_attention_write(conn, conversation_id)
+                    if snapshot is None:
+                        raise ConversationRecordMissing(conversation_id)
+                    self._apply_signal_mutation(conn, admission)
+                    with transaction_control_guard(cast(ChangeSignallingConnection, conn)):
+                        result, payloads = operation(conn)
+                    written = self.append_in_transaction(conn, conversation_id, payloads)
+                    final = (result, written)
+                    self._record_signal_result(conn, final)
+                    self._commit_rows(conn, tuple(row.payload for row in written))
+                    return final
+                except BaseException as error:
+                    self._invalidate_signal_failure(error)
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
+
+        return await self._write(write)
 
     async def append_event(
         self,
@@ -1281,7 +1332,7 @@ class ConversationStore:
                     resulting_read_through = max(resulting_read_through, read_through)
                 result = advance_conversation_attention(
                     snapshot,
-                    payloads,
+                    tuple(row.payload for row in written),
                     owner_read_through_sequence=resulting_read_through,
                     occurred_at=written[-1].created_at,
                 )
@@ -1423,6 +1474,9 @@ class ConversationStore:
                 if not isinstance(payload, ExplicitReplyMissingEventPayload)
                 or (payload.prompt_sender.kind.value, payload.prompt_sender.id) not in recipients
             )
+        if self._event_participant is not None:
+            with transaction_control_guard(cast(ChangeSignallingConnection, conn)):
+                payloads += self._event_participant(conn, conversation_id, payloads)
         created_at = self._integer_now()
         row = conn.execute(
             "SELECT latest_sequence FROM conversations WHERE conversation_id = ?",
@@ -1993,7 +2047,7 @@ class ConversationStore:
                 read_through = max(read_through, owner_read_through_sequence)
             result = advance_conversation_attention(
                 snapshot,
-                payloads,
+                tuple(row.payload for row in written),
                 owner_read_through_sequence=read_through,
                 occurred_at=last.created_at,
             )

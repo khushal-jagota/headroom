@@ -242,3 +242,71 @@ def resolve_agent_conversation_start(
         workspace_folder=workspace_folder,
         access=FLOOR_DEFAULT_ACCESS,
     )
+
+
+def resolve_goal_conversation_start(
+    *,
+    goal_id: str,
+    launch_configuration: ConversationStartConfiguration,
+    overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
+    workspace_folder: Path,
+) -> ConversationStartValues:
+    resolved = _with_overrides(launch_configuration, overrides)
+    return ConversationStartValues(
+        backend_key=resolved.backend_key,
+        model=resolved.model,
+        reasoning_effort=resolved.reasoning_effort,
+        workspace_folder=workspace_folder,
+        access=FLOOR_DEFAULT_ACCESS,
+        role_materials=ConversationRoleMaterials(
+            role_text=(
+                "Start with the `panels` skill. You are the agent for goal " + goal_id + ". "
+                "Read your goal and page document with "
+                "`panels goal show " + goal_id + " --json`. "
+                "Read bound measurement results with `panels goal read " + goal_id + " --json`. "
+                "Discover goals with `panels goal list --json`. "
+                "Inspect goal requests with `panels goal schema create --json`, "
+                "`panels goal schema edit --json`, and "
+                "`panels goal schema primary-chart --json`. "
+                "Inspect source and measure requests with `panels measure-source schema --json` "
+                "and `panels measure schema --json`. "
+                "These read-only commands return schema, examples, and notes without stdin "
+                "or a server request. Replace example identifiers with saved record IDs. "
+                "Read source script helpers and executable examples with "
+                "`panels measure-source runtime --json`. "
+                "Inspect script and run requests with `panels measure-source schema script --json` "
+                "and `panels measure-source schema run --json`. "
+                "Goal pages are dashboards for the user. Keep them focused on useful signals "
+                "and concise text. Use checklists for steps and charts for measurements. "
+                "Add text when it gives useful context rather than repeats visible state. "
+                "Include intake records or work artifacts only when they help the user. "
+                "Preserve useful authored context and artifact previews. "
+                "Read the normal goal schemas for explicit main-display choices. "
+                "Keep supporting notes and evidence in your goal's managed files. "
+                "Use `panels goal artifact list " + goal_id + " --json` to discover artifacts. "
+                "Use `panels goal artifact read|write|delete` with your goal ID and a path "
+                "relative to `artifacts/`. Write UTF-8 text with `--body-file FILE`, "
+                "or use `--body-file -` for stdin. File commands support `--json`. "
+                "Link the returned `/files/goals/` URL in messages. "
+                "An index page represents its folder in artifact lists. "
+                "Its supporting assets remain readable by their known paths. "
+                "Completion, deactivation, and conversation reset preserve your files. "
+                "The saved page JSON holds current goal content. Files hold supporting material. "
+                "Measurements stay in their existing store. You can create and manage sources "
+                "assigned to this goal, including scripts, measures, datasets, runs, "
+                "and schedules. "
+                "Use `panels measure-source --help` and `panels dataset --help`. "
+                "You can update manual measures bound to this goal, including shared measures. "
+                "Use `panels measure manual-state` and `panels measure manual-write`. "
+                "Chief owns the overall goals surface and goal setting. "
+                "Use `panels goal --help` for canonical goal and page edits. "
+                "You can mark or reverse completion and activate or make your goal inactive "
+                "without approval steps. Completion and active state are independent. "
+                "Marking done never deactivates a goal. Deactivation is explicit. "
+                "You own no Tickets. Request work from Chief through ordinary messages. "
+                "This goal has no Ticket stages or automatic Worker continuation."
+                + _ROLE_REPLY_REQUIREMENT
+            ),
+            identity_environment_variables=(("PLAN_ACTOR", "goal"), ("PLAN_GOAL_ID", goal_id)),
+        ),
+    )
