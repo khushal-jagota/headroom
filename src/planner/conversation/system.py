@@ -2593,23 +2593,48 @@ class SqliteProcessConversationSystem:
         self,
         state: _ConversationState,
         turn_token: TurnToken,
+        *,
+        content: MessageContent,
+        sender_label: str,
+        sender_message_count: int,
+        mode: PromptDeliveryMode,
+        model_change: str | None,
+        reasoning_effort_change: str | None,
+        automatic_compaction: bool,
+        reply_senders: tuple[Principal, ...] = (),
+        messages: tuple[_Message, ...] = (),
+        reasoning_effort_is_set: bool = False,
         native_message_operation: NativeMessageOperation | None = None,
-        **kwargs: Any,
     ) -> _PromptDeliveryAttempt:
+        deliver_unsettled = partial(
+            self._deliver_prompt_unsettled,
+            state,
+            turn_token,
+            content=content,
+            sender_label=sender_label,
+            sender_message_count=sender_message_count,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            automatic_compaction=automatic_compaction,
+            reply_senders=reply_senders,
+            messages=messages,
+            reasoning_effort_is_set=reasoning_effort_is_set,
+        )
         reservation = state.reserved_turn
         if reservation is not None and reservation.token == turn_token:
-            reservation.messages = kwargs.get("messages", ())
-            reservation.mode = kwargs["mode"]
+            reservation.messages = messages
+            reservation.mode = mode
             if reservation.shutdown_owned:
                 raise DeliveryCancelled()
         try:
             if reservation is None:
-                return await self._deliver_prompt_unsettled(state, turn_token, **kwargs)
+                return await deliver_unsettled()
 
             async def deliver_reserved_prompt() -> _PromptDeliveryAttempt:
 
                 try:
-                    return await self._deliver_prompt_unsettled(state, turn_token, **kwargs)
+                    return await deliver_unsettled()
                 except DeliveryCancelled:
                     if not reservation.shutdown_owned:
                         raise
@@ -2644,10 +2669,10 @@ class SqliteProcessConversationSystem:
                 raise
 
             async def settle_recovery_exception() -> None:
-                messages = tuple(
-                    message for message in kwargs.get("messages", ()) if message.recovery_references
+                recovery_messages = tuple(
+                    message for message in messages if message.recovery_references
                 )
-                if not messages:
+                if not recovery_messages:
                     await self._persist(
                         state,
                         partial(
@@ -2658,13 +2683,13 @@ class SqliteProcessConversationSystem:
                     )
                     return
                 async with state.lock:
-                    for index, message in enumerate(messages):
+                    for index, message in enumerate(recovery_messages):
                         await self._append_event(
                             state,
                             PromptDeliveryUncertainEventPayload(
                                 content=message.content,
                                 sender_label=message.sender_label,
-                                mode=kwargs["mode"],
+                                mode=mode,
                                 sender_message_id=message.sender_message_id,
                                 sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
                                 sender=message.sender,
@@ -2741,23 +2766,65 @@ class SqliteProcessConversationSystem:
             and reasoning_effort_change is None
             and state.record.reasoning_effort is not None
         )
+        return await self._write_on_child(
+            state,
+            turn_token,
+            content=content,
+            sender_label=sender_label,
+            sender_message_count=sender_message_count,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            automatic_compaction=automatic_compaction,
+            reply_senders=reply_senders,
+            messages=messages,
+            reasoning_effort_is_set=effort_is_set,
+            interruption_notice=interruption_notice,
+            requires_exact_rebind=requires_exact_rebind,
+        )
+
+    async def _write_on_child(
+        self,
+        state: _ConversationState,
+        turn_token: TurnToken,
+        *,
+        content: MessageContent,
+        sender_label: str,
+        sender_message_count: int,
+        mode: PromptDeliveryMode,
+        model_change: str | None,
+        reasoning_effort_change: str | None,
+        automatic_compaction: bool,
+        reply_senders: tuple[Principal, ...] = (),
+        messages: tuple[_Message, ...] = (),
+        reasoning_effort_is_set: bool = False,
+        interruption_notice: str | None = None,
+        requires_exact_rebind: bool = False,
+        wire_content: MessageContent | None = None,
+        check_delivery_owner: Callable[[], None] | None = None,
+    ) -> _PromptDeliveryAttempt:
+        """Prepare and write once; a rebound child cannot request another rebind."""
         try:
-            if (
-                state.last_ended_turn_token is not None
-                and state.last_ended_turn_token.turn_number >= turn_token.turn_number
-            ):
-                raise DeliveryCancelled()
+            if check_delivery_owner is None:
+                if (
+                    state.last_ended_turn_token is not None
+                    and state.last_ended_turn_token.turn_number >= turn_token.turn_number
+                ):
+                    raise DeliveryCancelled()
             child = await self._ensure_child(
                 state,
                 model=model_change,
                 reasoning_effort=reasoning_effort_change,
-                reasoning_effort_is_set=effort_is_set,
+                reasoning_effort_is_set=reasoning_effort_is_set,
             )
         except BackendSpawnFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
+        if check_delivery_owner is not None:
+            async with state.lock:
+                check_delivery_owner()
         automatic_notice = False
         if messages:
             messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
@@ -2776,13 +2843,19 @@ class SqliteProcessConversationSystem:
             sender_label = messages[0].sender_label
             sender_message_count = len(messages)
             reply_senders = self._reply_senders(messages)
-        composed_content = await self._compose_prompt_content(state, content)
-        if interruption_notice is not None:
-            composed_content = prefix_message_content_text(
-                composed_content, interruption_notice, "\n\n"
-            )
-        composed = with_authenticated_reply_directive(composed_content, reply_senders)
-        if (
+        if messages or wire_content is None:
+            composed_content = await self._compose_prompt_content(state, content)
+            if interruption_notice is not None:
+                composed_content = prefix_message_content_text(
+                    composed_content, interruption_notice, "\n\n"
+                )
+            wire_content = with_authenticated_reply_directive(composed_content, reply_senders)
+        if check_delivery_owner is not None:
+            async with state.lock:
+                check_delivery_owner()
+                if state.child is not child:
+                    raise DeliveryCancelled()
+        elif (
             state.last_ended_turn_token is not None
             and state.last_ended_turn_token.turn_number >= turn_token.turn_number
         ):
@@ -2794,7 +2867,7 @@ class SqliteProcessConversationSystem:
                 raise NeedsRebind("exact desired default or alias target requires a fresh child")
             accepted = await attempted_child.write_prompt(
                 turn_token,
-                composed,
+                wire_content,
                 sender_content=content,
                 sender_label=sender_label,
                 sender_message_count=sender_message_count,
@@ -2802,7 +2875,7 @@ class SqliteProcessConversationSystem:
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
                 automatic_compaction=automatic_compaction,
-                reasoning_effort_is_set=effort_is_set,
+                reasoning_effort_is_set=reasoning_effort_is_set,
             )
         except PromptWriteRefused as refused:
             return _PromptDeliveryAttempt(
@@ -2816,12 +2889,15 @@ class SqliteProcessConversationSystem:
                 refusal_detail=str(rejected),
             )
         except NeedsRebind as rebind:
+            if check_delivery_owner is not None:
+                await self._discard_child(state, child)
+                return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
             rebound = await self._rebind_and_write_prompt(
                 state,
                 turn_token,
                 refused_child=attempted_child,
                 reservation=attempted_reservation,
-                content=composed,
+                content=wire_content,
                 sender_content=content,
                 sender_label=sender_label,
                 sender_message_count=sender_message_count,
@@ -2831,7 +2907,7 @@ class SqliteProcessConversationSystem:
                 automatic_compaction=automatic_compaction,
                 messages=messages,
                 interruption_notice=interruption_notice,
-                reasoning_effort_is_set=effort_is_set,
+                reasoning_effort_is_set=reasoning_effort_is_set,
             )
             return replace(
                 rebound,
@@ -2839,6 +2915,12 @@ class SqliteProcessConversationSystem:
                     rebound.refusal_reason is not None and rebind.failed_child_recovery
                 ),
             )
+        except PromptWriteFailed:
+            raise
+        except BaseException:
+            if check_delivery_owner is not None:
+                await self._discard_child(state, child)
+            raise
         if attempted_reservation is not None:
             attempted_reservation.prompt_accepted = True
         return _PromptDeliveryAttempt(
@@ -2924,86 +3006,21 @@ class SqliteProcessConversationSystem:
             check_delivery_owner()
             if state.child is not None or state.child_is_quarantined:
                 return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
-        try:
-            child = await self._ensure_child(
-                state,
-                model=model_change,
-                reasoning_effort=reasoning_effort_change,
-                reasoning_effort_is_set=reasoning_effort_is_set,
-            )
-        except BackendSpawnFailed:
-            return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
-        except SessionLoadFailed:
-            return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
-        async with state.lock:
-            check_delivery_owner()
-        automatic_notice = False
-        if messages:
-            messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
-                state,
-                messages,
-                lifecycle_if_all_suppressed=(
-                    _turn_fact(turn_token, LifecycleStatus.unavailable),
-                    _prompt_fact(turn_token, LifecycleStatus.suppressed),
-                ),
-            )
-            if not messages:
-                await self._discard_child(state, child)
-                return _PromptDeliveryAttempt(suppression_reason=suppression_reason)
-            sender_content = one_prompt_from(messages)
-            sender_label = messages[0].sender_label
-            sender_message_count = len(messages)
-            composed_content = await self._compose_prompt_content(state, sender_content)
-            if interruption_notice is not None:
-                composed_content = prefix_message_content_text(
-                    composed_content, interruption_notice, "\n\n"
-                )
-            content = with_authenticated_reply_directive(
-                composed_content,
-                self._reply_senders(messages),
-            )
-        async with state.lock:
-            check_delivery_owner()
-            if state.child is not child:
-                raise DeliveryCancelled()
-        try:
-            accepted = await child.write_prompt(
-                turn_token,
-                content,
-                sender_content=sender_content,
-                sender_label=sender_label,
-                sender_message_count=sender_message_count,
-                mode=mode,
-                model_change=model_change,
-                reasoning_effort_change=reasoning_effort_change,
-                automatic_compaction=automatic_compaction,
-                reasoning_effort_is_set=reasoning_effort_is_set,
-            )
-        except PromptWriteRefused as refused:
-            return _PromptDeliveryAttempt(
-                PromptDeliveryRefusalReason.write_to_backend_failed,
-                refusal_detail=str(refused),
-            )
-        except BackendPromptRejected as rejected:
-            return _PromptDeliveryAttempt(
-                PromptDeliveryRefusalReason.backend_rejected_prompt,
-                record_refusal=True,
-                refusal_detail=str(rejected),
-            )
-        except PromptWriteFailed:
-            raise
-        except NeedsRebind:
-            await self._discard_child(state, child)
-            return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
-        except BaseException:
-            await self._discard_child(state, child)
-            raise
-        if reservation is not None:
-            reservation.prompt_accepted = True
-        return _PromptDeliveryAttempt(
-            composed_content_delivered=accepted.composed_content_delivered,
+        return await self._write_on_child(
+            state,
+            turn_token,
+            content=sender_content,
+            wire_content=content,
+            sender_label=sender_label,
+            sender_message_count=sender_message_count,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            automatic_compaction=automatic_compaction,
             messages=messages,
-            automatic_notice=automatic_notice,
+            reasoning_effort_is_set=reasoning_effort_is_set,
+            interruption_notice=interruption_notice,
+            check_delivery_owner=check_delivery_owner,
         )
 
     async def _finalize_delivery(
