@@ -141,7 +141,7 @@ class MacRuns:
         identity = link.identity
         registered_before_ask = set(self.pending_commands)
         unknown = await self._reconnect(identity, link)
-        if not await self._reconciliation_current(identity, link):
+        if not self._reconciliation_current(identity, link):
             return
         await settled_io(self.store.mark_ready, identity)
         if not await link.tell(
@@ -266,13 +266,7 @@ class MacRuns:
                 pass  # Loss supplies no proof of non-invocation.
         return prompt_may_have_sent
 
-    async def _reconciliation_current(self, identity: ExecutorIdentity, writer: Link) -> bool:
-        if self.link is not writer or writer.is_closing() or self.identity != identity:
-            return False
-        try:
-            await settled_io(self.store.verify_connection, identity)
-        except PlannerError:
-            return False
+    def _reconciliation_current(self, identity: ExecutorIdentity, writer: Link) -> bool:
         return self.link is writer and not writer.is_closing() and self.identity == identity
 
     async def _emit_command(
@@ -491,7 +485,7 @@ class MacRuns:
         response = await writer.request(
             WireMessageKind.reconnect_ask, as_object(ReconnectAsk(tuple(pending)))
         )
-        if not await self._reconciliation_current(identity, writer):
+        if not self._reconciliation_current(identity, writer):
             raise ConnectionError("reconnect generation changed")
         if response.kind is not WireMessageKind.reconnect_result:
             raise ValueError("reconnect ask refused")
@@ -533,7 +527,7 @@ class MacRuns:
             if await settled_io(self._closed_reconciliation_child, item.child, identity):
                 self.retire_child(item.child)
                 continue
-            if not await self._reconciliation_current(identity, writer):
+            if not self._reconciliation_current(identity, writer):
                 raise ConnectionError("reconnect generation changed")
             children[item.child] = item
         # Inventory absence is not termination evidence. Stop every retained run
@@ -545,12 +539,12 @@ class MacRuns:
                 or run.reference.child_id in self.children
             ):
                 continue
-            if not await self._reconciliation_current(identity, writer):
+            if not self._reconciliation_current(identity, writer):
                 raise ConnectionError("reconnect generation changed")
             proxy = self._make_child(run.reference)
             self.children[run.reference.child_id] = proxy
             await self.conversations.stop_interrupted_remote_child(run.reference, proxy)
-        if not await self._reconciliation_current(identity, writer):
+        if not self._reconciliation_current(identity, writer):
             raise ConnectionError("reconnect generation changed")
         for proxy in tuple(self.children.values()):
             proxy.observe_callbacks(children.get(proxy.reference))

@@ -535,9 +535,7 @@ def create_app(
             return {
                 "mode": "local",
                 "last_contact_at_ms": None,
-                "last_contact_source": "vps_received_valid_executor_frame",
                 "connection_state": "disconnected",
-                "reconciliation_ready": False,
             }
         return {"mode": "remote", **endpoint.health()}
 

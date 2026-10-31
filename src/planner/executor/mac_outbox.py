@@ -504,7 +504,7 @@ class MacOutbox:
                 # This item cannot use the descriptor. Answer its request and
                 # obtain a durable refusal without disturbing other conversations.
                 refused = await link.request(
-                    WireMessageKind.error,
+                    WireMessageKind.refuse_envelope,
                     as_object(EnvelopeRefusal(envelope, str(error))),
                     request_id=request_id,
                 )
