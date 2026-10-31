@@ -28,7 +28,6 @@ if TYPE_CHECKING:
 
 from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
-from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
 from planner.conversation.backends.contracts import (
     AgentMessageCompletedArguments,
@@ -388,7 +387,7 @@ class StartRun:
     canonical_skill_snapshot: CanonicalSkillSnapshot
     vendor_session_cursor: str | None = None
     workspace_home_relative: str | None = None
-    admission_expectation: AdmissionExpectation | None = None
+
     kind: Literal["start"] = "start"
 
 
@@ -404,7 +403,7 @@ class WritePrompt:
     reasoning_effort_change: str | None = None
     reasoning_effort_is_set: bool = False
     automatic_compaction: bool = False
-    admission_expectation: AdmissionExpectation | None = None
+
     kind: Literal["write_prompt"] = "write_prompt"
 
 
@@ -414,7 +413,7 @@ class Steer:
     content: MessageContent
     sender_label: str
     sender_content: MessageContent | None = None
-    admission_expectation: AdmissionExpectation | None = None
+
     kind: Literal["steer"] = "steer"
 
 
@@ -458,10 +457,6 @@ def decode_command_arguments(operation: ChildOperation, raw: object) -> ChildCom
     """Decode the JSON command at ingress, including the previous untagged wire form."""
     if isinstance(raw, dict):
         raw = {"kind": operation.value, **raw}
-        if raw.get("admission_expectation") is not None:
-            from planner.conversation.admission.service import parse_expectation
-
-            raw["admission_expectation"] = parse_expectation(raw["admission_expectation"])
         # Saved answers have one stable identity and their complete chosen value.
         if "answer" in raw and raw["answer"] is not None:
             answer = type_adapter(DurableAnswer).validate_python(raw["answer"])

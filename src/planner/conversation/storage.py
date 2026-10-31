@@ -32,7 +32,7 @@ from uuid import uuid4
 from pydantic import JsonValue
 
 from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
-from planner.conversation.backends.contracts import AdmissionRefused, BackendSpawnFailed, TurnToken
+from planner.conversation.backends.contracts import BackendSpawnFailed, TurnToken
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
@@ -576,7 +576,7 @@ class ConversationStore:
         while True:
             try:
                 return await operation()
-            except (asyncio.CancelledError, AdmissionRefused):
+            except asyncio.CancelledError:
                 # A proven pre-dispatch refusal is an admission outcome, not a failed write.
                 raise
             except Exception as error:

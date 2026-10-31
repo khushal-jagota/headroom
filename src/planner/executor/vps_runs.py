@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sqlite3
 import time
 from uuid import uuid4
 
 from planner.conversation.backends.contracts import (
-    AdmissionRefused,
     BackendEventSink,
     BackendSpawnFailed,
     DeliveryCancelled,
@@ -45,7 +43,7 @@ from planner.executor.protocol import (
 )
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
-from planner.executor.vps_remote_child import MacRemoteChild, command_emission_decision
+from planner.executor.vps_remote_child import MacRemoteChild
 
 
 def now_ms() -> int:
@@ -66,8 +64,6 @@ class MacRuns:
         self.pending_commands: dict[str, tuple[ChildCommand, asyncio.Future[CommandOutcome]]] = {}
         self._cancelled_initial_children: set[ChildReference] = set()
         self._possibly_emitted_commands: set[str] = set()
-        self._newly_recorded_commands: dict[str, ChildCommand] = {}
-        self._policy_held_commands: set[str] = set()
         self._prompt_command_ids: set[str] = set()
         self._emission_tasks: dict[str, set[asyncio.Task[bool]]] = {}
         self._tasks: set[asyncio.Task[object]] = set()
@@ -341,7 +337,7 @@ class MacRuns:
         expected_identity: ExecutorIdentity | None = None,
         expected_writer: Link | None = None,
     ) -> bool:
-        """The final guard is shared by immediate sends and reconnect replay."""
+        """Send on the current link, preserving command identity across replay."""
         if command.operation not in (
             ChildOperation.answer_permission_ask,
             ChildOperation.answer_user_input,
@@ -352,8 +348,6 @@ class MacRuns:
                 raise ConnectionError("command input generation changed")
             if self.link is None or not self.ready:
                 raise ConnectionError("executor link unavailable")
-            if not await self._command_policy_allows_emission(command, expected_identity):
-                return False
             writer = self.link
             assert writer is not None
 
@@ -432,15 +426,8 @@ class MacRuns:
         task.add_done_callback(self._tasks.discard)
 
     async def send_new_command(self, command: ChildCommand) -> CommandOutcome:
-        """Only MacRemoteChild._call supplies freshly minted command identities.
-
-        Recovery and reconnect replay use send_command directly. Registration is
-        in-process evidence only; a reopened journal never gains unsent provenance.
-        """
-
+        """Prepare a new command, send it, and record its outcome."""
         await settled_io(self.store.prepare_command, command)
-        if command.operation in (ChildOperation.start, ChildOperation.write_prompt):
-            self._newly_recorded_commands.setdefault(command.command_id, command)
         outcome = await self.send_command(command)
         await settled_io(self.store.record_prompt_outcome, command, outcome)
         if (
@@ -449,38 +436,6 @@ class MacRuns:
         ):
             await settled_io(self.store.close_child, command.child, now_ms())
         return outcome
-
-    async def _command_policy_allows_emission(
-        self, command: ChildCommand, identity: ExecutorIdentity | None
-    ) -> bool:
-        if command.operation not in (ChildOperation.start, ChildOperation.write_prompt):
-            return True
-        decision = await settled_io(
-            command_emission_decision,
-            self.db_path,
-            command,
-            identity,
-            self._newly_recorded_commands.get(command.command_id) == command
-            and command.command_id not in self._possibly_emitted_commands,
-        )
-        if isinstance(decision, CommandOutcome):
-            pending = self.pending_commands.get(command.command_id)
-            if pending is not None and not pending[1].done():
-                pending[1].set_result(decision)
-            self._newly_recorded_commands.pop(command.command_id, None)
-            return False
-        if isinstance(decision, AdmissionRefused):
-            if command.command_id not in self._policy_held_commands:
-                logging.getLogger("planner.executor").warning(
-                    "Command %s on %s remains uncertain; policy blocks redispatch: %s. "
-                    "Original evidence or definitive executor settlement is required.",
-                    command.command_id,
-                    command.child,
-                    decision,
-                )
-                self._policy_held_commands.add(command.command_id)
-            return False
-        return decision
 
     async def send_command(self, command: ChildCommand) -> CommandOutcome:
         if self._initial_command_cancelled(command):
@@ -574,9 +529,6 @@ class MacRuns:
             child = self.children.get(outcome.child.child_id)
             if child is not None and child.reference == outcome.child:
                 child.saved_answers.pop(outcome.command_id, None)
-        if outcome.disposition is not CommandDisposition.uncertain:
-            self._newly_recorded_commands.pop(outcome.command_id, None)
-            self._policy_held_commands.discard(outcome.command_id)
         pending = self.pending_commands.get(outcome.command_id)
         if pending is not None and pending[0].child == outcome.child and not pending[1].done():
             pending[1].set_result(outcome)

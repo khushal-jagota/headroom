@@ -22,7 +22,6 @@ import pytest
 from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
 
 import planner.conversation.system as conversation_system
-from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
@@ -33,7 +32,6 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
-    EmissionCheck,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteRefused,
@@ -216,8 +214,6 @@ class _FakeBackendChild:
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         if self._backend.session_load_fails:
             raise SessionLoadFailed(self._backend.conversation_id)
@@ -250,8 +246,6 @@ class _FakeBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
         reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         # The label and the mode travel with the text as metadata for backends that have a
@@ -309,8 +303,6 @@ class _FakeBackendChild:
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         del sender_content
         del sender_label
@@ -692,6 +684,30 @@ async def _start(
             workspace_folder=Path("/tmp/workspace"),
         )
     )
+
+
+def test_disabled_saved_model_refuses_dispatch_until_reenabled(harness: _Harness) -> None:
+    from planner.conversation.backend_state import BackendStateStore
+
+    async def exercise() -> None:
+        backend_key = ConversationBackendKey.codex
+        await _start(harness, backend_key=backend_key, model="exact-provider-model")
+        policy = BackendStateStore(str(harness.db_path))
+        policy.write_model_enablement(backend_key, "exact-provider-model", False)
+        refused = await harness.system.send(
+            "c", text_message_content("blocked"), sender_label="Owner"
+        )
+        assert isinstance(refused, PromptDeliveryRefused)
+        assert refused.refusal_reason is PromptDeliveryRefusalReason.model_resolution_failed
+        assert refused.model_validation is not None
+        assert refused.model_validation["reason"] == "model_incompatible"
+        assert harness.backend("c").writes == []
+        policy.write_model_enablement(backend_key, "exact-provider-model", True)
+        sent = await harness.system.send("c", text_message_content("allowed"), sender_label="Owner")
+        assert isinstance(sent, PromptDeliveryStarted)
+        assert len(harness.backend("c").writes) == 1
+
+    _run(exercise)
 
 
 # --- the conversation's record is written as step one ------------------------------------

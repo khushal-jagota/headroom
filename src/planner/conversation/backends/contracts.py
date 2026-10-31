@@ -25,11 +25,9 @@ and is not translated into a refusal.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from planner.conversation.admission.contracts import AdmissionExpectation
     from planner.execution_identity import ChildReference
 
 from planner.conversation.contracts import (
@@ -51,34 +49,8 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 
 
-@dataclass(frozen=True, slots=True)
-class BackendEmissionInputs:
-    model: str | None
-    reasoning_effort: str | None
-    workspace: Path
-
-
-class EmissionCheck(Protocol):
-    def __call__(self, prepared: BackendEmissionInputs | None = None) -> None: ...
-
-
 class BackendAdapterError(Exception):
     """Something an adapter was asked to do could not be done. Always say which."""
-
-
-class AdmissionRefused(BackendAdapterError):
-    """A final check proved no provider submission occurred."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        reason: str = "context_changed",
-        corrective_action: str = "verify_launch_context",
-    ) -> None:
-        super().__init__(message)
-        self.reason = reason
-        self.corrective_action = corrective_action
 
 
 class BackendSpawnFailed(BackendAdapterError):
@@ -428,8 +400,6 @@ class BackendChild(Protocol):
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         """Spawn the process and create or resume its session.
 
@@ -454,8 +424,6 @@ class BackendChild(Protocol):
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
         reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Start a turn with this message, on these values.
@@ -511,8 +479,6 @@ class BackendChild(Protocol):
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         """Try to admit a message to the exact turn named by ``turn_token``.
 

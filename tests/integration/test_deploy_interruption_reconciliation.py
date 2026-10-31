@@ -277,7 +277,6 @@ def test_unresumable_ticket_recovery_keeps_conversation_status_readable(
     from tests.unit.test_conversation_system import _FakeBackend
     from tests.unit.test_current_model_resolution import ScopedCatalogue, context, observation, row
 
-    from planner.conversation.backends.contracts import BackendEmissionInputs
     from planner.conversation.contracts import (
         ConversationBackendKey,
         ConversationSystem,
@@ -301,11 +300,6 @@ def test_unresumable_ticket_recovery_keeps_conversation_status_readable(
     class RecoveryCatalogue(ScopedCatalogue):
         def verify_context(self, expected: LaunchContext) -> bool:
             return expected == self.current_context
-
-        def verify_prepared_launch(
-            self, expected: LaunchContext, prepared: BackendEmissionInputs
-        ) -> bool:
-            return self.verify_context(expected) and prepared.workspace == tmp_path
 
     catalogue = RecoveryCatalogue(
         observation(

@@ -226,60 +226,26 @@ def _prepare_written_configuration_validation(
             ErrorCode.validation, "validation does not describe the written selection"
         )
     if validation.launch_token is not None:
-        from planner.conversation.admission.policy import (
-            check_policy_dependencies,
-            recorded_policy_dependencies,
-        )
-        from planner.conversation.backends.contracts import AdmissionRefused
+        from planner.conversation.backend_state import model_is_enabled
 
-        try:
-            dependencies = recorded_policy_dependencies(
-                selection=validation.selection,
-                launch_token=validation.launch_token,
-            )
-        except (AdmissionRefused, ValueError, TypeError) as error:
-            reason = ValidationReason.catalog_unavailable
-            action = CorrectiveAction.verify_launch_context
-            if isinstance(error, AdmissionRefused):
-                try:
-                    reason = ValidationReason(error.reason)
-                except ValueError:
-                    reason = ValidationReason.context_changed
-                try:
-                    action = CorrectiveAction(error.corrective_action)
-                except ValueError:
-                    action = CorrectiveAction.verify_launch_context
-            validation = replace(
-                validation,
-                state=ValidationState.unresolved,
-                reason=reason,
-                corrective_action=action,
-                launch_token=None,
-            )
-        else:
-            try:
-                check_policy_dependencies(conn, dependencies)
-            except AdmissionRefused as error:
-                if (
-                    departed
-                    and error.reason == ValidationReason.model_incompatible.value
-                    and error.corrective_action == CorrectiveAction.choose_model.value
-                ):
-                    # A definitive provider receipt is already a fact. Keep its exact
-                    # evidence and identity while denying any subsequent launch.
-                    validation = replace(
-                        validation,
-                        state=ValidationState.incompatible,
-                        reason=ValidationReason.model_incompatible,
-                        corrective_action=CorrectiveAction.choose_model,
-                        launch_token=None,
-                    )
-                else:
-                    raise PlannerError(
-                        ErrorCode.validation,
-                        "model policy changed before configuration was committed",
-                        {"reason": error.reason, "corrective_action": error.corrective_action},
-                    ) from error
+        if any(
+            not model_is_enabled(conn, selection.backend_key, model)
+            for model in {selection.submitted_token, validation.launch_token}
+        ):
+            if departed:
+                validation = replace(
+                    validation,
+                    state=ValidationState.incompatible,
+                    reason=ValidationReason.model_incompatible,
+                    corrective_action=CorrectiveAction.choose_model,
+                    launch_token=None,
+                )
+            else:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "model policy changed before configuration was committed",
+                    {"reason": "model_incompatible", "corrective_action": "choose_model"},
+                )
     from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
 
     ticket = tickets.read_ticket(conn, ticket_id)

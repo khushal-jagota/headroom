@@ -14,26 +14,19 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
-import aiohttp
-
-from planner.conversation.admission.contracts import AdmissionExpectation
-from planner.conversation.admission.service import check_expectation
 from planner.conversation.backends.claude_agent_sdk import ClaudeAgentSdkBackendChildFactory
 from planner.conversation.backends.codex_app_server import CodexAppServerBackendChildFactory
 from planner.conversation.backends.codex_app_server.login import codex_home
 from planner.conversation.backends.contracts import (
-    AdmissionRefused,
     BackendAdapterError,
     BackendChild,
     BackendChildFactory,
-    BackendEmissionInputs,
     BackendPermissionAsk,
     BackendPromptRejected,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerRefused,
     BackendUserInputRequest,
-    EmissionCheck,
     NeedsRebind,
     PromptWriteRefused,
     SessionLoadFailed,
@@ -107,7 +100,6 @@ from planner.executor.protocol import (
     type_adapter,
 )
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
-from planner.tickets.contracts import TicketLocale
 from planner.workspace_localization import localize_workspace
 
 
@@ -136,51 +128,6 @@ class RunningChild:
     reasoning_effort: str | None = None
     backend_key: ConversationBackendKey | None = None
     localized_start: ResolvedConversationStart | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _NativeEmissionGuard:
-    registry: MacRunner
-    child: RunningChild
-    command: ChildCommand
-    expectation: AdmissionExpectation
-    model: str | None
-    reasoning_effort: str | None
-
-    def __call__(self, prepared: BackendEmissionInputs | None = None) -> None:
-        expected = self.expectation
-        child = self.child
-        check_expectation(expected)
-        launch = child.launch_input
-        localized = child.localized_start
-        if (
-            self.registry._children.get(child.reference.child_id) is not child
-            or child.reference != self.command.child
-            or self.registry.admission_stopped
-            or child.reference.child_id in self.registry._retiring_children
-            or child.reference.child_id in self.registry._retired_children
-            or expected.child != self.command.child
-            or expected.turn != self.command.turn
-            or expected.executor_identity is None
-            or expected.executor_identity.executor_incarnation != self.registry.incarnation
-            or expected.selection.destination is not TicketLocale.macos
-            or expected.selection.backend_key != child.backend_key
-            or launch is None
-            or localized is None
-            or expected.workspace.workspace_folder != launch.resolved_start.workspace_folder
-            or expected.workspace.workspace_path_policy
-            != launch.resolved_start.workspace_path_policy
-            or expected.workspace.workspace_home_relative != launch.workspace_home_relative
-            or expected.launch_token != self.model
-            or expected.reasoning_effort != self.reasoning_effort
-        ):
-            raise AdmissionRefused("destination execution ownership or parameters changed")
-        if prepared is not None and (
-            prepared.model != self.model
-            or prepared.reasoning_effort != self.reasoning_effort
-            or prepared.workspace != localized.workspace_folder
-        ):
-            raise AdmissionRefused("model verification provider parameters changed")
 
 
 class NativeEventSink:
@@ -574,8 +521,6 @@ class MacRunner:
                             staged.unlink(missing_ok=True)
 
                 await settled_io(install)
-        except (ConnectionError, aiohttp.ClientError) as error:
-            raise AdmissionRefused("input connection changed before provider invocation") from error
         finally:
             temporary.unlink(missing_ok=True)
             self._transfers -= 1
@@ -804,28 +749,6 @@ class MacRunner:
             # Await accounting instead of spinning on already finished tasks.
             await idle.wait()
 
-    def _emission_guard(
-        self,
-        child: RunningChild,
-        command: ChildCommand,
-        expectation: AdmissionExpectation | None,
-        *,
-        model: str | None,
-        reasoning_effort: str | None,
-    ) -> EmissionCheck | None:
-        if expectation is None:
-            if (
-                child.ticket_id is not None
-                and child.backend_key is not ConversationBackendKey.hermes
-            ):
-                raise AdmissionRefused(
-                    "model verification legacy_unscoped",
-                    reason="legacy_unscoped",
-                    corrective_action="classify_selection",
-                )
-            return None
-        return _NativeEmissionGuard(self, child, command, expectation, model, reasoning_effort)
-
     async def _start_run(self, command: ChildCommand, args: StartRun) -> JsonObject:
         if command.child.child_id in self._children:
             raise BackendSpawnFailed("child identity already has a native start")
@@ -844,19 +767,6 @@ class MacRunner:
             existing.ticket_id == ticket_id for existing in self._children.values()
         ):
             raise BackendSpawnFailed("Ticket already has a retained source child")
-        expectation = args.admission_expectation
-        if (
-            ticket_id is not None
-            and resolved.backend_key is not ConversationBackendKey.hermes
-            and expectation is None
-        ):
-            raise AdmissionRefused(
-                "model verification legacy_unscoped",
-                reason="legacy_unscoped",
-                corrective_action="classify_selection",
-            )
-        if expectation is not None and expectation.conversation_id != resolved.conversation_id:
-            raise AdmissionRefused("model verification start parameters changed")
         capability = secrets.token_urlsafe(32)
         resolved = self._localize_start(
             resolved, command.child, capability, args.workspace_home_relative
@@ -909,19 +819,10 @@ class MacRunner:
         self._children[command.child.child_id] = child
         async with child.lock:
             self._check_child_admission(child)
-            guard = self._emission_guard(
-                child,
-                command,
-                expectation,
-                model=resolved.model,
-                reasoning_effort=resolved.reasoning_effort,
-            )
             self._mark_invoking(command)
             await native.start(
                 resolved,
                 vendor_session_cursor=args.vendor_session_cursor,
-                emission_check=guard,
-                admission_expectation=expectation,
             )
         return {}
 
@@ -955,9 +856,6 @@ class MacRunner:
             if args.reasoning_effort_change is None and not args.reasoning_effort_is_set
             else args.reasoning_effort_change
         )
-        guard = self._emission_guard(
-            child, command, args.admission_expectation, model=model, reasoning_effort=effort
-        )
         previous_turn = child.active_turn
         child.active_turn = command.turn
         self._mark_invoking(command)
@@ -973,10 +871,8 @@ class MacRunner:
                 reasoning_effort_change=args.reasoning_effort_change,
                 reasoning_effort_is_set=args.reasoning_effort_is_set,
                 automatic_compaction=args.automatic_compaction,
-                emission_check=guard,
-                admission_expectation=args.admission_expectation,
             )
-        except (AdmissionRefused, BackendPromptRejected):
+        except BackendPromptRejected:
             child.active_turn = previous_turn
             raise
         child.model, child.reasoning_effort = model, effort
@@ -989,21 +885,12 @@ class MacRunner:
         if self.admission_stopped:
             raise _CommandAdmissionRefused("executor is quiescing")
         assert command.turn is not None
-        guard = self._emission_guard(
-            child,
-            command,
-            args.admission_expectation,
-            model=child.model,
-            reasoning_effort=child.reasoning_effort,
-        )
         self._mark_invoking(command)
         outcome = await child.native.steer(
             command.turn,
             self._with_native_worker_context(child.localized_start, args.content),
             sender_content=args.sender_content,
             sender_label=args.sender_label,
-            emission_check=guard,
-            admission_expectation=args.admission_expectation,
         )
         if isinstance(outcome, BackendSteerRefused):
             return {
@@ -1119,20 +1006,11 @@ class MacRunner:
                     command.child,
                     CommandDisposition.refused,
                     {
-                        "error_type": "AdmissionRefused"
-                        if isinstance(error, AdmissionRefused)
-                        else "BackendSpawnFailed"
+                        "error_type": "BackendSpawnFailed"
                         if command.operation is ChildOperation.start
                         else "PromptWriteRefused",
                         "error_message": str(error),
-                        "reason": error.reason
-                        if isinstance(error, AdmissionRefused)
-                        else "input_unavailable",
-                        **(
-                            {"corrective_action": error.corrective_action}
-                            if isinstance(error, AdmissionRefused)
-                            else {}
-                        ),
+                        "reason": "input_unavailable",
                     },
                 )
                 self._commands[command.command_id].outcome = outcome
@@ -1230,7 +1108,7 @@ class MacRunner:
                         "error_message": str(error),
                     },
                 )
-            except (_CommandAdmissionRefused, AdmissionRefused) as error:
+            except _CommandAdmissionRefused as error:
                 outcome = CommandOutcome(
                     command.command_id,
                     command.child,
@@ -1238,11 +1116,6 @@ class MacRunner:
                     {
                         "error_type": type(error).__name__,
                         "error_message": str(error),
-                        **(
-                            {"reason": error.reason, "corrective_action": error.corrective_action}
-                            if isinstance(error, AdmissionRefused)
-                            else {}
-                        ),
                     },
                 )
             except (ValueError, BackendAdapterError) as error:
