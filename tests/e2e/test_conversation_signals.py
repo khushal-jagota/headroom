@@ -29,6 +29,59 @@ from tests.support.server_fixtures import signal_server as signal_server
 EVIDENCE = REPO_ROOT / "data/verification/conversation-signals/message-precedence-revision"
 
 
+def _navigate_to_retained_history(page: Page, newest_sequence: int) -> None:
+    """Use real paging to leave the newest edge after the normal newest entry."""
+    page.evaluate("""() => {
+      window.historyPagingStreams=[]; window.historyPagingReads=0;
+      const Original=window.EventSource;
+      window.EventSource=class extends Original {
+        constructor(url,options) { super(url,options);
+          if(String(url).includes('/view/tail')) window.historyPagingStreams.push(this);
+        }
+      };
+      const originalFetch=window.fetch;
+      window.fetch=async (...args)=>{
+        const url=typeof args[0]==='string'?args[0]:args[0].url;
+        const tracked=url.includes('/view/page')||url.includes('/owner-read');
+        if(tracked)window.historyPagingReads++;
+        try{return await originalFetch(...args);}
+        finally{if(tracked)window.historyPagingReads--;}
+      };
+      window.historyPagingBounds=()=>{
+        const rows=[...document.querySelectorAll(
+          '[data-conversation-thread] [data-conversation-view-key]')];
+        const values=rows.map(row=>/(?:^|:)e(\\d+)$/.exec(
+          row.dataset.conversationViewKey||''))
+          .filter(Boolean).map(match=>Number(match[1]));
+        return {oldest:Math.min(...values),newest:Math.max(...values)};
+      };
+    }""")
+    thread = page.locator("[data-conversation-thread]")
+    # The latest record can be a hidden finish event. Leave the actual retained
+    # newest row, rather than mistaking that hidden sequence gap for history.
+    retained_newest = page.evaluate("window.historyPagingBounds().newest")
+    history_before = min(newest_sequence, retained_newest)
+    for _ in range(12):
+        bounds = page.evaluate("window.historyPagingBounds()")
+        if bounds["newest"] < history_before:
+            break
+        thread.hover()
+        page.mouse.wheel(0, -100000)
+        page.wait_for_function(
+            "oldest=>window.historyPagingBounds().oldest<oldest",
+            arg=bounds["oldest"], timeout=WAIT_MS,
+        )
+        page.wait_for_function("""() => {
+          const streams=window.historyPagingStreams;
+          return streams.length>0&&streams.at(-1).readyState===EventSource.OPEN
+            &&window.historyPagingReads===0;
+        }""", timeout=WAIT_MS)
+    assert page.evaluate("window.historyPagingBounds().newest") < history_before
+    page.evaluate("""()=>new Promise(resolve=>requestAnimationFrame(()=>
+      requestAnimationFrame(resolve)))""")
+    page.wait_for_function("window.historyPagingReads===0", timeout=WAIT_MS)
+
+
 def _post(server: ServerHandle, path: str, body: dict[str, object] | None = None) -> JsonObject:
     response = httpx.post(server.base + path, json=body or {}, timeout=10)
     assert response.is_success, response.text
@@ -548,6 +601,7 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
 
     initial = int(snapshot()["latest_sequence"])
     wait_read(initial)  # Preserve the existing initial-entry read-credit behavior.
+    _navigate_to_retained_history(page, initial)
     before = anchor()
     first = "Unread until Latest delivers this refused history row."
     first_sequence = arrive(first)

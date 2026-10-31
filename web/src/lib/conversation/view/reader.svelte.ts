@@ -79,11 +79,6 @@ export class ConversationViewReader {
         this.changed();
     }
     entryPhase = $state<'idle' | 'loading' | 'placing' | 'error' | 'complete'>('idle');
-    entryTarget = $state.raw<ViewReaderAnchor | null>(null);
-    entryTargetReady = $state(false);
-    entryHeld = $state(false);
-    private entryOperation = 0;
-    private entryStarted = false;
     private receivedSnapshot = false;
     private initialLiveOutput: string | null = null;
     private initialLiveOutputTurn: string | null = null;
@@ -204,11 +199,11 @@ export class ConversationViewReader {
         this.restorationOwner = null;
         this.wakeLatest();
     }
-    constructor(readonly id: string, readonly lens: ConversationViewLens, readonly transcript: boolean, private changed: () => void = () => { }, private initialAnchor: ViewReaderAnchor | null = null, private expanded = new Set<string>(), readonly openTools = new SvelteSet<string>(), private entryReadThroughSequence: number | null = null) {
+    constructor(readonly id: string, readonly lens: ConversationViewLens, readonly transcript: boolean, private changed: () => void = () => { }, private initialAnchor: ViewReaderAnchor | null = null, private expanded = new Set<string>(), readonly openTools = new SvelteSet<string>()) {
         this.restoring = transcript && initialAnchor !== null && !initialAnchor.following;
         this.restorationAnchor = this.restoring ? initialAnchor ? copyViewReaderAnchor(initialAnchor) : null : null;
         this.restorationOutcome = this.restoring ? 'pending' : 'idle';
-        if (transcript && entryReadThroughSequence !== null && initialAnchor === null) this.entryPhase = 'loading';
+        if (transcript && initialAnchor === null) this.entryPhase = 'loading';
     }
     /** Restore a bounded neighborhood, not a page that ends at the held line.
      * The newest snapshot already suffices when it still contains that line.
@@ -263,68 +258,11 @@ export class ConversationViewReader {
         this.cancelRestorationRequests();
         void this.restoreAnchor();
     }
-    /** Entry is an operation, not a moving copy of the durable read watermark. */
-    private async prepareEntry(): Promise<void> {
-        const operation = ++this.entryOperation;
-        const active = () => !this.disposed && operation === this.entryOperation;
-        this.entryStarted = true;
-        this.entryPhase = 'loading';
-        this.entryTarget = null;
-        this.entryTargetReady = false;
-        let cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline,
-            order: { sequence: this.entryReadThroughSequence ?? 0, slot: Number.MAX_SAFE_INTEGER } };
-        while (active()) {
-            const admitted = await this.load(timeline, cursor, 'newer', true);
-            if (!active()) return;
-            if (!admitted) { this.failEntry(); return; }
-            const page = this.pages.find(page => page.scope.kind === 'timeline');
-            const target = page?.items.find(item => item.kind === 'row' && [
-                'prompt', 'agent_message', 'prompt_refused', 'prompt_uncertain', 'prompt_discarded', 'permission_ask', 'user_input', 'credential_request'
-            ].includes(item.row_kind));
-            if (target) {
-                this.entryTarget = { key: target.key, order: target.order, offset: 32, following: false };
-                this.entryTargetReady = target.kind === 'row' && target.body.kind === 'inline';
-                this.entryPhase = 'placing';
-                this.changed();
-                return;
-            }
-            const next = page?.newer;
-            if (!next) {
-                const latest = await this.load(timeline, null, 'older', true);
-                if (!active()) return;
-                if (!latest) { this.failEntry(); return; }
-                this.entryTargetReady = true;
-                this.entryPhase = 'placing';
-                this.changed();
-                return;
-            }
-            if (next.order.sequence < cursor.order.sequence || (next.order.sequence === cursor.order.sequence && next.order.slot <= cursor.order.slot)) {
-                this.failEntry(); return;
-            }
-            cursor = next;
-        }
-    }
-    entryBodyReady(key: string): void {
-        if (this.entryPhase === 'placing' && this.entryTarget?.key === key) this.entryTargetReady = true;
-    }
-    failEntry(): void {
-        if (this.disposed || this.entryPhase === 'complete' || this.entryPhase === 'idle') return;
-        this.entryOperation++;
-        this.entryPhase = 'error';
-        this.loading = false;
-        this.changed();
-    }
-    retryEntry(): void {
-        if (this.entryPhase === 'error') void this.prepareEntry();
-    }
     finishEntry(): void {
-        if (this.entryPhase !== 'placing' || !this.entryTargetReady) return;
-        this.entryHeld = this.entryTarget !== null;
+        if (this.entryPhase !== 'placing') return;
         this.entryPhase = 'complete';
         this.changed();
-        if (this.source === null) void this.connect().catch(() => undefined);
     }
-    releaseEntry(): void { this.entryHeld = false; }
     private url(suffix: string, query: Record<string, string> = {}): string {
         const search = new URLSearchParams({ lens: this.lens, ...query });
         return `/api/conversation/conversations/${encodeURIComponent(this.id)}/view${suffix}?${search}`;
@@ -415,7 +353,7 @@ export class ConversationViewReader {
         let count = pages.reduce((sum, p) => sum + p.items.length, 0);
         let bytes = pages.reduce((sum, p) => sum + p.items.reduce((n, item) => n + itemBytes(item), 0), 0);
         while (count > READER_ITEMS || bytes > READER_BODY_BYTES) {
-            const protectedKey = this.restorationAnchor?.key ?? (this.entryHeld ? this.entryTarget?.key : undefined);
+            const protectedKey = this.restorationAnchor?.key;
             const removable = pages.filter(p => p.items.length > 0 && !(p.items.length === 1 && p.items[0].key === protectedKey));
             const page = removable.find(p => scopeKey(p.scope) !== preferred) ?? removable[0];
             if (!page) {
@@ -443,7 +381,7 @@ export class ConversationViewReader {
         this.retainReadWitness();
     }
     async connect(): Promise<void> {
-        if (this.disposed || this.requests.size > 0 || this.restoring && this.receivedSnapshot || this.entryStarted && ['loading', 'placing', 'error'].includes(this.entryPhase))
+        if (this.disposed || this.requests.size > 0 || this.restoring && this.receivedSnapshot)
             return;
         if (this.reconnecting !== null)
             return this.reconnecting;
@@ -482,7 +420,7 @@ export class ConversationViewReader {
             } };
             const fail = (error: unknown) => { if (!active())
                 return; source.close(); this.source = null; this.loading = false; this.tailTrouble = true; this.updateTrouble();
-                if (this.entryPhase === 'loading' && !this.entryStarted) this.failEntry();
+                if (this.entryPhase === 'loading') this.entryPhase = 'error';
                 if (this.status) this.status = { ...this.status, authority: 'unknown', turn_running: null, pending_permission: null, pending_user_input: null, live_output: null, live_tool_key: null, live_tool_progress: null };
                 this.changed();
                 if (!settled) {
@@ -511,15 +449,9 @@ export class ConversationViewReader {
                     this.noteStatus(value.status);
                     this.coverage = value.coverage.through_sequence;
                     if (this.restoring) await this.restoreAnchor();
-                    if (this.entryPhase === 'loading' && !this.entryStarted) {
-                        if (value.coverage.through_sequence <= (this.entryReadThroughSequence ?? 0)) {
-                            // The admitted snapshot proves that there is no unread range.
-                            this.entryStarted = true;
-                            this.entryTarget = null;
-                            this.entryTargetReady = true;
-                            this.entryPhase = 'placing';
-                        } else void this.prepareEntry();
-                    }
+                    // Fresh entry retains the admitted newest snapshot. Presentation
+                    // readiness belongs to the viewport, not the durable read position.
+                    if (this.entryPhase === 'loading' || this.entryPhase === 'error') this.entryPhase = 'placing';
                     ready();
                 }
                 catch (error) {
@@ -761,7 +693,7 @@ export class ConversationViewReader {
         }
     }
     async receipts(ids: readonly string[]): Promise<ViewMessageReceipts> { return this.get('/receipts', { message_ids: JSON.stringify(ids.slice(0, 64)) }); }
-    close(): void { this.restorationOperation++; this.entryOperation++; this.disposed = true; this.generation++; this.releaseSource(); this.source = null; this.abort.abort(); this.cancelPages(); if (this.retry !== null)
+    close(): void { this.restorationOperation++; this.disposed = true; this.generation++; this.releaseSource(); this.source = null; this.abort.abort(); this.cancelPages(); if (this.retry !== null)
         clearTimeout(this.retry); this.retry = null; this.pages = []; this.status = null; this.requests.clear(); if (this.rangeTimer !== null)
         clearTimeout(this.rangeTimer); this.rangeTimer = null; }
 }

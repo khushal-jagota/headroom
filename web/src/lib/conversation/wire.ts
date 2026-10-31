@@ -1,3 +1,4 @@
+import { mutationHeaders } from "../releaseMonitor";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
@@ -465,7 +466,8 @@ export type BackendModelEnablementResult = {
 export type SentMessagePiece =
   | { piece: "text"; text: string }
   | { piece: "image"; data: string; media_type: string; file_name?: string }
-  | { piece: "file"; data: string; media_type: string; file_name: string };
+  | { piece: "file"; data: string; media_type: string; file_name: string }
+  | { piece: "video_upload"; upload_id: string };
 
 export type SendPromptBody = {
   content: SentMessagePiece[];
@@ -564,6 +566,9 @@ export async function mutateCredentialRequest(
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  if (init?.method && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase())) {
+    init = { ...init, headers: await mutationHeaders(init.headers) };
+  }
   let response: Response;
   try {
     response = await fetch(`${CONVERSATION_BASE}${path}`, init);

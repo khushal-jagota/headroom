@@ -1531,7 +1531,9 @@ def authored_goal_presentation(browser, url):
             wrap_checklist = page.locator(
                 '[data-goal-page="goal_wrapfixture"]'
             ).get_by_role("region", name="Completion checklist")
-            expect(wrap_checklist.get_by_role("button", name="2 completed", exact=True)).to_be_visible()
+            expect(
+                wrap_checklist.get_by_role("button", name="2 completed", exact=True)
+            ).to_be_visible()
             wrap_checklist.locator("[data-group-toggle]").click()
             short_lines = strike_mark_rects(wrap_checklist, "Short label")
             assert short_lines is not None and len(short_lines) == 1, short_lines
@@ -1642,7 +1644,9 @@ def authored_goal_presentation(browser, url):
                 wrap_checklist = page.locator(
                     '[data-goal-page="goal_wrapfixture"]'
                 ).get_by_role("region", name="Completion checklist")
-                expect(wrap_checklist.get_by_role("button", name="2 completed", exact=True)).to_be_visible()
+                expect(
+                    wrap_checklist.get_by_role("button", name="2 completed", exact=True)
+                ).to_be_visible()
                 wrap_checklist.locator("[data-group-toggle]").click()
                 reopen = wrap_checklist.get_by_role("checkbox", name=WRAPPED_LABEL, exact=True)
                 (reopen.tap if phone else reopen.click)()

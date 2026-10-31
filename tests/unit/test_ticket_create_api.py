@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,7 +15,7 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.db import connect, create_schema
+from planner.core.db import connect
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import CreateTicketBody
@@ -25,8 +24,6 @@ from planner.tickets.contracts import CreateTicketBody
 @pytest.fixture
 def create_api(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "ticket-create.db"
-    with closing(connect(str(db_path))) as conn:
-        create_schema(conn)
     config = load_config(
         path=None,
         env={
@@ -259,9 +256,10 @@ def test_create_refuses_holders_without_authority_before_kickoff_routing(
         "/api/tickets", json={"title": "Ordinary Ticket", "worker_type": "coding"}
     )
     assert manager.status_code == reviewer.status_code == 200
-    for holder in (
-        {"kind": "manager", "id": manager.json()["id"]},
-        {"kind": "ticket", "id": reviewer.json()["id"]},
+    for holder, assignment in (
+        ({"kind": "manager", "id": manager.json()["id"]}, {"kind": "chief", "id": "chief"}),
+        ({"kind": "ticket", "id": reviewer.json()["id"]}, {"kind": "chief", "id": "chief"}),
+        ({"kind": "chief", "id": "chief"}, {"kind": "manager", "id": manager.json()["id"]}),
     ):
         before = _snapshot(db_path)
         refused = client.post(
@@ -270,12 +268,16 @@ def test_create_refuses_holders_without_authority_before_kickoff_routing(
                 "title": "Invalid reviewer", "worker_type": "coding",
                 "brief": "This Brief must not normalize the invalid holder to owner.",
                 "ceiling_holder": holder,
+                "manager": assignment,
             },
         )
         assert refused.status_code == 400, refused.text
         error = refused.json()["error"]
         assert error["code"] == "validation"
-        assert error["message"] == "ceiling holder must have authority to decide this Ticket"
+        assert error["message"] == (
+            "ceiling holder must be the user or the Ticket's direct manager; "
+            "name an eligible holder explicitly"
+        )
         assert error["detail"]["holder"] == holder
         assert error["detail"]["ticket_id"]
         assert _snapshot(db_path) == before

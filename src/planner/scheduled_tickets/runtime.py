@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from contextlib import nullcontext
 from time import monotonic
 
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.scheduled_tickets.contracts import ScheduledTicketOccurrence
@@ -22,10 +24,12 @@ class ScheduledTicketLoop:
         *,
         busy_timeout_ms: int = 5000,
         participants: tuple[SlotParticipant, ...] | None = None,
+        workspace_admission: WorkspaceAdmission | None = None,
     ) -> None:
         self._participants = (
             participants if participants is not None else (TicketScheduleParticipant(),)
         )
+        self._workspace_admission = workspace_admission
         self._db_path = db_path
         self._clock = clock
         self._busy_timeout_ms = busy_timeout_ms
@@ -33,17 +37,24 @@ class ScheduledTicketLoop:
         self._thread: threading.Thread | None = None
 
     def poll_once(self) -> list[ScheduledTicketOccurrence]:
-        conn = connect(self._db_path, self._busy_timeout_ms)
-        try:
-            local_now = self._clock.now()
-            results: list[ScheduledTicketOccurrence] = []
-            for participant in self._participants:
-                results.extend(
-                    participant.poll(conn, local_now=local_now, now=int(local_now.timestamp()))
-                )
-            return results
-        finally:
-            conn.close()
+        with (
+            self._workspace_admission.operation()
+            if self._workspace_admission
+            else nullcontext(True) as admitted
+        ):
+            if not admitted:
+                return []
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            try:
+                local_now = self._clock.now()
+                results: list[ScheduledTicketOccurrence] = []
+                for participant in self._participants:
+                    results.extend(
+                        participant.poll(conn, local_now=local_now, now=int(local_now.timestamp()))
+                    )
+                return results
+            finally:
+                conn.close()
 
     def start(self, interval: int) -> None:
         if self._thread is not None:

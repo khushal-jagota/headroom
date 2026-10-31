@@ -1,7 +1,7 @@
 import { VIEW_PROJECTION_VERSION } from "../contracts";
 import type {Fence,ViewRequest,ViewSnapshot,ViewFrame,ViewWindowRequest,ViewOwner,CurrentAuthority,DegradedAuthority} from '../contracts';
 import type {NavigationPublication} from '../collection';
-import type {NavigationOwnerState} from '../owner';
+import type {NavigationHealth,ScopedNavigationOwnerState} from '../owner';
 import {createNavigationKnowledge,type DurableFact} from '../knowledge';
 import {createVisibilityTracker,type Certification} from '../visibility';
 import {compareRevision,sameAuthority} from '../validation';
@@ -9,7 +9,7 @@ import {applyFrame,sameDomain} from './validation';
 import {createViewTransport,type ViewTransport} from './transport';
 import {NavigationRequestError} from '../transport';
 
-export type ViewDemand={selected?:ViewOwner|null;selected_conversation_id?:string|null;review_conversation_ids?:readonly string[];windows:readonly ViewWindowRequest[]};
+export type ViewDemand={review_skipped_keys?:readonly import("../contracts").ReviewHistoryKey[];review_priority_keys?:readonly import("../contracts").ReviewHistoryKey[];selected?:ViewOwner|null;selected_conversation_id?:string|null;review_conversation_ids?:readonly string[];windows:readonly ViewWindowRequest[]};
 export function viewWindow(section:ViewWindowRequest['section'],owner:ViewOwner|null=null,options:Partial<Omit<ViewWindowRequest,'section'|'owner'>>={}):ViewWindowRequest {
   return {section,owner,group:'all',child_filter:'all',anchor:null,direction:'after',limit:30,...options};
 }
@@ -17,7 +17,7 @@ export function windowIdentity(window:ViewWindowRequest):string {
   return JSON.stringify([window.section,window.owner,window.group,window.child_filter]);
 }
 export function defaultViewRequest(locale='en-US'):ViewRequest {
-  return {projection_version:VIEW_PROJECTION_VERSION,scope_generation:0,locale,selected:null,selected_conversation_id:null,review_conversation_ids:[],windows:[
+  return {projection_version:VIEW_PROJECTION_VERSION,scope_generation:0,locale,selected:null,selected_conversation_id:null,review_conversation_ids:[],review_skipped_keys:[],review_priority_keys:[],windows:[
     viewWindow('rail_parents',null,{limit:60}),
     viewWindow('rail_tickets',{kind:'chief',id:'chief'}),
     viewWindow('unread',null,{limit:20}),
@@ -28,13 +28,13 @@ export function defaultViewRequest(locale='en-US'):ViewRequest {
 export function createScopedNavigationOwner(options:{transport?:ViewTransport;request?:ViewRequest;reconnectDelayMs?:number}={}) {
   const transport=options.transport ?? createViewTransport();
   const knowledge=createNavigationKnowledge();
-  const listeners=new Set<(state:NavigationOwnerState)=>void>();
+  const listeners=new Set<(state:ScopedNavigationOwnerState)=>void>();
   const demands=new Map<string,ViewDemand>();
   let request=options.request ?? defaultViewRequest(typeof navigator==='undefined'?'en-US':navigator.language.startsWith('de')?'de-DE':'en-US');
   let activeRequest=request;
   let pendingScope:{controller:AbortController;close:()=>void}|undefined;
   let scopeToken=0;
-  let state:NavigationOwnerState={connection:'idle',generation:0,error:null,publication:undefined,effective:undefined};
+  let state:ScopedNavigationOwnerState={connection:'idle',generation:0,error:null,health:null,publication:undefined,effective:undefined};
   let current:ViewSnapshot|undefined;
   let publicationSequence=0;
   let started=false,disposed=false;
@@ -49,7 +49,14 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
   function emit(){for(const listener of listeners)listener(state);}
   function canCertify(){return state.effective?.runtimeCurrent===true && [...state.effective.conversations.values()].every(v=>v.message_for_owner.state==='fresh' && v.last_turn_failed.state==='fresh');}
   function publication(value:ViewSnapshot):NavigationPublication {
-    return Object.freeze({publicationId:++publicationSequence,admissionToken:`view:${state.generation}:${publicationSequence}`,continuity:value.coverage,cursor:null,mode:value.mode,authority:value.authority,records:Object.freeze(value.content.records),view:Object.freeze({id:value.view_id,scopeGeneration:value.scope_generation,contentVersion:value.content_version,orderingGeneration:value.ordering_generation,windows:Object.freeze(value.content.windows),counts:Object.freeze(value.content.counts),reviewContext:Object.freeze(value.content.review_context)})});
+    return Object.freeze({publicationId:++publicationSequence,admissionToken:`view:${state.generation}:${publicationSequence}`,continuity:value.coverage,cursor:null,mode:value.mode,authority:value.authority,records:Object.freeze(value.content.records),view:Object.freeze({id:value.view_id,scopeGeneration:value.scope_generation,contentVersion:value.content_version,orderingGeneration:value.ordering_generation,windows:Object.freeze(value.content.windows),counts:Object.freeze(value.content.counts),reviewContext:Object.freeze(value.content.review_context),reviewSummary:Object.freeze(value.content.review_summary)})});
+  }
+  function rememberAuthority(authority:CurrentAuthority|DegradedAuthority) {
+    if(lastAuthority && lastAuthority.delivery_session_id!==authority.delivery_session_id) {
+      if(retiredSessions.size>=64)throw new Error('Navigation authority history full; reload workspace');
+      retiredSessions.add(lastAuthority.delivery_session_id);
+    }
+    lastAuthority=authority;
   }
   function admit(value:ViewFrame,generation:number,scope=activeRequest):NavigationPublication|undefined {
     if(disposed || generation!==state.generation) return;
@@ -60,25 +67,29 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     if(value.event==='snapshot' && current && sameDomain(value.coverage,current.coverage) && compareRevision(value.coverage.revision,current.coverage.revision)<0)throw new Error('Obsolete navigation coverage');
     const next=applyFrame(current,value);
     const unchanged=current && next.view_id===current.view_id && next.content_version===current.content_version && sameAuthority(next.authority,current.authority) && state.effective?.runtimeCurrent===true;
-    if(lastAuthority && lastAuthority.delivery_session_id!==next.authority.delivery_session_id) {
-      if(retiredSessions.size>=64)throw new Error('Navigation authority history full; reload workspace');
-      retiredSessions.add(lastAuthority.delivery_session_id);
-    }
-    current=next;lastAuthority=next.authority;
+    rememberAuthority(next.authority);
+    current=next;
     const admitted=publication(next);
+    // Recovery concerns the demanded scope. Updates to the retained active scope
+    // cannot certify that its failed replacement is current.
+    const health:NavigationHealth=next.mode==='degraded'
+      ? {state:'degraded',availability:{...next.authority.availability}}
+      : value.event==='snapshot' && scope.scope_generation===request.scope_generation ? null : state.health;
+    const healthChanged=health!==state.health;
     if(value.event==='checkpoint' || unchanged) {
       // Coverage changes do not create a new selector/DOM generation or rebuild knowledge.
       if(canCertify())visibility.publication(admitted);
-      state={...state,publication:admitted};
+      state={...state,publication:admitted,health};
+      if(healthChanged)emit();
       return admitted;
     }
-    state={...state,publication:admitted,effective:knowledge.accept(admitted),connection:next.mode==='current'?'subscribed':'degraded',error:null};
+    state={...state,publication:admitted,effective:knowledge.accept(admitted),connection:next.mode==='current'?'subscribed':'degraded',error:null,health};
     if(canCertify())visibility.publication(admitted);
     emit();
     return admitted;
   }
   function cancelPending(){scopeToken++;pendingScope?.controller.abort();pendingScope?.close();pendingScope=undefined;}
-  function lose(connection:NavigationOwnerState['connection']) {
+  function lose(connection:ScopedNavigationOwnerState['connection']) {
     cancelPending();controller.abort();closeStream?.();closeStream=undefined;clearTimeout(reconnect);
     controller=new AbortController();
     const generation=state.generation+1;
@@ -86,9 +97,9 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     state={...state,generation,connection,effective:knowledge.loseRuntime()};emit();
     return generation;
   }
-  function failure(generation:number,error=new NavigationRequestError('Navigation unavailable','unavailable')) {
+  function failure(generation:number,error=new NavigationRequestError('Navigation unavailable','unavailable'),health:NavigationHealth={state:'reconnecting'}) {
     if(disposed||generation!==state.generation)return;
-    state={...state,error};
+    state={...state,error,health};
     const next=lose('reconnecting');
     reconnect=setTimeout(()=>{if(!disposed&&state.generation===next)void startStream().catch(()=>undefined);},options.reconnectDelayMs ?? 1000);
   }
@@ -96,9 +107,9 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     const scope=activeRequest,signal=controller.signal;
     closeStream=transport.connect(scope,{frame(frame){
       if(disposed||signal.aborted||generation!==state.generation)return;
-      try{const result=admit(frame,generation,scope);if(frame.event==='snapshot'&&result){onSnapshot?.(result);if(frame.mode==='degraded')failure(generation);}}
+      try{const result=admit(frame,generation,scope);if(frame.event==='snapshot'&&result){onSnapshot?.(result);if(frame.mode==='degraded')failure(generation,undefined,{state:'degraded',availability:{...frame.authority.availability}});}}
       catch(error){onError?.(error instanceof Error?error:new Error('Invalid navigation view'));failure(generation);}
-    },error(){if(signal.aborted)return;onError?.(new Error('Navigation stream unavailable'));failure(generation);}},signal);
+    },error(){if(disposed||signal.aborted||generation!==state.generation)return;onError?.(new Error('Navigation stream unavailable'));failure(generation);}},signal);
   }
   async function startStream():Promise<void> {
     if(disposed)return;
@@ -122,10 +133,11 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
       const abort=()=>{nextController.signal.removeEventListener('abort',abort);reject(new Error('Obsolete navigation scope'));};
       nextController.signal.addEventListener('abort',abort,{once:true});
       const failed=(error:Error)=>{
+        if(disposed||nextController.signal.aborted)return;
         if(activeGeneration!==undefined){reject(error);failure(activeGeneration);return;}
         if(disposed||token!==scopeToken)return;
         cancelPending();
-        state={...state,error:new NavigationRequestError(error.message,'unavailable')};emit();
+        state={...state,error:new NavigationRequestError(error.message,'unavailable'),health:{state:'reconnecting'}};emit();
         reconnect=setTimeout(()=>{if(!disposed)void replaceScope().catch(()=>undefined);},options.reconnectDelayMs??1000);
       };
       pendingScope={controller:nextController,close:()=>pendingClose()};
@@ -139,18 +151,21 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
         try{
           if(frame.scope_generation!==scope.scope_generation || frame.event==='reset')throw new Error('Obsolete navigation scope');
           buffered=applyFrame(buffered,frame);
-          if(buffered.mode!=='current'){failure(state.generation);return;}
           if(retiredSessions.has(buffered.authority.delivery_session_id))throw new Error('Retired navigation authority');
           if(lastAuthority?.delivery_session_id===buffered.authority.delivery_session_id && compareRevision(buffered.authority.availability.generation,lastAuthority.availability.generation)<0)throw new Error('Obsolete navigation authority');
+          if(buffered.mode!=='current'){
+            rememberAuthority(buffered.authority);
+            failure(state.generation,undefined,{state:'degraded',availability:{...buffered.authority.availability}});return;
+          }
           // Active scope remains authoritative while this bounded pending stream catches up.
           if(current && sameDomain(buffered.coverage,current.coverage) && compareRevision(buffered.coverage.revision,current.coverage.revision)<0)return;
           const sameContent=current?.view_id===buffered.view_id && current.content_version===buffered.content_version && sameAuthority(current.authority,buffered.authority);
           controller.abort();closeStream?.();controller=nextController;closeStream=pendingClose;
           pendingScope=undefined;activeRequest=scope;activeGeneration=state.generation+(sameContent?0:1);
           if(!sameContent)visibility.generation(activeGeneration);
-          const hadError=state.error!==null;state={...state,generation:activeGeneration,error:null};
+          const hadError=state.error!==null,previousHealth=state.health;state={...state,generation:activeGeneration,error:null};
           nextController.signal.removeEventListener('abort',abort);
-          admit(buffered,activeGeneration,scope);buffered=undefined;if(sameContent&&hadError)emit();resolve();
+          admit(buffered,activeGeneration,scope);buffered=undefined;if(sameContent&&hadError&&previousHealth===state.health)emit();resolve();
         }catch(error){failed(error instanceof Error?error:new Error('Invalid navigation scope'));}
       },error(){failed(new Error('Navigation scope unavailable'));}},nextController.signal);
     });
@@ -164,25 +179,33 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
       if(disposed||generation!==state.generation)throw new Error('Obsolete navigation certification');
       const admitted=admit(result,generation);
       if(!admitted)throw new Error('Navigation certification not admitted');
-      if(result.mode==='current')connect(generation);else failure(generation);
+      if(result.mode==='current')connect(generation);else failure(generation,undefined,{state:'degraded',availability:{...result.authority.availability}});
       return {publication:admitted,proof:canCertify()?result.proof:null};
     }catch(error){failure(generation);throw error;}
   }
   function setDemand(name:string,demand:ViewDemand|undefined) {
+    const previous=demands.get(name);
     if(demand)demands.set(name,demand);else demands.delete(name);
-    refreshDemand();
+    try {refreshDemand();} catch(error) {if(previous)demands.set(name,previous);else demands.delete(name);throw error;}
   }
   function refreshDemand() {
     const base=defaultViewRequest(request.locale);
     const reviewConversationIds=new Set<string>();
+    const skippedKeys=new Map<string,import("../contracts").ReviewHistoryKey>();
+    const priorityKeys=new Map<string,import("../contracts").ReviewHistoryKey>();
     const windows=new Map(base.windows.map(window=>[windowIdentity(window),window]));
     for(const entry of demands.values()) {
       if(entry.selected!==undefined){base.selected=entry.selected;base.selected_conversation_id=entry.selected_conversation_id??null;}
       for(const id of entry.review_conversation_ids ?? [])reviewConversationIds.add(id);
+      for(const key of entry.review_skipped_keys ?? [])skippedKeys.set(JSON.stringify(key),key);
+      for(const key of entry.review_priority_keys ?? [])priorityKeys.set(JSON.stringify(key),key);
       for(const window of entry.windows)windows.set(windowIdentity(window),{...window});
     }
     if(reviewConversationIds.size>256)throw new Error('Review conversation context exceeds its budget');
     base.review_conversation_ids=[...reviewConversationIds].sort();
+    const compareKey=(a:import("../contracts").ReviewHistoryKey,b:import("../contracts").ReviewHistoryKey)=>a.kind.localeCompare(b.kind)||a.id.localeCompare(b.id);
+    base.review_skipped_keys=[...skippedKeys.values()].sort(compareKey);
+    base.review_priority_keys=[...priorityKeys.values()].sort(compareKey);
     base.windows=[...windows.values()];
     // Parent pages define the visible child surfaces. Shrinking these in response
     // to child demand would repeatedly mount/unmount that same demand. Keep them
@@ -212,7 +235,9 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     if(priorityWindow)base.windows.sort((a,b)=>Number(windowIdentity(b)===priorityWindow)-Number(windowIdentity(a)===priorityWindow));
     // Demand is metadata only. Pages never accumulate when a surface replaces its window.
     if(JSON.stringify({...base,scope_generation:0})===JSON.stringify({...request,scope_generation:0}))return;
-    request={...base,scope_generation:request.scope_generation+1};
+    const next={...base,scope_generation:request.scope_generation+1};
+    if(new TextEncoder().encode(JSON.stringify(next)).byteLength>128*1024)throw new Error('Navigation view request is too large');
+    request=next;
     if(started&&!demandScheduled){demandScheduled=true;queueMicrotask(()=>{demandScheduled=false;if(!disposed)void replaceScope().catch(()=>undefined);});}
   }
   return {
@@ -221,10 +246,10 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     prioritizeWindow(window:ViewWindowRequest|undefined){if(!window)return;const identity=windowIdentity(window);if(priorityWindow!==identity){priorityWindow=identity;refreshDemand();}},
     getRequest:()=>request,
     getState:()=>state,
-    subscribe(listener:(state:NavigationOwnerState)=>void){listeners.add(listener);listener(state);return()=>{listeners.delete(listener);};},
+    subscribe(listener:(state:ScopedNavigationOwnerState)=>void){listeners.add(listener);listener(state);return()=>{listeners.delete(listener);};},
     registerObserver:visibility.registerObserver,
     waitForVisibility(value:unknown,options:Parameters<typeof visibility.waitForVisibility>[1]){return canCertify()?visibility.waitForVisibility(value,options):Promise.resolve({status:'unknown' as const,reason:'runtime_unavailable'});},
     invalidateDurableFact(conversationId:string,fact:DurableFact,boundary:number){const effective=knowledge.invalidateDurableFact(conversationId,fact,boundary);if(effective!==state.effective)visibility.loseRuntime();state={...state,effective};emit();},
-    dispose(){if(disposed)return;disposed=true;cancelPending();controller.abort();closeStream?.();clearTimeout(reconnect);knowledge.clear();visibility.dispose();state={...state,effective:undefined,publication:undefined,connection:'disposed'};emit();listeners.clear();demands.clear();retiredSessions.clear();current=undefined;},
+    dispose(){if(disposed)return;disposed=true;cancelPending();controller.abort();closeStream?.();clearTimeout(reconnect);knowledge.clear();visibility.dispose();state={...state,effective:undefined,publication:undefined,connection:'disposed',health:null};emit();listeners.clear();demands.clear();retiredSessions.clear();current=undefined;},
   };
 }

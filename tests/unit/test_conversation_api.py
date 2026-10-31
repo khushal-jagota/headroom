@@ -14,7 +14,7 @@ import asyncio
 import base64
 import json
 import zlib
-from collections.abc import Callable, Coroutine, Iterator, MutableMapping
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterator, MutableMapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -95,6 +95,8 @@ from planner.conversation.snapshot import (
 )
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
+from planner.conversation.video_uploads.contracts import UploadDestination
+from planner.conversation.video_uploads.service import VideoUploadService
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.response_compression import (
@@ -1420,3 +1422,350 @@ def test_suppressed_fate_keeps_its_reason_at_the_http_boundary() -> None:
     assert delivery_fate_json(PromptDeliverySuppressed("proposal_revision_changed")) == {
         "fate": "suppressed", "reason": "proposal_revision_changed"
     }
+
+
+# Admission evidence: these cases add the destination-lock/ledger/send boundary that
+# upload-store unit tests cannot prove. They reuse this file's SQLite runtime and fake
+# backend. Range/HEAD assertions exercise ASGI delivery without another browser host.
+def _video_owner_routes(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+) -> tuple[VideoUploadService, str]:
+    from planner.conversation.video_uploads import config as video_config
+    from planner.conversation.video_uploads import service as video_service
+    from planner.conversation.video_uploads.service import VideoUploadService
+    from planner.core.clock import build_clock
+    from planner.core.config import load_config
+    from planner.core.errors import PlannerError
+    from planner.core.server import handle_planner_error
+    from planner.tickets.api import router as tickets_router
+
+    async def probe(_path: Path, _filename: str) -> str:
+        return "video/mp4"
+
+    monkeypatch.setattr(video_service, "require_probe", lambda: "ffprobe")
+    monkeypatch.setattr(video_service, "probe_video", probe)
+    monkeypatch.setattr(video_config, "FREE_SPACE_FLOOR_BYTES", 0)
+    service = VideoUploadService(harness.db_path)
+    harness.app.state.video_uploads = service
+    harness.app.state.conversation_system = harness.system
+    harness.app.state.conn_factory = lambda: connect(str(harness.db_path))
+    config = load_config(
+        path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(harness.db_path)}
+    )
+    harness.app.state.config = config
+    harness.app.state.clock = build_clock(config)
+    harness.app.add_exception_handler(PlannerError, handle_planner_error)
+    harness.app.include_router(tickets_router, prefix="/api")
+    conn = connect(str(harness.db_path))
+    try:
+        ticket = tickets_data.create_ticket(
+            conn,
+            title="Video admission",
+            worker_type="coding",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        with conn:
+            conn.execute(
+                "UPDATE tickets SET employee_backend='hermes',employee_launch_model='a-model' "
+                "WHERE id=?",
+                (ticket.id,),
+            )
+    finally:
+        conn.close()
+    return service, ticket.id
+
+
+async def _ready_video(service: VideoUploadService, destination: UploadDestination) -> str:
+    from planner.conversation.video_uploads.contracts import ReserveVideoUpload
+
+    upload = service.reserve(
+        ReserveVideoUpload(destination=destination, filename="clip.mp4", byte_count=8)
+    )
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b"12345678"
+
+    await service.transfer(upload.upload_id, chunks())
+    return upload.upload_id
+
+
+def test_video_send_preserves_file_delivery_retry_and_range(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.message_content import MessageFile
+    from planner.conversation.video_uploads.contracts import UploadDestination
+
+    service, _ = _video_owner_routes(harness, monkeypatch)
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            upload_id = await _ready_video(
+                service,
+                UploadDestination(
+                    kind="conversation",
+                    id="c",
+                    expected_conversation_id="c",
+                ),
+            )
+            body: dict[str, Any] = {
+                "sender_label": "owner",
+                "sender_message_id": "video-message",
+                "content": [
+                    {"piece": "text", "text": "watch this"},
+                    {"piece": "video_upload", "upload_id": upload_id},
+                ],
+            }
+            route = "/api/conversation/conversations/c/send"
+            first = await client.post(route, json=body)
+            assert first.json() == {"fate": "started"}, first.text
+            repeated = await client.post(route, json=body)
+            assert repeated.json() == first.json()
+            assert len(harness.backend("c").written_contents) == 1
+            video = harness.backend("c").written_contents[0][1]
+            assert isinstance(video, MessageFile)
+            assert video.media_type == "video/mp4" and video.byte_count == 8
+            assert service.status(upload_id).state == "linked"
+            file_route = f"/api/conversation/conversations/c/files/{video.stored_file_id}"
+            ranged = await client.get(file_route, headers={"Range": "bytes=2-4"})
+            assert ranged.status_code == 206 and ranged.content == b"345"
+            assert ranged.headers["content-range"] == "bytes 2-4/8"
+            head = await client.head(file_route)
+            assert head.status_code == 200 and head.content == b""
+            assert head.headers["content-length"] == "8"
+            assert head.headers["accept-ranges"] == "bytes"
+            duplicate_video = await client.post(
+                route, json={**body, "content": body["content"] + [body["content"][1]]}
+            )
+            assert duplicate_video.status_code == 422
+
+    _run(exercise)
+
+
+def test_video_first_send_binding_precedes_creation_and_reset_retry_never_dispatches(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.video_uploads.contracts import UploadDestination
+
+    service, ticket_id = _video_owner_routes(harness, monkeypatch)
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            upload_id = await _ready_video(
+                service,
+                UploadDestination(
+                    kind="ticket",
+                    id=ticket_id,
+                    expected_conversation_id=None,
+                ),
+            )
+            route = f"/api/tickets/{ticket_id}/conversation/send"
+            first = await client.post(
+                route,
+                json={"sender_label": "owner", "content": [{"piece": "text", "text": "first"}]},
+            )
+            current = first.json()["conversation_id"]
+            body: dict[str, Any] = {
+                "sender_label": "owner",
+                "sender_message_id": "video-message",
+                "content": [{"piece": "video_upload", "upload_id": upload_id}],
+            }
+            stale = await client.post(route, json=body)
+            assert stale.status_code == 409, stale.text
+            assert service.status(upload_id).state == "ready"
+            assert len(harness.backend(current).written_contents) == 1
+            await client.post(f"/api/tickets/{ticket_id}/conversation/reset")
+            accepted = await client.post(route, json=body)
+            assert accepted.json()["fate"] == "started", accepted.text
+            admitted = accepted.json()["conversation_id"]
+            assert admitted != current
+            await client.post(f"/api/tickets/{ticket_id}/conversation/reset")
+            replay = await client.post(route, json=body)
+            assert replay.json() == accepted.json(), replay.text
+            assert len(harness.backend(admitted).written_contents) == 1
+            assert service.status(upload_id).state == "linked"
+            uncertain_upload = await _ready_video(
+                service,
+                UploadDestination(
+                    kind="ticket",
+                    id=ticket_id,
+                    expected_conversation_id=None,
+                ),
+            )
+            checked = service.preflight(
+                uncertain_upload,
+                UploadDestination(
+                    kind="ticket",
+                    id=ticket_id,
+                    expected_conversation_id=None,
+                ),
+                "unknown-video-message",
+            )
+            service.adopt(checked, admitted)
+            unknown = await client.post(
+                route,
+                json={
+                    **body,
+                    "sender_message_id": "unknown-video-message",
+                    "content": [{"piece": "video_upload", "upload_id": uncertain_upload}],
+                },
+            )
+            assert unknown.json()["fate"] == "uncertain", unknown.text
+            assert service.status(uncertain_upload).state == "admitted"
+            assert len(harness.backend(admitted).written_contents) == 1
+            conn = connect(str(harness.db_path))
+            try:
+                assert tickets_data.read_ticket(conn, ticket_id).conversation_id is None
+            finally:
+                conn.close()
+
+    _run(exercise)
+
+
+def test_video_malformed_companion_does_not_pin_and_first_refusal_allows_retry(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.video_uploads.contracts import UploadDestination
+
+    service, ticket_id = _video_owner_routes(harness, monkeypatch)
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            upload_id = await _ready_video(
+                service,
+                UploadDestination(
+                    kind="ticket",
+                    id=ticket_id,
+                    expected_conversation_id=None,
+                ),
+            )
+            route = f"/api/tickets/{ticket_id}/conversation/send"
+            body: dict[str, Any] = {
+                "sender_label": "owner",
+                "sender_message_id": "video-message",
+                "content": [{"piece": "video_upload", "upload_id": upload_id}],
+            }
+            malformed = await client.post(
+                route,
+                json={
+                    **body,
+                    "content": body["content"]
+                    + [
+                        {
+                            "piece": "file",
+                            "data": "!",
+                            "media_type": "text/plain",
+                            "file_name": "notes.txt",
+                        }
+                    ],
+                },
+            )
+            assert malformed.status_code == 422, malformed.text
+            assert service.status(upload_id).state == "ready"
+            original_factory = harness._make_child
+
+            def refused_factory(
+                *, resolved_start: ResolvedConversationStart,
+                event_sink: BackendEventSink, message_files: ConversationMessageFiles,
+            ) -> _FakeBackendChild:
+                harness.backend(resolved_start.conversation_id).write_fails = True
+                return original_factory(
+                    resolved_start=resolved_start,
+                    event_sink=event_sink,
+                    message_files=message_files,
+                )
+
+            harness.system._backend_child_factories[ConversationBackendKey.hermes] = refused_factory
+            refused = await client.post(route, json=body)
+            assert refused.json()["fate"] == "refused", refused.text
+            assert service.status(upload_id).state == "ready"
+            harness.system._backend_child_factories[ConversationBackendKey.hermes] = (
+                original_factory
+            )
+            retried = await client.post(route, json=body)
+            assert retried.json()["fate"] == "started", retried.text
+            assert service.status(upload_id).state == "linked"
+            assert (
+                len(
+                    [
+                        path
+                        for path in conversation_files_root(harness.db_path).rglob("f_*")
+                        if not path.name.endswith(".media-type")
+                    ]
+                )
+                == 1
+            )
+
+    _run(exercise)
+
+
+def test_explicit_usage_refresh_preserves_observation_after_all_failure_outcomes(
+    harness: _Harness,
+) -> None:
+    from datetime import UTC, datetime
+
+    from planner.conversation.backend_state import BackendStateStore
+    from planner.conversation.backend_usage import (
+        BackendUsageOutcome,
+        BackendUsageResult,
+        BackendUsageWindow,
+        BackendUsageWindowKind,
+    )
+    from planner.conversation.usage.api import router as usage_router
+
+    observed = datetime(2026, 10, 27, 6, tzinfo=UTC)
+    reset = datetime(2026, 10, 28, 6, tzinfo=UTC)
+    state = BackendStateStore(str(harness.db_path))
+
+    class Adapter:
+        outcome = BackendUsageOutcome.succeeded
+
+        async def refresh(self) -> BackendUsageResult:
+            return BackendUsageResult(
+                backend_key=ConversationBackendKey.claude,
+                outcome=self.outcome,
+                observed_at=observed if self.outcome is BackendUsageOutcome.succeeded else None,
+                windows=(BackendUsageWindow(BackendUsageWindowKind.five_hour, 35.5, reset),)
+                if self.outcome is BackendUsageOutcome.succeeded else (),
+            )
+
+    adapter = Adapter()
+    harness.app.state.conversation = replace(
+        harness.runtime,
+        backend_state=state,
+        backend_usage=BackendUsageService({ConversationBackendKey.claude: adapter}),
+    )
+    harness.app.include_router(usage_router, prefix=CONVERSATION_PREFIX)
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            response = await client.post(f"{CONVERSATION_PREFIX}/backends/refresh")
+            assert response.status_code == 200
+            saved = state.read_usage(ConversationBackendKey.claude)
+            assert saved is not None
+            assert saved.observed_at == observed
+            assert saved.windows[0].used_percent == 35.5
+            initial = (await client.get(f"{CONVERSATION_PREFIX}/usage/limits")).json()
+            for outcome in (
+                BackendUsageOutcome.failed,
+                BackendUsageOutcome.unauthenticated,
+                BackendUsageOutcome.unavailable,
+            ):
+                adapter.outcome = outcome
+                response = await client.post(f"{CONVERSATION_PREFIX}/backends/refresh")
+                assert response.status_code == 200
+                result = next(
+                    row for row in response.json()["usage_outcomes"]
+                    if row["backend_key"] == "claude"
+                )
+                assert result["outcome"] == str(outcome)
+                assert result["detail"] is None
+                assert state.read_usage(ConversationBackendKey.claude) == saved
+                assert (await client.get(f"{CONVERSATION_PREFIX}/usage/limits")).json() == initial
+
+    _run(exercise)

@@ -304,3 +304,21 @@ def test_receipt_recovery_rejects_unattributable_replacement(
             assert store.path.read_bytes() == before
         finally:
             os.close(baseline)
+
+
+def test_neutral_cancellation_and_uncertainty_have_distinct_projections(tmp_path: Path) -> None:
+    store = DeploymentLifecycleStore(tmp_path / "lifecycle.json", now=Clock())
+    store.start("cancelled-attempt", SHA, prior_sha=PRIOR_SHA)
+    store.transition("cancelled-attempt", "cancelled", detail="Canceled before installation.")
+    neutral = store.project(PRIOR_SHA)
+    assert (neutral.state, neutral.outcome, neutral.deployed_sha) == (
+        "idle", "cancelled", PRIOR_SHA
+    )
+    before = store.path.read_bytes()
+    store.transition("cancelled-attempt", "failed", preserve_terminal=True)
+    assert store.path.read_bytes() == before
+    store.start("uncertain-attempt", SHA, expected_deployment_id="cancelled-attempt")
+    store.transition("uncertain-attempt", "unknown", detail="Admission is uncertain.")
+    uncertain = store.project(PRIOR_SHA)
+    assert (uncertain.state, uncertain.outcome) == ("unknown", None)
+    assert uncertain.detail == "Admission is uncertain."

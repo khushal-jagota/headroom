@@ -233,3 +233,32 @@ def test_hosted_owner_strips_both_manager_identity_generations(tmp_path: Path) -
             },
         )
     assert response.json() == {"kind": "owner", "id": "owner", "conversation_id": None}
+
+
+def test_preview_gate_requires_explicit_edge_evidence_even_on_safe_reads() -> None:
+    """Ordinary local-owner access must never accidentally admit application traffic."""
+    import pytest
+
+    from planner.core.errors import PlannerError
+    from planner.core.trusted_ingress import TrustedIngressConfig, require_preview_ingress
+
+    config = TrustedIngressConfig("tailscale", ALLOWED_LOGIN, CANONICAL_ORIGIN)
+    valid = [(b"host", b"panels.tailnet.ts.net"), (b"tailscale-user-login", ALLOWED_LOGIN.encode())]
+    require_preview_ingress({"type": "http", "method": "GET", "headers": valid}, config)
+    require_preview_ingress(
+        {"type": "websocket", "headers": valid + [(b"origin", CANONICAL_ORIGIN.encode())]}, config
+    )
+    rejected = [
+        [],
+        [(b"host", b"panels.tailnet.ts.net")],
+        valid + [(b"tailscale-user-login", ALLOWED_LOGIN.encode())],
+        valid + [(b"host", b"panels.tailnet.ts.net")],
+        valid + [(b"origin", b"https://foreign.example")],
+        [(b"host", b"127.0.0.1:8767"), valid[1]],
+        [valid[0], (b"tailscale-user-login", b"someone-else")],
+    ]
+    for headers in rejected:
+        with pytest.raises(PlannerError):
+            require_preview_ingress({"type": "http", "method": "GET", "headers": headers}, config)
+    with pytest.raises(PlannerError):
+        require_preview_ingress({"headers": valid}, TrustedIngressConfig(None, None, None))

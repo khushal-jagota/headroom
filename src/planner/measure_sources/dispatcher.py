@@ -6,9 +6,11 @@ import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from time import monotonic
 
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.db import connect
@@ -40,7 +42,9 @@ class SourceDispatcher:
         key_path: Path,
         busy_timeout_ms: int = 5000,
         runtime_limits: RuntimeLimits = DEFAULT_LIMITS,
+        workspace_admission: WorkspaceAdmission | None = None,
     ) -> None:
+        self._workspace_admission = workspace_admission
         self._db_path = db_path
         self._clock = clock
         self._runtime = runtime
@@ -109,6 +113,11 @@ class SourceDispatcher:
             conn.close()
             self._wake.set()
 
+    def _execute_admitted(self, run: SourceRun, admission: ExitStack) -> None:
+        # Ownership starts before claim/submission and lasts through completion.
+        with admission:
+            self._execute(run)
+
     def _pump(self) -> None:
         self._futures = {key: value for key, value in self._futures.items() if not value.done()}
         remaining = MAX_CONCURRENT_RUNS - len(self._futures)
@@ -126,10 +135,25 @@ class SourceDispatcher:
             for row in rows:
                 if self._stop.is_set():
                     break
-                run = claim_run(conn, str(row[0]), now=self._clock.now_unix())
-                if run is not None:
-                    assert self._executor is not None
-                    self._futures[run.id] = self._executor.submit(self._execute, run)
+                with ExitStack() as admission:
+                    admitted = admission.enter_context(
+                        self._workspace_admission.operation()
+                        if self._workspace_admission is not None
+                        else nullcontext(True)
+                    )
+                    if not admitted:
+                        break
+                    run = claim_run(conn, str(row[0]), now=self._clock.now_unix())
+                    if run is not None:
+                        assert self._executor is not None
+                        ownership = admission.pop_all()
+                        try:
+                            self._futures[run.id] = self._executor.submit(
+                                self._execute_admitted, run, ownership
+                            )
+                        except BaseException:
+                            ownership.close()
+                            raise
         finally:
             conn.close()
 

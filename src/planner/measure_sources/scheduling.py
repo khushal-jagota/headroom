@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.errors import PlannerError
@@ -19,7 +20,10 @@ _LOG = logging.getLogger(__name__)
 
 
 class SourceScheduleParticipant:
-    def __init__(self, config: Config, clock: Clock, runtime: SourceRuntime) -> None:
+    def __init__(
+        self, config: Config, clock: Clock, runtime: SourceRuntime, *,
+        workspace_admission: WorkspaceAdmission | None = None,
+    ) -> None:
         self._stopped = False
         self._dispatcher = SourceDispatcher(
             config.db_path,
@@ -28,6 +32,7 @@ class SourceScheduleParticipant:
             key_path=Path(config.credential_key_path),
             busy_timeout_ms=config.db_busy_timeout_ms,
             runtime_limits=RuntimeLimits(config.measure_source_timeout_seconds),
+            workspace_admission=workspace_admission,
         )
 
     def start(self) -> None:

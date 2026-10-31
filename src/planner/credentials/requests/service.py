@@ -38,7 +38,14 @@ _tasks: dict[int, set[asyncio.Task[object]]] = {}
 
 async def shield_operation[T](runtime: ConversationRuntime, operation: Coroutine[Any, Any, T]) -> T:
     tasks = _tasks.setdefault(id(runtime), set())
-    task = asyncio.create_task(operation)
+    async def admitted_operation() -> T:
+        with runtime.system.workspace_admission.operation() as admitted:
+            if not admitted:
+                operation.close()
+                raise RuntimeError("Workspace admission is closed for an owner update.")
+            return await operation
+
+    task = asyncio.create_task(admitted_operation())
     tasks.add(cast(asyncio.Task[object], task))
 
     def done(completed: asyncio.Task[T]) -> None:

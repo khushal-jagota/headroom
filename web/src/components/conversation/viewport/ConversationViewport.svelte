@@ -273,7 +273,7 @@
       const stream = target.closest<HTMLElement>('.c2-streaming');
       const streaming = stream !== null && stream.dataset.conversationStreamArrival !== 'false';
       const following = streaming
-        ? settledOnOpening && !pendingOpen && heldUnreadKey === null && (heldSent === null ? withTheNewestLineBeforeTheWrite : threadElement !== null && withTheNewestLine(threadElement))
+        ? settledOnOpening && !pendingOpen && (heldSent === null ? withTheNewestLineBeforeTheWrite : threadElement !== null && withTheNewestLine(threadElement))
         : messageKey !== null && arrivingMessages.get(messageKey) === true;
       if (streaming && following && heldSent === null && liveArrivalPixels === 0 && threadElement !== null && !conversationMotion(threadElement).active(positionMotion)) {
         // A newly admitted stream row can add a flex gap before its text writes.
@@ -322,9 +322,6 @@
     }
     if (textRestoration !== null && textRestoration.anchor.content) {
       alignSavedText(thread);
-    } else if (heldUnreadKey !== null) {
-      const held = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node => node.dataset.conversationViewKey === heldUnreadKey);
-      if (held) moveTheThread(thread, geometry.elementAtTheTopScrollTop(held));
     } else if (heldSent !== null) {
       const sent = heldSentElement(thread);
       if (sent) moveTheThread(thread, geometry.sentMessageScrollTop(sent));
@@ -347,7 +344,6 @@
 
   const positionMotion = {};
   let gestureGeneration = 0;
-  let heldUnreadKey = $state<string | null>(null);
   function cancelLatestRecovery(): void {
     if (latestIntent?.cause !== 'restoration-fallback') return;
     latestIntent.controller?.abort();
@@ -383,7 +379,6 @@
     cancelTextRestoration();
     pendingOpen = false;
     settledOnOpening = true;
-    heldUnreadKey = null;
     heldSent = null;
     liveArrivalPixels = 0;
     streamWrites.clear();
@@ -394,7 +389,7 @@
     placement = null;
     if (placementReady) { pendingOpen = false; settledOnOpening = true; }
     placementReady = true;
-    reader?.releaseEntry();
+    pendingPresentationTarget = null;
     if (newestPlacementMessageId !== null) settledMessageIds.add(newestPlacementMessageId);
     sentMessageToPlace = null;
     newestPlacementMessageId = null;
@@ -456,7 +451,6 @@
 
   /** Is the reader with the newest line right now? Measured, never remembered. */
   function withTheNewestLine(thread: HTMLDivElement): boolean {
-    if (heldUnreadKey !== null) return false;
     const geometry = threadGeometry(thread, reservedSpaceElement);
     if (!geometry.hasShape()) return withTheNewestLineBeforeTheWrite;
     return geometry.newestLineIsInSight(geometry.read(reservedSpacePixels).newestLineBottomPixels);
@@ -468,7 +462,7 @@
     const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.getBoundingClientRect().bottom>top);
     const key=element?.dataset.conversationViewKey;
     const item=reader.pages.flatMap(page=>page.items).find(item=>item.key===key);
-    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:!manualReader&&withTheNewestLineBeforeTheWrite&&!latestPending&&heldUnreadKey===null,content:textPresentations.capture(item.key,thread.getBoundingClientRect())};
+    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:!manualReader&&withTheNewestLineBeforeTheWrite&&!latestPending,content:textPresentations.capture(item.key,thread.getBoundingClientRect())};
   }
 
   function onThreadScroll(): void {
@@ -489,7 +483,7 @@
       manualReader = false;
       retirementOwner = null;
       withTheNewestLineBeforeTheWrite = true;
-    } else if (!manualReader) withTheNewestLineBeforeTheWrite = !jumpVisible && heldUnreadKey === null;
+    } else if (!manualReader) withTheNewestLineBeforeTheWrite = !jumpVisible;
     rememberNavigationPosition(thread);
     saveLogicalAnchor(thread);
   }
@@ -522,7 +516,6 @@
     settledOnOpening = true;
     placementReady = true;
     entryPresentationPending = false;
-    heldUnreadKey = null;
     heldSent = null;
     liveArrivalPixels = 0;
     arrivingMessages.clear();
@@ -535,7 +528,6 @@
     sentMessageToPlace = null;
     newestPlacementMessageId = null;
     recoveryToPlace = null;
-    reader?.releaseEntry();
     if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
     if (cause === 'restoration-fallback') {
       viewAnchor = null;
@@ -580,13 +572,6 @@
     }
   }
 
-  function requestWaitingOnThePerson(thread: HTMLDivElement): HTMLElement | null {
-    const waiting = thread.querySelectorAll<HTMLElement>(
-      '[data-conversation-ask-state="live"], [data-conversation-user-input-state="live"]'
-    );
-    return waiting[waiting.length - 1] ?? null;
-  }
-
   function restoredAnchorElement(thread: HTMLDivElement): HTMLElement | null {
     if (viewAnchor === null || viewAnchor.following) return null;
     const nodes = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')];
@@ -609,8 +594,7 @@
       const bounds = released.getBoundingClientRect();
       if (bounds.bottom > viewport.top && bounds.top < viewport.bottom) return false;
     }
-    return [...contentElement.querySelectorAll('[aria-busy="true"], [data-markdown-rendering]')].every(node =>
-      node.closest('[data-visible-content-state="released"], [data-visible-content-state="retained"]') !== null);
+    return presentationReady(contentElement);
   }
 
   function landTheOpen(thread: HTMLDivElement): void {
@@ -621,8 +605,7 @@
     }
     const geometry = threadGeometry(thread, reservedSpaceElement);
     const end = Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels));
-    const request = requestWaitingOnThePerson(thread);
-    moveTheThread(thread, request === null ? end : Math.min(end, geometry.elementAtTheTopScrollTop(request)));
+    moveTheThread(thread, end);
   }
 
   /** All causes retain their intent until one pass settles the latest DOM. */
@@ -686,8 +669,6 @@
             if (placement) placement.cancelled = true;
             placement = threadPlacement(reader, 'sent', id);
           }
-          heldUnreadKey = null;
-          reader?.releaseEntry();
           sentMessageToPlace = id;
           recoveryToPlace = null;
           newestPlacementMessageId = id;
@@ -711,11 +692,6 @@
         }
 
         if (manualReader) retireReplySpace(thread);
-        if (heldUnreadKey !== null) {
-          const held = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
-            .find(node => node.dataset.conversationViewKey === heldUnreadKey);
-          if (held) reservedSpacePixels = geometry.answerRoomPixels(held);
-        }
         // Space is part of layout. Place only after its final DOM height is present.
         await tick();
         if (startedIn !== generation || gesture !== gestureGeneration || !canMeasure() || thread !== threadElement) return;
@@ -728,11 +704,11 @@
         takeTheReading(geometry.read(reservedSpacePixels));
 
         // Recovery owns an explicit newest destination. It never uses opening's
-        // request-at-top or old row offset, even while newest content is pending.
+        // old row offset, even while newest content is pending.
         if (intent?.cause === 'restoration-fallback' && isCurrentLatest(intent) && !intent.admitted) return;
-        if (pendingOpen || !settledOnOpening || reader?.entryPhase === 'placing') {
+        if (pendingOpen || !settledOnOpening || !manualReader && reader?.entryPhase === 'placing') {
           if (reader !== null && reader.pages.length === 0 && (reader.status === null || reader.loading)) return;
-          const targetKey = reader?.entryTarget?.key ?? (viewAnchor && !viewAnchor.following ? viewAnchor.key : null);
+          const targetKey = viewAnchor && !viewAnchor.following ? viewAnchor.key : null;
           if (viewAnchor !== null && !viewAnchor.following) {
             const held = restoredAnchorElement(thread);
             if (held) {
@@ -746,7 +722,7 @@
           }
           if (targetKey === null) landTheOpen(thread);
           const destination = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
-          const target = (targetKey === null ? destination : reader?.entryTarget === null || reader?.entryTarget === undefined ? restoredAnchorElement(thread) ?? undefined : [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node => node.dataset.conversationViewKey === targetKey));
+          const target = (targetKey === null ? destination : restoredAnchorElement(thread) ?? undefined);
           if (target === undefined) return;
           const restoringAnchor = viewAnchor !== null && !viewAnchor.following;
           if (!restoringAnchor && !presentationReady(target)) {
@@ -770,20 +746,8 @@
         }
 
         if (reader?.entryPhase === 'placing') {
-          if (textRestoration !== null) { cancelTextRestoration(); viewAnchor = null; }
-          if (!reader.entryTargetReady) return;
-          const entryReader = reader;
-          const target = reader.entryTarget;
-          const element = target === null ? null : [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
-            .find(node => node.dataset.conversationViewKey === target.key);
-          if (target !== null && !element) return;
-          if (element) {
-            heldUnreadKey = target!.key;
-            reservedSpacePixels = Math.max(reservedSpacePixels, geometry.answerRoomPixels(element));
-            await tick();
-            if (startedIn !== generation || thread !== threadElement || reader !== entryReader || reader.entryPhase !== 'placing' || reader.entryTarget?.key !== target?.key || !reader.entryTargetReady) return;
-            moveTheThread(thread, threadGeometry(thread, reservedSpaceElement).elementAtTheTopScrollTop(element));
-          } else landTheOpen(thread);
+          // Reader input can end automatic entry before presentation settles.
+          if (!manualReader) landTheOpen(thread);
           reader.finishEntry();
         } else if (!settledOnOpening || pendingOpen) {
           landTheOpen(thread);
@@ -835,10 +799,6 @@
           settledMessageIds.add(sentMessageToPlace);
           placement = null;
           repairLayout(thread);
-        } else if (heldUnreadKey !== null) {
-          const held = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
-            .find(node => node.dataset.conversationViewKey === heldUnreadKey);
-          if (held) moveTheThread(thread, geometry.elementAtTheTopScrollTop(held));
         } else if (heldSent !== null) {
           const sent = heldSentElement(thread);
           if (sent) moveTheThread(thread, geometry.sentMessageScrollTop(sent));
@@ -926,7 +886,7 @@
           && reservedSpacePixels === 0 && Math.abs(thread.scrollTop - Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels))) <= 1
           && !jumpVisible && latestPresented;
         if (latestPlaced) { latestPending = false; manualReader = false; retirementOwner = null; }
-        withTheNewestLineBeforeTheWrite = !manualReader && (followingMore || !jumpVisible) && !latestPending && heldUnreadKey === null && heldSent === null;
+        withTheNewestLineBeforeTheWrite = !manualReader && (followingMore || !jumpVisible) && !latestPending && heldSent === null;
         saveLogicalAnchor(thread);
         if (latestPlaced && intent !== null) {
           // Wait for Latest to leave the DOM before returning the keyboard to the thread.
@@ -973,7 +933,6 @@
       newestMessageSequence = 0;
       noteMessageArrivals();
       heldSent = null;
-      heldUnreadKey = null;
       manualReader = anchor !== null && !anchor.following;
       retirementOwner = null;
       navigationPending = false;
@@ -988,7 +947,6 @@
       latestIntent = null;
       if (conversationOnScreen !== wanted) {
         conversationOnScreen = wanted;
-        heldUnreadKey = null;
         settledOnOpening = false;
         settledMessageIds = new Set();
         recoverySeen.clear();
@@ -1009,7 +967,6 @@
     rows;
     reader?.revision;
     reader?.entryPhase;
-    reader?.entryTargetReady;
     reader?.restoring;
     reader?.restorationOutcome;
     const attempt = reader?.restorationAttempt ?? 0;
@@ -1036,7 +993,7 @@
       const thread = threadElement;
       navigationPending = false;
       if (hasUnplacedAcceptedSend()) supersedeRestorationWithAcceptedSend();
-      if (!manualReader && thread !== null && canMeasure() && !pendingOpen && !(latestPending && latestIntent?.cause === 'restoration-fallback') && heldSent === null && heldUnreadKey === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
+      if (!manualReader && thread !== null && canMeasure() && !pendingOpen && !(latestPending && latestIntent?.cause === 'restoration-fallback') && heldSent === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
       noteMessageArrivals();
       requestReconciliation();
     });
@@ -1061,7 +1018,7 @@
           manualReader = false;
           retirementOwner = null;
           navigationPending = false;
-          if (answerRoomMessageId === null && heldSent === null && heldUnreadKey === null) {
+          if (answerRoomMessageId === null && heldSent === null) {
             reservedSpacePixels = 0;
             retainedTopInset = null;
           }
@@ -1084,7 +1041,7 @@
       if (difference !== 0) navigationPending = false;
       previousThreadHeight = height;
       if (keys.includes(positionMotion)) return;
-      if (difference !== 0 && heldUnreadKey === null && heldSent === null && !pendingOpen) {
+      if (difference !== 0 && heldSent === null && !pendingOpen) {
         // Size writes run first in the shared frame. Keep content fixed to the card bottom.
         moveTheThread(thread, thread.scrollTop + difference);
       }
@@ -1133,7 +1090,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div
     class="chat-thread"
-    style:padding-top={heldUnreadKey !== null ? `${SENT_MESSAGE_TOP_GAP_PIXELS}px` : retainedTopInset !== null ? `${retainedTopInset}px` : undefined}
+    style:padding-top={retainedTopInset !== null ? `${retainedTopInset}px` : undefined}
     data-conversation-thread
     data-conversation-placement-ready={placementReady}
     data-conversation-position-owner={latestPending ? "latest" : manualReader ? "manual" : heldSent !== null ? "sent" : "following"}

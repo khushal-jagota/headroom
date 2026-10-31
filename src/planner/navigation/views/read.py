@@ -13,6 +13,7 @@ from planner.navigation.review import canonical_review_address, review_message_i
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.contracts import (
     VIEW_PROJECTION_VERSION,
+    ReviewHistoryKey,
     ViewContent,
     ViewGroup,
     ViewRequest,
@@ -32,6 +33,8 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
         "selected",
         "selected_conversation_id",
         "review_conversation_ids",
+        "review_skipped_keys",
+        "review_priority_keys",
         "windows",
     }:
         raise ValueError("invalid view request fields")
@@ -73,6 +76,19 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
         or len(set(review_ids)) != len(review_ids)
     ):
         raise ValueError("invalid Review conversation context")
+    for field in ("review_skipped_keys", "review_priority_keys"):
+        keys = value[field]
+        if not isinstance(keys, list) or any(
+            not isinstance(item, dict)
+            or set(item) != {"kind", "id"}
+            or item["kind"] not in ("ticket", "conversation")
+            or not isinstance(item["id"], str)
+            or not 0 < len(item["id"]) <= 256
+            for item in keys
+        ):
+            raise ValueError("invalid Review history")
+        if len({(item["kind"], item["id"]) for item in keys}) != len(keys):
+            raise ValueError("duplicate Review history key")
     windows = value["windows"]
     if not isinstance(windows, list) or len(windows) > config.maximum_windows:
         raise ValueError("invalid view windows")
@@ -172,7 +188,14 @@ def continuity(conn: sqlite3.Connection) -> Continuity:
 
 
 def _anchor(binding: str, row: tuple[Any, ...]) -> str:
-    values = [row[0], row[1].hex(), row[2].hex(), row[3], row[4]]
+    offset = len(row) - 5
+    values = [
+        *row[:offset],
+        row[offset],
+        row[offset + 1].hex(),
+        row[offset + 2].hex(),
+        *row[offset + 3 :],
+    ]
     return base64.urlsafe_b64encode(compact([binding, values]).encode()).decode()
 
 
@@ -188,12 +211,19 @@ def _decode(binding: str, value: str) -> tuple[Any, ...]:
         row = parsed[1]
         if (
             not isinstance(row, list)
-            or len(row) != 5
-            or type(row[0]) is not int
-            or not all(isinstance(v, str) for v in row[1:])
+            or len(row) not in (5, 6)
+            or any(type(v) is not int for v in row[: len(row) - 4])
+            or not all(isinstance(v, str) for v in row[len(row) - 4 :])
         ):
             raise ValueError("invalid anchor shape")
-        result = (row[0], bytes.fromhex(row[1]), bytes.fromhex(row[2]), row[3], row[4])
+        offset = len(row) - 5
+        result = (
+            *row[:offset],
+            row[offset],
+            bytes.fromhex(row[offset + 1]),
+            bytes.fromhex(row[offset + 2]),
+            *row[offset + 3 :],
+        )
         if _anchor(parsed[0], result) != value:
             raise ValueError("noncanonical anchor")
         if parsed[0] != binding:
@@ -328,11 +358,63 @@ def read_content(
                 "canonical_address_id": address_id,
             }
         )
+    review_base = (section_key("review", None, "all", "all"), profile, value["locale"])
+    count = conn.execute(
+        "SELECT value FROM navigation_view_counts WHERE section_key=? AND profile=? AND locale=?",
+        review_base,
+    ).fetchone()
+    eligible_count = int(count[0]) if count else 0
+
+    def history_members(keys: list[ReviewHistoryKey]) -> set[Key]:
+        found: set[Key] = set()
+        for item in keys:
+            if item["kind"] == "ticket":
+                key = ("ticket", item["id"])
+            else:
+                conversation = record(conn, ("conversation", item["id"]))
+                if (
+                    conversation is None
+                    or not conversation["attention"]["durable"]["message_for_owner"]
+                ):
+                    continue
+                address_id = canonical_review_address(conn, item["id"])
+                address_value = record(conn, ("address", address_id)) if address_id else None
+                if address_value is None or address_id is None:
+                    continue
+                key = (
+                    ("ticket", address_value["owner_id"])
+                    if address_value["owner_kind"] == "ticket"
+                    else ("address", address_id)
+                )
+            if conn.execute(
+                "SELECT 1 FROM navigation_view_memberships WHERE section_key=? AND profile=? "
+                "AND locale=? AND kind=? AND id=?",
+                (*review_base, *key),
+            ).fetchone():
+                found.add(key)
+        return found
+
+    skipped = history_members(value["review_skipped_keys"])
+    priority = history_members(value["review_priority_keys"])
+    priority_json = compact([{"kind": kind, "id": identity} for kind, identity in sorted(priority)])
+    cohort_digest = digest(
+        sorted((item["kind"], item["id"]) for item in value["review_priority_keys"])
+    )
+    review_summary = {"skipped": len(skipped), "new": eligible_count - len(skipped)}
     windows: list[Any] = []
     pending_windows: list[Any] = []
     for window in value["windows"]:
         key = window_key(window)
-        binding = digest([key, profile, value["locale"], ORDERING_GENERATION, coverage["epoch"]])
+        binding = digest(
+            [
+                key,
+                profile,
+                value["locale"],
+                ORDERING_GENERATION,
+                coverage["epoch"],
+                cohort_digest if window["section"] == "review" else None,
+            ]
+        )
         try:
             anchor = None if window["anchor"] is None else _decode(binding, window["anchor"])
         except StaleViewAnchor:
@@ -340,6 +422,8 @@ def read_content(
             # delivery authority are all independently validated and remain unchanged.
             window = {**window, "anchor": None, "direction": "after"}
             anchor = None
+        if anchor is not None and len(anchor) != (6 if window["section"] == "review" else 5):
+            raise ValueError("invalid navigation anchor arity")
         base = (key, profile, value["locale"])
         count = conn.execute(
             "SELECT value FROM navigation_view_counts WHERE section_key=? AND "
@@ -347,44 +431,59 @@ def read_content(
             base,
         ).fetchone()
         total = count[0] if count else 0
-        args: tuple[Any, ...] = base
-        sql = (
-            "SELECT rank,title_key,id_key,kind,id FROM navigation_view_memberships "
-            "WHERE section_key=? AND profile=? AND locale=?"
+        is_review = window["section"] == "review"
+        source = (
+            "(SELECT m.*,CASE WHEN (m.kind,m.id) IN (SELECT json_extract(j.value,'$.kind'), "
+            "json_extract(j.value,'$.id') FROM json_each(?) j) "
+            "THEN 1 ELSE 0 END AS priority FROM navigation_view_memberships m)"
+            if is_review
+            else "navigation_view_memberships"
         )
+        columns = (("priority",) if is_review else ()) + (
+            "rank",
+            "title_key",
+            "id_key",
+            "kind",
+            "id",
+        )
+        query_base = ((priority_json,) if is_review else ()) + base
+        prefix = (
+            "SELECT "
+            + ",".join(columns)
+            + " FROM "
+            + source
+            + " WHERE section_key=? AND profile=? AND locale=?"
+        )
+        args: tuple[Any, ...] = query_base
+        sql = prefix
         backward = window["direction"] == "before"
         if anchor:
             sql += (
-                " AND (rank,title_key,id_key,kind,id) "
+                " AND ("
+                + ",".join(columns)
+                + ") "
                 + ("<" if backward else ">")
-                + " (?,?,?,?,?)"
+                + " ("
+                + ",".join("?" for _ in columns)
+                + ")"
             )
             args += anchor
         order = " DESC" if backward else " ASC"
-        sql += (
-            " ORDER BY "
-            + ",".join(name + order for name in ("rank", "title_key", "id_key", "kind", "id"))
-            + " LIMIT ?"
-        )
+        sql += " ORDER BY " + ",".join(name + order for name in columns) + " LIMIT ?"
         rows = list(conn.execute(sql, (*args, window["limit"])))
         if not rows and total and window["limit"] and anchor is not None:
-            # The anchored suffix/prefix vanished. Return the nearest reachable edge,
-            # not an empty page whose only continuation repeats the same anchor.
             backward = not backward
             order = " DESC" if backward else " ASC"
             rows = list(
                 conn.execute(
-                    "SELECT rank,title_key,id_key,kind,id FROM navigation_view_memberships "
-                    "WHERE section_key=? AND profile=? AND locale=? ORDER BY "
-                    + ",".join(
-                        name + order for name in ("rank", "title_key", "id_key", "kind", "id")
-                    )
-                    + " LIMIT ?",
-                    (*base, window["limit"]),
+                    prefix + " ORDER BY " + ",".join(name + order for name in columns) + " LIMIT ?",
+                    (*query_base, window["limit"]),
                 )
             )
             window = {**window, "anchor": None, "direction": "before" if backward else "after"}
-        pending_windows.append((window, key, binding, base, total, backward, rows, []))
+        pending_windows.append(
+            (window, key, binding, (prefix, query_base, columns), total, backward, rows, [])
+        )
 
     # Preserve all count identities. Give each admitted surface one member before
     # filling pages. A surface whose dependencies do not fit stays count-only and
@@ -393,7 +492,7 @@ def read_content(
         rows, accepted = item[6], item[7]
         for row in rows[:1]:
             if admit(
-                (row[3], row[4]),
+                (row[-2], row[-1]),
                 settled_only=item[0]["section"] == "settled",
                 review=item[0]["section"] == "review",
             ):
@@ -404,7 +503,7 @@ def read_content(
             if position < len(rows) and len(accepted) == position:
                 row = rows[position]
                 if admit(
-                    (row[3], row[4]),
+                    (row[-2], row[-1]),
                     settled_only=item[0]["section"] == "settled",
                     review=item[0]["section"] == "review",
                 ):
@@ -416,15 +515,20 @@ def read_content(
         def continuation(
             row: tuple[Any, ...],
             direction: str,
-            base: tuple[str, str, str] = base,
+            base: tuple[str, tuple[str, ...], tuple[str, ...]] = base,
             binding: str = binding,
         ) -> str | None:
+            prefix, query_base, columns = base
             exists = conn.execute(
-                "SELECT 1 FROM navigation_view_memberships WHERE section_key=? AND "
-                "profile=? AND locale=? AND (rank,title_key,id_key,kind,id) "
+                prefix
+                + " AND ("
+                + ",".join(columns)
+                + ") "
                 + direction
-                + " (?,?,?,?,?) LIMIT 1",
-                (*base, *row),
+                + " ("
+                + ",".join("?" for _ in columns)
+                + ") LIMIT 1",
+                (*query_base, *row),
             ).fetchone()
             return _anchor(binding, row) if exists else None
 
@@ -438,7 +542,7 @@ def read_content(
                 else None,
                 "window_id": digest(key),
                 "request": window,
-                "members": [{"kind": r[3], "id": r[4]} for r in accepted],
+                "members": [{"kind": r[-2], "id": r[-1]} for r in accepted],
                 "total": total,
                 "previous": continuation(accepted[0], "<") if accepted else None,
                 "next": continuation(accepted[-1], ">") if accepted else None,
@@ -456,6 +560,7 @@ def read_content(
             "windows": windows,
             "counts": counts,
             "review_context": review_context,
+            "review_summary": review_summary,
         },
     )
 
