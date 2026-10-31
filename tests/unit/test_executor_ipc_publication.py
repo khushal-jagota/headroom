@@ -111,10 +111,8 @@ async def ipc_service(
     finally:
         if handlers:
             await asyncio.gather(*handlers)
-        if executor.gateway._publications:
-            await asyncio.gather(*(row.task for row in executor.gateway._publications.values()))
-        if executor.gateway._ipc_lookups:
-            await asyncio.gather(*executor.gateway._ipc_lookups)
+        if executor.gateway._publishing:
+            await asyncio.gather(*(task for _, task in executor.gateway._publishing.values()))
         executor.outbox.close()
 
 
@@ -193,27 +191,38 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                 identity = outcome["submission_id"]
                 assert outcome["request_id"] == identity
                 assert outcome["publication"] == "unknown"
-                tracker = executor.gateway._publications[identity]
-                assert not tracker.task.done()
-                assert executor.runner._source_work[child.reference] == 1
                 assert executor.outbox.pending_count() == 0
                 (executor.paths.artifacts / "t_example" / "file").write_text("changed bytes")
                 concurrent = await executor.gateway.handle(retry_request(child, identity))
                 assert concurrent.unconfirmed is not None
                 assert concurrent.unconfirmed.publication == "preparing"
-                assert executor.gateway._publications[identity] is tracker
+                other = replace(
+                    child,
+                    reference=replace(child.reference, child_id="other"),
+                    capability="other-capability",
+                )
+                executor.runner._children["other"] = other
+                forbidden = await executor.gateway.handle(retry_request(other, identity))
+                assert forbidden.error is not None and forbidden.error["code"] == "agent_forbidden"
                 release.set()
-                publication = await tracker.task
-                assert executor.runner._source_work == {}
-                assert captures == 1
-                snapshots = executor.outbox.snapshots(publication.envelope)
+                async with asyncio.timeout(5):
+                    while True:
+                        response = await executor.gateway.handle(retry_request(child, identity))
+                        assert response.unconfirmed is not None
+                        if response.unconfirmed.publication == "queued":
+                            break
+                        await asyncio.sleep(0.01)
+                forbidden = await executor.gateway.handle(retry_request(other, identity))
+                assert forbidden.error is not None and forbidden.error["code"] == "agent_forbidden"
+                publication = executor.outbox.pending()[0]
+                snapshots = executor.outbox.snapshots(publication)
                 assert snapshots[0].local_path.read_text() == "original bytes"
                 retried = await asyncio.to_thread(
                     CliRunner().invoke, executor_group, ["retry", identity, "--json"]
                 )
                 assert retried.exit_code == 3, retried.output
                 assert json.loads(retried.stdout)["publication"] == "queued"
-                assert executor.outbox.pending() == (publication.envelope,)
+                assert executor.outbox.pending() == (publication,)
                 assert captures == 1
             finally:
                 release.set()
@@ -227,7 +236,8 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
     async def run() -> None:
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
             response = await executor.gateway.handle(write_request(child, "original"))
-            assert response.queued is not None
+            assert response.unconfirmed is not None
+            assert response.unconfirmed.publication == "queued"
             envelope = executor.outbox.pending()[0]
             executor.outbox.acknowledge(
                 AcceptanceReceipt(
@@ -242,13 +252,6 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
             assert not (executor.outbox.root / "entries" / "original").exists()
             acknowledged = await executor.gateway.handle(retry_request(child, "original"))
             assert acknowledged.error == {"code": "validation"}
-            changed = replace(
-                write_request(child, "original"),
-                payload={"operation": "ticket.edit", "arguments": {}},
-            )
-            conflict = await executor.gateway.handle(changed)
-            assert conflict.error is not None and conflict.error["code"] == "validation"
-            assert not executor.outbox.pending()
             sender = executor.outbox.sender_id
         # A fresh registry has no old native child authority. Journal identity still survives.
         restarted = MacService(

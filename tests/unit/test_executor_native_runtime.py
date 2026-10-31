@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import time
 from collections.abc import Iterator
 from dataclasses import replace
@@ -322,7 +323,7 @@ def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
                 time.monotonic() + 0.1,
             )
         )
-        assert response.queued is not None and response.queued.disposition == "queued"
+        assert response.unconfirmed is not None and response.unconfirmed.publication == "queued"
         published = spool.lookup("write")
         assert published is not None
         if trigger == "changing":
@@ -658,15 +659,74 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
         assert native_stops == []
         released.set()
         await task
-        registry.begin_source_work(start.child)
+        source_release = asyncio.Event()
+        source_task = registry.source_work(start.child, source_release.wait)
         assert not (await registry.quiesce()).ready
         assert native_stops == []
-        registry.end_source_work(start.child)
+        source_release.set()
+        await source_task
         assert not (await registry.quiesce()).ready
         assert native_stops == [True]
         assert len(spool.pending()) == 1
         acknowledge_pending(spool)
         assert (await registry.quiesce()).ready
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("publication_fails", [False, True])
+def test_cancelled_event_caller_leaves_stop_waiting_for_publication(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+    publication_fails: bool,
+) -> None:
+    async def run() -> None:
+        registry, outbox, native, start = native_registry
+        await registry.run(start)
+        assert native.sink is not None
+        entered, release = asyncio.Event(), threading.Event()
+        loop = asyncio.get_running_loop()
+        add = outbox.add
+
+        def held_event(entry: OutboxEntry, *, ticket_id: str | None = None) -> QueuedEnvelope:
+            if entry.kind is EnvelopeKind.backend_event:
+                loop.call_soon_threadsafe(entered.set)
+                assert release.wait(5)
+                if publication_fails:
+                    raise OSError("event could not reach disk")
+            return add(entry, ticket_id=ticket_id)
+
+        monkeypatch.setattr(outbox, "add", held_event)
+        event = asyncio.create_task(native.sink.vendor_session_cursor_rebound("saved-cursor"))
+        stopping = None
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            event.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(event, 1)
+            stopping = asyncio.create_task(
+                registry.run(
+                    ChildCommand("stop", start.child, ChildOperation.stop, None, StopRun())
+                )
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(stopping), 0.05)
+            release.set()
+            outcome = await asyncio.wait_for(stopping, 5)
+            if publication_fails:
+                assert outcome.disposition is CommandDisposition.uncertain
+                assert not outbox.pending()
+            else:
+                assert outcome.disposition is CommandDisposition.succeeded
+                assert [entry.kind for entry in outbox.pending()] == [
+                    EnvelopeKind.backend_event,
+                    EnvelopeKind.child_stopped,
+                ]
+        finally:
+            release.set()
+            await asyncio.gather(event, return_exceptions=True)
+            if stopping is not None:
+                await stopping
 
     asyncio.run(run())
 

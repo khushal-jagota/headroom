@@ -87,8 +87,6 @@ def request(operation: IpcOperation, payload: JsonObject) -> IpcResponse:
                 or response.unconfirmed.submission_id != submission_id
             ):
                 raise ValueError("executor IPC publication identity mismatch")
-            if response.queued is not None and response.queued.submission_id != submission_id:
-                raise ValueError("executor IPC queued identity mismatch")
             validated_response = response
             return response
     except (OSError, ValueError) as error:

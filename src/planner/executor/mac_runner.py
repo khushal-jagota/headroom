@@ -8,6 +8,7 @@ import hashlib
 import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
+from functools import partial
 from pathlib import Path
 from typing import Literal, cast
 from uuid import uuid4
@@ -342,7 +343,6 @@ class MacRunner:
         )
         self.connection = connection
         self.ready = ready
-        self._transfers = 0
         self.factory = factory or self._factory(panels_server_url)
         self.message_files = message_files
         self._children: dict[str, RunningChild] = {}
@@ -351,8 +351,6 @@ class MacRunner:
         self.admission_stopped = False
         self._retired_children: set[str] = set()
         self._retiring_children: set[str] = set()
-        self._source_work: dict[ChildReference, int] = {}
-        self._source_idle: dict[ChildReference, asyncio.Event] = {}
         self._source_tasks: dict[ChildReference, set[asyncio.Task[object]]] = {}
         self._failed_source_work: set[ChildReference] = set()
 
@@ -367,67 +365,30 @@ class MacRunner:
             raise PermissionError("unknown executor child capability")
         return child
 
-    def begin_source_work(self, child: ChildReference, *, final_event: bool = False) -> None:
-        if child.child_id in self._retired_children or (
-            child.child_id in self._retiring_children and not final_event
-        ):
-            raise PermissionError("source child is retired or retiring")
-        key = child
-        if key not in self._source_work:
-            self._source_idle[key] = asyncio.Event()
-        self._source_work[key] = self._source_work.get(key, 0) + 1
-
-    async def source_work[T](
+    def source_work[T](
         self,
         child: ChildReference,
         work: Callable[[], Awaitable[T]],
         *,
-        new_work: bool = False,
         final_event: bool = False,
-    ) -> T:
-        # Existing native work can still publish its final events after admission closes.
-        if new_work and self.admission_stopped:
-            raise PermissionError("executor admission stopped")
-        self.begin_source_work(child, final_event=final_event)
+    ) -> asyncio.Task[T]:
+        """Own work that must reach the outbox before this run's stop can be proved."""
+        if child.child_id in self._retired_children or (
+            child.child_id in self._retiring_children and not final_event
+        ):
+            raise PermissionError("source child is retired or retiring")
         task = asyncio.ensure_future(work())
-        tasks = self._source_tasks.setdefault(child, set())
-        tasks.add(cast(asyncio.Task[object], task))
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            # A cancelled catalog refresh or IPC must not release its source count
-            # while its snapshot/publication thread still owns durable work.
-            while not task.done():
-                try:
-                    await asyncio.shield(task)
-                except asyncio.CancelledError:
-                    continue
-                except Exception:
-                    break
-            failed = task.cancelled() or task.exception() is not None
-            if final_event and failed:
-                self._failed_source_work.add(child)
-            raise
-        except Exception:
-            if final_event:
-                self._failed_source_work.add(child)
-            raise
-        finally:
-            tasks.discard(cast(asyncio.Task[object], task))
-            if not tasks:
-                self._source_tasks.pop(child, None)
-            self.end_source_work(child)
+        self._source_tasks.setdefault(child, set()).add(cast(asyncio.Task[object], task))
+        task.add_done_callback(partial(self._source_work_done, child))
+        return task
 
-    def record_lost_output(self, child: ChildReference) -> None:
-        """An authored write failed to enter the durable outbox; stop stays unproved."""
-        self._failed_source_work.add(child)
-
-    def end_source_work(self, child: ChildReference) -> None:
-        key = child
-        self._source_work[key] -= 1
-        if not self._source_work[key]:
-            del self._source_work[key]
-            self._source_idle.pop(key).set()
+    def _source_work_done(self, child: ChildReference, task: asyncio.Task[object]) -> None:
+        tasks = self._source_tasks[child]
+        tasks.discard(task)
+        if not tasks:
+            del self._source_tasks[child]
+        if task.cancelled() or task.exception() is not None:
+            self._failed_source_work.add(child)
 
     def _factory(
         self, server_url: str
@@ -460,7 +421,6 @@ class MacRunner:
         link = self.connection()
         if link is None:
             raise ConnectionError("executor link unavailable")
-        self._transfers += 1
         temporary = self.paths.run / (".input-" + uuid4().hex)
         try:
             async with link.transfer_capacity():
@@ -491,7 +451,6 @@ class MacRunner:
 
         finally:
             temporary.unlink(missing_ok=True)
-            self._transfers -= 1
 
     async def run(self, command: ChildCommand) -> CommandOutcome:
         record = self._commands.get(command.command_id)
@@ -652,13 +611,8 @@ class MacRunner:
         return _outcome(command, CommandDisposition.succeeded, {})
 
     async def _finish_source_work(self, reference: ChildReference) -> None:
-        while idle := self._source_idle.get(reference):
-            tasks = tuple(self._source_tasks.get(reference, ()))
-            if tasks:
-                await asyncio.gather(*(asyncio.shield(task) for task in tasks))
-            # A finished inner task does not release its outer owner's count.
-            # Await accounting instead of spinning on already finished tasks.
-            await idle.wait()
+        while tasks := self._source_tasks.get(reference):
+            await asyncio.wait(tuple(tasks))
 
     async def _start_run(self, command: ChildCommand, args: StartRun) -> JsonObject:
         if command.child.child_id in self._children:
@@ -963,10 +917,12 @@ class MacRunner:
         turn: TurnToken | None,
         arguments: dict[str, object],
     ) -> None:
-        await self.source_work(
-            reference,
-            lambda: self._report_event(reference, method, turn, arguments),
-            final_event=True,
+        await asyncio.shield(
+            self.source_work(
+                reference,
+                lambda: self._report_event(reference, method, turn, arguments),
+                final_event=True,
+            )
         )
 
     async def _report_event(
@@ -1038,7 +994,7 @@ class MacRunner:
             record.required_output is not None and not record.output_published
             for record in self._commands.values()
         )
-        unresolved += sum(self._source_work.values())
+        unresolved += sum(len(tasks) for tasks in self._source_tasks.values())
         return active, callbacks, unresolved, self.outbox.pending_count()
 
     async def quiesce(self) -> Quiescence:
