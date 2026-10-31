@@ -11,8 +11,6 @@ if TYPE_CHECKING:
     from planner.conversation.admission.contracts import AdmissionExpectation
 from uuid import uuid4
 
-from pydantic import TypeAdapter
-
 from planner.conversation.admission.service import bind_command
 from planner.conversation.backends import contracts as backend
 from planner.conversation.backends.contracts import (
@@ -60,6 +58,7 @@ from planner.executor.protocol import (
     decode_provider_submission,
     encode_message,
     encode_value,
+    type_adapter,
 )
 from planner.executor.skills import validate_skill_snapshot
 from planner.executor.store import ExecutorStore
@@ -446,7 +445,7 @@ def command_emission_decision(
             (command.child.executor_incarnation, command.command_id),
         ).fetchone()
         if known is not None:
-            outcome = TypeAdapter(CommandOutcome).validate_json(known[0])
+            outcome = type_adapter(CommandOutcome).validate_json(known[0])
             if outcome.child != command.child:
                 raise ValueError("recorded outcome conflicts with command child")
             return outcome

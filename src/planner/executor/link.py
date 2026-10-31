@@ -13,7 +13,6 @@ from uuid import uuid4
 
 import aiohttp
 from fastapi import WebSocket
-from pydantic import TypeAdapter
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from planner.execution_identity import ExecutorIdentity, ProtocolRefused, parse_identity
@@ -39,6 +38,7 @@ from planner.executor.protocol import (
     decode_message,
     encode_message,
     encode_value,
+    type_adapter,
 )
 
 
@@ -480,7 +480,7 @@ async def accept_link(
             if hello.kind is not WireMessageKind.hello:
                 raise ProtocolRefused("executor handshake required")
             identity = parse_identity(hello.payload.get("identity"))
-            health = TypeAdapter(ExecutorHealth).validate_python(hello.payload)
+            health = type_adapter(ExecutorHealth).validate_python(hello.payload)
             if health.identity != identity:
                 raise ProtocolRefused("identity coercion refused")
             if type(hello.payload.get("process_id")) is not int or health.process_id < 1:

@@ -17,8 +17,6 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
-from pydantic import TypeAdapter
-
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
 from planner.executor.configuration import (
     FILE_CHUNK_BYTES,
@@ -59,6 +57,7 @@ from planner.executor.protocol import (
     encode_message,
     encode_value,
     envelope_payload_digest,
+    type_adapter,
 )
 
 DATABASE_NAME = "outbox.sqlite3"
@@ -364,7 +363,7 @@ class MacOutbox:
 
     @staticmethod
     def _object(value: object) -> JsonObject:
-        return TypeAdapter(JsonObject).validate_python(encode_value(value))
+        return cast(JsonObject, type_adapter(JsonObject).validate_python(encode_value(value)))
 
     def _envelope(self, row: tuple[object, ...]) -> QueuedEnvelope:
         sequence, submission, conversation, _, kind, encoded, _ = row
@@ -375,8 +374,8 @@ class MacOutbox:
         )
         assert isinstance(kind, str) and isinstance(encoded, (bytes, str))
         value = json.loads(encoded)
-        files = TypeAdapter(tuple[FileManifest, ...]).validate_python(value["files"])
-        payload: JsonObject = TypeAdapter(JsonObject).validate_python(value["payload"])
+        files = type_adapter(tuple[FileManifest, ...]).validate_python(value["files"])
+        payload: JsonObject = type_adapter(JsonObject).validate_python(value["payload"])
         digest = envelope_payload_digest(
             payload,
             files,
@@ -405,7 +404,9 @@ class MacOutbox:
             if row is None:
                 return None
             receipt = (
-                TypeAdapter(AcceptanceReceipt).validate_json(row[6]) if row[6] is not None else None
+                type_adapter(AcceptanceReceipt).validate_json(row[6])
+                if row[6] is not None
+                else None
             )
             return OutboxRecord(self._envelope(row), receipt)
 
@@ -488,7 +489,7 @@ class MacOutbox:
                 if envelope.kind is EnvelopeKind.cli_write:
                     self._db.execute(
                         "UPDATE items SET receipt_json=? WHERE submission_id=?",
-                        (TypeAdapter(AcceptanceReceipt).dump_json(receipt), receipt.submission_id),
+                        (type_adapter(AcceptanceReceipt).dump_json(receipt), receipt.submission_id),
                     )
                 else:
                     self._db.execute(
@@ -532,7 +533,7 @@ class MacOutbox:
                 if response.kind is WireMessageKind.missing_files:
                     from planner.executor.protocol import FileManifest
 
-                    missing = TypeAdapter(tuple[FileManifest, ...]).validate_python(
+                    missing = type_adapter(tuple[FileManifest, ...]).validate_python(
                         response.payload.get("files")
                     )
                     snapshots = {
@@ -549,7 +550,7 @@ class MacOutbox:
                     continue
                 if response.kind is not WireMessageKind.receipt:
                     raise ValueError("expected outbox receipt")
-                receipt = TypeAdapter(AcceptanceReceipt).validate_python(response.payload)
+                receipt = type_adapter(AcceptanceReceipt).validate_python(response.payload)
                 await asyncio.to_thread(self.acknowledge, receipt)
                 return
             except sqlite3.OperationalError as error:
@@ -640,7 +641,7 @@ class _OutboxDelivery:
                         },
                         request_id=request_id,
                     )
-                    slot = TypeAdapter(FileTransfer).validate_python(response.payload)
+                    slot = type_adapter(FileTransfer).validate_python(response.payload)
                     if (
                         response.kind is not WireMessageKind.file_transfer
                         or slot.direction != "upload"
@@ -660,7 +661,7 @@ class _OutboxDelivery:
                     )
                     if refused.kind is not WireMessageKind.receipt:
                         raise ValueError("expected upload refusal receipt") from error
-                    return TypeAdapter(AcceptanceReceipt).validate_python(refused.payload)
+                    return type_adapter(AcceptanceReceipt).validate_python(refused.payload)
                 if link.is_closing():
                     raise ConnectionError("file generation changed")
                 return None

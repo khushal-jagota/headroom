@@ -14,8 +14,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
 
-from pydantic import TypeAdapter
-
 from planner.core.task_settlement import wait_for_settlement
 from planner.execution_identity import (
     ExecutorIdentity,
@@ -54,6 +52,7 @@ from planner.executor.protocol import (
     as_object,
     encode_frame,
     read_typed_frame,
+    type_adapter,
 )
 
 
@@ -134,7 +133,7 @@ class AgentGateway:
             if request.operation == IpcOperation.health:
                 return IpcResponse(request.request_id, as_object(self.health()), None)
             if request.operation == IpcOperation.quiesce:
-                expected = TypeAdapter(QuiesceRequest).validate_python(request.payload)
+                expected = type_adapter(QuiesceRequest).validate_python(request.payload)
                 async with self._quiesce_lock:
                     if expected.expected_identity != self.identity or (
                         expected.expected_process_id != os.getpid()
@@ -196,7 +195,7 @@ class AgentGateway:
                     raise ValueError("invalid IPC response deadline")
                 deadline = min(deadline, request.response_deadline)
             if request.operation is IpcOperation.retry:
-                retry = TypeAdapter(IpcRetryPayload).validate_python(request.payload)
+                retry = type_adapter(IpcRetryPayload).validate_python(request.payload)
                 safe_component(retry.submission_id)
                 publication = self._publications.get(retry.submission_id)
                 if publication is not None:
@@ -223,7 +222,7 @@ class AgentGateway:
                 except (TimeoutError, OSError):
                     return self._unconfirmed(request.request_id, retry.submission_id, "unknown")
                 if row is not None:
-                    original = TypeAdapter(CliWrite).validate_python(row.envelope.payload)
+                    original = type_adapter(CliWrite).validate_python(row.envelope.payload)
                     if (
                         original.child != child.reference
                         or row.envelope.kind != EnvelopeKind.cli_write
@@ -233,7 +232,7 @@ class AgentGateway:
 
             if request.operation is not IpcOperation.write:
                 raise ValueError("unsupported executor IPC operation")
-            incoming = TypeAdapter(IpcWritePayload).validate_python(request.payload)
+            incoming = type_adapter(IpcWritePayload).validate_python(request.payload)
             safe_component(request.request_id)
             write = CliWrite(
                 incoming.operation,
@@ -255,7 +254,7 @@ class AgentGateway:
                         if previous.envelope.kind != EnvelopeKind.cli_write:
                             raise _IpcConflict("submission identity conflicts with journal")
                         self._match_publication(
-                            TypeAdapter(CliWrite).validate_python(previous.envelope.payload), write
+                            type_adapter(CliWrite).validate_python(previous.envelope.payload), write
                         )
                         publication.admitted = True
                         return previous

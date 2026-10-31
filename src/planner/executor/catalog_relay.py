@@ -11,8 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
-from pydantic import TypeAdapter
-
 from planner.conversation.contracts import (
     WorkspacePathPolicy,
 )
@@ -45,6 +43,7 @@ from planner.executor.protocol import (
     WireMessageKind,
     as_object,
     encode_value,
+    type_adapter,
 )
 from planner.tickets.contracts import TicketLocale
 
@@ -61,7 +60,7 @@ class MacCatalogRelay:
     def handle(self, message: WireMessage, link: Link, *, admit: Callable[[], bool]) -> None:
         # Metadata never enters the child registry or the durable journal.
         try:
-            request = TypeAdapter(CatalogRequest).validate_json(
+            request = type_adapter(CatalogRequest).validate_json(
                 json.dumps(message.payload), strict=True
             )
             context = message.payload["expected_context"]
@@ -260,7 +259,7 @@ class VpsCatalogRelay:
                 if response.kind is not WireMessageKind.catalog_response:
                     raise ValueError("unexpected catalog reply")
                 self._catalog_raw_identities(response.payload)
-                parsed = TypeAdapter(CatalogResponse).validate_json(
+                parsed = type_adapter(CatalogResponse).validate_json(
                     json.dumps(response.payload), strict=True
                 )
                 if parse_identity(response.payload.get("executor_identity")) != identity:

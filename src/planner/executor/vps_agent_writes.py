@@ -9,8 +9,6 @@ from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
-from pydantic import TypeAdapter
-
 from planner.conversation.api import delivery_fate_json
 from planner.conversation.contracts import (
     ConversationSystem,
@@ -40,6 +38,7 @@ from planner.executor.protocol import (
     QueuedEnvelope,
     ReceiptDisposition,
     encode_value,
+    type_adapter,
 )
 from planner.message_delivery import api, service
 from planner.message_delivery.contracts import MessageDeliveryMode
@@ -64,7 +63,7 @@ class AgentWrites:
     async def accept(
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
-        write = TypeAdapter(CliWrite).validate_python(envelope.payload)
+        write = type_adapter(CliWrite).validate_python(envelope.payload)
         if write.child.conversation_id != envelope.conversation_id:
             raise ValueError("CLI conversation conflicts with envelope")
         if write.operation in ("message.send", "ticket.request_help"):

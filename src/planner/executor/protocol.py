@@ -9,8 +9,19 @@ import struct
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Protocol, TypedDict, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Literal,
+    Protocol,
+    TypedDict,
+    cast,
+    overload,
+)
 
 if TYPE_CHECKING:
     from planner.executor.vps_remote_child import MacRemoteChild
@@ -56,6 +67,24 @@ type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, J
 
 
 type JsonObject = dict[str, JsonValue]
+
+
+@overload
+def type_adapter[T](value_type: type[T], /) -> TypeAdapter[T]: ...
+
+
+@overload
+def type_adapter(value_type: Any, /) -> TypeAdapter[Any]: ...
+
+
+def type_adapter(value_type: Any, /) -> TypeAdapter[Any]:
+    """Build each executor schema once, then reuse it for parsing and encoding."""
+    return _cached_type_adapter(value_type)
+
+
+@cache
+def _cached_type_adapter(value_type: Any, /) -> TypeAdapter[Any]:
+    return TypeAdapter(value_type)
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,7 +466,7 @@ def decode_command_arguments(operation: ChildOperation, raw: object) -> ChildCom
             raw["admission_expectation"] = parse_expectation(raw["admission_expectation"])
         # Saved answers have one stable identity and their complete chosen value.
         if "answer" in raw and raw["answer"] is not None:
-            answer = TypeAdapter(DurableAnswer).validate_python(raw["answer"])
+            answer = type_adapter(DurableAnswer).validate_python(raw["answer"])
             raw = {**raw, "answer": answer}
             if operation is ChildOperation.answer_permission_ask:
                 raw.setdefault("ask_id", answer.ask.ask_id)
@@ -445,7 +474,7 @@ def decode_command_arguments(operation: ChildOperation, raw: object) -> ChildCom
             elif operation is ChildOperation.answer_user_input:
                 raw.setdefault("request_id", answer.ask.ask_id)
                 raw.setdefault("answers", answer.user_input_answers)
-    result: ChildCommandArguments = TypeAdapter(ChildCommandArguments).validate_python(raw)
+    result: ChildCommandArguments = type_adapter(ChildCommandArguments).validate_python(raw)
     if result.kind != operation.value:
         raise ValueError("command operation conflicts with arguments")
     return result
@@ -756,7 +785,7 @@ class OutboxLink(Protocol):
 
 
 def encode_value(value: object) -> JsonValue:
-    return TypeAdapter(object).dump_python(value, mode="json")  # type: ignore[no-any-return]
+    return type_adapter(object).dump_python(value, mode="json")  # type: ignore[no-any-return]
 
 
 def encode_backend_event(
@@ -772,37 +801,39 @@ def decode_event_arguments(event: BackendEvent) -> DecodedBackendEventArguments:
     """Decode one closed callback shape without changing its wire representation."""
     match event.method:
         case BackendEventMethod.agent_message_delta:
-            return TypeAdapter(AgentMessageDeltaArguments).validate_python(event.arguments)
+            return type_adapter(AgentMessageDeltaArguments).validate_python(event.arguments)
         case BackendEventMethod.model_thinking_happened:
-            return TypeAdapter(ModelThinkingHappenedArguments).validate_python(event.arguments)
+            return type_adapter(ModelThinkingHappenedArguments).validate_python(event.arguments)
         case BackendEventMethod.provider_selection_reported:
-            return TypeAdapter(ProviderSelectionReportedArguments).validate_python(event.arguments)
+            return type_adapter(ProviderSelectionReportedArguments).validate_python(event.arguments)
         case BackendEventMethod.agent_message_completed:
-            return TypeAdapter(AgentMessageCompletedArguments).validate_python(event.arguments)
+            return type_adapter(AgentMessageCompletedArguments).validate_python(event.arguments)
         case BackendEventMethod.tool_call_started:
-            return TypeAdapter(ToolCallStartedArguments).validate_python(event.arguments)
+            return type_adapter(ToolCallStartedArguments).validate_python(event.arguments)
         case BackendEventMethod.tool_call_progress:
-            return TypeAdapter(ToolCallProgressArguments).validate_python(event.arguments)
+            return type_adapter(ToolCallProgressArguments).validate_python(event.arguments)
         case BackendEventMethod.tool_call_finished:
-            return TypeAdapter(ToolCallFinishedArguments).validate_python(event.arguments)
+            return type_adapter(ToolCallFinishedArguments).validate_python(event.arguments)
         case BackendEventMethod.plan_updated:
-            return TypeAdapter(PlanUpdatedArguments).validate_python(event.arguments)
+            return type_adapter(PlanUpdatedArguments).validate_python(event.arguments)
         case BackendEventMethod.token_usage_reported:
-            return TypeAdapter(TokenUsageReportedArguments).validate_python(event.arguments)
+            return type_adapter(TokenUsageReportedArguments).validate_python(event.arguments)
         case BackendEventMethod.context_compacted:
-            return TypeAdapter(ContextCompactedArguments).validate_python(event.arguments)
+            return type_adapter(ContextCompactedArguments).validate_python(event.arguments)
         case BackendEventMethod.permission_ask_raised:
-            return TypeAdapter(PermissionAskRaisedArguments).validate_python(event.arguments)
+            return type_adapter(PermissionAskRaisedArguments).validate_python(event.arguments)
         case BackendEventMethod.user_input_requested:
-            return TypeAdapter(UserInputRequestedArguments).validate_python(event.arguments)
+            return type_adapter(UserInputRequestedArguments).validate_python(event.arguments)
         case BackendEventMethod.user_input_failed:
-            return TypeAdapter(UserInputFailedArguments).validate_python(event.arguments)
+            return type_adapter(UserInputFailedArguments).validate_python(event.arguments)
         case BackendEventMethod.turn_ended:
-            return TypeAdapter(TurnEndedArguments).validate_python(event.arguments)
+            return type_adapter(TurnEndedArguments).validate_python(event.arguments)
         case BackendEventMethod.vendor_session_cursor_rebound:
-            return TypeAdapter(VendorSessionCursorReboundArguments).validate_python(event.arguments)
+            return type_adapter(VendorSessionCursorReboundArguments).validate_python(
+                event.arguments
+            )
         case BackendEventMethod.composer_catalog_reported:
-            return TypeAdapter(ComposerCatalogReportedArguments).validate_python(event.arguments)
+            return type_adapter(ComposerCatalogReportedArguments).validate_python(event.arguments)
 
 
 def decode_prompt_result(result: JsonObject) -> BackendPromptAccepted:
@@ -816,7 +847,7 @@ def decode_provider_submission(raw: object) -> ProviderSubmissionFact | None:
     """Historical outcomes remain readable without an invented provider fact."""
     if raw is None:
         return None
-    return TypeAdapter(ProviderSubmissionFact).validate_python(raw)
+    return type_adapter(ProviderSubmissionFact).validate_python(raw)
 
 
 def envelope_payload_digest(
@@ -836,7 +867,7 @@ def envelope_payload_digest(
         "sequence": sequence,
         "submission_id": submission_id,
         "kind": kind.value,
-        "file_dependencies": TypeAdapter(tuple[FileManifest, ...]).dump_python(
+        "file_dependencies": type_adapter(tuple[FileManifest, ...]).dump_python(
             manifests, mode="json"
         ),
     }
@@ -846,7 +877,7 @@ def envelope_payload_digest(
 
 
 def _encode_payload(value: object) -> bytes:
-    body = TypeAdapter(type(value)).dump_json(value)
+    body = type_adapter(type(value)).dump_json(value)
     if not body or len(body) > MAX_ENVELOPE_BYTES:
         raise ProtocolRefused("frame exceeds envelope limit")
     return body
@@ -857,7 +888,7 @@ async def read_typed_frame[T](reader: FrameReader, value_type: type[T]) -> T:
     length = struct.unpack("!I", header)[0]
     if not length or length > MAX_ENVELOPE_BYTES:
         raise ProtocolRefused("invalid frame length")
-    return TypeAdapter(value_type).validate_json(await reader.readexactly(length), strict=True)
+    return type_adapter(value_type).validate_json(await reader.readexactly(length), strict=True)
 
 
 def encode_message(message: WireMessage) -> bytes:
@@ -867,7 +898,7 @@ def encode_message(message: WireMessage) -> bytes:
 def decode_message(body: bytes) -> WireMessage:
     if not body or len(body) > MAX_ENVELOPE_BYTES:
         raise ProtocolRefused("message exceeds envelope limit")
-    return TypeAdapter(WireMessage).validate_json(body, strict=True)
+    return type_adapter(WireMessage).validate_json(body, strict=True)
 
 
 def encode_frame(value: object) -> bytes:

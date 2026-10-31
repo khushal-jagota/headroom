@@ -10,7 +10,6 @@ from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
-from pydantic import TypeAdapter
 from starlette.types import ASGIApp
 
 from planner.conversation.message_content import MessageFile
@@ -51,6 +50,7 @@ from planner.executor.protocol import (
     WritePrompt,
     decode_event_arguments,
     encode_value,
+    type_adapter,
 )
 from planner.executor.vps_inbox import MacInbox, MissingFiles
 from planner.executor.vps_runs import MacRuns, now_ms
@@ -250,7 +250,7 @@ class VpsExecutor:
                 await self.runs.link_up(writer, message.request_id)
                 return
             elif message.kind is WireMessageKind.live_backend_event:
-                event = TypeAdapter(BackendEvent).validate_python(message.payload)
+                event = type_adapter(BackendEvent).validate_python(message.payload)
                 if event.method not in LIVE_BACKEND_EVENT_METHODS:
                     raise ValueError("live frame must not carry a recorded event")
                 if event.child.executor_incarnation != identity.executor_incarnation:
@@ -260,7 +260,7 @@ class VpsExecutor:
                 )
                 return
             elif message.kind is WireMessageKind.envelope:
-                envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
+                envelope = type_adapter(QueuedEnvelope).validate_python(message.payload)
                 try:
                     result = _object(await self.inbox.accept(envelope, identity))
                     response_kind = WireMessageKind.receipt
@@ -271,13 +271,13 @@ class VpsExecutor:
                 result = _object(await self._refuse_upload_item(message, identity))
                 response_kind = WireMessageKind.receipt
             elif message.kind is WireMessageKind.command_outcome:
-                outcome = TypeAdapter(CommandOutcome).validate_python(message.payload)
+                outcome = type_adapter(CommandOutcome).validate_python(message.payload)
                 if message.request_id != outcome.command_id:
                     raise ValueError("command result ID conflicts with reply")
                 await self.runs._resolve_command(outcome)
                 return
             elif message.kind is WireMessageKind.read_request:
-                read = TypeAdapter(LiveReadRequest).validate_python(message.payload)
+                read = type_adapter(LiveReadRequest).validate_python(message.payload)
                 result, response_kind = await self._read(read), WireMessageKind.read_response
             elif message.kind in (
                 WireMessageKind.put_file,
@@ -338,13 +338,13 @@ class VpsExecutor:
     async def _refuse_upload_item(
         self, message: WireMessage, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
-        rejected = TypeAdapter(EnvelopeRefusal).validate_python(message.payload)
+        rejected = type_adapter(EnvelopeRefusal).validate_python(message.payload)
         envelope = rejected.envelope
         raw = envelope.payload.get("child")
         if not isinstance(raw, dict):
             ask = envelope.payload.get("ask")
             raw = ask.get("child") if isinstance(ask, dict) else None
-        child = TypeAdapter(ChildReference).validate_python(raw)
+        child = type_adapter(ChildReference).validate_python(raw)
         if child.executor_incarnation != identity.executor_incarnation or (
             child.conversation_id != envelope.conversation_id
         ):
@@ -378,13 +378,13 @@ class VpsExecutor:
         if service is None:
             raise ValueError("file generation unavailable")
         if message.kind is WireMessageKind.put_file:
-            upload = TypeAdapter(FileUploadRequest).validate_python(message.payload)
+            upload = type_adapter(FileUploadRequest).validate_python(message.payload)
             await settled_io(self.inbox.authorize_upload, upload)
             await settled_io(self.runs.store.verify_connection, identity)
             slot = service.create_upload(upload.manifest)
             self._upload_transfers[identity, slot.transfer_id] = message.request_id, upload
             return _object(slot), WireMessageKind.file_transfer
-        request = TypeAdapter(FileDownloadRequest).validate_python(message.payload)
+        request = type_adapter(FileDownloadRequest).validate_python(message.payload)
         pending = self.runs.pending_commands.get(request.command_id)
         if pending is None or pending[1].done():
             raise ValueError("input command is no longer pending")

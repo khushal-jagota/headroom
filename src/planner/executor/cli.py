@@ -6,13 +6,12 @@ import asyncio
 import json
 
 import click
-from pydantic import TypeAdapter
 
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import executor_paths
 from planner.executor.ipc_client import request
-from planner.executor.protocol import IpcOperation, QuiesceRequest
+from planner.executor.protocol import IpcOperation, QuiesceRequest, type_adapter
 
 
 @click.group("executor")
@@ -100,7 +99,7 @@ def quiesce(
         exit_when_ready,
     )
     response = request(
-        IpcOperation.quiesce, TypeAdapter(QuiesceRequest).dump_python(expected, mode="json")
+        IpcOperation.quiesce, type_adapter(QuiesceRequest).dump_python(expected, mode="json")
     )
     if response.error is not None:
         raise click.ClickException(str(response.error))
