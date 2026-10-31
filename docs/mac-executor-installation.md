@@ -43,6 +43,7 @@ Set operator-reviewed values for these inputs:
 Use the existing Tailscale Serve route only when it targets the intended endpoint and durable state.
 The owner's normal app URL targets production. It does not select an isolated verification database.
 The executor ID selects routing under the existing allowed Serve login. It is not another credential or hardware attestation.
+To enable Mac execution on the VPS, set `executor_id: <the same logical executor ID>` in its `data/config.yaml` (or the YAML file selected by `PLAN_CONFIG_PATH`) and restart Panels; remove the line and restart to return to local execution.
 See [app service prerequisites](executor.md#app-service-prerequisites-and-boundaries).
 
 Check the actual native host before installation:
@@ -383,4 +384,4 @@ Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/cli.
 `src/planner/executor/mac_outbox.py`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
 
-_Last verified: 2026-10-30. Commands checked against source; no live Mac operation occurred._
+_Last verified: 2026-10-31. Commands checked against source; no live Mac operation occurred._
