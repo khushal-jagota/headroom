@@ -24,7 +24,6 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
-from planner.core.db import connect
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.mac_outbox import MacOutbox
@@ -41,7 +40,6 @@ from planner.executor.protocol import (
     QueuedEnvelope,
     encode_value,
 )
-from planner.executor.store import ExecutorStore
 from planner.executor.vps_agent_writes import deliver_native_message
 from planner.executor.vps_inbox import InboxStore
 from planner.tickets import data
@@ -91,27 +89,13 @@ class HeldFixture:
         for previous in self.systems:
             await previous.shutdown()
 
-        async def native(command: ChildCommand) -> CommandOutcome:
-            outcome = await self.native(command)
-            conn = connect(self.path)
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-                ExecutorStore.record_command_outcome_in_transaction(conn, outcome)
-                conn.commit()
-            except BaseException:
-                conn.rollback()
-                raise
-            finally:
-                conn.close()
-            return outcome
-
         factory = MacRemoteChildFactory(
             lambda start, sink: ChildReference(
                 "11111111-1111-1111-1111-111111111111",
                 "child_" + start.conversation_id,
                 start.conversation_id,
             ),
-            native,
+            self.native,
             lambda start: canonical_snapshot(),
             db_path=self.path,
         )

@@ -361,9 +361,11 @@ class MacInbox:
                 if (
                     envelope.kind is EnvelopeKind.child_stopped
                     and previous.disposition is ReceiptDisposition.accepted
+                    and previous.result.get("recorded") is True
                 ):
                     await self.runs._resolve_command(
-                        type_adapter(CommandOutcome).validate_python(envelope.payload)
+                        type_adapter(CommandOutcome).validate_python(envelope.payload),
+                        stop_proven=True,
                     )
                 return previous
             return await self._apply_envelope(envelope, identity)
@@ -451,7 +453,7 @@ class MacInbox:
                 partial(
                     self.store.accept,
                     envelope,
-                    lambda conn, row: self._command_outcome(conn, outcome),
+                    lambda conn, row: cast(JsonObject, {"recorded": True}),
                     now_ms(),
                     identity=identity,
                 )
@@ -492,7 +494,3 @@ class MacInbox:
             )
 
         raise ValueError("unknown executor envelope")
-
-    def _command_outcome(self, conn: sqlite3.Connection, outcome: CommandOutcome) -> JsonObject:
-        self.runs.store.record_command_outcome_in_transaction(conn, outcome, output_confirmed=True)
-        return {"recorded": True}

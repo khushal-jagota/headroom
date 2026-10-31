@@ -344,7 +344,7 @@ queries = {
     'lifecycle': ('SELECT * FROM conversation_lifecycle_facts WHERE conversation_id=?', (conversation,)),
     'assignments': ('SELECT * FROM executor_child_assignments WHERE conversation_id=?', (conversation,)),
     'runtime': ('SELECT * FROM executor_core_turns WHERE conversation_id=?', (conversation,)),
-    'outcomes': ('SELECT * FROM executor_command_outcomes WHERE outcome_json LIKE ?', ('%' + conversation + '%',)),
+    'receipts': ('SELECT * FROM mac_inbox_positions WHERE conversation_id=?', (conversation,)),
 }
 connection.execute('BEGIN')
 with connection:

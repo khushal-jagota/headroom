@@ -522,7 +522,6 @@ class MacRuns:
             pending[0].operation is ChildOperation.stop
             and outcome.disposition is CommandDisposition.succeeded
             and not stop_proven
-            and not await settled_io(self.store.has_accepted_command_outcome, outcome)
         ):
             return
         if outcome.disposition is not CommandDisposition.uncertain:

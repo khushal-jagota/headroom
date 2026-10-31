@@ -2231,6 +2231,50 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
     asyncio.run(run())
 
 
+def test_stop_waits_for_queued_receipt_after_direct_result_and_reconnect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        stopping: asyncio.Task[None] | None = None
+        direct_result = asyncio.Event()
+        handle = harness.endpoint._handle_message
+
+        async def observe(message: WireMessage, identity: ExecutorIdentity, writer: Link) -> None:
+            await handle(message, identity, writer)
+            if message.kind is WireMessageKind.command_outcome:
+                direct_result.set()
+
+        monkeypatch.setattr(harness.endpoint, "_handle_message", observe)
+        try:
+            async with paused_outbox(harness.mac.outbox):
+                stopping = asyncio.create_task(harness.system.kill("c_scripted"))
+                await asyncio.wait_for(direct_result.wait(), 5)
+                assert not stopping.done()
+                generation = harness.mac.identity.connection_generation
+                assert harness.endpoint.runs.link is not None
+                harness.endpoint.runs.link.close()
+                await eventually(
+                    lambda: harness.mac.identity.connection_generation > generation
+                    and harness.endpoint.runs.identity == harness.mac.identity
+                    and harness.endpoint.runs.ready,
+                    "stop did not reconcile on the replacement connection",
+                )
+                assert not stopping.done()
+                assert harness.native.stop_count == 1
+            await asyncio.wait_for(stopping, 5)
+            await eventually(lambda: not harness.mac.outbox.pending(), "stop receipt did not drain")
+            assert not await harness.system.is_running("c_scripted")
+            assert harness.native.stop_count == 1
+        finally:
+            if stopping is not None and not stopping.done():
+                stopping.cancel()
+                await asyncio.gather(stopping, return_exceptions=True)
+            await harness.close()
+
+    asyncio.run(run())
+
+
 def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -22,7 +22,6 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
-from planner.core.db import connect
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.mac_outbox import MacOutbox
@@ -102,14 +101,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             outcome = CommandOutcome(
                 command.command_id, command.child, CommandDisposition.succeeded, result
             )
-            # Model the actual endpoint's definitive receipt settlement, not a hint.
-            outcome_conn = connect(path)
-            try:
-                outcome_conn.execute("BEGIN IMMEDIATE")
-                store.runs.record_command_outcome_in_transaction(outcome_conn, outcome)
-                outcome_conn.commit()
-            finally:
-                outcome_conn.close()
             return outcome
 
         from tests.support.executor_turns import MacRemoteChildFactory
