@@ -16,6 +16,7 @@ import pytest
 from alembic import command
 from sqlalchemy import Engine
 from tests.integration.navigation_staging_merge_support import historical_snapshot
+from tests.support.historical_coding_definition import seed_historical_coding_definition
 from tests.support.navigation_current import (
     current_navigation_database,
     prepared_navigation_database,
@@ -160,6 +161,7 @@ def _seed_pre_lifecycle(path: Path) -> Engine:
         )
         seed_default_projects(conn)
         seed_shipped_worker_types(conn)
+        seed_historical_coding_definition(conn)
         seed_chief_settings(conn)
         conn.execute(
             "INSERT INTO projects(id,name,priority,created_at,updated_at) "

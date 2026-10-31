@@ -56,7 +56,7 @@ def mac_ticket(connection: Connection, backend: str = "codex") -> Ticket:
         field="brief",
         principal=OWNER_PRINCIPAL,
         now=2,
-        next_ceiling="needs_success_condition",
+        next_ceiling="needs_what_changes",
         next_holder=OWNER_PRINCIPAL,
     )
 

@@ -45,7 +45,13 @@ def field_revision(conn: sqlite3.Connection, ticket_id: str, field: str) -> str:
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
     definition = configured_worker_type_registry().require(str(row[0]))
-    if field not in definition.field_ids():
+    # A type amendment closes removed fields to writes, but retains their text.
+    # Read eligibility follows that stored key, not the current type's write gates.
+    if not definition.has_field(field) and conn.execute(
+        "SELECT 1 FROM tickets,json_each(tickets.field_values) "
+        "WHERE tickets.id=? AND key=?",
+        (ticket_id, field),
+    ).fetchone() is None:
         raise PlannerError(ErrorCode.not_found, "Ticket field not found", {"field": field})
     row = conn.execute(
         "SELECT revision FROM ticket_workspace_fields WHERE ticket_id=? AND field=?",
