@@ -379,6 +379,14 @@ class _PromptDeliveryAttempt:
     automatic_notice: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _SteerAttempt:
+    lifecycle: LifecycleFact
+    outcome: BackendSteerOutcome | PromptDeliverySuppressed
+    automatic_notice: bool = False
+    adapter_error: Exception | None = None
+
+
 type _BackendEventHandler = Callable[[], Coroutine[Any, Any, object]]
 
 
@@ -1497,20 +1505,10 @@ class SqliteProcessConversationSystem:
 
                 if immediate_refusal is not None:
                     immediate_fate = await self._record_steer_outcome(
-                        state,
-                        BackendSteerRefused(immediate_refusal),
+                        state=state,
+                        outcome=BackendSteerRefused(immediate_refusal),
                         turn_token=steer_turn_token,
-                        content=held.content,
-                        sender_label=held.sender_label,
-                        sender_message_id=held.sender_message_id,
-                        sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
-                        sender=held.sender,
-                        recipient=held.recipient,
-                        reply_requested=held.reply_requested,
-                        recovery_references=held.recovery_references,
-                        owner_read_through_sequence=held.owner_read_through_sequence,
-                        acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
-                        native_message_operation=held.native_message_operation,
+                        message=held,
                     )
                     self._settle_held_deliveries(state, (held,))
         finally:
@@ -1564,31 +1562,12 @@ class SqliteProcessConversationSystem:
             reservation.automatic_notice = delivery.automatic_notice
             try:
                 started = await self._finalize_delivery(
-                    state,
-                    reservation,
-                    delivery.refusal_reason,
-                    content=held.content,
-                    sender_label=held.sender_label,
+                    state=state,
+                    reservation=reservation,
                     mode=PromptDeliveryMode.send_now,
-                    model_change=held.model_change,
-                    reasoning_effort_change=held.reasoning_effort_change,
-                    sender_message_id=held.sender_message_id,
-                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
-                    sender=held.sender,
-                    recipient=held.recipient,
-                    reply_requested=held.reply_requested,
-                    recovery_references=held.recovery_references,
-                    refusal_detail=delivery.refusal_detail,
-                    composed_content_delivered=delivery.composed_content_delivered,
-                    record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
-                    owner_read_through_sequence=(
-                        held.owner_read_through_sequence
-                        if held.sender is not None and held.sender.kind is PrincipalKind.owner
-                        else None
-                    ),
-                    acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
-                    native_message_operation=held.native_message_operation,
+                    message=held,
+                    delivery=replace(delivery, record_refusal=True),
                 )
                 async with state.lock:
                     self._settle_held_deliveries(state, (held,))
@@ -1611,41 +1590,8 @@ class SqliteProcessConversationSystem:
 
         assert steer_child is not None
         assert steer_turn_token is not None
-        attempt = await self._begin_attempt(state, steer_turn_token, LifecycleOperation.steer)
-        messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
-            state,
-            (held,),
-            lifecycle_if_all_suppressed=(replace(attempt, status=LifecycleStatus.suppressed),),
-        )
-        if not messages:
-            async with state.lock:
-                self._settle_held_deliveries(state, (held,))
-                state.steer_settlements.discard(barrier)
-                barrier.set()
-            assert suppression_reason is not None
-            return PromptDeliverySuppressed(suppression_reason)
-        adapter_error: Exception | None = None
         try:
-            wire_content = with_authenticated_reply_directive(
-                held.content,
-                (
-                    (held.sender,)
-                    if held.reply_requested
-                    and held.sender is not None
-                    and held.recipient is not None
-                    else ()
-                ),
-            )
-            steer_outcome = await steer_child.steer(
-                steer_turn_token,
-                wire_content,
-                sender_content=held.content,
-                sender_label=held.sender_label,
-            )
-        except PromptWriteRefused:
-            steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
-        except PromptWriteFailed:
-            steer_outcome = BackendSteerUncertain()
+            steer = await self._attempt_steer(state, steer_turn_token, steer_child, held)
         except asyncio.CancelledError:
             assert barrier is not None
             state.steer_settlements.discard(barrier)
@@ -1653,12 +1599,16 @@ class SqliteProcessConversationSystem:
             async with state.lock:
                 self._quarantine_uncertain_held_batch(state, (held,))
             raise
-        except Exception as error:
-            # An unexpected adapter fault proves neither acceptance nor refusal.
-            # Settle an unknown fate before propagating it, so this identity cannot
-            # cross the backend boundary again or disappear from a held batch.
-            adapter_error = error
-            steer_outcome = BackendSteerUncertain()
+        if isinstance(steer.outcome, PromptDeliverySuppressed):
+            async with state.lock:
+                self._settle_held_deliveries(state, (held,))
+                state.steer_settlements.discard(barrier)
+                barrier.set()
+            return steer.outcome
+        attempt = steer.lifecycle
+        steer_outcome = steer.outcome
+        automatic_notice = steer.automatic_notice
+        adapter_error = steer.adapter_error
 
         if isinstance(steer_outcome, BackendSteerRefused) and (
             steer_outcome.refusal_reason
@@ -1680,41 +1630,19 @@ class SqliteProcessConversationSystem:
             async with state.lock:
                 self._settle_held_deliveries(state, (held,))
                 return self._hold_prompt(
-                    state,
-                    content=held.content,
-                    sender_label=held.sender_label,
-                    model_change=held.model_change,
-                    reasoning_effort_change=held.reasoning_effort_change,
-                    sender_message_id=held.sender_message_id,
-                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
-                    sender=held.sender,
-                    recipient=held.recipient,
-                    reply_requested=held.reply_requested,
-                    recovery_references=held.recovery_references,
-                    owner_read_through_sequence=held.owner_read_through_sequence,
+                    state=state,
                     queue_reason=PromptQueueReason.command_needs_its_own_turn,
-                    acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
-                    native_message_operation=held.native_message_operation,
+                    message=held,
                 )
 
         async with state.lock:
             fate = await self._record_steer_outcome(
-                state,
-                steer_outcome,
+                state=state,
+                outcome=steer_outcome,
                 attempt=attempt,
                 turn_token=steer_turn_token,
-                content=held.content,
-                sender_label=held.sender_label,
-                sender_message_id=held.sender_message_id,
-                sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
-                sender=held.sender,
-                recipient=held.recipient,
-                reply_requested=held.reply_requested,
-                recovery_references=held.recovery_references,
-                owner_read_through_sequence=held.owner_read_through_sequence,
                 automatic_notice=automatic_notice,
-                acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
-                native_message_operation=held.native_message_operation,
+                message=held,
             )
             self._settle_held_deliveries(state, (held,))
             state.steer_settlements.discard(barrier)
@@ -2243,24 +2171,47 @@ class SqliteProcessConversationSystem:
             state=state, reservation=reservation, mode=PromptDeliveryMode.send_now, message=message
         )
 
+    async def _attempt_steer(
+        self,
+        state: _ConversationState,
+        turn_token: TurnToken,
+        child: BackendChild,
+        message: _Message,
+    ) -> _SteerAttempt:
+        attempt = await self._begin_attempt(state, turn_token, LifecycleOperation.steer)
+        messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
+            state,
+            (message,),
+            lifecycle_if_all_suppressed=(replace(attempt, status=LifecycleStatus.suppressed),),
+        )
+        if not messages:
+            assert suppression_reason is not None
+            return _SteerAttempt(attempt, PromptDeliverySuppressed(suppression_reason))
+        adapter_error: Exception | None = None
+        try:
+            wire_content = with_authenticated_reply_directive(
+                message.content, self._reply_senders(messages)
+            )
+            outcome = await child.steer(
+                turn_token,
+                wire_content,
+                sender_content=message.content,
+                sender_label=message.sender_label,
+            )
+        except PromptWriteRefused:
+            outcome = BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
+        except PromptWriteFailed:
+            outcome = BackendSteerUncertain()
+        except Exception as error:
+            # Unknown adapter faults must be recorded as uncertain before being raised.
+            adapter_error = error
+            outcome = BackendSteerUncertain()
+        return _SteerAttempt(attempt, outcome, automatic_notice, adapter_error)
+
     async def _steer(
         self,
         state: _ConversationState,
-        content: MessageContent,
-        sender_label: str,
-        model_change: str | None,
-        reasoning_effort_change: str | None,
-        sender_message_id: str | None,
-        sent_at_unix_milliseconds: int | None,
-        sender: Principal | None,
-        recipient: Principal | None,
-        reply_requested: bool,
-        recovery_references: tuple[DeploymentRecoveryReference, ...],
-        owner_read_through_sequence: int | None,
-        acknowledge_owner_on_failure: bool = True,
-        *,
-        reasoning_effort_is_set: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
+        message: _Message,
     ) -> PromptDeliveryFate:
         """Steer active work, or apply the shared idle and fallback rules."""
         reservation: _ReservedTurn | None = None
@@ -2277,47 +2228,17 @@ class SqliteProcessConversationSystem:
                 and not state.held_prompts
             ):
                 reservation = await self._reserve_turn(state)
-            elif any(not isinstance(piece, MessageText) for piece in content):
+            elif any(not isinstance(piece, MessageText) for piece in message.content):
                 queued = self._hold_prompt(
-                    state,
-                    content=content,
-                    sender_label=sender_label,
-                    model_change=model_change,
-                    reasoning_effort_change=reasoning_effort_change,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    sender=sender,
-                    recipient=recipient,
-                    reply_requested=reply_requested,
-                    recovery_references=recovery_references,
-                    queue_reason=PromptQueueReason.attachment,
-                    owner_read_through_sequence=owner_read_through_sequence,
-                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    native_message_operation=native_message_operation,
+                    state=state, queue_reason=PromptQueueReason.attachment, message=message
                 )
             elif (
-                model_change is not None
-                or reasoning_effort_change is not None
-                or reasoning_effort_is_set
+                message.model_change is not None
+                or message.reasoning_effort_change is not None
+                or message.reasoning_effort_is_set
             ):
                 queued = self._hold_prompt(
-                    state,
-                    content=content,
-                    sender_label=sender_label,
-                    model_change=model_change,
-                    reasoning_effort_change=reasoning_effort_change,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    sender=sender,
-                    recipient=recipient,
-                    reply_requested=reply_requested,
-                    recovery_references=recovery_references,
-                    queue_reason=PromptQueueReason.run_change,
-                    owner_read_through_sequence=owner_read_through_sequence,
-                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    native_message_operation=native_message_operation,
+                    state=state, queue_reason=PromptQueueReason.run_change, message=message
                 )
             elif (
                 state.child_is_quarantined
@@ -2327,22 +2248,7 @@ class SqliteProcessConversationSystem:
                 or not backend_supports_steer(state.record.backend_key)
             ):
                 queued = self._hold_prompt(
-                    state,
-                    content=content,
-                    sender_label=sender_label,
-                    model_change=model_change,
-                    reasoning_effort_change=reasoning_effort_change,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    sender=sender,
-                    recipient=recipient,
-                    reply_requested=reply_requested,
-                    recovery_references=recovery_references,
-                    queue_reason=PromptQueueReason.steer_refused,
-                    owner_read_through_sequence=owner_read_through_sequence,
-                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    native_message_operation=native_message_operation,
+                    state=state, queue_reason=PromptQueueReason.steer_refused, message=message
                 )
             barrier: asyncio.Event | None = None
             automatic_notice = False
@@ -2352,7 +2258,7 @@ class SqliteProcessConversationSystem:
                     partial(
                         self._store.all_sender_messages_are_manager_notices,
                         state.record.conversation_id,
-                        (sender_message_id,),
+                        (message.sender_message_id,),
                     ),
                 )
                 barrier = asyncio.Event()
@@ -2364,91 +2270,28 @@ class SqliteProcessConversationSystem:
             # Steer names how to address active work. With no turn to join, this message
             # opens an ordinary turn, so its durable mode and backend metadata are queue.
             return await self._deliver_and_finalize(
-                state,
-                reservation,
-                content=content,
-                sender_label=sender_label,
-                mode=PromptDeliveryMode.queue,
-                model_change=model_change,
-                reasoning_effort_change=reasoning_effort_change,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                sender=sender,
-                recipient=recipient,
-                reply_requested=reply_requested,
-                recovery_references=recovery_references,
-                owner_read_through_sequence=owner_read_through_sequence,
-                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                reasoning_effort_is_set=reasoning_effort_is_set,
-                native_message_operation=native_message_operation,
+                state=state, reservation=reservation, mode=PromptDeliveryMode.queue, message=message
             )
         if queued is not None:
             return queued
         assert child is not None
         assert running is not None
-        attempt = await self._begin_attempt(state, running.token, LifecycleOperation.steer)
-        messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
-            state,
-            (
-                _Message(
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    held_prompt_id="",
-                    content=content,
-                    sender_label=sender_label,
-                    model_change=model_change,
-                    reasoning_effort_change=reasoning_effort_change,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    snapshot_sent_at_unix_milliseconds=0,
-                    sender=sender,
-                    recipient=recipient,
-                    reply_requested=reply_requested,
-                    recovery_references=recovery_references,
-                    queue_reason=PromptQueueReason.steer_refused,
-                    owner_read_through_sequence=owner_read_through_sequence,
-                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                    native_message_operation=native_message_operation,
-                ),
-            ),
-            lifecycle_if_all_suppressed=(replace(attempt, status=LifecycleStatus.suppressed),),
-        )
-        if not messages:
-            assert barrier is not None
-            state.steer_settlements.discard(barrier)
-            barrier.set()
-            assert suppression_reason is not None
-            return PromptDeliverySuppressed(suppression_reason)
-        adapter_error: Exception | None = None
         try:
-            wire_content = with_authenticated_reply_directive(
-                content,
-                (
-                    (sender,)
-                    if reply_requested and sender is not None and recipient is not None
-                    else ()
-                ),
-            )
-            steer_outcome = await child.steer(
-                running.token,
-                wire_content,
-                sender_content=content,
-                sender_label=sender_label,
-            )
-        except PromptWriteRefused:
-            steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
-        except PromptWriteFailed:
-            steer_outcome = BackendSteerUncertain()
+            steer = await self._attempt_steer(state, running.token, child, message)
         except asyncio.CancelledError:
             assert barrier is not None
             state.steer_settlements.discard(barrier)
             barrier.set()
             raise
-        except Exception as error:
-            # An unexpected adapter fault proves neither acceptance nor refusal.
-            # Settle an unknown fate before propagating it, so this identity cannot
-            # cross the backend boundary again or disappear from a held batch.
-            adapter_error = error
-            steer_outcome = BackendSteerUncertain()
+        if isinstance(steer.outcome, PromptDeliverySuppressed):
+            assert barrier is not None
+            state.steer_settlements.discard(barrier)
+            barrier.set()
+            return steer.outcome
+        attempt = steer.lifecycle
+        steer_outcome = steer.outcome
+        automatic_notice = steer.automatic_notice
+        adapter_error = steer.adapter_error
 
         if isinstance(steer_outcome, BackendSteerRefused):
             await self._persist(
@@ -2466,42 +2309,19 @@ class SqliteProcessConversationSystem:
             # queue path so an idle conversation starts this message and a replacement
             # turn holds it. Merely appending here can strand it after the last drain.
             return await self._queue(
-                state,
-                content,
-                sender_label,
-                model_change,
-                reasoning_effort_change,
-                sender_message_id,
-                sent_at_unix_milliseconds,
-                sender,
-                recipient,
-                reply_requested,
-                recovery_references,
-                owner_read_through_sequence,
+                state=state,
                 queue_reason=_queue_reason_for_refused_steer(steer_outcome.refusal_reason),
-                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                reasoning_effort_is_set=reasoning_effort_is_set,
-                native_message_operation=native_message_operation,
+                message=message,
             )
 
         async with state.lock:
             fate = await self._record_steer_outcome(
-                state,
-                steer_outcome,
+                state=state,
+                outcome=steer_outcome,
                 attempt=attempt,
                 turn_token=running.token,
-                content=content,
-                sender_label=sender_label,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                sender=sender,
-                recipient=recipient,
-                reply_requested=reply_requested,
-                recovery_references=recovery_references,
-                owner_read_through_sequence=owner_read_through_sequence,
                 automatic_notice=automatic_notice,
-                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                native_message_operation=native_message_operation,
+                message=message,
             )
 
             assert barrier is not None
@@ -3675,21 +3495,11 @@ class SqliteProcessConversationSystem:
         self,
         state: _ConversationState,
         outcome: BackendSteerOutcome,
+        message: _Message,
         *,
         turn_token: TurnToken | None,
         attempt: LifecycleFact | None = None,
-        content: MessageContent,
-        sender_label: str,
-        sender_message_id: str | None,
-        sent_at_unix_milliseconds: int | None,
-        sender: Principal | None,
-        recipient: Principal | None,
-        reply_requested: bool,
-        recovery_references: tuple[DeploymentRecoveryReference, ...],
-        owner_read_through_sequence: int | None,
-        acknowledge_owner_on_failure: bool = True,
         automatic_notice: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused | PromptDeliveryUncertain:
         """Record and map one steering outcome while the conversation lock is held."""
         fate: PromptDeliveryFate
@@ -3703,14 +3513,14 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 PromptEventPayload(
-                    recovery_references=recovery_references,
-                    content=content,
-                    sender_label=sender_label,
+                    recovery_references=message.recovery_references,
+                    content=message.content,
+                    sender_label=message.sender_label,
                     mode=PromptDeliveryMode.steer,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    sender=sender,
-                    recipient=recipient,
+                    sender_message_id=message.sender_message_id,
+                    sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                    sender=message.sender,
+                    recipient=message.recipient,
                 ),
                 native_message_admission=NativeMessageAdmission(
                     fate, getattr(outcome, "composed_content_delivered", False) is True
@@ -3719,11 +3529,11 @@ class SqliteProcessConversationSystem:
                     () if attempt is None else (replace(attempt, status=LifecycleStatus.injected),)
                 ),
                 owner_read_through_sequence=(
-                    owner_read_through_sequence
-                    if sender is not None and sender.kind is PrincipalKind.owner
+                    message.owner_read_through_sequence
+                    if message.sender is not None and message.sender.kind is PrincipalKind.owner
                     else None
                 ),
-                native_message_operation=native_message_operation,
+                native_message_operation=message.native_message_operation,
             )
             if (
                 outcome.composed_content_delivered
@@ -3733,22 +3543,22 @@ class SqliteProcessConversationSystem:
                 state.running_turn.automatic_notice = (
                     state.running_turn.automatic_notice and automatic_notice
                 )
-                if reply_requested and sender is not None:
-                    state.running_turn.prompt_senders.setdefault(sender, None)
+                if message.reply_requested and message.sender is not None:
+                    state.running_turn.prompt_senders.setdefault(message.sender, None)
             return PromptDeliveryInjected()
         if isinstance(outcome, BackendSteerRefused):
             await self._append_event(
                 state,
                 PromptDeliveryRefusedEventPayload(
-                    recovery_references=recovery_references,
-                    content=content,
-                    sender_label=sender_label,
+                    recovery_references=message.recovery_references,
+                    content=message.content,
+                    sender_label=message.sender_label,
                     mode=PromptDeliveryMode.steer,
                     refusal_reason=outcome.refusal_reason,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    sender=sender,
-                    recipient=recipient,
+                    sender_message_id=message.sender_message_id,
+                    sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                    sender=message.sender,
+                    recipient=message.recipient,
                 ),
                 lifecycle=(
                     () if attempt is None else (replace(attempt, status=LifecycleStatus.refused),)
@@ -3757,27 +3567,27 @@ class SqliteProcessConversationSystem:
                     fate, getattr(outcome, "composed_content_delivered", False) is True
                 ),
                 owner_read_through_sequence=(
-                    owner_read_through_sequence
-                    if acknowledge_owner_on_failure
-                    and sender is not None
-                    and sender.kind is PrincipalKind.owner
+                    message.owner_read_through_sequence
+                    if message.acknowledge_owner_on_failure
+                    and message.sender is not None
+                    and message.sender.kind is PrincipalKind.owner
                     else None
                 ),
-                native_message_operation=native_message_operation,
+                native_message_operation=message.native_message_operation,
             )
             return PromptDeliveryRefused(refusal_reason=outcome.refusal_reason)
         assert isinstance(outcome, BackendSteerUncertain)
         await self._append_event(
             state,
             PromptDeliveryUncertainEventPayload(
-                recovery_references=recovery_references,
-                content=content,
-                sender_label=sender_label,
+                recovery_references=message.recovery_references,
+                content=message.content,
+                sender_label=message.sender_label,
                 mode=PromptDeliveryMode.steer,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                sender=sender,
-                recipient=recipient,
+                sender_message_id=message.sender_message_id,
+                sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                sender=message.sender,
+                recipient=message.recipient,
             ),
             native_message_admission=NativeMessageAdmission(
                 fate, outcome.composed_content_delivered is True
@@ -3786,13 +3596,13 @@ class SqliteProcessConversationSystem:
                 () if attempt is None else (replace(attempt, status=LifecycleStatus.unknown),)
             ),
             owner_read_through_sequence=(
-                owner_read_through_sequence
-                if acknowledge_owner_on_failure
-                and sender is not None
-                and sender.kind is PrincipalKind.owner
+                message.owner_read_through_sequence
+                if message.acknowledge_owner_on_failure
+                and message.sender is not None
+                and message.sender.kind is PrincipalKind.owner
                 else None
             ),
-            native_message_operation=native_message_operation,
+            native_message_operation=message.native_message_operation,
         )
         if (
             outcome.composed_content_delivered
@@ -3804,8 +3614,8 @@ class SqliteProcessConversationSystem:
             state.running_turn.automatic_notice = (
                 state.running_turn.automatic_notice and automatic_notice
             )
-            if reply_requested and sender is not None:
-                state.running_turn.prompt_senders.setdefault(sender, None)
+            if message.reply_requested and message.sender is not None:
+                state.running_turn.prompt_senders.setdefault(message.sender, None)
         return PromptDeliveryUncertain()
 
     # --- turns --------------------------------------------------------------------------
