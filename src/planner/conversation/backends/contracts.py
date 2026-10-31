@@ -541,17 +541,6 @@ class RetainedBackendRun:
     retirement_confirmed: bool
 
 
-@runtime_checkable
-class RetainedBackendChildFactory(Protocol):
-    """Recover an exact retained child without allocating or starting an agent."""
-
-    def recover(self, reference: ChildReference) -> BackendChild | None: ...
-
-    def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
-        """Read durable custody, including confirmed retirement, without starting work."""
-        ...
-
-
 class BackendChildFactory(Protocol):
     """Makes the child for one conversation, on one backend.
 
@@ -572,6 +561,17 @@ class BackendChildFactory(Protocol):
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
     ) -> BackendChild: ...
+
+
+@runtime_checkable
+class RetainedBackendChildFactory(BackendChildFactory, Protocol):
+    """Recover an exact retained child without allocating or starting an agent."""
+
+    def recover(self, reference: ChildReference) -> BackendChild | None: ...
+
+    def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
+        """Read durable custody, including confirmed retirement, without starting work."""
+        ...
 
 
 # Typed callback arguments at the native event boundary.

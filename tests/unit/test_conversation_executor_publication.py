@@ -21,12 +21,10 @@ from planner.conversation.lifecycle import LifecycleStatus
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.conversation.system import SqliteProcessConversationSystem
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference
 from planner.executor.protocol import (
     AcceptanceReceipt,
     BackendEvent,
-    BackendEventMethod,
     EnvelopeKind,
     JsonObject,
     QueuedEnvelope,
@@ -140,98 +138,5 @@ def test_restart_closes_native_request_before_initial_signal_snapshot(
                 for f in await restored.store.lifecycle_facts("c")
             )
             assert await restored.store.select_deployment_recoveries() == {}
-
-    asyncio.run(exercise())
-
-
-def test_refused_evidence_before_stop_commit_keeps_core_available(
-    tmp_db: sqlite3.Connection,
-) -> None:
-    from tests.unit.test_executor_native_runtime import canonical_snapshot
-
-    from planner.core.contracts import ErrorCode, PlannerError
-    from planner.executor.protocol import (
-        ChildCommand,
-        ChildOperation,
-        CommandDisposition,
-        CommandOutcome,
-        ReceiptDisposition,
-    )
-
-    async def exercise() -> None:
-        path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
-        harness = _Harness(path)
-        try:
-            async with harness.client() as client:
-                await _start(client, "c")
-            await harness.system.send("c", text_message_content("work"), sender_label="owner")
-            state = harness.system._conversations["c"]
-            assert state.running_turn is not None
-            reference = ChildReference("native-process", "cleanup-child", "c")
-            token = state.running_turn.token
-            native = InboxStore(str(path))
-            identity = ExecutorIdentity(
-                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
-            )
-            native.runs.begin_connection(identity, 1)
-            native.runs.register_child(reference, "chief", "chief", 1)
-
-            stops: list[str] = []
-
-            guarded = asyncio.Event()
-
-            async def stop_result(command: ChildCommand) -> CommandOutcome:
-                if command.operation is ChildOperation.stop:
-                    stops.append(command.command_id)
-                if not guarded.is_set():
-                    event = BackendEvent(reference, BackendEventMethod.turn_ended, token, {})
-                    queued = _envelope(1, EnvelopeKind.backend_event, event)
-
-                    def refuse(
-                        connection: sqlite3.Connection, envelope: QueuedEnvelope
-                    ) -> JsonObject:
-                        raise PlannerError(ErrorCode.validation, "required final event refused", {})
-
-                    receipt = native.accept(queued, refuse, 100, identity=identity)
-                    assert receipt.disposition is ReceiptDisposition.refused
-                    guarded.set()
-                return CommandOutcome(
-                    command.command_id, reference, CommandDisposition.succeeded, {}
-                )
-
-            from tests.support.executor_turns import MacRemoteChildFactory
-
-            factory = MacRemoteChildFactory(
-                lambda start, sink: reference,
-                stop_result,
-                lambda start: canonical_snapshot(),
-                db_path=str(path),
-            )
-            harness.system._backend_child_factories = {
-                key: factory for key in harness.system._backend_child_factories
-            }
-            state.child = factory.recover(reference)
-            state.executor_child_reference = reference
-            await asyncio.wait_for(harness.system.kill("c"), 2)
-            assert guarded.is_set()
-            assert not state.lock.locked()
-            assert state.child is not None and state.child_is_quarantined
-            assert state.executor_child_reference == reference
-            assert native.runs.child_assignment(reference) is not None
-            assert tmp_db.execute("SELECT stop_state FROM mac_runs").fetchone()[0] == "unproved"
-            assert harness.store.recording_failures("c") == ()
-            await asyncio.wait_for(harness.system.kill("c"), 2)
-            assert state.initial_shutdown_task is not None
-            await asyncio.wait_for(asyncio.shield(state.initial_shutdown_task), 2)
-            assert len(stops) == 2 and len(set(stops)) == 2
-            assert (
-                state.child_is_quarantined and native.runs.child_assignment(reference) is not None
-            )
-            assert InboxStore(str(path)).runs.retained_runs()[0].retirement_confirmed is False
-        finally:
-            # A failed cleanup stays quarantined. Teardown only releases this
-            # test process and must not schedule a second retirement attempt.
-            state.child = None
-            await harness.runtime.shutdown()
 
     asyncio.run(exercise())

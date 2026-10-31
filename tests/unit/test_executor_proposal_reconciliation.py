@@ -8,6 +8,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.executor_inbox import lookup_receipt
 from tests.support.probe import (
     install_probe_registry,
     seed_probe_worker_type,
@@ -73,8 +74,8 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "mac_process", 1
         )
-        store.runs.begin_connection(identity, 1000)
-        store.runs.mark_ready(identity, 1001)
+        store.runs.begin_connection(identity)
+        store.runs.mark_ready(identity)
         ticket = data.create_ticket(
             tmp_db,
             title="Mac collaborative proposal",
@@ -142,7 +143,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
             assert data.read_ticket(tmp_db, ticket.id) == claimed
             assert _openers(tmp_db, ticket.id) == openers_before
             assert _wakes(tmp_db, ticket.id) == []
-            assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+            assert lookup_receipt(store, envelope.sender_id, envelope.submission_id) is None
             if inject_cut:
                 inject_cut = False
                 raise sqlite3.OperationalError("cut after domain write before receipt")
@@ -153,7 +154,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         assert data.read_ticket(tmp_db, ticket.id) == claimed
         assert _openers(tmp_db, ticket.id) == openers_before
         assert _wakes(tmp_db, ticket.id) == []
-        assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+        assert lookup_receipt(store, envelope.sender_id, envelope.submission_id) is None
         receipt = store.accept(envelope, writer, 1004, identity=identity)
         settled = data.read_ticket(tmp_db, ticket.id)
         assert settled.worker_step_claim is WorkerStepClaim.none
@@ -198,9 +199,9 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         reconnected = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, identity.executor_incarnation, 2
         )
-        store.runs.mark_lost(identity, 1005)
-        store.runs.begin_connection(reconnected, 2000)
-        store.runs.mark_ready(reconnected, 2001)
+        store.runs.mark_lost(identity)
+        store.runs.begin_connection(reconnected)
+        store.runs.mark_ready(reconnected)
         for _ in range(2):
             assert store.accept(envelope, writer, 2002, identity=reconnected) == receipt
             assert data.read_ticket(tmp_db, ticket.id) == next_claim

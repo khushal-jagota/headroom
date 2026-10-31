@@ -10,6 +10,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 import pytest
+from tests.support.executor_inbox import lookup_receipt
 from tests.unit.test_conversation_api import _Harness, _start
 from tests.unit.test_conversation_executor_publication import _envelope, _take_event
 
@@ -65,7 +66,7 @@ async def _case(
         state.executor_child_reference = child
         store = InboxStore(str(path))
         identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "proof", 1)
-        store.runs.begin_connection(identity, 1000)
+        store.runs.begin_connection(identity)
         store.runs.register_child(child, "chief", "chief", 1000)
         event = BackendEvent(
             child,
@@ -116,7 +117,7 @@ def test_worker_progress_and_cancellation_retain_lock_through_finalization(
                 assert state.lock.locked()
                 owned = tuple(state.settlement_tasks)
                 assert owned and not all(task.done() for task in owned)
-                assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+                assert lookup_receipt(store, envelope.sender_id, envelope.submission_id) is None
                 assert not any(
                     row.kind is ConversationEventKind.tool_call_started
                     for row in await harness.store.read_events_after("c", 0)
@@ -124,7 +125,7 @@ def test_worker_progress_and_cancellation_retain_lock_through_finalization(
                 release.set()
                 await asyncio.gather(*owned)
                 assert not state.lock.locked()
-                receipt = store.lookup_receipt(envelope.sender_id, envelope.submission_id)
+                receipt = lookup_receipt(store, envelope.sender_id, envelope.submission_id)
                 assert receipt is not None and receipt.disposition is ReceiptDisposition.accepted
                 assert await _take_event(harness.system, event, envelope, accept) == receipt
                 events = await harness.store.read_events_after("c", 0)
@@ -374,7 +375,7 @@ def test_stale_events_receive_durable_ignored_acceptance_without_rows_or_live_fr
                     assert receipt.disposition is ReceiptDisposition.accepted
                     assert receipt.result == {"applied": False}
                     assert (
-                        store.lookup_receipt(envelope.sender_id, envelope.submission_id) == receipt
+                        lookup_receipt(store, envelope.sender_id, envelope.submission_id) == receipt
                     )
                     assert await endpoint.inbox.accept(envelope, identity) == receipt
                 assert tail._items.empty()

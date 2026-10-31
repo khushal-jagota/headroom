@@ -15,26 +15,20 @@ from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect
 from planner.execution_identity import ChildReference
-from planner.executor.store import ExecutorStore
+from planner.executor.worker_identity import ticket_id_of
 
 
 @dataclass(frozen=True, slots=True)
 class LocaleBackendChildFactory:
     db_path: str
     local_factory: BackendChildFactory
-    remote_factory: BackendChildFactory
+    remote_factory: RetainedBackendChildFactory
 
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
-        if isinstance(self.remote_factory, RetainedBackendChildFactory):
-            return self.remote_factory.retained_runs()
-        return ()
+        return self.remote_factory.retained_runs()
 
     def recover(self, reference: ChildReference) -> BackendChild | None:
         """Recover only retained authority, without allocation or native execution."""
-        if ExecutorStore(self.db_path).child_assignment(reference) is None:
-            return None
-        if not isinstance(self.remote_factory, RetainedBackendChildFactory):
-            raise ValueError("Configured remote factory cannot recover an exact child")
         return self.remote_factory.recover(reference)
 
     def __call__(
@@ -44,17 +38,13 @@ class LocaleBackendChildFactory:
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
     ) -> BackendChild:
-        env = (
-            {}
-            if resolved_start.role_materials is None
-            else dict(resolved_start.role_materials.identity_environment_variables)
-        )
+        ticket_id = ticket_id_of(resolved_start)
         remote = False
-        if env.get("PLAN_ACTOR") == "worker" and env.get("PLAN_TICKET_ID"):
+        if ticket_id:
             conn = connect(self.db_path)
             try:
                 row = conn.execute(
-                    "SELECT locale FROM tickets WHERE id=?", (env["PLAN_TICKET_ID"],)
+                    "SELECT locale FROM tickets WHERE id=?", (ticket_id,)
                 ).fetchone()
                 remote = row is not None and row["locale"] == "macos"
             finally:

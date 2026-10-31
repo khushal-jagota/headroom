@@ -18,7 +18,6 @@ STATEMENTS = (
     """CREATE TABLE executor_connections (
         executor_incarnation TEXT PRIMARY KEY, connection_generation INTEGER NOT NULL,
         identity_json TEXT NOT NULL, connection_state TEXT NOT NULL,
-        observed_at_ms INTEGER NOT NULL, lost_at_ms INTEGER,
         active INTEGER NOT NULL CHECK(active IN (0,1)))""",
     "CREATE UNIQUE INDEX executor_one_active_connection ON executor_connections(active) WHERE active=1",
     """CREATE TABLE mac_inbox_positions (
@@ -35,7 +34,7 @@ STATEMENTS = (
         conversation_id TEXT PRIMARY KEY, executor_incarnation TEXT NOT NULL, child_id TEXT NOT NULL,
         principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL, turn_number INTEGER NOT NULL,
         delivery_uncertain INTEGER NOT NULL CHECK(delivery_uncertain IN (0,1)),
-        stop_state TEXT NOT NULL CHECK(stop_state IN ('open','stopping','unproved','closed')))""",
+        stop_state TEXT NOT NULL CHECK(stop_state IN ('open','stopping','closed')))""",
     """CREATE TABLE conversation_reply_credits (
         conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
         turn_number INTEGER NOT NULL, principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL,

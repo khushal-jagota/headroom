@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.executor.clock import now_ms
 from planner.executor.configuration import (
     CLI_RESULT_TIMEOUT_SECONDS,
 )
@@ -22,7 +23,7 @@ from planner.executor.files import (
 )
 from planner.executor.link import Link
 from planner.executor.mac_outbox import MacOutbox
-from planner.executor.mac_runner import MacRunner, RunningChild, now_ms
+from planner.executor.mac_runner import MacRunner, RunningChild
 from planner.executor.protocol import (
     AcceptanceReceipt,
     CliWrite,

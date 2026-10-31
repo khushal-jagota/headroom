@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
-import time
+from dataclasses import dataclass, field
 from uuid import uuid4
 
 from planner.conversation.backends.contracts import (
@@ -22,6 +21,7 @@ from planner.execution_identity import (
     ChildReference,
     ExecutorIdentity,
 )
+from planner.executor.clock import now_ms
 from planner.executor.link import Link
 from planner.executor.link_files import settled_io
 from planner.executor.protocol import (
@@ -31,23 +31,27 @@ from planner.executor.protocol import (
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
-    JsonObject,
     MacRunConversations,
     ReconnectAsk,
     ReconnectResult,
     WireMessageKind,
     WithdrawCommands,
     WithdrawResult,
-    encode_value,
+    as_object,
     type_adapter,
 )
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
 from planner.executor.vps_remote_child import MacRemoteChild
+from planner.executor.worker_identity import ticket_id_of
 
 
-def now_ms() -> int:
-    return time.time_ns() // 1_000_000
+@dataclass
+class _PendingCommand:
+    command: ChildCommand
+    future: asyncio.Future[CommandOutcome]
+    possibly_emitted: bool = False
+    emissions: set[asyncio.Task[bool]] = field(default_factory=set)
 
 
 class MacRuns:
@@ -61,11 +65,9 @@ class MacRuns:
         self.link: Link | None = None
         self.ready = False
         self.children: dict[str, MacRemoteChild] = {}
-        self.pending_commands: dict[str, tuple[ChildCommand, asyncio.Future[CommandOutcome]]] = {}
+        self.pending_commands: dict[str, _PendingCommand] = {}
         self._cancelled_initial_children: set[ChildReference] = set()
-        self._possibly_emitted_commands: set[str] = set()
-        self._prompt_command_ids: set[str] = set()
-        self._emission_tasks: dict[str, set[asyncio.Task[bool]]] = {}
+        self._emitted_prompts: dict[ChildReference, set[str]] = {}
         self._tasks: set[asyncio.Task[object]] = set()
 
     def __call__(
@@ -76,23 +78,10 @@ class MacRuns:
         message_files: ConversationMessageFiles,
     ) -> MacRemoteChild:
         del message_files
-        environment = dict(
-            resolved_start.role_materials.identity_environment_variables
-            if resolved_start.role_materials
-            else ()
-        )
-        ticket_id = environment.get("PLAN_TICKET_ID")
-        if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
+        if not ticket_id_of(resolved_start):
             raise BackendSpawnFailed("Mac runs require a Ticket Worker identity")
         reference = self.assign_child(resolved_start, event_sink)
-        child = MacRemoteChild(
-            reference,
-            self.send_new_command,
-            self._read_skill_snapshot,
-            self.cancel_initial_delivery,
-            retire_reference=self.retire_child,
-            send_answer=self.queue_answer,
-        )
+        child = self._make_child(reference, initial_history_complete=True)
         self.children[reference.child_id] = child
         return child
 
@@ -102,25 +91,7 @@ class MacRuns:
     def recover(self, reference: ChildReference) -> MacRemoteChild | None:
         if self.store.child_assignment(reference) is None:
             return None
-        return self.recover_child(reference)
-
-    @staticmethod
-    def interrupt_after_restart(conn: sqlite3.Connection, at_ms: int) -> None:
-        conn.execute(
-            "UPDATE executor_connections SET connection_state='disconnected',lost_at_ms=? "
-            "WHERE active=1",
-            (at_ms,),
-        )
-        conn.execute("UPDATE mac_runs SET stop_state='stopping' WHERE stop_state='open'")
-
-    @staticmethod
-    def status(conn: sqlite3.Connection) -> tuple[tuple[str, str], ...]:
-        return tuple(
-            (row[0], row[1])
-            for row in conn.execute(
-                "SELECT identity_json,connection_state FROM executor_connections WHERE active=1"
-            )
-        )
+        return self._make_child(reference)
 
     async def close(self) -> None:
         self.ready = False
@@ -131,7 +102,7 @@ class MacRuns:
     async def admit(self, link: Link) -> None:
         identity = link.identity
         old_link = self.link
-        await settled_io(self.store.begin_connection, identity, now_ms())
+        await settled_io(self.store.begin_connection, identity)
         self.identity, self.link, self.ready = identity, link, False
         if old_link is not None:
             old_link.close()
@@ -145,9 +116,10 @@ class MacRuns:
             and old_identity.executor_incarnation != identity.executor_incarnation
         )
         if replaced:
-            for command, future in tuple(self.pending_commands.values()):
-                if not future.done():
-                    future.set_result(
+            for pending in tuple(self.pending_commands.values()):
+                command = pending.command
+                if not pending.future.done():
+                    pending.future.set_result(
                         CommandOutcome(
                             command.command_id,
                             command.child,
@@ -171,7 +143,7 @@ class MacRuns:
         unknown = await self._reconnect(identity, link)
         if not await self._reconciliation_current(identity, link):
             return
-        await settled_io(self.store.mark_ready, identity, now_ms())
+        await settled_io(self.store.mark_ready, identity)
         if not await link.tell(
             WireMessageKind.reconciliation_ready,
             {"ready": True},
@@ -190,26 +162,24 @@ class MacRuns:
         for child in tuple(self.children.values()):
             for command in tuple(child.saved_answers.values()):
                 self.queue_answer(command)
-        for command, future in reconnect_commands:
+        for pending in reconnect_commands:
+            command = pending.command
             if (
-                not future.done()
+                not pending.future.done()
                 and command.child.executor_incarnation == identity.executor_incarnation
             ):
-                if not await self._emit_command(command, identity, link):
-                    await self._release_closed_answer(command, future)
+                if not await self._emit_command(pending, identity, link):
+                    self._release_closed_answer(command, pending.future)
 
     async def link_down(self, link: Link) -> None:
         if self.link is link:
             self.ready = False
             self.link = None
-            await settled_io(self.store.mark_lost, link.identity, now_ms())
+            await settled_io(self.store.mark_lost, link.identity)
 
     def _read_skill_snapshot(self, start: ResolvedConversationStart) -> CanonicalSkillSnapshot:
-        environment = dict(
-            start.role_materials.identity_environment_variables if start.role_materials else ()
-        )
-        ticket_id = environment.get("PLAN_TICKET_ID")
-        if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
+        ticket_id = ticket_id_of(start)
+        if not ticket_id:
             raise BackendSpawnFailed("Canonical skill bootstrap requires a Worker Ticket identity")
         conn = db.connect(self.db_path)
         try:
@@ -227,16 +197,13 @@ class MacRuns:
         child = ChildReference(
             self.identity.executor_incarnation, str(uuid4()), start.conversation_id
         )
-        environment = dict(
-            start.role_materials.identity_environment_variables if start.role_materials else ()
-        )
-        ticket_id = environment.get("PLAN_TICKET_ID")
-        if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
+        ticket_id = ticket_id_of(start)
+        if not ticket_id:
             raise BackendSpawnFailed("Mac runs require a Ticket Worker identity")
         self.store.register_child(child, "ticket", ticket_id, now_ms())
         return child
 
-    def recover_child(
+    def _make_child(
         self, child: ChildReference, *, initial_history_complete: bool = False
     ) -> MacRemoteChild:
         """Bind the retained identity without starting it or granting new authority."""
@@ -255,6 +222,8 @@ class MacRuns:
         proxy = self.children.get(child.child_id)
         if proxy is not None and proxy.reference == child:
             self.children.pop(child.child_id, None)
+        self._emitted_prompts.pop(child, None)
+        self._cancelled_initial_children.discard(child)
 
     def _initial_command_cancelled(self, command: ChildCommand) -> bool:
         return (
@@ -267,25 +236,21 @@ class MacRuns:
     ) -> bool:
         """Fence before cleanup; retained native outcomes remain untouched."""
         self._cancelled_initial_children.add(child)
-        prompt_may_have_sent = any(
-            command_id in self._possibly_emitted_commands
-            for command_id in command_ids
-            if command_id in self._prompt_command_ids
-        )
-        for command, future in tuple(self.pending_commands.values()):
+        prompt_ids = set(command_ids) & self._emitted_prompts.get(child, set())
+        prompt_may_have_sent = bool(prompt_ids)
+        for pending in tuple(self.pending_commands.values()):
+            command = pending.command
             if command.child != child or not self._initial_command_cancelled(command):
                 continue
-            if command.operation is ChildOperation.write_prompt:
-                prompt_may_have_sent |= command.command_id in self._possibly_emitted_commands
-            for emission in self._emission_tasks.get(command.command_id, ()):
+            for emission in pending.emissions:
                 emission.cancel()
-            if not future.done() and command.command_id not in self._possibly_emitted_commands:
-                future.set_exception(DeliveryCancelled())
+            if not pending.future.done() and not pending.possibly_emitted:
+                pending.future.set_exception(DeliveryCancelled())
         if prompt_may_have_sent and self.ready and self.link is not None:
             identity = self.identity
             try:
                 response = await self.link.request(
-                    WireMessageKind.withdraw, _object(WithdrawCommands(child, command_ids))
+                    WireMessageKind.withdraw, as_object(WithdrawCommands(child, command_ids))
                 )
                 if (
                     response.kind is not WireMessageKind.withdraw_result
@@ -293,7 +258,6 @@ class MacRuns:
                 ):
                     raise ValueError("invalid withdrawal reply")
                 result = type_adapter(WithdrawResult).validate_python(response.payload)
-                prompt_ids = set(command_ids) & self._prompt_command_ids
                 if prompt_ids <= set(result.withdrawn):
                     prompt_may_have_sent = False
             except (OSError, ConnectionError, ValueError, TimeoutError):
@@ -310,16 +274,20 @@ class MacRuns:
         return self.link is writer and not writer.is_closing() and self.identity == identity
 
     async def _emit_command(
-        self,
-        command: ChildCommand,
-        identity: ExecutorIdentity | None = None,
-        writer: Link | None = None,
+        self, pending: _PendingCommand, identity: ExecutorIdentity, writer: Link
     ) -> bool:
-        identity = self.identity if identity is None else identity
-        writer = self.link if writer is None else writer
-        task = asyncio.create_task(self._emit_command_unsettled(command, identity, writer))
-        tasks = self._emission_tasks.setdefault(command.command_id, set())
-        tasks.add(task)
+        command = pending.command
+        emit = (
+            self._emit_answer(command, identity, writer)
+            if command.operation
+            in (
+                ChildOperation.answer_permission_ask,
+                ChildOperation.answer_user_input,
+            )
+            else self._emit_input(pending, identity, writer)
+        )
+        task = asyncio.create_task(emit)
+        pending.emissions.add(task)
         try:
             return await task
         except asyncio.CancelledError:
@@ -327,61 +295,40 @@ class MacRuns:
                 raise
             return False
         finally:
-            tasks.discard(task)
-            if not tasks:
-                self._emission_tasks.pop(command.command_id, None)
+            pending.emissions.discard(task)
 
-    async def _emit_command_unsettled(
-        self,
-        command: ChildCommand,
-        expected_identity: ExecutorIdentity | None = None,
-        expected_writer: Link | None = None,
+    async def _emit_input(
+        self, pending: _PendingCommand, identity: ExecutorIdentity, writer: Link
     ) -> bool:
-        """Send on the current link, preserving command identity across replay."""
-        if command.operation not in (
-            ChildOperation.answer_permission_ask,
-            ChildOperation.answer_user_input,
-        ):
-            if self._initial_command_cancelled(command):
+        command = pending.command
+
+        def admit() -> bool:
+            if self._initial_command_cancelled(command) or pending.future.done():
                 return False
-            if expected_identity != self.identity or expected_writer is not self.link:
+            if identity != self.identity or writer is not self.link:
                 raise ConnectionError("command input generation changed")
-            if self.link is None or not self.ready:
+            if not self.ready:
                 raise ConnectionError("executor link unavailable")
-            writer = self.link
-            assert writer is not None
+            pending.possibly_emitted = True
+            if command.operation is ChildOperation.write_prompt:
+                self._emitted_prompts.setdefault(command.child, set()).add(command.command_id)
+            return True
 
-            def admit() -> bool:
-                if self._initial_command_cancelled(command):
-                    return False
-                pending = self.pending_commands.get(command.command_id)
-                if pending is not None and pending[1].done():
-                    return False
-                if expected_identity != self.identity or expected_writer is not self.link:
-                    raise ConnectionError("command input generation changed")
-                if not self.ready:
-                    raise ConnectionError("executor link unavailable")
-                self._possibly_emitted_commands.add(command.command_id)
-                if command.operation is ChildOperation.write_prompt:
-                    self._prompt_command_ids.add(command.command_id)
-                return True
+        return await writer.tell(
+            WireMessageKind.command,
+            as_object(command),
+            request_id=command.command_id,
+            admit=admit,
+        )
 
-            return await writer.tell(
-                WireMessageKind.command,
-                _object(command),
-                request_id=command.command_id,
-                admit=admit,
-            )
+    async def _emit_answer(
+        self, command: ChildCommand, identity: ExecutorIdentity, writer: Link
+    ) -> bool:
         child = self.children.get(command.child.child_id)
-        answer_writer = expected_writer
         emitted = False
 
         def admit_answer() -> bool:
-            if (
-                not self.ready
-                or self.link is not answer_writer
-                or self.identity != expected_identity
-            ):
+            if not self.ready or self.link is not writer or self.identity != identity:
                 raise ConnectionError("answer connection changed")
             return (
                 child is not None
@@ -394,10 +341,9 @@ class MacRuns:
             nonlocal emitted
             if not admit_answer():
                 return
-            assert answer_writer is not None
-            emitted = await answer_writer.tell(
+            emitted = await writer.tell(
                 WireMessageKind.command,
-                _object(command),
+                as_object(command),
                 request_id=command.command_id,
                 admit=admit_answer,
             )
@@ -406,7 +352,7 @@ class MacRuns:
             await self.conversations.emit_answer(command.turn, emit)
         return emitted
 
-    async def _release_closed_answer(
+    def _release_closed_answer(
         self, command: ChildCommand, future: asyncio.Future[CommandOutcome]
     ) -> None:
         if command.operation in (
@@ -442,9 +388,9 @@ class MacRuns:
             raise DeliveryCancelled()
         existing = self.pending_commands.get(command.command_id)
         if existing is not None:
-            if existing[0] != command:
+            if existing.command != command:
                 raise ValueError("command identity reused with different content")
-            return await asyncio.shield(existing[1])
+            return await asyncio.shield(existing.future)
         if (
             self.identity is not None
             and command.child.executor_incarnation != self.identity.executor_incarnation
@@ -458,15 +404,17 @@ class MacRuns:
                 {"reason": "executor_process_replaced"},
             )
         future: asyncio.Future[CommandOutcome] = asyncio.get_running_loop().create_future()
-        self.pending_commands[command.command_id] = (command, future)
+        pending = _PendingCommand(command, future)
+        self.pending_commands[command.command_id] = pending
         try:
             if self.ready and self.link is not None:
                 identity, writer = self.identity, self.link
+                assert identity is not None
                 try:
                     if not future.done() and not await self._emit_command(
-                        command, identity, writer
+                        pending, identity, writer
                     ):
-                        await self._release_closed_answer(command, future)
+                        self._release_closed_answer(command, future)
                 except (OSError, ConnectionError):
                     pass  # The exact command remains pending across a link loss.
             return await asyncio.shield(future)
@@ -492,34 +440,28 @@ class MacRuns:
         self.authority(child)
         return False
 
-    def validate_stop(self, outcome: CommandOutcome, identity: ExecutorIdentity) -> None:
-        self._validate_outcome_assignment(outcome, identity)
-        if outcome.disposition is not CommandDisposition.succeeded:
-            raise ValueError("child_stopped requires successful exact-child stop")
-        pending = self.pending_commands.get(outcome.command_id)
-        if pending is not None and pending[0].operation is not ChildOperation.stop:
-            raise ValueError("child_stopped conflicts with pending command")
-
-    def _validate_outcome_assignment(
-        self, outcome: CommandOutcome, identity: ExecutorIdentity
-    ) -> None:
+    def validate_stop(self, outcome: CommandOutcome) -> None:
         # Closed assignments admit only their retained exact stop proof.
         # They grant no callback, command-result or new native-work authority.
         pending = self.pending_commands.get(outcome.command_id)
         if not (
             self.store.has_closed_child_assignment(outcome.child)
             and pending is not None
-            and pending[0].child == outcome.child
-            and pending[0].operation is ChildOperation.stop
+            and pending.command.child == outcome.child
+            and pending.command.operation is ChildOperation.stop
         ):
             self.authority(outcome.child)
+        if outcome.disposition is not CommandDisposition.succeeded:
+            raise ValueError("child_stopped requires successful exact-child stop")
+        if pending is not None and pending.command.operation is not ChildOperation.stop:
+            raise ValueError("child_stopped conflicts with pending command")
 
-    async def _resolve_command(self, outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
+    def _resolve_command(self, outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
         pending = self.pending_commands.get(outcome.command_id)
-        if pending is None or pending[0].child != outcome.child:
+        if pending is None or pending.command.child != outcome.child:
             return
         if (
-            pending[0].operation is ChildOperation.stop
+            pending.command.operation is ChildOperation.stop
             and outcome.disposition is CommandDisposition.succeeded
             and not stop_proven
         ):
@@ -528,9 +470,8 @@ class MacRuns:
             child = self.children.get(outcome.child.child_id)
             if child is not None and child.reference == outcome.child:
                 child.saved_answers.pop(outcome.command_id, None)
-        pending = self.pending_commands.get(outcome.command_id)
-        if pending is not None and pending[0].child == outcome.child and not pending[1].done():
-            pending[1].set_result(outcome)
+        if not pending.future.done():
+            pending.future.set_result(outcome)
 
     def owns_conversation(self, conversation_id: str) -> bool:
         return any(
@@ -540,13 +481,13 @@ class MacRuns:
 
     async def _reconnect(self, identity: ExecutorIdentity, writer: Link) -> set[str]:
         pending = {
-            key: command
-            for key, (command, future) in tuple(self.pending_commands.items())
-            if not future.done()
-            and command.child.executor_incarnation == identity.executor_incarnation
+            key: item.command
+            for key, item in tuple(self.pending_commands.items())
+            if not item.future.done()
+            and item.command.child.executor_incarnation == identity.executor_incarnation
         }
         response = await writer.request(
-            WireMessageKind.reconnect_ask, _object(ReconnectAsk(tuple(pending)))
+            WireMessageKind.reconnect_ask, as_object(ReconnectAsk(tuple(pending)))
         )
         if not await self._reconciliation_current(identity, writer):
             raise ConnectionError("reconnect generation changed")
@@ -557,6 +498,13 @@ class MacRuns:
             pending
         ):
             raise ValueError("reconnect command identities changed")
+        unknown = self._reconcile_commands(result, pending)
+        await self._reconcile_children(result.children, identity, writer)
+        return unknown
+
+    def _reconcile_commands(
+        self, result: ReconnectResult, pending: dict[str, ChildCommand]
+    ) -> set[str]:
         unknown: set[str] = set()
         for state in result.commands:
             if state.phase == "finished":
@@ -564,14 +512,19 @@ class MacRuns:
                     raise ValueError("finished command lacks its result")
                 if state.outcome.child != pending[state.command_id].child:
                     raise ValueError("finished command child changed")
-                await self._resolve_command(state.outcome)
+                self._resolve_command(state.outcome)
             elif state.outcome is not None:
                 raise ValueError("unfinished command has an outcome")
             elif state.phase == "unknown":
                 unknown.add(state.command_id)
-        children: list[ChildInventory] = []
+        return unknown
+
+    async def _reconcile_children(
+        self, inventory: tuple[ChildInventory, ...], identity: ExecutorIdentity, writer: Link
+    ) -> None:
+        children: dict[ChildReference, ChildInventory] = {}
         seen: set[str] = set()
-        for item in result.children:
+        for item in inventory:
             if item.child.child_id in seen:
                 raise ValueError("duplicate reconnect child")
             seen.add(item.child.child_id)
@@ -580,11 +533,7 @@ class MacRuns:
                 continue
             if not await self._reconciliation_current(identity, writer):
                 raise ConnectionError("reconnect generation changed")
-            children.append(item)
-            if item.child.child_id not in self.children:
-                proxy = self.recover_child(item.child)
-                self.children[item.child.child_id] = proxy
-                await self.conversations.stop_interrupted_remote_child(item.child, proxy)
+            children[item.child] = item
         # Inventory absence is not termination evidence. Stop every retained run
         # after a VPS restart, including one that never reached Mac creation.
         for run in await settled_io(self.store.retained_runs):
@@ -596,20 +545,10 @@ class MacRuns:
                 continue
             if not await self._reconciliation_current(identity, writer):
                 raise ConnectionError("reconnect generation changed")
-            proxy = self.recover_child(run.reference)
+            proxy = self._make_child(run.reference)
             self.children[run.reference.child_id] = proxy
             await self.conversations.stop_interrupted_remote_child(run.reference, proxy)
         if not await self._reconciliation_current(identity, writer):
             raise ConnectionError("reconnect generation changed")
         for proxy in tuple(self.children.values()):
-            proxy.observe_callbacks(
-                next((item for item in children if item.child == proxy.reference), None)
-            )
-        return unknown
-
-
-def _object(value: object) -> JsonObject:
-    encoded = encode_value(value)
-    if not isinstance(encoded, dict):
-        raise ValueError("expected object")
-    return encoded
+            proxy.observe_callbacks(children.get(proxy.reference))

@@ -9,6 +9,7 @@ from sqlite3 import Connection
 from typing import Any, cast
 
 import pytest
+from tests.support.executor_inbox import lookup_receipt
 from tests.support.executor_turns import MacRemoteChildFactory
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
@@ -40,8 +41,8 @@ from planner.executor.protocol import (
     QueuedEnvelope,
     encode_value,
 )
-from planner.executor.vps_agent_writes import deliver_native_message
 from planner.executor.vps_inbox import InboxStore
+from planner.executor.vps_transport import VpsExecutor
 from planner.tickets import data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
@@ -83,7 +84,7 @@ class HeldFixture:
     system: SqliteProcessConversationSystem = field(init=False)
     source: Principal
     systems: list[SqliteProcessConversationSystem]
-    resolutions: int = 0
+    endpoint: VpsExecutor = field(init=False)
 
     async def new_core(self) -> SqliteProcessConversationSystem:
         for previous in self.systems:
@@ -117,10 +118,12 @@ class HeldFixture:
                 owns_conversation=lambda _: True,
             ),
         )
+        self.endpoint = VpsExecutor(self.path, RealClock())
+        self.endpoint.bind_conversations(system)
         self.systems.append(system)
         return system
 
-    def entry(self, submission_id: str, text: str) -> tuple[QueuedEnvelope, CliWrite]:
+    def entry(self, submission_id: str, text: str) -> QueuedEnvelope:
         write = CliWrite(
             "message.send",
             {
@@ -143,29 +146,16 @@ class HeldFixture:
                 submission_id=submission_id,
             )
         )
-        return envelope, write
+        return envelope
 
     async def deliver(
         self,
         envelope: QueuedEnvelope,
-        write: CliWrite,
         *,
         system: SqliteProcessConversationSystem | None = None,
     ) -> AcceptanceReceipt:
-        def resolve(connection: Connection, request: CliWrite, principal: Principal) -> Principal:
-            self.resolutions += 1
-            return CHIEF
-
-        return await deliver_native_message(
-            store=self.store,
-            envelope=envelope,
-            write=write,
-            principal=self.source,
-            identity=IDENTITY,
-            clock=RealClock(),
-            conversations=system or self.system,
-            resolve_recipient=resolve,
-        )
+        self.endpoint.bind_conversations(system or self.system)
+        return await self.endpoint.inbox.accept(envelope, IDENTITY)
 
     async def source_reply_credited(
         self, system: SqliteProcessConversationSystem | None = None
@@ -193,8 +183,8 @@ class HeldFixture:
 async def boot(connection: Connection, root: Path) -> HeldFixture:
     path = str(connection.execute("PRAGMA database_list").fetchone()[2])
     store = InboxStore(path)
-    store.runs.begin_connection(IDENTITY, 1000)
-    store.runs.mark_ready(IDENTITY, 1001)
+    store.runs.begin_connection(IDENTITY)
+    store.runs.mark_ready(IDENTITY)
     ticket = data.create_ticket(
         connection,
         title="Held source",
@@ -268,7 +258,7 @@ async def boot(connection: Connection, root: Path) -> HeldFixture:
 
 
 def replay_result(fixture: HeldFixture, envelope: QueuedEnvelope) -> JsonObject:
-    stored = fixture.store.lookup_receipt(envelope.sender_id, envelope.submission_id)
+    stored = lookup_receipt(fixture.store, envelope.sender_id, envelope.submission_id)
     return stored.result if stored is not None else {}
 
 
@@ -279,26 +269,23 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
         fixture = await boot(tmp_db, tmp_path)
         try:
             entries = [fixture.entry("first", "First Ω"), fixture.entry("second", "Second")]
-            receipts = [await fixture.deliver(envelope, write) for envelope, write in entries]
+            receipts = [await fixture.deliver(envelope) for envelope in entries]
             assert [receipt.result["fate"] for receipt in receipts] == ["queued", "queued"]
             assert [
                 held.sender_message_id for held in await fixture.system.held_prompts("c_target")
             ] == ["first", "second"]
-            for (envelope, write), receipt in zip(entries, receipts, strict=True):
-                assert (await fixture.deliver(envelope, write)).result == replay_result(
-                    fixture, envelope
-                )
+            for envelope, receipt in zip(entries, receipts, strict=True):
+                assert (await fixture.deliver(envelope)).result == replay_result(fixture, envelope)
                 fixture.spool.acknowledge(receipt)
             assert fixture.spool.pending() == ()
-            assert fixture.resolutions == 2
             assert not await fixture.source_reply_credited()
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
             assert await fresh.held_prompts("c_target") == ()
-            for (envelope, write), _receipt in zip(entries, receipts, strict=True):
-                assert (
-                    await fixture.deliver(envelope, write, system=fresh)
-                ).result == replay_result(fixture, envelope)
+            for envelope, _receipt in zip(entries, receipts, strict=True):
+                assert (await fixture.deliver(envelope, system=fresh)).result == replay_result(
+                    fixture, envelope
+                )
             assert fixture.native.commands == before
             assert not await fixture.source_reply_credited(fresh)
         finally:
@@ -313,7 +300,7 @@ def test_lost_first_receipt_keeps_operation_binding_and_never_repeats_held_send(
     async def run() -> None:
         fixture = await boot(tmp_db, tmp_path)
         try:
-            envelope, write = fixture.entry("lost_receipt", "Waiting before receipt")
+            envelope = fixture.entry("lost_receipt", "Waiting before receipt")
             from planner.message_delivery import service
 
             send = service.send_message
@@ -324,18 +311,17 @@ def test_lost_first_receipt_keeps_operation_binding_and_never_repeats_held_send(
 
             monkeypatch.setattr(service, "send_message", crash)
             with pytest.raises(InjectedCrash, match="first receipt interrupted"):
-                await fixture.deliver(envelope, write)
-            saved = fixture.store.lookup_receipt(envelope.sender_id, envelope.submission_id)
+                await fixture.deliver(envelope)
+            saved = lookup_receipt(fixture.store, envelope.sender_id, envelope.submission_id)
             assert saved is not None and saved.result["fate"] == "uncertain"
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
             monkeypatch.setattr(service, "send_message", send)
-            receipt = await fixture.deliver(envelope, write, system=fresh)
+            receipt = await fixture.deliver(envelope, system=fresh)
             assert receipt.result["fate"] == "uncertain"
-            assert (await fixture.deliver(envelope, write, system=fresh)).result == replay_result(
+            assert (await fixture.deliver(envelope, system=fresh)).result == replay_result(
                 fixture, envelope
             )
-            assert fixture.resolutions == 1
             assert await fresh.held_prompts("c_target") == ()
             assert fixture.native.commands == before
         finally:

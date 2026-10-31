@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from tests.support.executor_control import MessageReader
+from tests.support.executor_inbox import lookup_receipt
 
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 
@@ -22,15 +23,9 @@ from tests.unit.test_executor_native_runtime import native_registry as native_re
 from tests.unit.test_executor_request_deadlines import peer
 
 from planner.conversation.backends.contracts import TurnToken
-from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.protocol import (
-    AnswerApplication,
-    ChildCommand,
-    ChildOperation,
-    CommandDisposition,
-    CommandOutcome,
     EnvelopeKind,
     FileManifest,
     FileScope,
@@ -59,7 +54,7 @@ def store(tmp_path: Path) -> InboxStore:
     finally:
         connection.close()
     result = InboxStore(path)
-    result.runs.begin_connection(IDENTITY, 1000)
+    result.runs.begin_connection(IDENTITY)
     persist_pending_turn(result.runs, ASK)
     return result
 
@@ -93,7 +88,7 @@ def test_transient_storage_failure_has_no_receipt_and_retry_applies(store: Inbox
 
     with pytest.raises(sqlite3.OperationalError):
         store.accept(envelope(), fails, 1100, identity=IDENTITY)
-    assert store.lookup_receipt("sender", "conversation-1") is None
+    assert lookup_receipt(store, "sender", "conversation-1") is None
     assert store.accept(envelope(), effect, 1200, identity=IDENTITY).disposition == "accepted"
 
 
@@ -207,72 +202,6 @@ def test_session_file_cleanup_failure_still_releases_transport_root(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize(
-    "kind",
-    [
-        EnvelopeKind.backend_event,
-        EnvelopeKind.child_stopped,
-        EnvelopeKind.answer_application,
-        EnvelopeKind.cli_write,
-    ],
-)
-def test_refused_native_evidence_marker_survives_domain_rollback_and_metadata_turns(
-    store: InboxStore, kind: EnvelopeKind
-) -> None:
-
-    from planner.executor.protocol import BackendEvent, BackendEventMethod, encode_value
-
-    value: object
-    if kind is EnvelopeKind.backend_event:
-        value = BackendEvent(CHILD, BackendEventMethod.turn_ended, ASK.turn, {})
-    elif kind is EnvelopeKind.child_stopped:
-        value = CommandOutcome("late-result", CHILD, CommandDisposition.succeeded, {})
-    elif kind is EnvelopeKind.answer_application:
-        value = AnswerApplication("answer", ASK, 1000)
-    else:
-        value = {"operation": "refused-domain-action"}
-    payload = cast(JsonObject, encode_value(value))
-    queued = replace(envelope(), kind=kind, payload=payload)
-    queued = replace(
-        queued,
-        payload_sha256=envelope_payload_digest(
-            payload,
-            (),
-            sender_id=queued.sender_id,
-            conversation_id=queued.conversation_id,
-            sequence=queued.sequence,
-            submission_id=queued.submission_id,
-            kind=kind,
-        ),
-    )
-
-    def refuse(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-        effect(connection, envelope)
-        raise PlannerError(ErrorCode.validation, "required publication refused", {})
-
-    receipt = store.accept(queued, refuse, 1100, identity=IDENTITY)
-    assert receipt.disposition is ReceiptDisposition.refused
-    connection = connect(store.db_path)
-    try:
-        assert connection.execute("SELECT count(*) FROM effects").fetchone()[0] == 0
-        assert connection.execute("SELECT stop_state FROM mac_runs").fetchone()[0] == (
-            "open" if kind is EnvelopeKind.cli_write else "unproved"
-        )
-    finally:
-        connection.close()
-    from planner.executor.protocol import StopRun
-
-    store.runs.prepare_command(
-        ChildCommand("stop", CHILD, ChildOperation.stop, ASK.turn, StopRun())
-    )
-    if kind is not EnvelopeKind.cli_write:
-        with pytest.raises(ValueError, match="unproved"):
-            store.runs.close_child(CHILD, 1200)
-    else:
-        store.runs.close_child(CHILD, 1200)
-    assert store.lookup_receipt(queued.sender_id, queued.submission_id) == receipt
-
-
 def test_postcommit_error_preserves_durable_effect_and_receipt(
     store: InboxStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -305,7 +234,7 @@ def test_postcommit_error_preserves_durable_effect_and_receipt(
             store.accept(row, effect, 123, identity=IDENTITY)
     assert raised.value is error
     assert calls == ["commit", "rollback"]
-    saved = store.lookup_receipt(row.sender_id, row.submission_id)
+    saved = lookup_receipt(store, row.sender_id, row.submission_id)
     assert saved is not None and saved.disposition is ReceiptDisposition.accepted
     assert store.accept(row, effect, 124, identity=IDENTITY) == saved
     connection = connect(store.db_path)

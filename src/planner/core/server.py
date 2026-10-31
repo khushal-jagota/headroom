@@ -11,7 +11,6 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic as _monotonic
-from time import time as _wall_time
 from typing import Any, cast
 from uuid import uuid4
 
@@ -277,9 +276,9 @@ def create_app(
         ) as conversation:
             audit_conn = conn_factory()
             try:
-                from planner.executor.vps_runs import MacRuns
+                from planner.executor.store import ExecutorStore
 
-                MacRuns.interrupt_after_restart(audit_conn, int(_wall_time() * 1000))
+                ExecutorStore.interrupt_after_restart(audit_conn)
                 audit_conn.commit()
                 tickets_data.audit_ticket_registry_integrity(audit_conn)
                 reconcile_managed_skill_versions(audit_conn)

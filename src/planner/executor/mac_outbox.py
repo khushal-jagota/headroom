@@ -322,14 +322,10 @@ class MacOutbox:
                 )
                 # Reject an unsendable item before acknowledging its durable addition.
                 encode_message(
-                    WireMessage(WireMessageKind.envelope, "0" * 32, self._object(envelope))
+                    WireMessage(WireMessageKind.envelope, "0" * 32, as_object(envelope))
                 )
             self._notify()  # Only a committed item may wake sending.
             return envelope
-
-    @staticmethod
-    def _object(value: object) -> JsonObject:
-        return cast(JsonObject, type_adapter(JsonObject).validate_python(encode_value(value)))
 
     def _envelope(self, row: sqlite3.Row) -> QueuedEnvelope:
         value = json.loads(row["payload_json"])
@@ -521,7 +517,7 @@ class MacOutbox:
 
     async def _send_one(self, link: Link, envelope: QueuedEnvelope) -> None:
         while True:
-            response = await link.request(WireMessageKind.envelope, self._object(envelope))
+            response = await link.request(WireMessageKind.envelope, as_object(envelope))
             if response.kind is WireMessageKind.missing_files:
                 missing = type_adapter(tuple[FileManifest, ...]).validate_python(
                     response.payload.get("files")

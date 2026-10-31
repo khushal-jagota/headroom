@@ -180,7 +180,7 @@ def test_capture_keeps_historical_ticket_name_without_current_claim_authority(
     assert turn.claim is None and turn.claim_revision is None
 
 
-@pytest.mark.parametrize("evidence", ["unproved", "closed"])
+@pytest.mark.parametrize("evidence", ["stopping", "closed"])
 def test_vps_stop_requires_native_evidence_before_excluding_local_recovery(
     capture_database: Path, evidence: str
 ) -> None:

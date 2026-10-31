@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
-import time
-from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
@@ -28,6 +25,7 @@ from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.execution_identity import ExecutorIdentity
+from planner.executor.clock import now_ms
 from planner.executor.link_files import settled_io
 from planner.executor.mutations import write_ticket_mutation
 from planner.executor.protocol import (
@@ -36,7 +34,6 @@ from planner.executor.protocol import (
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
-    encode_value,
     type_adapter,
 )
 from planner.message_delivery import api, service
@@ -45,10 +42,6 @@ from planner.message_delivery.contracts import MessageDeliveryMode
 if TYPE_CHECKING:
     from planner.executor.vps_inbox import InboxStore
     from planner.executor.vps_runs import MacRuns
-
-
-def now_ms() -> int:
-    return time.time_ns() // 1_000_000
 
 
 class AgentWrites:
@@ -65,10 +58,9 @@ class AgentWrites:
         write = type_adapter(CliWrite).validate_python(envelope.payload)
         if write.child.conversation_id != envelope.conversation_id:
             raise ValueError("CLI conversation conflicts with envelope")
-        if write.operation in ("message.send", "ticket.request_help"):
-            principal = await settled_io(self.runs.authority, write.child)
-            return await self._native_message(envelope, write, principal, identity)
         principal = await settled_io(self.runs.authority, write.child)
+        if write.operation in ("message.send", "ticket.request_help"):
+            return await self._deliver_message(envelope, write, principal, identity)
         from planner.tickets.contracts import ReviewTransferNotice
         from planner.tickets.review_transfer import notify_review_transfers
 
@@ -78,17 +70,8 @@ class AgentWrites:
             # This read shares the receipt's BEGIN IMMEDIATE and domain write.
             # A separate post-probe read cannot fence closure committed while
             # the receipt transaction waits for its SQLite write lock.
-            current_assignment = connection.execute(
-                "SELECT principal_kind,principal_id FROM executor_child_assignments "
-                "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
-                "AND closed_at_ms IS NULL",
-                (
-                    write.child.executor_incarnation,
-                    write.child.child_id,
-                    write.child.conversation_id,
-                ),
-            ).fetchone()
-            if current_assignment is None or tuple(current_assignment) != (
+            current_assignment = self.store.runs.open_child_assignment(connection, write.child)
+            if current_assignment != (
                 principal.kind.value,
                 principal.id,
             ):
@@ -114,21 +97,6 @@ class AgentWrites:
                 connection.close()
         return receipt
 
-    def _resolve_native_recipient(
-        self, conn: sqlite3.Connection, write: CliWrite, principal: Principal
-    ) -> Principal:
-        from planner.message_delivery import api
-
-        body = write.arguments.get("body")
-        if not isinstance(body, dict):
-            raise PlannerError(ErrorCode.validation, "message body must be an object", {})
-        if write.operation == "message.send":
-            return api._principal(body.get("target"))
-        default = self._help_recipient(conn, write, principal)
-        if set(body) - {"message", "recipient"}:
-            raise PlannerError(ErrorCode.validation, "unknown help request field", {})
-        return api._principal(body["recipient"]) if body.get("recipient") else default
-
     def _help_recipient(
         self, conn: sqlite3.Connection, write: CliWrite, principal: Principal
     ) -> Principal:
@@ -143,47 +111,57 @@ class AgentWrites:
             )
         return data.read_ticket(conn, ticket_id).ceiling_holder
 
-    async def _native_message(
+    async def _deliver_message(
         self,
         envelope: QueuedEnvelope,
         write: CliWrite,
         principal: Principal,
         identity: ExecutorIdentity,
     ) -> AcceptanceReceipt:
-        return await deliver_native_message(
-            store=self.store,
-            envelope=envelope,
-            write=write,
-            principal=principal,
-            identity=identity,
-            clock=self.clock,
-            conversations=self.conversations,
-            resolve_recipient=self._resolve_native_recipient,
+        """Reserve before calling a provider; a replay never calls it again."""
+        previous, recipient, message, mode = await settled_io(
+            self._reserve_dispatch, envelope, write, principal, identity
         )
+        if previous is not None:
+            return previous
+        operation = NativeMessageOperation(envelope.sender_id, envelope.submission_id)
+        operation.in_commit = partial(self._record_delivery, envelope, write, recipient, operation)
+        connection = connect(self.db_path)
+        try:
+            try:
+                delivered = await service.send_message(
+                    self.conversations,
+                    connection,
+                    self.clock,
+                    RequestContext(principal),
+                    recipient,
+                    message,
+                    mode,
+                    sender_message_id=envelope.submission_id,
+                    native_message_operation=operation,
+                )
+                result = cast(JsonObject, api._result_json(delivered))
+            except PlannerError as error:
+                result = cast(JsonObject, error.to_payload())
+        finally:
+            connection.close()
 
+        def save() -> AcceptanceReceipt:
+            with self.store._transaction() as conn:
+                self.store.runs._connected(conn, identity)
+                return self._finish_dispatch(conn, envelope, result)
 
-type RecipientResolver = Callable[[sqlite3.Connection, CliWrite, Principal], Principal]
+        return await settled_io(save)
 
-
-async def deliver_native_message(
-    *,
-    store: InboxStore,
-    envelope: QueuedEnvelope,
-    write: CliWrite,
-    principal: Principal,
-    identity: ExecutorIdentity,
-    clock: Clock,
-    conversations: ConversationSystem,
-    resolve_recipient: RecipientResolver,
-) -> AcceptanceReceipt:
-    """Reserve dispatch before calling a provider; a replay never calls it again."""
-    prior = await settled_io(partial(store.preflight, envelope, identity=identity))
-    if prior is not None:
-        return prior
-
-    def admit() -> tuple[AcceptanceReceipt | None, Principal, str, MessageDeliveryMode]:
-        with store._transaction() as conn:
-            previous = store._preflight(conn, envelope, identity)
+    def _reserve_dispatch(
+        self,
+        envelope: QueuedEnvelope,
+        write: CliWrite,
+        principal: Principal,
+        identity: ExecutorIdentity,
+    ) -> tuple[AcceptanceReceipt | None, Principal, str, MessageDeliveryMode]:
+        with self.store._transaction() as conn:
+            previous = self.store._prior_receipt(conn, envelope, identity)
             if previous is not None:
                 return previous, principal, "", MessageDeliveryMode.queue
             body = write.arguments.get("body")
@@ -197,9 +175,13 @@ async def deliver_native_message(
                 if "mode" in body
                 else api._message_delivery_mode()
             )
-            recipient = resolve_recipient(conn, write, principal)
+            if write.operation == "message.send":
+                recipient = api._principal(body.get("target"))
+            else:
+                default = self._help_recipient(conn, write, principal)
+                recipient = api._principal(body["recipient"]) if body.get("recipient") else default
             service.require_reach(conn, principal, recipient)
-            store.install_files(envelope.file_dependencies)
+            self.store.install_files(envelope.file_dependencies)
             result: JsonObject = {
                 "target": {"kind": recipient.kind.value, "id": recipient.id},
                 "conversation_id": None,
@@ -213,27 +195,12 @@ async def deliver_native_message(
                 result,
                 now_ms(),
             )
-            conn.execute(
-                "INSERT INTO mac_inbox_positions VALUES (?,?,?,?,?,?) "
-                "ON CONFLICT(sender_id,conversation_id) DO UPDATE SET "
-                "sequence=excluded.sequence,submission_id=excluded.submission_id,"
-                "disposition=excluded.disposition,result_json=excluded.result_json",
-                (
-                    envelope.sender_id,
-                    envelope.conversation_id,
-                    envelope.sequence,
-                    envelope.submission_id,
-                    "dispatching",
-                    json.dumps(encode_value(reservation)),
-                ),
-            )
+            self.store._write_position(conn, envelope, reservation, dispatching=True)
             return None, recipient, message, mode
 
-    previous, recipient, message, mode = await settled_io(admit)
-    if previous is not None:
-        return previous
-
-    def complete(conn: sqlite3.Connection, result: JsonObject) -> AcceptanceReceipt:
+    def _finish_dispatch(
+        self, conn: sqlite3.Connection, envelope: QueuedEnvelope, result: JsonObject
+    ) -> AcceptanceReceipt:
         previous = conn.execute(
             "SELECT * FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?",
             (envelope.sender_id, envelope.conversation_id),
@@ -241,7 +208,7 @@ async def deliver_native_message(
         if previous is None or previous["submission_id"] != envelope.submission_id:
             raise ValueError("message inbox position changed during dispatch")
         if previous["disposition"] != "dispatching":
-            return store._receipt(previous)
+            return self.store._receipt(previous)
         disposition = (
             ReceiptDisposition.refused
             if "error" in result
@@ -252,7 +219,7 @@ async def deliver_native_message(
         if disposition is ReceiptDisposition.refused:
             from planner.executor.refusals import record_refused_write
 
-            record_refused_write(conn, store.db_path, envelope, result)
+            record_refused_write(conn, self.db_path, envelope, result)
         receipt = AcceptanceReceipt(
             envelope.sender_id,
             envelope.submission_id,
@@ -261,21 +228,15 @@ async def deliver_native_message(
             result,
             now_ms(),
         )
-        conn.execute(
-            "UPDATE mac_inbox_positions SET disposition=?,result_json=? "
-            "WHERE sender_id=? AND conversation_id=?",
-            (
-                disposition.value,
-                json.dumps(encode_value(receipt)),
-                envelope.sender_id,
-                envelope.conversation_id,
-            ),
-        )
+        self.store._write_position(conn, envelope, receipt)
         return receipt
 
-    operation = NativeMessageOperation(envelope.sender_id, envelope.submission_id)
-
-    def recorded(
+    def _record_delivery(
+        self,
+        envelope: QueuedEnvelope,
+        write: CliWrite,
+        recipient: Principal,
+        operation: NativeMessageOperation,
         conn: sqlite3.Connection,
         conversation_id: str,
         payload: object,
@@ -307,39 +268,12 @@ async def deliver_native_message(
         ).fetchone()
         if current is None or current[0] != envelope.submission_id or current[1] != "dispatching":
             return
-        complete(
+        self._finish_dispatch(
             conn,
+            envelope,
             {
                 "target": {"kind": recipient.kind.value, "id": recipient.id},
                 "conversation_id": conversation_id,
                 **fate,
             },
         )
-
-    operation.in_commit = recorded
-    connection = connect(store.db_path)
-    try:
-        try:
-            delivered = await service.send_message(
-                conversations,
-                connection,
-                clock,
-                RequestContext(principal),
-                recipient,
-                message,
-                mode,
-                sender_message_id=envelope.submission_id,
-                native_message_operation=operation,
-            )
-            result = cast(JsonObject, api._result_json(delivered))
-        except PlannerError as error:
-            result = cast(JsonObject, error.to_payload())
-    finally:
-        connection.close()
-
-    def save() -> AcceptanceReceipt:
-        with store._transaction() as conn:
-            store.runs._connected(conn, identity)
-            return complete(conn, result)
-
-    return await settled_io(save)

@@ -21,6 +21,7 @@ import pytest
 from pydantic import TypeAdapter
 from tests.support.executor_control import paused_outbox
 from tests.support.executor_https import HttpsProxy, serve_executor_app
+from tests.support.executor_inbox import lookup_receipt
 
 from planner.conversation.backends.contracts import (
     BackendChild,
@@ -455,8 +456,7 @@ async def boot(
     root: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    native_factory: Callable[[ResolvedConversationStart], BackendChildFactory]
-    | None = None,
+    native_factory: Callable[[ResolvedConversationStart], BackendChildFactory] | None = None,
     backend_key: ConversationBackendKey = ConversationBackendKey.codex,
     model: str = "scripted",
     reasoning_effort: str | None = None,
@@ -1152,8 +1152,10 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                     with pytest.raises(TimeoutError):
                         await asyncio.wait_for(watcher.next_item(), 0.05)
                     assert (
-                        harness.endpoint.inbox.store.lookup_receipt(
-                            pending[0].sender_id, pending[0].submission_id
+                        lookup_receipt(
+                            harness.endpoint.inbox.store,
+                            pending[0].sender_id,
+                            pending[0].submission_id,
                         )
                         is not None
                     )
@@ -1183,7 +1185,7 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
             assert native_child.ticket_id is not None
             artifact = harness.mac.paths.artifacts / native_child.ticket_id / "queued.txt"
             artifact.parent.mkdir(parents=True, exist_ok=True)
-            artifact.write_text("a refused write does not wait for these bytes")
+            artifact.write_text("bytes published before a queued payload refusal")
             async with paused_outbox(harness.mac.outbox):
                 malformed = harness.mac.outbox.add(
                     OutboxEntry(
@@ -1210,8 +1212,10 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
                         conversation_id=child.conversation_id,
                         kind=EnvelopeKind.cli_write,
                         payload=as_object(CliWrite("ticket.unsupported", {}, child, None)),
-                    )
+                    ),
+                    ticket_id=native_child.ticket_id,
                 )
+                assert assigned_refusal.file_dependencies
                 await harness.native.raise_ask()
                 following = harness.mac.outbox.pending()[-1]
                 assert following.sequence == assigned_refusal.sequence + 1
@@ -1230,6 +1234,11 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
             assigned = harness.mac.outbox.lookup(assigned_refusal.submission_id)
             assert assigned is not None and assigned.receipt is not None
             assert assigned.receipt.disposition is ReceiptDisposition.refused
+            assert "validation" in str(assigned.receipt.result)
+            published = harness.endpoint.inbox.store.file_target(
+                assigned_refusal.file_dependencies[0]
+            )
+            assert published.read_bytes() == artifact.read_bytes()
             for envelope in (malformed, unassigned, assigned_refusal):
                 stale = await harness.endpoint.inbox.accept(envelope, harness.mac.identity)
                 assert stale.disposition is ReceiptDisposition.accepted and stale.result == {}
@@ -1246,19 +1255,14 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
                 assert "validation" in refusals[0]["detail"]
             finally:
                 connection.close()
-            accepted = harness.endpoint.inbox.store.lookup_receipt(
-                following.sender_id, following.submission_id
+            accepted = lookup_receipt(
+                harness.endpoint.inbox.store, following.sender_id, following.submission_id
             )
             assert accepted is not None and accepted.disposition is ReceiptDisposition.accepted
             assert harness.events("permission_asked") == 1
-            with connect(harness.endpoint.db_path) as connection:
-                assert (
-                    connection.execute(
-                        "SELECT stop_state FROM mac_runs WHERE conversation_id=?",
-                        (child.conversation_id,),
-                    ).fetchone()[0]
-                    == "unproved"
-                )
+            await asyncio.wait_for(harness.system.kill(child.conversation_id), 5)
+            assert harness.endpoint.runs.store.child_assignment(child) is None
+            assert all(run.retirement_confirmed for run in harness.endpoint.runs.retained_runs())
         finally:
             await harness.close()
 
@@ -1315,8 +1319,8 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
             await eventually(
                 lambda: harness.endpoint.cut_count == 1, "Receipt cut was not exercised"
             )
-            first_receipt = harness.endpoint.inbox.store.lookup_receipt(
-                pending[0].sender_id, pending[0].submission_id
+            first_receipt = lookup_receipt(
+                harness.endpoint.inbox.store, pending[0].sender_id, pending[0].submission_id
             )
             assert first_receipt is not None
             assert first_receipt.payload_sha256 == pending[0].payload_sha256
@@ -1326,8 +1330,8 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
             )
             assert harness.events("permission_asked") == 1
             assert harness.native.answers == []
-            receipt = harness.endpoint.inbox.store.lookup_receipt(
-                pending[0].sender_id, pending[0].submission_id
+            receipt = lookup_receipt(
+                harness.endpoint.inbox.store, pending[0].sender_id, pending[0].submission_id
             )
             assert receipt == first_receipt
 
@@ -1503,15 +1507,22 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
             generation = harness.mac.identity.connection_generation
             monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 0.15)
             emitted: list[ChildCommand] = []
-            emit = harness.endpoint.runs._emit_command
+            link = harness.endpoint.runs.link
+            tell = link.tell
 
-            async def record_command(command: ChildCommand, *args: Any) -> bool:
-                result = await emit(command, *args)
-                if result:
-                    emitted.append(command)
+            async def record_command(
+                kind: WireMessageKind,
+                payload: JsonObject,
+                *,
+                request_id: str | None = None,
+                admit: Callable[[], bool] | None = None,
+            ) -> bool:
+                result = await tell(kind, payload, request_id=request_id, admit=admit)
+                if result and kind is WireMessageKind.command:
+                    emitted.append(TypeAdapter(ChildCommand).validate_python(payload))
                 return result
 
-            monkeypatch.setattr(harness.endpoint.runs, "_emit_command", record_command)
+            monkeypatch.setattr(link, "tell", record_command)
             first_chunk = asyncio.Event()
             claim_download = GenerationTransfers.claim_download
 
@@ -1894,8 +1905,8 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             assert harness.events("tool_call_finished") == 0
             assert len(refusals) == 1
             assert (
-                harness.endpoint.inbox.store.lookup_receipt(
-                    refusals[0].sender_id, refusals[0].submission_id
+                lookup_receipt(
+                    harness.endpoint.inbox.store, refusals[0].sender_id, refusals[0].submission_id
                 )
                 == refusals[0]
             )
@@ -2249,9 +2260,11 @@ def test_stop_waits_for_queued_receipt_after_direct_result_and_reconnect(
                 assert harness.endpoint.runs.link is not None
                 harness.endpoint.runs.link.close()
                 await eventually(
-                    lambda: harness.mac.identity.connection_generation > generation
-                    and harness.endpoint.runs.identity == harness.mac.identity
-                    and harness.endpoint.runs.ready,
+                    lambda: (
+                        harness.mac.identity.connection_generation > generation
+                        and harness.endpoint.runs.identity == harness.mac.identity
+                        and harness.endpoint.runs.ready
+                    ),
                     "stop did not reconcile on the replacement connection",
                 )
                 assert not stopping.done()
@@ -2328,11 +2341,11 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                     accepted.append(envelope)
                 return receipt
 
-            async def observed_hint(outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
+            def observed_hint(outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
                 pending = harness.endpoint.runs.pending_commands.get(outcome.command_id)
-                if pending is not None and pending[0].operation is ChildOperation.stop:
+                if pending is not None and pending.command.operation is ChildOperation.stop:
                     stop_hint.set()
-                await resolve(outcome, stop_proven=stop_proven)
+                resolve(outcome, stop_proven=stop_proven)
 
             async def cancel_native() -> None:
                 pass
@@ -2353,9 +2366,9 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             await asyncio.wait_for(event_waiting.wait(), 5)
             await asyncio.wait_for(stop_hint.wait(), 5)
             stops = [
-                (command, future)
-                for command, future in harness.endpoint.runs.pending_commands.values()
-                if command.operation is ChildOperation.stop
+                (pending.command, pending.future)
+                for pending in harness.endpoint.runs.pending_commands.values()
+                if pending.command.operation is ChildOperation.stop
             ]
             assert stops and all(not future.done() for _, future in stops)
             assert harness.endpoint.runs.store.child_assignment(reference) is not None
@@ -2388,8 +2401,8 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                 )
                 assert all(row.sequence < stop_sequence for row in (application, final_event))
                 for row in (application, final_event):
-                    receipt = harness.endpoint.inbox.store.lookup_receipt(
-                        row.sender_id, row.submission_id
+                    receipt = lookup_receipt(
+                        harness.endpoint.inbox.store, row.sender_id, row.submission_id
                     )
                     assert receipt is None  # The later stop has advanced the single inbox position.
                 assert (
@@ -2664,8 +2677,8 @@ def test_reconnect_ready_precedes_retained_output_drain(
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "Retained output did not drain"
             )
-            receipt = harness.endpoint.inbox.store.lookup_receipt(
-                queued[0].sender_id, queued[0].submission_id
+            receipt = lookup_receipt(
+                harness.endpoint.inbox.store, queued[0].sender_id, queued[0].submission_id
             )
             assert receipt is not None and receipt.result.get("applied") is True
             assert await harness.endpoint.inbox.accept(queued[0], harness.mac.identity) == receipt
