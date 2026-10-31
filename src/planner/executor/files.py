@@ -94,6 +94,40 @@ def regular_descriptor(path: Path) -> Iterator[int]:
         os.close(descriptor)
 
 
+def copy_hashed(
+    incoming: int,
+    outgoing: int,
+    *,
+    byte_limit: int | None = None,
+    skip_unreadable_source: bool = False,
+) -> tuple[str, int]:
+    """Copy bounded blocks, returning the digest and length.
+
+    Capture may skip a failed source read (length -1), never a failed write.
+    """
+    digest = hashlib.sha256()
+    count = 0
+    while True:
+        try:
+            block = os.read(incoming, FILE_CHUNK_BYTES)
+        except (FileNotFoundError, NotADirectoryError, PermissionError):
+            if skip_unreadable_source:
+                return "", -1
+            raise
+        if not block:
+            return digest.hexdigest(), count
+        count += len(block)
+        if byte_limit is not None and count > byte_limit:
+            raise ValueError("file exceeds manifest length")
+        digest.update(block)
+        view = memoryview(block)
+        while view:
+            written = os.write(outgoing, view)
+            if not written:
+                raise OSError("file write made no progress")
+            view = view[written:]
+
+
 def copy_verified(source: Path, destination: Path, manifest: FileManifest) -> None:
     """Copy bounded blocks into a new inode and verify complete bytes."""
     with regular_descriptor(source) as incoming, directory_descriptor(destination.parent) as parent:
@@ -104,20 +138,8 @@ def copy_verified(source: Path, destination: Path, manifest: FileManifest) -> No
             dir_fd=parent,
         )
         try:
-            digest = hashlib.sha256()
-            count = 0
-            while block := os.read(incoming, FILE_CHUNK_BYTES):
-                count += len(block)
-                if count > manifest.byte_count:
-                    raise ValueError("file exceeds manifest length")
-                digest.update(block)
-                view = memoryview(block)
-                while view:
-                    written = os.write(outgoing, view)
-                    if not written:
-                        raise OSError("file write made no progress")
-                    view = view[written:]
-            if count != manifest.byte_count or digest.hexdigest() != manifest.sha256:
+            digest, count = copy_hashed(incoming, outgoing, byte_limit=manifest.byte_count)
+            if count != manifest.byte_count or digest != manifest.sha256:
                 raise ValueError("incomplete or corrupt file")
             fsync_file(outgoing)
         except BaseException:

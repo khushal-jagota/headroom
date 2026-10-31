@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-import hashlib
 import json
 import logging
 import os
@@ -20,13 +19,13 @@ from uuid import uuid4
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
 from planner.executor.configuration import (
-    FILE_CHUNK_BYTES,
     FILE_MODIFIED_WINDOW_NS,
     MAX_TRANSFERS,
     ExecutorPaths,
 )
 from planner.executor.files import (
     contained_path,
+    copy_hashed,
     directory_descriptor,
     fsync_directory,
     fsync_file,
@@ -227,25 +226,15 @@ class MacOutbox:
                         )
                         continue
                     temporary = self._blobs / (".tmp-" + uuid4().hex)
-                    digest = hashlib.sha256()
-                    count = 0
                     try:
                         with os.fdopen(
                             os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
                             "wb",
                         ) as outgoing:
                             before = os.fstat(incoming)
-                            while True:
-                                try:
-                                    block = os.read(incoming, FILE_CHUNK_BYTES)
-                                except (FileNotFoundError, NotADirectoryError, PermissionError):
-                                    count = -1
-                                    break
-                                if not block:
-                                    break
-                                outgoing.write(block)
-                                digest.update(block)
-                                count += len(block)
+                            sha256, count = copy_hashed(
+                                incoming, outgoing.fileno(), skip_unreadable_source=True
+                            )
                             after = os.fstat(incoming)
                             if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
                                 after.st_size,
@@ -258,7 +247,6 @@ class MacOutbox:
                                 continue
                             outgoing.flush()
                             fsync_file(outgoing.fileno())
-                        sha256 = digest.hexdigest()
                         target = self._blobs / sha256
                         if not target.exists():
                             os.replace(temporary, target)
