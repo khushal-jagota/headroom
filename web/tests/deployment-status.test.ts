@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deploymentStatusExpiry, deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard } from "../src/lib/deploymentStatus";
+import { deploymentStatusDetail, deploymentStatusExpiry, deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard } from "../src/lib/deploymentStatus";
 import type { ReleaseSnapshot } from "../src/lib/releaseMonitor";
 import type { DeploymentStatus } from "../src/lib/types";
 
@@ -14,7 +14,7 @@ describe("deployment status precedence and expiry", () => {
     const canceled = status({ state: "idle", outcome: "cancelled" });
     expect(resolveDeploymentStatus(canceled, "connected", now)).toBe("connected");
     expect(resolveDeploymentStatus(canceled, "reconnecting", now)).toBe("reconnecting");
-    expect(resolveDeploymentStatus(status({ state: "unknown" }), "connected", now)).toBe("reconnecting");
+    expect(resolveDeploymentStatus(status({ state: "unknown" }), "connected", now)).toBe("unknown");
   });
   it("keeps failed deployments visible over fresh progress, recovery, and disconnection", () => {
     for (const outcome of ["failed", "rolled_back"] as const) {
@@ -33,12 +33,40 @@ describe("deployment status precedence and expiry", () => {
       expect(resolveDeploymentStatus(progress, "connected", now)).toBe(state);
       expect(deploymentStatusExpiry(progress, now)).toBe(now + 1000);
       expect(deploymentStatusExpiryDelay(progress, now)).toBe(1001);
-      expect(resolveDeploymentStatus(progress, "connected", now + 1000)).toBe("reconnecting");
+      expect(resolveDeploymentStatus(progress, "connected", now + 1000)).toBe("unknown");
       expect(deploymentStatusExpiryDelay(progress, now + 1000)).toBeNull();
       for (const valid_until of [null, "invalid", new Date(now - 1).toISOString()]) {
         const expired = status({ state, valid_until });
-        expect(resolveDeploymentStatus(expired, "connected", now)).toBe("reconnecting");
+        expect(resolveDeploymentStatus(expired, "connected", now)).toBe("unknown");
         expect(deploymentStatusExpiryDelay(expired, now)).toBeNull();
+      }
+    }
+  });
+  it("retires only an installed report notice at a fixed deadline, including stale progress", () => {
+    const deadline = now + 300_000;
+    for (const state of ["unknown", "restarting"] as const) {
+      const installed = status({ state, installation_confirmed: true,
+        valid_until: new Date(now).toISOString(),
+        unknown_display_until: new Date(deadline).toISOString() });
+      expect(resolveDeploymentStatus(installed, "connected", now)).toBe("unknown");
+      expect(deploymentStatusDetail(installed, "unknown")).toContain("No action is needed from you.");
+      expect(deploymentStatusExpiryDelay(installed, now)).toBe(300_001);
+      expect(resolveDeploymentStatus(installed, "connected", deadline - 1)).toBe("unknown");
+      expect(resolveDeploymentStatus(installed, "connected", deadline)).toBe("connected");
+      // A reloaded body retains the server deadline, rather than starting a new timer.
+      expect(resolveDeploymentStatus({ ...installed }, "connected", deadline + 1)).toBe("connected");
+      expect(resolveDeploymentStatus(installed, "reconnecting", now)).toBe("reconnecting");
+      for (const unknown_display_until of [null, undefined, "invalid"]) {
+        expect(resolveDeploymentStatus({ ...installed, unknown_display_until }, "connected", deadline)).toBe("unknown");
+      }
+      const held = { ...installed, installation_confirmed: false, work_paused: true };
+      expect(resolveDeploymentStatus(held, "connected", deadline + 86_400_000)).toBe("unknown");
+      expect(deploymentStatusExpiryDelay(held, now)).toBeNull();
+      expect(deploymentStatusDetail(held, "unknown")).toContain("Chief review is required.");
+      expect(deploymentStatusDetail(held, "unknown")).toContain("Work remains paused.");
+      expect(deploymentStatusDetail({ ...held, work_paused: false }, "unknown")).not.toContain("paused");
+      for (const outcome of ["failed", "rolled_back"] as const) {
+        expect(resolveDeploymentStatus({ ...installed, outcome }, "connected", deadline)).toBe("problem");
       }
     }
   });
@@ -85,6 +113,7 @@ describe("the one status card", () => {
     // A rolled back release still differs from the booted one, so the update prompt
     // would otherwise invite a reload into the deploy that just failed.
     expect(resolveStatusCard("problem", release({ updateAvailable: true }))).toBe("Problem");
+    expect(resolveStatusCard("unknown", release({ updateAvailable: true }))).toBe("Deployment outcome unknown");
     for (const state of ["preparing", "restarting", "back_up", "reconnecting", "connected"] as const) {
       expect(resolveStatusCard(state, release({ updateAvailable: true }))).toBe("update-ready");
     }

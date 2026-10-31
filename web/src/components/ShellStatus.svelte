@@ -3,7 +3,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import type { NavigationHealth } from "../lib/navigation/owner";
   import type { ConnectionStatus } from "../lib/changeStream";
-  import { deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard, type StatusCardKey } from "../lib/deploymentStatus";
+  import { deploymentStatusDetail, deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard, type StatusCardKey } from "../lib/deploymentStatus";
   import { queries } from "../lib/queryCatalogue";
   import { releaseState, requestReleaseReload } from "../lib/releaseMonitor";
   import UpdateActions from "./UpdateActions.svelte";
@@ -18,6 +18,7 @@
     Deploying: { word: "Deploying", state: "changing", action: null },
     Deployed: { word: "Deployed", state: "settled", action: null },
     Reconnecting: { word: "Reconnecting", state: "changing", action: null },
+    "Deployment outcome unknown": { word: "Deployment outcome unknown", state: "settled", action: null, sentence: true },
     Problem: { word: "Problem", state: "wrong", action: null },
     "update-ready": { word: "New version ready", state: "settled", action: "Refresh page" },
     // A held update states its own reason, so it carries no control. The sentence
@@ -30,6 +31,7 @@
   const updates = createQuery(() => queries.updates());
   const deployment = createQuery(() => queries.deploymentStatus());
   const statusState = $derived(resolveDeploymentStatus(deployment.data, connectionState, clock));
+  const statusDetail = $derived(deploymentStatusDetail(deployment.data, statusState));
   const baseStatusWord = $derived(resolveStatusCard(statusState, $releaseState));
   const hasOwnerUpdate = $derived(activeUpdateRequest(updates.data?.request) ||
     (updates.data?.configured && usableUpdate(updates.data.available, clock)) || ["failed", "cancelled"].includes(updates.data?.request?.state ?? ""));
@@ -175,8 +177,8 @@
   <span class="status-mark" aria-hidden="true"></span>
   <span class={entry.sentence ? "status-sentence" : "status-word"}>{entry.word}</span>
   {#if entry.action}<span class="status-action">{entry.action}</span>{/if}
-  {#if deployment.data?.detail && (statusState === "problem" || statusState === "preparing" || statusState === "restarting" || deployment.data.state === "unknown")}
-    <span class="status-detail">{deployment.data.detail}</span>
+  {#if statusDetail}
+    <span class="status-detail deployment-detail">{statusDetail}</span>
   {/if}
 {/snippet}
 
@@ -195,9 +197,6 @@
           {:else}
             <div class="status-base">{@render cardBody(card)}</div>
           {/if}
-        {/if}
-        {#if deployment.data?.detail && (displayedWord === "Problem" || (deployment.data?.state === "unknown" && displayedWord === "Reconnecting"))}
-          <div class="deployment-detail">{deployment.data.detail}</div>
         {/if}
         {#if (displayedWord === "owner-update" || displayedWord === "Problem") && updates.data}
           <UpdateActions status={updates.data} now={clock} />

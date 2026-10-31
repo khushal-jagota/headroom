@@ -49,11 +49,17 @@ Failure before that commit restores the snapshot and the prior app, then proves 
 
 After the commit, ordinary work opens. A later skill failure or a failed published-route check leaves the installed app in place and reports the workflow incomplete. Those failures do not restore the database and do not mark the app unhealthy. The finalizer records the exact attempt, the observed health and recovery failures, the installed SHA, and each workflow check on its own. A confirmed cancellation before installation is reported as neutral. Missing evidence stays uncertain. A stale finalizer cannot overwrite a replacement attempt. If the report itself cannot be read, the saved evidence remains authoritative and the report says it is uncertain. A reporting failure does not change what the update does. An intentional later code rollback does not rewind the database by itself. There is no arbitrary-SHA rollback button. The owner selects another retained release.
 
+Both lifecycle finalizers run with host Python and source from the checked-out control revision. They do not use the disposable deployment environment or the installed app. The launcher excludes ambient Python packages. A missing source file or a failed report write fails the reporting step. It does not restart the app or restore data.
+
+Cleanup rejects any removal target that overlaps the control checkout or the resolved Python interpreter. It checks all targets before a service action or deletion. Publication cleanup also requires retained proof. If a rehearsal attempted installation, cleanup requires a terminal record for that exact attempt. If either condition fails, cleanup preserves the temporary evidence and reports its refusal. This protects a report from future step reorders. These startup checks do not promise race-free containment of concurrent filesystem changes.
+
 The published route check runs after skill reconciliation. The operator sets the Actions variable `PANELS_PUBLISHED_ORIGIN` to the private HTTPS origin. The helper requests `/api/meta` with HTTP/2 and rejects anything that did not negotiate HTTP/2. That check is separate from the loopback health check.
 
 Interrupted agent sessions are captured outside the snapshot. After admission, eligible conversations get one recovery prompt through the normal send path. Nothing uncertain is replayed. See [Conversations](conversations.md).
 
-If the runner disappears before commit, work stays closed. Expired lifecycle evidence becomes a visible recovery-required state. Expiry does not admit traffic and does not restore anything. The owner continues on the deployment runner with an explicit snapshot and fallback. No maximum outage is promised.
+If the runner disappears before commit, work stays closed. Expired lifecycle evidence reports an unconfirmed installation and required Chief review. Expiry does not admit traffic, restore data, or prove that a restart is necessary. No maximum outage is promised. When a recorded commit matches the available app and admission is open, only the final report remains uncertain. That owner notice ends after five minutes without changing the evidence. See [Updates](updates.md) for the display rules.
+
+Deployment attention stays beside the lifecycle, outside database snapshots and temporary cleanup. Panels sends the Chief a real system prompt through the normal conversation path. Its durable message identity prevents duplicate prompts after a lost receipt. A pending record never means that delivery occurred. If startup or conversation admission holds agent work, attention remains pending until admission permits delivery. An uncertain delivery stays uncertain and does not automatically resend.
 
 ## An older database that still has cancelled Tickets
 

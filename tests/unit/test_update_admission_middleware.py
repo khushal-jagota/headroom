@@ -32,8 +32,8 @@ STALE_SHA = "b" * 40
 STATUS_PATHS = ("/api/health", "/api/meta", "/api/deployment-status", "/api/updates")
 WAIT_PAYLOAD = {
     "detail": (
-        "Normal work waits for the deployment runner. "
-        "Recovery requires the owner if progress expires."
+        "Installation is unconfirmed. Work remains paused. "
+        "Chief review is required."
     )
 }
 STALE_PAYLOAD = {
