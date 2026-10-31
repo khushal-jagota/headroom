@@ -34,7 +34,6 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
-from planner.execution_identity import ChildReference
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
@@ -61,9 +60,7 @@ def claude_registry(
         clients.append(scripted)
         return scripted
 
-    def factory(
-        resolved: ResolvedConversationStart, capability: str, reference: ChildReference
-    ) -> BackendChildFactory:
+    def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
         return ClaudeAgentSdkBackendChildFactory(
             ClaudeAgentSdkChildLaunch(claude_executable=Path("/unused/claude")),
             client_factory=client,

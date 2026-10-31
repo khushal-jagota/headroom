@@ -41,12 +41,6 @@ SENTINELS: dict[str, tuple[object, ...]] = {
         123,
         None,
     ),
-    "executor_command_outcomes": (
-        "incarnation",
-        "command",
-        '{"status":"uncertain","opaque":"Exact α bytes"}',
-        0,
-    ),
     "conversation_video_uploads": (
         "upload",
         '{"kind":"ticket","id":"ticket-sentinel"}',

@@ -12,13 +12,26 @@ import stat
 import tempfile
 from pathlib import Path
 
+from planner.conversation.backends.codex_app_server.login import codex_home
 from planner.conversation.backends.contracts import BackendSpawnFailed
+from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import PlannerError
+from planner.environments.hermes_home import resolve_planner_home
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.protocol import CanonicalSkillSnapshot, CanonicalSkillSource
 from planner.managed_skills import read_all_skill_sources, skill_description
 from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES, provision_native_backend_skills
 from planner.worker_types.store import read_definitions
+
+
+def native_skill_home(backend: ConversationBackendKey) -> Path:
+    """Use the same native account home as the selected provider."""
+    if backend is ConversationBackendKey.codex:
+        return codex_home(os.environ)
+    if backend is ConversationBackendKey.hermes:
+        return resolve_planner_home()
+    configured_home = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    return Path(configured_home).expanduser() if configured_home else Path.home() / ".claude"
 
 
 def validate_skill_snapshot(snapshot: CanonicalSkillSnapshot) -> None:

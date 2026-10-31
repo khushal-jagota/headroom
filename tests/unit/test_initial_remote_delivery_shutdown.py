@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, cast
@@ -228,14 +227,13 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
         )
 
     async def run() -> None:
-        endpoint.runs.pending_commands[command.command_id] = (
-            command,
-            asyncio.get_running_loop().create_future(),
-        )
+        stopping = asyncio.create_task(endpoint.runs.send_command(command))
+        await asyncio.sleep(0)
         actual = CommandOutcome(command.command_id, reference, CommandDisposition.succeeded, {})
         receipt = await endpoint.inbox.accept(envelope(actual, sequence=1), IDENTITY)
         assert receipt.disposition is ReceiptDisposition.accepted
-        assert tmp_db.execute("SELECT count(*) FROM executor_command_outcomes").fetchone()[0] == 1
+        assert receipt.result == {"recorded": True}
+        assert await asyncio.wait_for(stopping, 2) == actual
         assert endpoint.inbox.store.runs.child_assignment(reference) is None
         with pytest.raises(PlannerError, match="assignment"):
             endpoint.runs.authority(reference)
@@ -243,17 +241,12 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
             envelope(replace(actual, command_id="invented-command"), sequence=2), IDENTITY
         )
         assert refused.disposition is ReceiptDisposition.refused
-        # The first native result cannot be rewritten, even through historical admission.
+        # Completion does not renew authority for another publication.
         conflict = await endpoint.inbox.accept(
             envelope(replace(actual, disposition=CommandDisposition.uncertain), sequence=3),
             IDENTITY,
         )
         assert conflict.disposition is ReceiptDisposition.refused
-        assert "successful exact-child stop" in str(conflict.result)
-        stored = json.loads(
-            tmp_db.execute("SELECT outcome_json FROM executor_command_outcomes").fetchone()[0]
-        )
-        assert stored["disposition"] == "succeeded"
 
     asyncio.run(run())
 

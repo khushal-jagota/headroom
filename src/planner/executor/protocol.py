@@ -745,14 +745,12 @@ class ControlMessageWriter(Protocol):
     def is_closing(self) -> bool: ...
 
 
-class OutboxLink(Protocol):
-    async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage: ...
-
-    async def put_file(
-        self, envelope: QueuedEnvelope, snapshot: FileSnapshot
-    ) -> AcceptanceReceipt | None:
-        """Stage immutable bytes, or return the item's permanent refusal receipt."""
-        ...
+def payload_child(payload: JsonObject) -> JsonObject | None:
+    child = payload.get("child")
+    if not isinstance(child, dict):
+        ask = payload.get("ask")
+        child = ask.get("child") if isinstance(ask, dict) else None
+    return child if isinstance(child, dict) else None
 
 
 def encode_value(value: object) -> JsonValue:

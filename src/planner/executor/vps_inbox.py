@@ -42,6 +42,7 @@ from planner.executor.protocol import (
     TransactionalWriter,
     as_object,
     decode_event_arguments,
+    payload_child,
     type_adapter,
 )
 from planner.executor.store import ExecutorStore, VpsDatabase
@@ -276,11 +277,9 @@ class InboxStore(VpsDatabase):
         ):
             raise _invalid("Envelope digest does not match content")
         if check_files and envelope.file_dependencies:
-            child = envelope.payload.get("child")
-            if not isinstance(child, dict):
-                ask = envelope.payload.get("ask")
-                child = ask.get("child") if isinstance(ask, dict) else None
-            reference = type_adapter(ChildReference).validate_python(child)
+            reference = type_adapter(ChildReference).validate_python(
+                payload_child(envelope.payload)
+            )
             assignment = connection.execute(
                 "SELECT principal_kind,principal_id FROM executor_child_assignments "
                 "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
@@ -361,9 +360,11 @@ class MacInbox:
                 if (
                     envelope.kind is EnvelopeKind.child_stopped
                     and previous.disposition is ReceiptDisposition.accepted
+                    and previous.result.get("recorded") is True
                 ):
                     await self.runs._resolve_command(
-                        type_adapter(CommandOutcome).validate_python(envelope.payload)
+                        type_adapter(CommandOutcome).validate_python(envelope.payload),
+                        stop_proven=True,
                     )
                 return previous
             return await self._apply_envelope(envelope, identity)
@@ -451,7 +452,7 @@ class MacInbox:
                 partial(
                     self.store.accept,
                     envelope,
-                    lambda conn, row: self._command_outcome(conn, outcome),
+                    lambda conn, row: cast(JsonObject, {"recorded": True}),
                     now_ms(),
                     identity=identity,
                 )
@@ -492,7 +493,3 @@ class MacInbox:
             )
 
         raise ValueError("unknown executor envelope")
-
-    def _command_outcome(self, conn: sqlite3.Connection, outcome: CommandOutcome) -> JsonObject:
-        self.runs.store.record_command_outcome_in_transaction(conn, outcome, output_confirmed=True)
-        return {"recorded": True}

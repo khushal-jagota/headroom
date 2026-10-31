@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
-import os
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -14,9 +13,6 @@ from pathlib import Path
 from typing import Literal, cast
 from uuid import uuid4
 
-from planner.conversation.backends.claude_agent_sdk import ClaudeAgentSdkBackendChildFactory
-from planner.conversation.backends.codex_app_server import CodexAppServerBackendChildFactory
-from planner.conversation.backends.codex_app_server.login import codex_home
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
@@ -31,7 +27,6 @@ from planner.conversation.backends.contracts import (
     SessionLoadFailed,
     TurnToken,
 )
-from planner.conversation.backends.hermes_acp import HermesAcpBackendChildFactory
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ConversationBackendKey,
@@ -42,14 +37,16 @@ from planner.conversation.events import ConversationTurnEnding, PlanEntry, ToolC
 from planner.conversation.logic.addressed_reply import with_runtime_prompt_context
 from planner.conversation.message_content import MessageContent, MessageFile
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.production_backends import production_backend_launches
-from planner.environments.hermes_home import resolve_planner_home
+from planner.conversation.production_backends import production_backend_child_factories
 from planner.execution_identity import (
     AskKind,
     AskReference,
     ChildReference,
 )
 from planner.executor.configuration import (
+    EXECUTOR_CAPABILITY_ENV,
+    EXECUTOR_CHILD_ID_ENV,
+    EXECUTOR_ROOT_ENV,
     MAX_TOOL_DETAIL_CHARACTERS,
     NATIVE_SKILLS_DIR_ENV,
     NATIVE_WORKER_CONTEXT,
@@ -95,7 +92,7 @@ from planner.executor.protocol import (
     encode_value,
     type_adapter,
 )
-from planner.executor.skills import install_native_skill_snapshot
+from planner.executor.skills import install_native_skill_snapshot, native_skill_home
 from planner.workspace_localization import localize_workspace
 
 
@@ -141,15 +138,15 @@ class RunningChild:
     reference: ChildReference
     capability: str
     native: BackendChild
-    ticket_id: str | None = None
+    ticket_id: str
+    launch_input: StartRun
+    localized_start: ResolvedConversationStart
+    backend_key: ConversationBackendKey
     active_turn: TurnToken | None = None
     asks: dict[str, AskReference] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    launch_input: StartRun | None = None
     model: str | None = None
     reasoning_effort: str | None = None
-    backend_key: ConversationBackendKey | None = None
-    localized_start: ResolvedConversationStart | None = None
 
 
 class NativeEventSink:
@@ -332,13 +329,12 @@ class MacRunner:
         *,
         incarnation: str,
         outbox: MacOutboxWriter,
-        factory: Callable[[ResolvedConversationStart, str, ChildReference], BackendChildFactory]
-        | None = None,
+        factory: Callable[[ResolvedConversationStart], BackendChildFactory] | None = None,
         panels_server_url: str = "",
         connection: Callable[[], Link | None] = lambda: None,
         ready: Callable[[], bool] = lambda: False,
         message_files: ConversationMessageFiles,
-        paths: ExecutorPaths | None = None,
+        paths: ExecutorPaths,
         workspace_home: Path | None = None,
     ) -> None:
         self.workspace_home = workspace_home or Path.home()
@@ -354,7 +350,6 @@ class MacRunner:
         self.factory = factory or self._factory(panels_server_url)
         self.message_files = message_files
         self._children: dict[str, RunningChild] = {}
-        self.prepare_inputs: Callable[[ChildCommand], Awaitable[None]] | None = self._prepare_inputs
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
         self.admission_stopped = False
@@ -440,47 +435,11 @@ class MacRunner:
 
     def _factory(
         self, server_url: str
-    ) -> Callable[[ResolvedConversationStart, str, ChildReference], BackendChildFactory]:
-        def factory(
-            resolved: ResolvedConversationStart, capability: str, reference: ChildReference
-        ) -> BackendChildFactory:
-            launches = production_backend_launches(panels_server_url=server_url)
-            identity = dict(
-                resolved.role_materials.identity_environment_variables
-                if resolved.role_materials is not None
-                else ()
-            )
-            ticket_id = identity.get("PLAN_TICKET_ID", resolved.conversation_id)
-            assert self.paths is not None
-            artifact_root = self.paths.artifacts / safe_component(ticket_id)
-            artifact_root.mkdir(parents=True, exist_ok=True)
-            # These override transport facts only. HOME/provider state remain inherited.
-            overrides = (
-                ("PLAN_EXECUTOR_ROOT", str(self.paths.root)),
-                ("PLAN_EXECUTOR_CHILD_ID", reference.child_id),
-                ("PLAN_EXECUTOR_CAPABILITY", capability),
-                ("PLAN_TICKET_FILES_DIR", str(artifact_root)),
-            )
-            if resolved.backend_key == ConversationBackendKey.codex:
-                return CodexAppServerBackendChildFactory(
-                    replace(
-                        launches.codex,
-                        environment_overrides=launches.codex.environment_overrides + overrides,
-                    )
-                )
-            if resolved.backend_key == ConversationBackendKey.hermes:
-                return HermesAcpBackendChildFactory(
-                    replace(
-                        launches.hermes,
-                        environment_overrides=launches.hermes.environment_overrides + overrides,
-                    )
-                )
-            return ClaudeAgentSdkBackendChildFactory(
-                replace(
-                    launches.claude,
-                    environment_overrides=launches.claude.environment_overrides + overrides,
-                ),
-            )
+    ) -> Callable[[ResolvedConversationStart], BackendChildFactory]:
+        def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+            return production_backend_child_factories(panels_server_url=server_url)[
+                resolved.backend_key
+            ]
 
         return factory
 
@@ -506,7 +465,6 @@ class MacRunner:
         if link is None:
             raise ConnectionError("executor link unavailable")
         self._transfers += 1
-        assert self.paths is not None
         temporary = self.paths.run / (".input-" + uuid4().hex)
         try:
             async with link.transfer_capacity():
@@ -590,6 +548,8 @@ class MacRunner:
         reference: ChildReference,
         capability: str,
         workspace_home_relative: str | None,
+        identity: dict[str, str],
+        skill_generation: Path,
     ) -> ResolvedConversationStart:
         try:
             relative = workspace_home_relative
@@ -601,7 +561,6 @@ class MacRunner:
         except (OSError, ValueError) as error:
             raise BackendSpawnFailed(f"Mac workspace unavailable: {error}") from error
         original = resolved.role_materials
-        identity = dict(original.identity_environment_variables if original else ())
         # Native adapters merge role identity after launch settings. Remove the VPS
         # account paths and rebind transport facts here, at that final precedence.
         for key in (
@@ -610,22 +569,20 @@ class MacRunner:
             "CODEX_HOME",
             "HERMES_HOME",
             "CLAUDE_CONFIG_DIR",
-            "PLAN_EXECUTOR_ROOT",
-            "PLAN_EXECUTOR_CHILD_ID",
-            "PLAN_EXECUTOR_CAPABILITY",
+            EXECUTOR_ROOT_ENV,
+            EXECUTOR_CHILD_ID_ENV,
+            EXECUTOR_CAPABILITY_ENV,
             "PLAN_TICKET_FILES_DIR",
             NATIVE_SKILLS_DIR_ENV,
         ):
             identity.pop(key, None)
-        identity["PLAN_EXECUTOR_CHILD_ID"] = reference.child_id
-        identity["PLAN_EXECUTOR_CAPABILITY"] = capability
-        if self.paths is not None:
-            ticket_id = identity.get("PLAN_TICKET_ID", resolved.conversation_id)
-            assert self.paths is not None
-            artifact_root = self.paths.artifacts / safe_component(ticket_id)
-            artifact_root.mkdir(parents=True, exist_ok=True)
-            identity["PLAN_EXECUTOR_ROOT"] = str(self.paths.root)
-            identity["PLAN_TICKET_FILES_DIR"] = str(artifact_root)
+        artifact_root = self.paths.artifacts / safe_component(identity["PLAN_TICKET_ID"])
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        identity[EXECUTOR_CHILD_ID_ENV] = reference.child_id
+        identity[EXECUTOR_CAPABILITY_ENV] = capability
+        identity[EXECUTOR_ROOT_ENV] = str(self.paths.root)
+        identity["PLAN_TICKET_FILES_DIR"] = str(artifact_root)
+        identity[NATIVE_SKILLS_DIR_ENV] = str(skill_generation / "skills")
         role_text = original.role_text if original else ""
         return replace(
             resolved,
@@ -721,43 +678,23 @@ class MacRunner:
             else ()
         )
         ticket_id = identity.get("PLAN_TICKET_ID")
-        if ticket_id is not None and any(
-            existing.ticket_id == ticket_id for existing in self._children.values()
-        ):
+        if not ticket_id:
+            raise BackendSpawnFailed("Mac runs require a Ticket identity")
+        if any(existing.ticket_id == ticket_id for existing in self._children.values()):
             raise BackendSpawnFailed("Ticket already has a retained source child")
         capability = secrets.token_urlsafe(32)
-        resolved = self._localize_start(
-            resolved, command.child, capability, args.workspace_home_relative
-        )
         try:
-            if self.paths is None:
-                raise ValueError("executor paths are required for canonical skills")
-            if resolved.backend_key is ConversationBackendKey.codex:
-                native_home = codex_home(os.environ)
-            elif resolved.backend_key is ConversationBackendKey.hermes:
-                native_home = resolve_planner_home()
-            else:
-                configured_home = os.environ.get("CLAUDE_CONFIG_DIR", "")
-                native_home = (
-                    Path(configured_home).expanduser()
-                    if configured_home
-                    else Path.home() / ".claude"
-                )
             generation = install_native_skill_snapshot(
-                args.canonical_skill_snapshot, paths=self.paths, native_home=native_home
-            )
-            assert resolved.role_materials is not None
-            identity = dict(resolved.role_materials.identity_environment_variables)
-            identity[NATIVE_SKILLS_DIR_ENV] = str(generation / "skills")
-            resolved = replace(
-                resolved,
-                role_materials=replace(
-                    resolved.role_materials, identity_environment_variables=tuple(identity.items())
-                ),
+                args.canonical_skill_snapshot,
+                paths=self.paths,
+                native_home=native_skill_home(resolved.backend_key),
             )
         except Exception as error:
             raise BackendSpawnFailed(f"Canonical skill bootstrap failed: {error}") from error
-        native = self.factory(resolved, capability, command.child)(
+        resolved = self._localize_start(
+            resolved, command.child, capability, args.workspace_home_relative, identity, generation
+        )
+        native = self.factory(resolved)(
             resolved_start=resolved,
             event_sink=NativeEventSink(self, command.child),
             message_files=self.message_files,
@@ -787,17 +724,6 @@ class MacRunner:
         if child.reference.child_id in self._retiring_children:
             raise _CommandAdmissionRefused("source child identity is retiring")
 
-    @staticmethod
-    def _with_native_worker_context(
-        resolved_start: ResolvedConversationStart | None, content: MessageContent
-    ) -> MessageContent:
-        """Tell Mac Workers about the skills and Ticket files on this host."""
-        materials = None if resolved_start is None else resolved_start.role_materials
-        identity = {} if materials is None else dict(materials.identity_environment_variables)
-        if identity.get("PLAN_ACTOR") == "worker" and identity.get("PLAN_TICKET_ID"):
-            return with_runtime_prompt_context(content, NATIVE_WORKER_CONTEXT)
-        return content
-
     async def _write_prompt(
         self, child: RunningChild, command: ChildCommand, args: WritePrompt
     ) -> JsonObject:
@@ -816,7 +742,7 @@ class MacRunner:
         try:
             result = await child.native.write_prompt(
                 command.turn,
-                self._with_native_worker_context(child.localized_start, args.content),
+                with_runtime_prompt_context(args.content, NATIVE_WORKER_CONTEXT),
                 sender_label=args.sender_label,
                 sender_content=args.sender_content,
                 sender_message_count=args.sender_message_count,
@@ -842,7 +768,7 @@ class MacRunner:
         self._mark_invoking(command)
         outcome = await child.native.steer(
             command.turn,
-            self._with_native_worker_context(child.localized_start, args.content),
+            with_runtime_prompt_context(args.content, NATIVE_WORKER_CONTEXT),
             sender_content=args.sender_content,
             sender_label=args.sender_label,
         )
@@ -946,12 +872,8 @@ class MacRunner:
 
     async def _prepare(self, record: _CommandRecord) -> None:
         command = record.command
-        if command.operation is not ChildOperation.stop and self.prepare_inputs is not None:
-            async def prepare() -> None:
-                assert self.prepare_inputs is not None
-                await self.prepare_inputs(command)
-
-            task = asyncio.create_task(prepare())
+        if command.operation is not ChildOperation.stop:
+            task = asyncio.create_task(self._prepare_inputs(command))
             record.preparation = task
             if command.command_id in self._withdrawn_commands:
                 task.cancel()
