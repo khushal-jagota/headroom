@@ -703,6 +703,26 @@ class SqliteProcessConversationSystem:
                     else None
                 )
 
+        message = _Message(
+            held_prompt_id="",
+            snapshot_sent_at_unix_milliseconds=0,
+            queue_reason=PromptQueueReason.requested,
+            acknowledge_owner_on_failure=acknowledge_owner_on_failure,
+            content=content,
+            model_change=model_change,
+            native_message_operation=native_message_operation,
+            owner_read_through_sequence=owner_read_through_sequence,
+            reasoning_effort_change=reasoning_effort_change,
+            reasoning_effort_is_set=reasoning_effort_is_set,
+            recipient=recipient,
+            recovery_references=recovery_references,
+            reply_requested=reply_requested,
+            sender=sender,
+            sender_label=sender_label,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+        )
+
         if sender_message_id is not None:
             while True:
                 settled: asyncio.Event | None = None
@@ -712,29 +732,14 @@ class SqliteProcessConversationSystem:
                     if admitted is None:
                         admitted = state.admitted_sender_messages.get(sender_message_id)
                     if admitted is not None:
-                        if (
-                            admitted.content,
-                            admitted.sender_label,
-                            admitted.sender,
-                            admitted.recipient,
-                            admitted.recovery_references,
-                        ) != (content, sender_label, sender, recipient, recovery_references):
+                        if not message.same_message_as(admitted):
                             raise ValueError("sender_message_id already names a different message")
                         settled = admitted.settled
                     else:
                         for position, held in enumerate(state.held_prompts, start=1):
                             if held.sender_message_id != sender_message_id:
                                 continue
-                            if (
-                                held.content != content
-                                or held.sender_label != sender_label
-                                or held.sender != sender
-                                or held.recipient != recipient
-                                or held.recovery_references != recovery_references
-                                or held.model_change != model_change
-                                or held.reasoning_effort_change != reasoning_effort_change
-                                or held.reasoning_effort_is_set != reasoning_effort_is_set
-                            ):
+                            if not message.same_message_as(held):
                                 raise ValueError(
                                     "sender_message_id already names a different message"
                                 )
@@ -754,13 +759,7 @@ class SqliteProcessConversationSystem:
                 )
                 if outcome is not None:
                     payload = outcome.payload
-                    if (
-                        getattr(payload, "content", None) != content
-                        or getattr(payload, "sender_label", None) != sender_label
-                        or getattr(payload, "sender", None) != sender
-                        or getattr(payload, "recipient", None) != recipient
-                        or getattr(payload, "recovery_references", ()) != recovery_references
-                    ):
+                    if not message.same_message_as(payload):
                         raise ValueError("sender_message_id already names a different message")
                     if isinstance(payload, PromptEventPayload):
                         if payload.mode is PromptDeliveryMode.steer:
@@ -816,59 +815,11 @@ class SqliteProcessConversationSystem:
 
         try:
             if mode is PromptDeliveryMode.steer:
-                fate = await self._steer(
-                    state,
-                    content,
-                    sender_label,
-                    model_change,
-                    reasoning_effort_change,
-                    sender_message_id,
-                    sent_at_unix_milliseconds,
-                    sender,
-                    recipient,
-                    reply_requested,
-                    recovery_references,
-                    owner_read_through_sequence,
-                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    native_message_operation=native_message_operation,
-                )
+                fate = await self._steer(state=state, message=message)
             elif mode is PromptDeliveryMode.send_now:
-                fate = await self._send_now(
-                    state,
-                    content,
-                    sender_label,
-                    model_change,
-                    reasoning_effort_change,
-                    sender_message_id,
-                    sent_at_unix_milliseconds,
-                    sender,
-                    recipient,
-                    reply_requested,
-                    recovery_references,
-                    owner_read_through_sequence,
-                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    native_message_operation=native_message_operation,
-                )
+                fate = await self._send_now(state=state, message=message)
             else:
-                fate = await self._queue(
-                    state,
-                    content,
-                    sender_label,
-                    model_change,
-                    reasoning_effort_change,
-                    sender_message_id,
-                    sent_at_unix_milliseconds,
-                    sender,
-                    recipient,
-                    reply_requested,
-                    recovery_references,
-                    owner_read_through_sequence,
-                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    native_message_operation=native_message_operation,
-                )
+                fate = await self._queue(state=state, message=message)
             if (
                 record_refusal
                 and isinstance(fate, PromptDeliveryRefused)
