@@ -280,24 +280,10 @@ class MacRemoteChild:
 
     def observe_callbacks(self, inventory: ChildInventory | None) -> None:
         self._callbacks = (
-            set()
-            if inventory is None
-            else {
-                *inventory.pending_asks,
-                *(
-                    AskReference(
-                        self.reference, inventory.active_turn, request_id, AskKind.user_input
-                    )
-                    for request_id in inventory.pending_user_input_ids
-                    if inventory.active_turn is not None
-                ),
-            }
+            {ask for ask in inventory.pending_asks if ask.turn == inventory.active_turn}
+            if inventory is not None
+            else set()
         )
-        self._callbacks = {
-            ask
-            for ask in self._callbacks
-            if inventory is not None and ask.turn == inventory.active_turn
-        }
 
     def can_emit_answer(self, command: ChildCommand) -> bool:
         args = command.arguments

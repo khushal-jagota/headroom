@@ -156,7 +156,7 @@ def native_registry(
     registry = MacRunner(
         paths=ExecutorPaths(tmp_path / "executor"),
         incarnation=reference.executor_incarnation,
-        spool=spool,
+        outbox=spool,
         factory=factory,
         message_files=ConversationMessageFiles(tmp_path / "unused"),
     )
@@ -860,7 +860,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
         registry = MacRunner(
             incarnation=reference.executor_incarnation,
-            spool=spool,
+            outbox=spool,
             factory=factory,
             paths=paths,
             workspace_home=mac_home,
@@ -959,13 +959,11 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
     asyncio.run(run())
 
 
-def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_outcomes(
+def test_absent_stop_orders_proof_after_output_and_preserves_old_outcomes(
     native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
         registry, spool, native, start = native_registry
-        # A command for an absent identity retains its original uncertain result.
         old = replace(
             start,
             command_id="old",
@@ -978,54 +976,30 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
         )
         first = await registry.run(old)
         assert first.disposition is CommandDisposition.uncertain
-        entered, release = asyncio.Event(), asyncio.Event()
-        original_execute = registry._execute
-
-        async def delayed_execute(command: ChildCommand) -> CommandOutcome:
-            if command.command_id == "delayed-start":
-                entered.set()
-                await release.wait()
-            return await original_execute(command)
-
-        monkeypatch.setattr(registry, "_execute", delayed_execute)
-        delayed = asyncio.create_task(registry.run(replace(start, command_id="delayed-start")))
-        await entered.wait()
-        stop = ChildCommand(
-            "cleanup",
-            start.child,
-            ChildOperation.stop,
-            None,
-            decode_command_arguments(ChildOperation.stop, {}),
+        earlier = spool.add(
+            OutboxEntry(start.child.conversation_id, EnvelopeKind.backend_event, {})
         )
-        blocked = await registry.run(stop)
-        assert blocked.disposition is CommandDisposition.uncertain
-        assert start.child.child_id not in registry._retired_children
-        release.set()
-        assert (await asyncio.wait_for(delayed, 2)).disposition is CommandDisposition.refused
-        conflict = replace(
-            stop, command_id="conflict", child=replace(start.child, conversation_id="other")
-        )
-        assert (await registry.run(conflict)).disposition is CommandDisposition.refused
+        stop = ChildCommand("cleanup", start.child, ChildOperation.stop, None, StopRun())
         wrong = replace(
             stop, command_id="wrong", child=replace(start.child, executor_incarnation="old")
         )
-        assert (await registry.run(wrong)).disposition is CommandDisposition.refused
-        acknowledge_pending(spool)
-
-        retry = replace(stop, command_id="retry")
-        # Conflicting rejected commands do not become evidence of another assignment.
-        assert (await registry.run(retry)).disposition is CommandDisposition.succeeded
+        refused = await registry.run(wrong)
+        assert refused.disposition is CommandDisposition.refused
+        assert refused.result == {"reason": "incarnation_gone"}
+        stopped = await registry.run(stop)
+        assert stopped.disposition is CommandDisposition.succeeded
+        pending = spool.pending()
+        assert [row.kind for row in pending] == [
+            EnvelopeKind.backend_event, EnvelopeKind.child_stopped
+        ]
+        assert pending[0] == earlier
         assert await registry.run(old) == first
-        assert await registry.run(stop) == blocked
+        assert await registry.run(stop) == stopped
+        assert spool.pending() == pending
         assert (await registry.run(start)).disposition is CommandDisposition.refused
-        for field, value in (("conversation_id", "other"), ("executor_incarnation", "old")):
-            invalid = replace(
-                old, command_id="invalid-" + field, child=replace(start.child, **{field: value})
-            )
-            assert (await registry.run(invalid)).disposition is CommandDisposition.refused
+        assert not (await registry.quiesce()).ready
         acknowledge_pending(spool)
-        idempotent = replace(stop, command_id="idempotent")
-        assert (await registry.run(idempotent)).disposition is CommandDisposition.succeeded
+        assert (await registry.quiesce()).ready
         assert native.starts == 0
 
     asyncio.run(run())

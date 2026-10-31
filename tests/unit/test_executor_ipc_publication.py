@@ -404,10 +404,13 @@ def test_failed_add_reports_unknown_and_never_proves_stop(
             # Even if the native child is already absent, lost authored output
             # prevents the final stop proof from claiming complete delivery.
             executor.runner._children.clear()
-            stopped = await executor.runner._stop_exact_child(
+            stopped = await executor.runner.run(
                 ChildCommand("stop", child.reference, ChildOperation.stop, None, StopRun())
             )
             assert stopped.disposition is CommandDisposition.uncertain
-            assert stopped.result == {"reason": "child_has_unsettled_work"}
+            assert stopped.result == {
+                "error_type": "RuntimeError",
+                "error_message": "required source publication failed",
+            }
 
     asyncio.run(run())

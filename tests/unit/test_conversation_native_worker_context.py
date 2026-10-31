@@ -182,7 +182,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
-            spool=spool,
+            outbox=spool,
             factory=factory,
             message_files=ConversationMessageFiles(db_path),
         )
