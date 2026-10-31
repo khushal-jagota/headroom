@@ -2,7 +2,7 @@
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
   import { machineName } from "../lib/ticketMachines";
-  import { onMount, onDestroy, tick, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
@@ -22,7 +22,6 @@
   } from "../lib/lifecycle";
   import { holderLabelFor } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
-  import { createTicketSetupModelChoices, initialTicketSetupChoicesState } from "../lib/conversation/ticketSetupModelChoices";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
   import { conversationDock } from "../lib/conversation/layout/dock";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
@@ -30,9 +29,6 @@
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
-    readBackends,
-    readScopedBackends,
-    type BackendSnapshot,
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
@@ -121,18 +117,6 @@
   let section=$state.raw<TicketSection | undefined>(undefined);
   $effect(()=>{if(admittedSection) section=admittedSection;});
   let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
-  let setupChoices = $state.raw(initialTicketSetupChoicesState());
-  const setupModelChoices = createTicketSetupModelChoices({
-    read: readScopedBackends,
-    save: (_ticketId, configuration) => saveEmployeeConfiguration(configuration),
-    onChange: value => { setupChoices = value; }
-  });
-  $effect(() => {
-    const value = section?.detail.employee_configuration_editable ? section.detail : null;
-    const workspace = conversationStartValues.data;
-    untrack(() => setupModelChoices.sync(value, workspace));
-  });
-  onDestroy(() => setupModelChoices.dispose());
   // A changed public control tuple needs its matching exact detail/configuration.
   // One request per mismatch avoids a repeated refetch for an incompatible manifest.
   let refreshedMismatch='';
@@ -195,7 +179,6 @@
   const emptyTicketFieldText = "Not written yet.";
 
   let headerError = $state<unknown>(null);
-  let conversationBackends = $state<readonly BackendSnapshot[]>([]);
 
   /** How far open this page's conversation is.
    *
@@ -244,18 +227,6 @@
     }
     return draft;
   }
-
-  onMount(() => {
-    // What the conversation's model and effort pickers offer. Read once on arrival rather
-    // than through the query catalogue: it is a fact about the machine's agents, and
-    // nothing a person does to this Ticket changes it.
-    void readBackends()
-      .then((snapshots) => (conversationBackends = snapshots))
-      .catch(() => {
-        // The pickers fall back to showing the value already in force, which is the same
-        // thing they show before the catalog has arrived. Nothing here is worth a banner.
-      });
-  });
 
   /** Start this Ticket's conversation, so the first message has somewhere to go.
    *
@@ -535,21 +506,12 @@
         <div bind:this={sectionElement} use:sectionObservationEvents class="ticket-col" data-ticket-section={section.record.id} data-section-stage={section.record.value.stage}>
           {#snippet kickoffContextRow()}
             {#if detail.employee_configuration_editable}
+              {#key JSON.stringify([stableId, detail.locale, conversationStartValues.data?.workspace_folder, conversationStartValues.data?.workspace_path_policy])}
               <WorkerConfigurationSetup destination={detail.locale} ticketId={stableId} employeeBackend={detail.employee_backend}
                 employeeLaunchModel={detail.employee_launch_model} employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
-                displaySelection={{
-                  backendKey: (setupChoices.request?.employee_backend ?? setupChoices.intent?.employee_backend ?? detail.employee_backend) as import("../lib/conversation/wire").ConversationBackendKey,
-                  model: setupChoices.intent ? setupChoices.intent.employee_launch_model : detail.employee_launch_model,
-                  reasoningEffort: setupChoices.intent ? setupChoices.intent.employee_launch_reasoning_effort : detail.employee_launch_reasoning_effort,
-                  selectionKind: setupChoices.intent?.selection_kind
-                }}
-                scopedBackends={setupChoices.response ?? []}
-                snapshotLoading={setupChoices.loading} configurationSaving={setupChoices.saving}
-                snapshotError={setupChoices.error} configurationSaveError={setupChoices.saveError}
-                onChooseBackend={(backend) => void setupModelChoices.previewBackend(backend)}
-                onChooseCustomModel={(model, effort) => void setupModelChoices.chooseCustomModel(model, effort)}
-                onRetry={() => setupModelChoices.retry()}
+                workspace={conversationStartValues.data}
                 onSave={saveEmployeeConfiguration} />
+              {/key}
             {/if}
           {/snippet}
           {#if section}
@@ -639,7 +601,6 @@
             uploadOwner={{kind:"ticket",id:detail.id}}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
-            bind:backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"
             sendMessage={sendToTicketWorker}

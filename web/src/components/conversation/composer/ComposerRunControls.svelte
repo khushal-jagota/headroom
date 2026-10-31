@@ -23,7 +23,6 @@
 </script>
 
 <UnifiedModelPicker
-  displaySelection={view.displaySelection}
   readError={view.readError}
   {onRetry}
   chevron="drawn"

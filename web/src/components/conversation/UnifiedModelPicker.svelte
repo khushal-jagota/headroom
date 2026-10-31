@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { type ModelPickerDisplaySelection } from "../../lib/conversation/modelPickerFacts";
-  import { resolvedModelPickerLabel } from "../../lib/conversation/modelPickerLabel";
   import { tick } from "svelte";
   import {
     type ModelPickerChoice,
@@ -23,7 +21,6 @@
   import UsageRings from "./UsageRings.svelte";
 
   let {
-    displaySelection,
     readError = null,
     onRetry,
     scrollPanel = false,
@@ -42,7 +39,6 @@
     onChooseBackend,
     onChooseModel
   }: {
-    displaySelection?: ModelPickerDisplaySelection;
     /** Scoped transport failure; it supplies no canonical launch judgment. */
     readError?: string | null;
     onRetry?: () => Promise<void>;
@@ -71,14 +67,13 @@
   } = $props();
 
   let showing = $state<"models" | "efforts">("models");
-  let customToken = $state("");
-  let customEffort = $state("");
+  let olderExpanded = $state(false);
   let pendingModel = $state<string | null>(null);
   let feedback = $state<string | null>(null);
   let refreshing = $state(false);
   let picker = $state<ListboxPickerController>(null!);
 
-  let displayed = $derived(displaySelection ?? {
+  let displayed = $derived({
     backendKey: view.backendKey,
     model: view.modelValue,
     reasoningEffort: view.reasoningEffort || null
@@ -86,16 +81,19 @@
   let currentEffort = $derived(displayed.reasoningEffort);
   let activeBackendKey = $derived(displayed.backendKey);
   let activeBackendName = $derived(activeBackendKey ? activeBackendKey[0].toUpperCase() + activeBackendKey.slice(1) : "");
-  let effortRows = $derived([
-    {value: "", name: "Provider default"},
-    ...effortOptionsFor(models, pendingModel ?? displayed.model ?? "", backendEffortOptions)
-      .map((effort) => ({ value: effort, name: effort }))
+  let effortRows = $derived(activeBackendKey === "hermes" ? [] :
+    effortOptionsFor(models, pendingModel ?? displayed.model ?? "", backendEffortOptions)
+      .map((effort) => ({ value: effort, name: effort })));
+  const olderRow = "\0older-models";
+  let modelRows = $derived([
+    ...view.models,
+    ...(view.olderModels.length ? [{value: olderRow, name: `Older models (${view.olderModels.length})`}] : []),
+    ...(olderExpanded ? view.olderModels : [])
   ]);
-  let rows = $derived((showing === "models" ? view.models : effortRows) as readonly ListboxPickerItem[]);
+  let rows = $derived((showing === "models" ? modelRows : effortRows) as readonly ListboxPickerItem[]);
   let chosenValue = $derived(showing === "models" ? displayed.model : currentEffort ?? "");
-  let triggerFace = $derived(displaySelection
-    ? [resolvedModelPickerLabel(models, displayed.model ?? ""), currentEffort].filter(Boolean).join(" ") : view.face);
-  let foot = $derived(feedback ?? readError);
+  let triggerFace = $derived(view.face);
+  let foot = $derived(feedback ?? readError ?? (showing === "models" ? view.emptyReason : null));
   let pickerBusy = $derived(disabled);
   let refreshControl = $derived(backendRefreshControl(refreshing));
 
@@ -119,26 +117,31 @@
     showing = "models";
     pendingModel = null;
     feedback = null;
-    customToken = displayed.model ?? "";
-    customEffort = currentEffort ?? "";
-  }
-
-  function chooseCustom(): void {
-    if (pickerBusy || !customToken.trim()) return;
-    onChooseModel(customToken, customEffort === "" ? null : customEffort);
-    picker.close(!afterChoose);
-    if (afterChoose) void tick().then(afterChoose);
+    olderExpanded = view.olderModels.some(row => row.value === displayed.model);
   }
 
   function take(choice: ModelPickerChoice): void {
     if (disabled) return;
     if (showing === "models") {
+      if (choice.value === olderRow) {
+        olderExpanded = !olderExpanded;
+        return;
+      }
+      const efforts = activeBackendKey === "hermes" ? [] : effortOptionsFor(models, choice.value, backendEffortOptions);
+      if (!efforts.length) {
+        finish(choice.value, null);
+        return;
+      }
       pendingModel = choice.value;
       showing = "efforts";
       void tick().then(() => picker.setActiveValue(currentEffort ?? ""));
       return;
     }
-    onChooseModel(pendingModel ?? displayed.model ?? "", choice.value === "" ? null : choice.value);
+    finish(pendingModel ?? displayed.model ?? "", choice.value);
+  }
+
+  function finish(model: string, effort: string | null): void {
+    onChooseModel(model, effort);
     pendingModel = null;
     picker.close(!afterChoose);
     if (afterChoose) void tick().then(afterChoose);
@@ -151,6 +154,7 @@
       return;
     }
     feedback = null;
+    olderExpanded = false;
     showing = "models";
     pendingModel = null;
     if (key !== activeBackendKey) onChooseBackend(key, {model: null, reasoningEffort: null});
@@ -213,7 +217,8 @@
   triggerAttributes={{ "data-conversation-picker-trigger": "" }}
   panelAttributes={{ "data-conversation-picker-panel": "" }}
   optionAttributes={(choice, active, selected) => ({
-    "data-conversation-picker-choice": choice.value,
+    "data-conversation-picker-choice": choice.value === olderRow ? undefined : choice.value,
+    "aria-expanded": choice.value === olderRow ? String(olderExpanded) : undefined,
     "data-conversation-picker-active": active ? "true" : undefined,
     "data-conversation-picker-chosen": selected ? "true" : undefined
   })}
@@ -276,6 +281,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M19 8a8 8 0 1 0 1 7M19 3v5h-5" /></svg>
           {/snippet}
         </PickerRailRow>
+        {#if effortRows.length}
         <PickerRailRow
           on={showing === "efforts"}
           disabled={pickerBusy}
@@ -290,11 +296,12 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3.5 14h3.4v6.5H3.5Zm6.8-4h3.4v10.5h-3.4Zm6.8-6.5h3.4v17h-3.4Z" /></svg>
           {/snippet}
         </PickerRailRow>
+        {/if}
       </div>
     </PickerRail>
   {/snippet}
   {#snippet optionContent(choice, selected)}
-    <span class="model-picker-choice-name">{choice.name}
+    <span class="model-picker-choice-name">{#if choice.value === olderRow}<span aria-hidden="true">{olderExpanded ? "▾" : "▸"} </span>{/if}{choice.name}
     </span>
     {#if showUsage && showing === "models" && hasModelUsage(choice.value)}
       <UsageRings
@@ -306,11 +313,6 @@
     {/if}
   {/snippet}
   {#snippet afterList()}
-    <form class="model-picker-custom" onsubmit={(event) => { event.preventDefault(); chooseCustom(); }}>
-      <label><input aria-label="Provider token" placeholder="Custom model" data-model-picker-token bind:value={customToken} disabled={disabled} autocomplete="off" spellcheck="false" /></label>
-      <label><input aria-label="Provider effort" data-model-picker-effort bind:value={customEffort} disabled={disabled} placeholder="Provider default" autocomplete="off" spellcheck="false" /></label>
-      <button type="submit" data-listbox-picker-action disabled={pickerBusy || !customToken.trim()}>Use</button>
-    </form>
     {#if foot}
       <div class="model-picker-foot" data-conversation-picker-feedback>
         <div class="model-picker-summary" aria-live="polite">{foot}</div>
@@ -320,10 +322,6 @@
 </ListboxPicker>
 
 <style>
-  .model-picker-custom { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-top: var(--border-hairline) solid var(--border-color); }
-  .model-picker-custom label { min-width: 0; font-size: var(--type-xs); color: var(--text-muted); }
-  .model-picker-custom input { display: block; width: 100%; min-width: 0; box-sizing: border-box; padding: var(--space-1) var(--space-2); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); background: var(--surface-recessed); color: var(--text-default); font: inherit; }
-  .model-picker-custom button { align-self: end; min-height: 28px; padding: var(--space-1) var(--space-2); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-default); background: var(--surface-recessed); cursor: pointer; }
   .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }

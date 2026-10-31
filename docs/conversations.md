@@ -22,6 +22,23 @@ Each real agent identity has one canonical home and one credential: the user’s
 
 Model and reasoning changes ride the next message that is actually delivered. Browsing the picker does nothing until then. Codex and Hermes apply the change in place. Claude restarts the session and carries memory across. The backend is fixed once the conversation exists.
 
+The model picker shows full model names. For Claude and Codex, the highest numbered
+version of each variant appears first. Other enabled models sit under one
+“Older models (N)” row, which opens in place. It opens automatically when the saved
+model is older; the saved choice stays exactly as it was. Hermes shows one flat
+list and has no reasoning step. An empty Hermes list is a valid answer.
+
+Choosing a model with no reasoning options finishes the choice immediately.
+Otherwise the picker asks for one of that model's reasoning options. There is no
+custom model box or “Provider default” reasoning row. An unavailable or empty list
+says so plainly, and Refresh tries the read again.
+
+A Ticket's setup row and conversation composer share one model-list query for its
+machine and workspace. Refresh updates both. A failed refresh keeps the previous
+list and shows the error. Setup and launch-default screens use the same editor,
+which remembers each backend's choice while the screen stays open and restores
+the previous choice if a save fails.
+
 ## How a send tells the truth
 
 Send Message is the door for a person, Chief, a Manager, or a Worker addressing someone. It resolves the recipient’s current conversation, creating the link on first use, and records who sent it.

@@ -1,13 +1,16 @@
-import { onDestroy, onMount } from "svelte";
+import { onDestroy } from "svelte";
+import { createQuery } from "@tanstack/svelte-query";
+import { queries } from "../queryCatalogue";
+import { queryClient } from "../queryClient";
 import type { EmployeeConfigurationSnapshot } from "../types";
 import { resolveModelPicker } from "./modelPicker";
-import { readBackends, type BackendSnapshot, type ConversationBackendKey } from "./wire";
+import { type BackendSnapshot, type ConversationBackendKey } from "./wire";
 
 /** Instance-local selection and persistence shared by Ticket setup and launch defaults. */
 export function createEmployeeConfigurationEditor(
   incoming: () => EmployeeConfigurationSnapshot,
   save: (next: EmployeeConfigurationSnapshot) => Promise<EmployeeConfigurationSnapshot>,
-  enabled: () => boolean = () => true
+  read: (refresh?: boolean) => ReturnType<typeof queries.backends> = queries.backends
 ) {
   let selected = $state<EmployeeConfigurationSnapshot>({
     employee_backend: "claude",
@@ -16,13 +19,11 @@ export function createEmployeeConfigurationEditor(
   });
   let lastIncomingSignature = "";
   const providerChoices = new Map<string, EmployeeConfigurationSnapshot>();
-  let backends = $state<readonly BackendSnapshot[]>([]);
-  let loading = $state(false);
-  let backendsError = $state<unknown>(null);
+  const catalogue = createQuery(() => read(), () => queryClient);
+  let backends = $derived(catalogue.data ?? []);
   let saving = $state(false);
   let saveError = $state<unknown>(null);
   let disposed = false;
-  let requestGeneration = 0;
   let backendKey = $derived(selected.employee_backend as ConversationBackendKey);
   let snapshot = $derived(backends.find((candidate) => candidate.backend_key === backendKey) ?? null);
   let picker = $derived(resolveModelPicker({
@@ -43,18 +44,7 @@ export function createEmployeeConfigurationEditor(
   });
 
   async function loadBackends(): Promise<void> {
-    if (disposed || !enabled()) return;
-    const generation = ++requestGeneration;
-    loading = true;
-    backendsError = null;
-    try {
-      const answer = await readBackends();
-      if (!disposed && generation === requestGeneration) backends = answer;
-    } catch (error) {
-      if (!disposed && generation === requestGeneration) backendsError = error;
-    } finally {
-      if (!disposed && generation === requestGeneration) loading = false;
-    }
+    await queryClient.fetchQuery({...read(true), staleTime: 0});
   }
 
   async function persist(next: EmployeeConfigurationSnapshot): Promise<void> {
@@ -81,17 +71,16 @@ export function createEmployeeConfigurationEditor(
     }
   }
 
-  onMount(() => void loadBackends());
-  onDestroy(() => { disposed = true; requestGeneration += 1; });
+  onDestroy(() => { disposed = true; });
 
   return {
     get selected() { return selected; },
     get backends() { return backends; },
-    set backends(value: readonly BackendSnapshot[]) { if (!disposed) backends = value; },
+    set backends(value: readonly BackendSnapshot[]) { if (!disposed) queryClient.setQueryData(read().queryKey, [...value]); },
     get snapshot() { return snapshot; },
     get picker() { return picker; },
-    get loading() { return loading; },
-    get backendsError() { return backendsError; },
+    get loading() { return catalogue.isFetching; },
+    get backendsError() { return catalogue.error; },
     get saving() { return saving; },
     get saveError() { return saveError; },
     loadBackends,

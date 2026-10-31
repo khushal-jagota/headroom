@@ -1,4 +1,3 @@
-import type { ModelPickerDisplaySelection } from "../modelPickerFacts";
 import type { SelectionKind } from "../modelResolutionWire";
 import type { RunValues } from "../composer";
 import type {
@@ -40,7 +39,6 @@ export type ComposerRunSelectionIntent =
   | { intent: "choose_reasoning_effort"; reasoningEffort: string };
 
 export type ComposerRunControlsView = Readonly<{
-  displaySelection?: ModelPickerDisplaySelection;
   normalizedSelection: ComposerRunSelection;
   carriedRunValues: RunValues;
   disabled: boolean;
