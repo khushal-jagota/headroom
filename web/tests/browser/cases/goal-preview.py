@@ -1174,13 +1174,20 @@ def gauge_visual_equivalence(browser, url):
         # Leave through the real pointer path before waiting for its fade.
         page.mouse.move(0, 0)
         tooltip = chart.locator('[role="tooltip"]')
+        dismissal = {"pointerExit": True, "escapeAndTab": False}
         if tooltip.count():
+            # Mouse exit deliberately preserves keyboard and touch inspection.
+            # Use the figure's existing Escape path, then leave native focus.
+            if tooltip.get_attribute("aria-hidden") != "true":
+                chart.locator("figure[tabindex]").press("Escape")
+                page.keyboard.press("Tab")
+                dismissal["escapeAndTab"] = True
             expect(tooltip).to_have_attribute("aria-hidden", "true")
             expect(tooltip).to_have_css("opacity", "0")
         frames = ("() => new Promise(resolve => requestAnimationFrame("
                   "() => requestAnimationFrame(resolve)))")
         page.evaluate(frames)
-        record = {"raw": {"before": capture_geometry(chart)}}
+        record = {"dismissal": dismissal, "raw": {"before": capture_geometry(chart)}}
         chart.screenshot(path=str(output / f"{name}.png"))
         record["raw"]["after"] = capture_geometry(chart)
         original_style = chart.get_attribute("style")
