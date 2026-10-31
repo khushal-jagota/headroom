@@ -283,7 +283,7 @@ class MacRemoteChild:
             set()
             if inventory is None
             else {
-                *inventory.pending_asks,
+                *(ask for ask in inventory.pending_asks if ask.turn == inventory.active_turn),
                 *(
                     AskReference(
                         self.reference, inventory.active_turn, request_id, AskKind.user_input
@@ -293,11 +293,6 @@ class MacRemoteChild:
                 ),
             }
         )
-        self._callbacks = {
-            ask
-            for ask in self._callbacks
-            if inventory is not None and ask.turn == inventory.active_turn
-        }
 
     def can_emit_answer(self, command: ChildCommand) -> bool:
         args = command.arguments

@@ -15,26 +15,19 @@ from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect
 from planner.execution_identity import ChildReference
-from planner.executor.store import ExecutorStore
 
 
 @dataclass(frozen=True, slots=True)
 class LocaleBackendChildFactory:
     db_path: str
     local_factory: BackendChildFactory
-    remote_factory: BackendChildFactory
+    remote_factory: RetainedBackendChildFactory
 
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
-        if isinstance(self.remote_factory, RetainedBackendChildFactory):
-            return self.remote_factory.retained_runs()
-        return ()
+        return self.remote_factory.retained_runs()
 
     def recover(self, reference: ChildReference) -> BackendChild | None:
         """Recover only retained authority, without allocation or native execution."""
-        if ExecutorStore(self.db_path).child_assignment(reference) is None:
-            return None
-        if not isinstance(self.remote_factory, RetainedBackendChildFactory):
-            raise ValueError("Configured remote factory cannot recover an exact child")
         return self.remote_factory.recover(reference)
 
     def __call__(

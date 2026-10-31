@@ -1250,14 +1250,9 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
             )
             assert accepted is not None and accepted.disposition is ReceiptDisposition.accepted
             assert harness.events("permission_asked") == 1
-            with connect(harness.endpoint.db_path) as connection:
-                assert (
-                    connection.execute(
-                        "SELECT stop_state FROM mac_runs WHERE conversation_id=?",
-                        (child.conversation_id,),
-                    ).fetchone()[0]
-                    == "unproved"
-                )
+            await asyncio.wait_for(harness.system.kill(child.conversation_id), 5)
+            assert harness.endpoint.runs.store.child_assignment(child) is None
+            assert all(run.retirement_confirmed for run in harness.endpoint.runs.retained_runs())
         finally:
             await harness.close()
 
@@ -1502,15 +1497,22 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
             generation = harness.mac.identity.connection_generation
             monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 0.15)
             emitted: list[ChildCommand] = []
-            emit = harness.endpoint.runs._emit_command
+            link = harness.endpoint.runs.link
+            tell = link.tell
 
-            async def record_command(command: ChildCommand, *args: Any) -> bool:
-                result = await emit(command, *args)
-                if result:
-                    emitted.append(command)
+            async def record_command(
+                kind: WireMessageKind,
+                payload: JsonObject,
+                *,
+                request_id: str | None = None,
+                admit: Callable[[], bool] | None = None,
+            ) -> bool:
+                result = await tell(kind, payload, request_id=request_id, admit=admit)
+                if result and kind is WireMessageKind.command:
+                    emitted.append(TypeAdapter(ChildCommand).validate_python(payload))
                 return result
 
-            monkeypatch.setattr(harness.endpoint.runs, "_emit_command", record_command)
+            monkeypatch.setattr(link, "tell", record_command)
             first_chunk = asyncio.Event()
             claim_download = GenerationTransfers.claim_download
 
@@ -2323,11 +2325,11 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                     accepted.append(envelope)
                 return receipt
 
-            async def observed_hint(outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
+            def observed_hint(outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
                 pending = harness.endpoint.runs.pending_commands.get(outcome.command_id)
-                if pending is not None and pending[0].operation is ChildOperation.stop:
+                if pending is not None and pending.command.operation is ChildOperation.stop:
                     stop_hint.set()
-                await resolve(outcome, stop_proven=stop_proven)
+                resolve(outcome, stop_proven=stop_proven)
 
             async def cancel_native() -> None:
                 pass
@@ -2348,9 +2350,9 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             await asyncio.wait_for(event_waiting.wait(), 5)
             await asyncio.wait_for(stop_hint.wait(), 5)
             stops = [
-                (command, future)
-                for command, future in harness.endpoint.runs.pending_commands.values()
-                if command.operation is ChildOperation.stop
+                (pending.command, pending.future)
+                for pending in harness.endpoint.runs.pending_commands.values()
+                if pending.command.operation is ChildOperation.stop
             ]
             assert stops and all(not future.done() for _, future in stops)
             assert harness.endpoint.runs.store.child_assignment(reference) is not None

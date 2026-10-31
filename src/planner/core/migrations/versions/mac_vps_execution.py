@@ -35,7 +35,7 @@ STATEMENTS = (
         conversation_id TEXT PRIMARY KEY, executor_incarnation TEXT NOT NULL, child_id TEXT NOT NULL,
         principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL, turn_number INTEGER NOT NULL,
         delivery_uncertain INTEGER NOT NULL CHECK(delivery_uncertain IN (0,1)),
-        stop_state TEXT NOT NULL CHECK(stop_state IN ('open','stopping','unproved','closed')))""",
+        stop_state TEXT NOT NULL CHECK(stop_state IN ('open','stopping','closed')))""",
     """CREATE TABLE conversation_reply_credits (
         conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
         turn_number INTEGER NOT NULL, principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL,

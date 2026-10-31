@@ -137,7 +137,6 @@ class InboxStore(VpsDatabase):
             disposition = ReceiptDisposition.refused
             refusal = error if isinstance(error, PlannerError) else _invalid(str(error))
             result = cast(JsonObject, refusal.to_payload())
-            self.runs._mark_refused_cleanup_evidence(connection, envelope, identity)
         if disposition is ReceiptDisposition.accepted and result.get("fate") == "uncertain":
             disposition = ReceiptDisposition.uncertain
         if disposition is ReceiptDisposition.refused and envelope.kind is EnvelopeKind.cli_write:
@@ -362,7 +361,7 @@ class MacInbox:
                     and previous.disposition is ReceiptDisposition.accepted
                     and previous.result.get("recorded") is True
                 ):
-                    await self.runs._resolve_command(
+                    self.runs._resolve_command(
                         type_adapter(CommandOutcome).validate_python(envelope.payload),
                         stop_proven=True,
                     )
@@ -447,7 +446,7 @@ class MacInbox:
             outcome = type_adapter(CommandOutcome).validate_python(envelope.payload)
             if outcome.child.conversation_id != envelope.conversation_id:
                 raise ValueError("command outcome conversation conflicts with envelope")
-            await settled_io(self.runs.validate_stop, outcome, identity)
+            await settled_io(self.runs.validate_stop, outcome)
             receipt = await settled_io(
                 partial(
                     self.store.accept,
@@ -458,7 +457,7 @@ class MacInbox:
                 )
             )
             if receipt.disposition is ReceiptDisposition.accepted:
-                await self.runs._resolve_command(outcome, stop_proven=True)
+                self.runs._resolve_command(outcome, stop_proven=True)
             return receipt
         if envelope.kind is EnvelopeKind.answer_application:
             application = type_adapter(AnswerApplication).validate_python(envelope.payload)
