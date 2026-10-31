@@ -50,15 +50,15 @@ from typing import Any
 
 # What ``codex --version`` must print for the turn bundle to be the one that matches, and
 # the upstream tag that binary was cut from with its commit, so the Rust can be read.
-PINNED_CODEX_CLI_VERSION = "codex-cli 0.163.0"
-PINNED_UPSTREAM_TAG = "rust-v0.163.0"
-PINNED_UPSTREAM_COMMIT = "83086188ae0614bd882818ff1aa23f3194962012"
+PINNED_CODEX_CLI_VERSION = "codex-cli 0.166.0"
+PINNED_UPSTREAM_TAG = "rust-v0.166.0"
+PINNED_UPSTREAM_COMMIT = "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856"
 
 # The same three for the login bundle. Its disjoint definitions retain a separate pin
 # even when both bundles target the same installed version.
-LOGIN_PINNED_CODEX_CLI_VERSION = "codex-cli 0.163.0"
-LOGIN_PINNED_UPSTREAM_TAG = "rust-v0.163.0"
-LOGIN_PINNED_UPSTREAM_COMMIT = "83086188ae0614bd882818ff1aa23f3194962012"
+LOGIN_PINNED_CODEX_CLI_VERSION = "codex-cli 0.166.0"
+LOGIN_PINNED_UPSTREAM_TAG = "rust-v0.166.0"
+LOGIN_PINNED_UPSTREAM_COMMIT = "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856"
 
 # ---------------------------------------------------------------------------------------
 

@@ -55,9 +55,11 @@ DeploymentPhase = Literal[
     "succeeded",
     "failed",
     "rolled_back",
+    "cancelled",
+    "unknown",
 ]
 ProjectionState = Literal["idle", "preparing", "restarting", "back_up", "problem", "unknown"]
-DeploymentOutcome = Literal["succeeded", "failed", "rolled_back"]
+DeploymentOutcome = Literal["succeeded", "failed", "rolled_back", "cancelled"]
 
 _PHASES: frozenset[str] = frozenset(
     {
@@ -68,6 +70,8 @@ _PHASES: frozenset[str] = frozenset(
         "succeeded",
         "failed",
         "rolled_back",
+        "cancelled",
+        "unknown",
     }
 )
 _NONTERMINAL_PHASES = frozenset({"preparing", "restarting", "verifying", "app_healthy"})
@@ -75,17 +79,21 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _DEPLOYMENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _CODE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "preparing": frozenset({"preparing", "restarting", "verifying", "failed"}),
+    "preparing": frozenset(
+        {"preparing", "restarting", "verifying", "failed", "cancelled", "unknown"}
+    ),
     "restarting": frozenset(
-        {"restarting", "verifying", "app_healthy", "failed", "rolled_back"}
+        {"restarting", "verifying", "app_healthy", "failed", "rolled_back", "unknown"}
     ),
     "verifying": frozenset(
-        {"restarting", "verifying", "app_healthy", "failed", "rolled_back"}
+        {"restarting", "verifying", "app_healthy", "failed", "rolled_back", "unknown"}
     ),
-    "app_healthy": frozenset({"app_healthy", "succeeded", "failed", "rolled_back"}),
+    "app_healthy": frozenset({"app_healthy", "succeeded", "failed", "rolled_back", "unknown"}),
     "succeeded": frozenset(),
     "failed": frozenset(),
     "rolled_back": frozenset(),
+    "cancelled": frozenset(),
+    "unknown": frozenset(),
 }
 
 
@@ -276,7 +284,9 @@ class DeploymentLifecycleStore:
                     f"stale deployment {deployment_id!r}; current is "
                     f"{current.deployment_id!r}"
                 )
-            if preserve_terminal and current.phase in {"succeeded", "failed", "rolled_back"}:
+            if preserve_terminal and current.phase in {
+                "succeeded", "failed", "rolled_back", "cancelled", "unknown"
+            }:
                 return current
             if phase not in _ALLOWED_TRANSITIONS[current.phase]:
                 raise DeploymentLifecycleError(
@@ -330,7 +340,9 @@ class DeploymentLifecycleStore:
                 deployed_sha=deployed_sha,
                 target_sha=lifecycle.requested_sha,
                 outcome=None,
-                detail="Deployment progress expired before completion was confirmed.",
+                detail=("Recovery required: deployment progress expired. The owner must use the "
+                        "deployment runner and explicitly select the recorded snapshot or "
+                        "fallback when necessary."),
             )
         if lifecycle.phase == "preparing":
             state = "preparing"
@@ -346,6 +358,12 @@ class DeploymentLifecycleStore:
                 state = "back_up"
             else:
                 state = "idle"
+        elif lifecycle.phase == "cancelled":
+            state = "idle"
+            outcome = "cancelled"
+        elif lifecycle.phase == "unknown":
+            state = "unknown"
+            outcome = None
         elif lifecycle.phase == "rolled_back":
             state = "problem"
             outcome = "rolled_back"
@@ -481,9 +499,9 @@ def _validate_serving_proof(
 
 
 def _ttl_for_phase(phase: DeploymentPhase) -> timedelta:
-    if phase == "succeeded":
+    if phase in {"succeeded", "cancelled"}:
         return SUCCESS_TTL
-    if phase in {"failed", "rolled_back"}:
+    if phase in {"failed", "rolled_back", "unknown"}:
         return PROBLEM_TTL
     return NONTERMINAL_TTL
 

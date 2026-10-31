@@ -52,12 +52,14 @@ def descriptor(*, limit: int = 30, selected: str | None = None) -> ViewRequest:
     }
     return request(
         {
-            "projection_version": 6,
+            "projection_version": 7,
             "scope_generation": 1,
             "locale": "en-US",
             "selected": None if selected is None else {"kind": "ticket", "id": selected},
             "selected_conversation_id": None,
             "review_conversation_ids": [],
+            "review_skipped_keys": [],
+            "review_priority_keys": [],
             "windows": [window],
         }
     )
@@ -514,7 +516,7 @@ def test_sequence_bookkeeping_changes_coverage_without_public_content(tmp_path: 
         assert footprint == {"globals": False, "keys": [], "sections": []}
         common = {
             "wire_version": 3,
-            "projection_version": 6,
+            "projection_version": 7,
             "view_id": "view",
             "scope_generation": 1,
             "ordering_generation": "order",
@@ -671,7 +673,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
         runtime = ScopedDeliveryRuntime(host.delivery)
         query = descriptor(selected="t")
         current, access = asyncio.run(runtime.snapshot(query))
-        assert current["projection_version"] == 6
+        assert current["projection_version"] == 7
         assert current["mode"] == "current"
         assert current["content"]["counts"]["unread"] == 1
         captured = asyncio.run(runtime.capture())
@@ -682,7 +684,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
             asyncio.run(runtime.snapshot(query, captured=captured))
         degraded, _ = asyncio.run(runtime.snapshot(query))
         assert degraded["mode"] == "degraded"
-        assert degraded["projection_version"] == 6
+        assert degraded["projection_version"] == 7
         assert degraded["authority"]["permit"] is None
         assert degraded["content"]["counts"]["running_conversations"] is None
         assert degraded["content"]["counts"]["unread"] == 1
@@ -1053,6 +1055,12 @@ def test_review_canonical_address_transfers_and_retains_historical_conversation(
             {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
         ]
 
+        query["review_skipped_keys"] = [
+            {"kind": "ticket", "id": "a"},
+            {"kind": "conversation", "id": "old"},
+        ]
+        query["review_priority_keys"] = query["review_skipped_keys"][:]
+
         def check(owner: str) -> None:
             items = _review_items(conn)
             assert len(items) == 1
@@ -1060,6 +1068,7 @@ def test_review_canonical_address_transfers_and_retains_historical_conversation(
             assert items[0]["messages"][0]["recap"] == "Owner recap"
             for current in (True, False):
                 _, content = read_content(conn, query, current=current)
+                assert content["review_summary"] == {"skipped": 1, "new": 0}
                 assert content["counts"]["review"] == content["counts"]["unread"] == 1
                 assert content["windows"][0]["total"] == 1
                 assert content["windows"][0]["members"] == [{"kind": "ticket", "id": owner}]
@@ -1076,6 +1085,29 @@ def test_review_canonical_address_transfers_and_retains_historical_conversation(
         conn.execute("UPDATE tickets SET conversation_id='new' WHERE id='b'")
         conn.commit()
         check("a")
+        # A read conversation no longer supplies a skipped constituent when its
+        # current Ticket still has a separate proposal awaiting review.
+        query["review_skipped_keys"] = [{"kind": "conversation", "id": "old"}]
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE tickets SET pending_proposal=?,pending_proposal_revision=1 WHERE id='a'",
+            (
+                json.dumps(
+                    {
+                        "field": "implementation",
+                        "body": "Review",
+                        "proposed_by": "worker",
+                        "created_at": 2,
+                    }
+                ),
+            ),
+        )
+        conn.execute(
+            "UPDATE conversations SET owner_read_through_sequence=1 WHERE conversation_id='old'"
+        )
+        conn.commit()
+        _, read_message = read_content(conn, query, current=True)
+        assert read_message["review_summary"] == {"skipped": 0, "new": 1}
 
 
 def test_review_owner_state_reversals_preserve_unread_discovery(tmp_path: Path) -> None:
@@ -1112,7 +1144,8 @@ def test_review_owner_state_reversals_preserve_unread_discovery(tmp_path: Path) 
                 assert content["counts"]["review"] == content["windows"][0]["total"] == total
                 assert content["counts"]["unread"] == 3
             unread: ViewRequest = {
-                **query, "windows": [{**query["windows"][0], "section": "unread"}]
+                **query,
+                "windows": [{**query["windows"][0], "section": "unread"}],
             }
             _, content = read_content(conn, unread, current=True)
             assert len(content["windows"][0]["members"]) == 3
@@ -1291,7 +1324,7 @@ def test_review_held_context_follows_excluded_canonical_owner_and_survives_read(
         assert not any(row["kind"] == "address" for row in deleted["records"])
         common = {
             "wire_version": 3,
-            "projection_version": 6,
+            "projection_version": 7,
             "view_id": "view",
             "scope_generation": 1,
             "ordering_generation": "order",
@@ -1309,3 +1342,112 @@ def test_review_held_context_follows_excluded_canonical_owner_and_survives_read(
                 request({**query, "review_conversation_ids": ids})
         with pytest.raises(ValueError, match="exceeds row budget"):
             request(query, config=replace(DEFAULT_CONFIG, maximum_requested_rows=30))
+
+
+def test_review_history_counts_ignore_gone_keys_and_do_not_consume_row_budget(
+    tmp_path: Path,
+) -> None:
+    """History is source metadata, including beyond the 256 hydrated-row budget."""
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        add_review_tickets(conn)
+        query = descriptor(limit=1)
+        query["windows"] = [
+            {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
+        ]
+        query["review_skipped_keys"] = [
+            {"kind": "ticket", "id": identity}
+            for identity in ["active-a", "backlogged-a", *[f"gone-{i}" for i in range(300)]]
+        ]
+        query["review_priority_keys"] = query["review_skipped_keys"][:]
+        query = request(query, config=replace(DEFAULT_CONFIG, maximum_requested_rows=1))
+        _, content = read_content(conn, query, current=True)
+        assert content["review_summary"] == {"skipped": 1, "new": 1}
+        assert content["windows"][0]["members"] == [{"kind": "ticket", "id": "active-b"}]
+        assert {row["id"] for row in content["records"] if row["kind"] == "ticket"} == {"active-b"}
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET pending_proposal=NULL WHERE id='active-a'")
+        conn.commit()
+        _, cleared = read_content(conn, query, current=True)
+        assert cleared["review_summary"] == {"skipped": 0, "new": 1}
+        before = cast(ViewSnapshot, {"content": content, "content_version": digest(content)})
+        after = cast(
+            ViewSnapshot, {**before, "content": cleared, "content_version": digest(cleared)}
+        )
+        # Metadata has its own patch field, including when the visible first row is unchanged.
+        common = {
+            "wire_version": 3,
+            "projection_version": 7,
+            "view_id": "v",
+            "scope_generation": 1,
+            "ordering_generation": "o",
+            "coverage": {},
+            "authority": {},
+        }
+        frame = difference(
+            cast(ViewSnapshot, {**before, **common}), cast(ViewSnapshot, {**after, **common})
+        )
+        assert frame["review_summary"] == cleared["review_summary"]
+
+
+def test_review_priority_order_binds_all_cursor_paths_but_not_live_history(tmp_path: Path) -> None:
+    """Pages, reverse and overlap traversal share the source cohort order."""
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        conn.execute("BEGIN")
+        for identity in "abcdefgh":
+            add_ticket(conn, identity)
+            conn.execute(
+                "UPDATE tickets SET pending_proposal=?,pending_proposal_revision=1 WHERE id=?",
+                (
+                    json.dumps(
+                        {
+                            "field": "implementation",
+                            "body": "Review",
+                            "proposed_by": "worker",
+                            "created_at": ord(identity),
+                        }
+                    ),
+                    identity,
+                ),
+            )
+        conn.commit()
+        query = descriptor(limit=4)
+        query["windows"] = [
+            {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
+        ]
+        query["review_priority_keys"] = [{"kind": "ticket", "id": key} for key in "ab"]
+        query["review_skipped_keys"] = query["review_priority_keys"][:]
+        _, content = read_content(conn, query, current=True)
+        first = content["windows"][0]
+        assert [item["id"] for item in first["members"]] == list("cdef")
+
+        def page(anchor: str | None, direction: str = "after") -> ViewContent:
+            follow = {
+                **query,
+                "windows": [{**query["windows"][0], "anchor": anchor, "direction": direction}],
+            }
+            return read_content(conn, request(follow), current=True)[1]
+
+        # Adding a skip during this pass changes exact summary only, keeping all cursors valid.
+        query["review_skipped_keys"].append({"kind": "ticket", "id": "c"})
+        second = page(first["next"])
+        assert second["review_summary"] == {"skipped": 3, "new": 5}
+        assert [item["id"] for item in second["windows"][0]["members"]] == list("ghab")
+        reverse = page(second["windows"][0]["previous"], "before")
+        assert [item["id"] for item in reverse["windows"][0]["members"]] == list("cdef")
+        overlap = page(first["forward_overlap"])
+        assert [item["id"] for item in overlap["windows"][0]["members"]] == list("efgh")
+        back_overlap = page(second["windows"][0]["backward_overlap"], "before")
+        assert [item["id"] for item in back_overlap["windows"][0]["members"]] == list("efgh")
+        query["review_priority_keys"] = []
+        rebased = page(first["next"])
+        assert rebased["windows"][0]["request"]["anchor"] is None
+        assert [item["id"] for item in rebased["windows"][0]["members"]] == list("abcd")
+        query["review_priority_keys"] = [{"kind": "ticket", "id": key} for key in "ab"]
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM tickets WHERE id IN ('g','h','a','b')")
+        conn.commit()
+        fallback = page(first["next"])
+        assert [item["id"] for item in fallback["windows"][0]["members"]] == list("cdef")
+        assert fallback["review_summary"] == {"skipped": 1, "new": 3}

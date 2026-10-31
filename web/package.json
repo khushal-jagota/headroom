@@ -3,13 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "svelte-check --tsconfig ./tsconfig.json",
-    "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1",
-    "test:vitest": "vitest run --typecheck",
-    "test:legacy": "npm run test:browser",
-    "test": "npm run test:vitest && npm run test:browser",
-    "test:browser": "node tests/browser/run.mjs"
+    "check": "../scripts/dev check-node web && ./node_modules/.bin/svelte-check --tsconfig ./tsconfig.json",
+    "build": "../scripts/dev check-node web && ./node_modules/.bin/vite build",
+    "preview": "../scripts/dev check-node web && ./node_modules/.bin/vite preview --host 127.0.0.1",
+    "test:vitest": "../scripts/dev check-node web && ./node_modules/.bin/vitest run --typecheck",
+    "test:legacy": "../scripts/dev npm --prefix web run test:browser",
+    "test": "../scripts/dev npm --prefix web run test:vitest && ../scripts/dev npm --prefix web run test:browser",
+    "test:browser": "../scripts/dev check-node web && node tests/browser/run.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.2.1",

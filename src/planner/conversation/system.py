@@ -37,7 +37,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
-from typing import IO, Any
+from typing import IO, Any, Literal
 from uuid import uuid4
 
 from planner.conversation.backends.contracts import (
@@ -145,6 +145,7 @@ from planner.conversation.storage import (
     ConversationStore,
     StoredConversationEvent,
 )
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import change_signal
 from planner.core.commit_capture import register_capture_task
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
@@ -414,6 +415,7 @@ class SqliteProcessConversationSystem:
         self._unix_time_now = unix_time_now
         self._conversations: dict[str, _ConversationState] = {}
         self._conversations_lock = asyncio.Lock()
+        self.workspace_admission = WorkspaceAdmission()
         self._idle_child_janitor: asyncio.Task[None] | None = None
         self._signal = store.signal_coordinator
         self._runtime_ownership = store.claim_runtime(existing_ownership=runtime_ownership)
@@ -423,6 +425,40 @@ class SqliteProcessConversationSystem:
         self._shutdown_task: asyncio.Task[None] | None = None
 
     # --- the contract -------------------------------------------------------------------
+
+    def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
+        """Inspect every live conversation; uncertain delivery never counts as idle."""
+        if self._shutting_down or self.workspace_admission.closed:
+            return "unknown"
+        if self.workspace_admission.active:
+            return "busy"
+        for state in tuple(self._conversations.values()):
+            if (
+                state.lock.locked()
+                or state.phase is not _ConversationPhase.idle
+                or state.reserved_turn is not None
+                or state.running_turn is not None
+                or state.held_prompts
+                or state.admitted_sender_messages
+                or state.sender_messages_being_delivered
+                or state.steer_settlements
+                or any(not task.done() for task in state.settlement_tasks)
+            ):
+                return "busy"
+        return "idle"
+
+    async def run_with_workspace_admission(
+        self,
+        operation: Callable[[], None],
+        *,
+        require_idle: bool,
+    ) -> bool:
+        """Claim adoption under the same barrier as conversation start and send."""
+        return self.workspace_admission.claim(
+            operation,
+            idle=lambda: self.workspace_activity() == "idle",
+            require_idle=require_idle,
+        )
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         state = await self._conversation_state(conversation_id)
@@ -452,37 +488,45 @@ class SqliteProcessConversationSystem:
         operation: Callable[[sqlite3.Connection], tuple[T, tuple[ConversationEventPayload, ...]]],
     ) -> T:
         """Serialize a domain write with the canonical event transaction and publication."""
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            raise ValueError("conversation is absent")
-        async with state.lock:
-            result, written = await self._store.transact_events(conversation_id, operation)
-            self._take_in_written_rows(state, written)
-            return result
+        with self.workspace_admission.operation() as admitted:
+            if not admitted:
+                raise RuntimeError("Workspace admission is closed for an owner update.")
+            state = await self._conversation_state(conversation_id)
+            if state is None:
+                raise ValueError("conversation is absent")
+            async with state.lock:
+                result, written = await self._store.transact_events(conversation_id, operation)
+                self._take_in_written_rows(state, written)
+                return result
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
-        self._require_runtime_ownership()
-        """Create the conversation. Writing its row is the first thing that happens.
+        with self.workspace_admission.operation() as admitted:
+            if not admitted:
+                raise RuntimeError("Workspace admission is closed for an owner update.")
+            self._require_runtime_ownership()
+            """Create the conversation. Writing its row is the first thing that happens.
 
-        The row exists the moment it is committed, so a message can arrive for this
-        conversation before this call has finished — and that message will have picked the
-        conversation up from its row, and may already have a child running. Which is why
-        what follows only fills a gap: whatever is there is what this process is using, and
-        replacing it would strand a live child that nothing can reach any more.
-        """
-        resolved = resolve_conversation_start_request(request)
-        if self._model_resolver is not None:
-            current = await self._model_resolver.resolve(
-                resolved.backend_key, resolved.model, resolved.reasoning_effort
-            )
-            resolved = replace(
-                resolved, model=current.model, reasoning_effort=current.reasoning_effort
-            )
-        record = await self._store.create_conversation(resolved)
-        async with self._conversations_lock:
-            if record.conversation_id not in self._conversations:
-                with nullcontext() if self._signal is None else self._signal.runtime_registry():
-                    self._conversations[record.conversation_id] = _ConversationState(record=record)
+            The row exists the moment it is committed, so a message can arrive for this
+            conversation before this call has finished — and that message will have picked the
+            conversation up from its row, and may already have a child running. Which is why
+            what follows only fills a gap: whatever is there is what this process is using, and
+            replacing it would strand a live child that nothing can reach any more.
+            """
+            resolved = resolve_conversation_start_request(request)
+            if self._model_resolver is not None:
+                current = await self._model_resolver.resolve(
+                    resolved.backend_key, resolved.model, resolved.reasoning_effort
+                )
+                resolved = replace(
+                    resolved, model=current.model, reasoning_effort=current.reasoning_effort
+                )
+            record = await self._store.create_conversation(resolved)
+            async with self._conversations_lock:
+                if record.conversation_id not in self._conversations:
+                    with nullcontext() if self._signal is None else self._signal.runtime_registry():
+                        self._conversations[record.conversation_id] = _ConversationState(
+                            record=record
+                        )
 
     async def send(
         self,
@@ -536,39 +580,42 @@ class SqliteProcessConversationSystem:
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
-        """Send a message in. See the contract; the two sender-minted fields are extra.
+        with self.workspace_admission.operation() as admitted:
+            if not admitted:
+                raise RuntimeError("Workspace admission is closed for an owner update.")
+            """Send a message in. See the contract; the two sender-minted fields are extra.
 
-        ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own facts
-        about this message and are stored on its row exactly as they were given. A sender
-        that mints neither — every caller inside Panels today — leaves both absent and
-        nothing about its rows changes.
-        """
-        if record_refusal and sender_message_id is None:
-            raise ValueError("record_refusal requires a sender_message_id")
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            return AddressedPromptDeliveryReceipt(
-                PromptDeliveryRefused(PromptDeliveryRefusalReason.no_such_conversation), False
+            ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own facts
+            about this message and are stored on its row exactly as they were given. A sender
+            that mints neither — every caller inside Panels today — leaves both absent and
+            nothing about its rows changes.
+            """
+            if record_refusal and sender_message_id is None:
+                raise ValueError("record_refusal requires a sender_message_id")
+            state = await self._conversation_state(conversation_id)
+            if state is None:
+                return AddressedPromptDeliveryReceipt(
+                    PromptDeliveryRefused(PromptDeliveryRefusalReason.no_such_conversation), False
+                )
+            return await self._own_settlement(
+                state,
+                self._send_with_receipt(
+                    conversation_id,
+                    content,
+                    sender_label=sender_label,
+                    mode=mode,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                    owner_read_through_sequence=owner_read_through_sequence,
+                    sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
+                    reply_requested=reply_requested,
+                    recovery_references=recovery_references,
+                    record_refusal=record_refusal,
+                ),
             )
-        return await self._own_settlement(
-            state,
-            self._send_with_receipt(
-                conversation_id,
-                content,
-                sender_label=sender_label,
-                mode=mode,
-                model_change=model_change,
-                reasoning_effort_change=reasoning_effort_change,
-                owner_read_through_sequence=owner_read_through_sequence,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                sender=sender,
-                recipient=recipient,
-                reply_requested=reply_requested,
-                recovery_references=recovery_references,
-                record_refusal=record_refusal,
-            ),
-        )
 
     async def _send_with_receipt(
         self,
@@ -4151,6 +4198,11 @@ class SqliteProcessConversationSystem:
                 LOGGER.exception("the idle conversation child sweep failed")
 
     async def _sweep_idle_children(self) -> None:
+        with self.workspace_admission.operation() as admitted:
+            if admitted:
+                await self._sweep_admitted_idle_children()
+
+    async def _sweep_admitted_idle_children(self) -> None:
         """Compact due conversations, then stop children that sat idle long enough.
 
         A conversation whose lock is held is in the middle of something and is not idle, so

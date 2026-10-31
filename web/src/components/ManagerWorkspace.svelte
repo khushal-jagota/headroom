@@ -42,13 +42,11 @@
     workspaceName,
     requestedConversationId = null,
     backHref = "#/workspace/chief-of-staff",
-    workspaceResource = null,
-    navigationErrorHandledByParent = false
+    workspaceResource = null
     // A host that is already a way back can pass null so the line is not drawn.
   }: {
     itemId: string;
     requestedConversationId?: string | null;
-    navigationErrorHandledByParent?: boolean;
     workspaceName: string;
     backHref?: string | null;
     workspaceResource?: ManagerWorkspaceResource | null;
@@ -75,7 +73,7 @@
   let publicItem=$derived(rawPublicItem?.recap_reference && fullRecap.body===undefined?undefined:rawPublicItem?{...rawPublicItem,recap:fullRecap.body ?? rawPublicItem.recap}:undefined);
   let content=$derived(workspaceResource ?? ownWorkspace);
   let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
-    error:fullRecap.error ?? content.error ?? (navigationErrorHandledByParent ? null : navigation.state.error),isLoading:content.isLoading || !publicItem});
+    error:fullRecap.error ?? content.error,isLoading:content.isLoading || !publicItem});
   const manifests=createQuery(()=>queries.workerTypeManifests());
   let headerElement=$state<HTMLElement | null>(null);
   let hoverElement=$state<HTMLDivElement | null>(null);
@@ -252,7 +250,7 @@
           </div>
 
           <section class="manager-workers" aria-label="Workers">
-            <ManagerChildren navigationErrorHandledByParent principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication} tickets={shared?.ticketsByParent.get(`manager:${itemId}`) ?? []}
+            <ManagerChildren principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication} tickets={shared?.ticketsByParent.get(`manager:${itemId}`) ?? []}
               onHover={(element, id, immediate) => {
                 const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
                 if (ticket) hoverRow(element, ticket, immediate);
@@ -283,6 +281,7 @@
         bind:conversationState
         conversationId={selectedConversationId}
         persistenceKey={`owner:sprint-item:${itemId}`}
+        uploadOwner={{kind:"manager",id:itemId}}
         readOnly={selectedPastConversationId !== null}
         bind:selectedPastConversationId
         label="Manager"

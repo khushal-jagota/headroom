@@ -1,130 +1,37 @@
 # Notifications
 
-Panels can be installed from the browser as a small home-screen or desktop app. It
-uses Web Push, so a selected event can reach an enabled phone or Mac while the Panels
-page is closed. The service worker does not cache pages or provide an offline copy of
-Panels.
+A notification is a phone or desktop push for a kind of attention Khushal opted into, fired when that attention newly becomes true. Headroom can be installed from the browser. The service worker delivers pushes. It does not cache the app, and there is no offline copy.
 
-## What becomes a notification
+## What can become a push
 
-Panels derives five attention flags for each subject: a message is waiting for a reply,
-a worker is waiting for an answer, a proposal is waiting for approval, a stage is
-assigned to Khushal, and something failed. A message and a waiting ask are two flags
-because they are two different things. Held as one, whichever arrived second changed
-nothing, so it raised no edge and reached nobody, and an ask announced itself as a
-message. A flag that
-turns from false to true is an edge, and an edge is the only thing that can become a
-notification. The writer records the flag and the edge in its own transaction, so several
-commits stay distinct even when one wake-up covers them. Ticket creation captures its
-initial flags before commit. Blocker, proposal, assignment, conversation link, and read
-changes capture their flags in the same transaction.
+Each subject — a Ticket, Chief, or Managers as one group — has attention flags. A flag that flips from false to true is an edge. An edge is the only thing that can notify. The writer records the flag and the edge in the same transaction as the change that caused them, so several commits stay distinct even when one later poll delivers them.
 
-A permission or input request awaits an answer only while its turn remains open.
-A recorded completion, failure, or interruption clears all unanswered requests from
-that turn. The next request can then create a new notification edge. A prompt or steer
-alone does not close a request. Unread messages and failure attention remain separate.
+The flags are split because they are different events. A message waiting for a reply and a Worker waiting on a permission or input ask used to be easy to collapse. Whichever arrived second then changed nothing and reached nobody. They are separate. A proposal waiting on Khushal, a stage becoming his to fill, and a failure are separate again. Approval and stage-assignment exist on Tickets only. Chief and Managers offer reply, answer, and error.
 
-The delivery poll consumes those saved edges. It does not scan conversation history.
-A Ticket without a conversation has no conversation attention. The process that owns
-the polling lock reconciles imported state once before it starts the loops. Repeated
-startup reconciliation creates no duplicate edges. A startup failure releases the lock.
+All ordinary Managers share one subject. A preference is about Managers as a class. A Chief preference never changes the matching Ticket preference.
 
-Startup reconciliation also clears stale request attention when the conversation records
-that the turn ended. This correction preserves the generation and past deliveries, and
-creates no edge. A later conversation write can also correct the stale flag.
-Neither path replays missed historical edges. Recovery after a crash without a recorded
-turn ending remains outside this correction.
+The push itself carries a privacy-safe title, body, link, and a replacement tag. It does not carry the transcript, the prompt, or the permission text. One tag per subject means a newer notification replaces the older one at the operating system. The server owns the catalogue of choices. The Notifications screen renders that catalogue. It does not invent a parallel list.
 
-One policy function is the only door from an edge to a notification. It reads the saved
-choice for that type and either suppresses the edge or creates the privacy-safe title,
-body, exact subject link, and replacement tag. The subject uses the same kind and ID
-contract as requests and messages.
+A permission or input request awaits an answer only while its turn is open. The turn ending clears unanswered requests from that turn, so the next request can raise a new edge. Unread messages and failures stay their own flags.
 
-This chokepoint is intentional. The source adapters, user choices, wording, and delivery
-provider do not decide independently what counts. The server owns one catalogue, and
-the Notifications screen renders its subject groups and choices directly. It offers
-five choices for Tickets:
+Changing a preference affects future edges. It does not replay the past. Startup reconciliation can clear a stale “needs an answer” when the notebook shows the turn already ended. That correction does not raise an edge and does not replay missed history.
 
-- an unread addressed message awaits a reply;
-- a permission request or an input request awaits an answer;
-- an owner-held Ticket proposal awaits approval;
-- a Ticket stage becomes assigned to Khushal; and
-- a worker turn fails or a Ticket errors.
+When a parked review moves to an agent holder, Headroom attempts a courtesy message in that holder’s conversation. Khushal does not get an arrival message when a review moves to him. That courtesy is not a new push type. If the send fails, the courtesy can be lost. The proposal itself remains parked.
 
-Chief of Staff and Managers each offer awaiting reply, needs an answer,
-and errored.
-Approval and assignment belong to Tickets only. Each saved choice uses its subject and
-notification type as one key, so a Chief choice never changes the matching Ticket choice.
+## How a device is enabled
 
-Managers share one subject between all of them, because a sprint holds
-twenty or thirty Items and they are replaced each sprint. Upgrades preserve the old
-disabled Manager-error preference while adding the reply choice.
+Delivery is Web Push. At the moment an edge is accepted, Headroom writes a delivery row per enabled device and retries with backoff. An expired subscription disables that device.
 
-The notification contains no transcript, prompt, permission detail, or worker output.
-Opening a Ticket notification goes to `/#/workspace/<ticket-id>`. A Manager
-notification goes to `/#/workspace/item/<item-id>`. A notification sent
-before Tickets moved to the Workspace still carries the old `/#/ticket/<ticket-id>`
-address, which the app redirects. A Chief notification
-uses the retained `/#/agents/chief-of-staff` address, which the app redirects to
-`/#/workspace/chief-of-staff`. The service worker accepts only those subject links. A
-malformed payload or an unsupported link opens the safe Workspace fallback. All
-notifications for one subject use one stable replacement tag, so overlapping
-notifications coalesce at the operating system.
+Production pushes need HTTPS. Localhost is the development exception. On iPhone or iPad, add the site to the Home Screen, open that installed app, then enable notifications for this device. The screen still says “Add Panels to the Home Screen,” which is the old product name in the current copy. Permission requested in a browser tab on iOS does not stick the way the installed app does.
 
-## Review transfer notices
+## What feeds pushes, and where they land
 
-When a parked review changes holder, Panels attempts a courtesy message to the previous
-holder. The message identifies the Ticket and names the new holder. A holder change
-without a parked proposal sends no message. An unchanged final holder sends no message.
+Ticket, conversation, and proposal writes feed the flags. Preferences feed the policy that turns an edge into a push or drops it. A Ticket notification opens that Ticket in the Workspace. A Manager notification opens that Manager. A Chief notification opens Chief. Older addresses from before those routes moved still redirect. A malformed payload opens the Workspace.
 
-The Chief and managers receive the message through their existing conversation
-routes. The user receives it in the Ticket conversation as a Panels message. The notice
-requests no reply and grants no credit for a worker reply. Existing approval attention
-and proposal delivery to the new holder keep their current behavior.
+The Notifications section is Settings → Notifications, `#/settings/notifications`. The shell does not have a separate notifications destination anymore. `#/notifications` redirects there.
 
-This notice uses one best-effort send after the transfer commits. A failed send does not
-fail or repeat the transfer. A process failure before send or before a queued notice
-reaches the agent can lose it. A recorded conversation event persists through ordinary
-conversation storage. The notice adds no push notification type. An owner-directed
-message uses the existing unread-message attention and notification choice.
+## Pointers
 
-## Durable delivery
+`src/planner/notifications/` and `web/src/routes/NotificationsRoute.svelte`. The service worker is `static/service-worker.js`.
 
-Several messages before one read cause one reply notification. A later message causes
-another notification only after the first reply state clears.
-
-Every edge is decided once. An allowed edge creates one delivery row per device that was
-registered at that time, holding the words that were sent. A suppressed edge is decided
-too, and leaves nothing behind. The delivery log is therefore the whole record of what
-Panels sent, and Panels keeps no notification history besides it.
-
-Notification reads never change attention state. Reads and owner replies do not clear a
-failed agent state; only a successful start or explicit restart does.
-
-The single-machine runtime loop owns the queue step and delivery. A database
-change wakes it promptly, and a periodic pass covers missed wake-ups and retries.
-Successful deliveries are recorded. Temporary failures back off and retry. A push
-provider's expired-subscription response disables that device.
-
-The Web Push signing identity, subscriptions, preferences, attention state, edges, and
-delivery results all live in the main SQLite database. Normal database backup and
-restore therefore preserve the identity that existing devices trust.
-
-## Enabling a device
-
-Open **More → Notifications**. Choose the kinds of event that count for Tickets and the
-Chief of Staff, then press
-**Enable on this device**. Panels asks the browser for notification permission only at
-that point. On iPhone and iPad, first add Panels to the Home Screen and open that
-installed app. Web Push also requires Panels to be served over HTTPS in production
-(`localhost` is the browser's development exception).
-
-Disabling a device removes its subscription from Panels and asks the browser to
-unsubscribe. Changing a “What counts” switch affects later edges; it does not resurrect
-events that were suppressed earlier.
-
-Code paths: `src/planner/notifications/`, the notification tables in the baseline revision,
-`static/service-worker.js`, and
-`web/src/routes/NotificationsRoute.svelte`.
-
-_Last verified: 2026-10-22._
+_Last verified: 2026-10-30._

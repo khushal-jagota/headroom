@@ -15,6 +15,7 @@ import httpx
 from playwright.sync_api import BrowserContext, Page, expect
 from tests.e2e.harness import WAIT_MS, JsonObject, ServerHandle, capture_success
 from tests.e2e.test_conversation_signals import (  # noqa: F401
+    _navigate_to_retained_history,
     _post,
     signal_server,
 )
@@ -335,6 +336,7 @@ def test_owner_send_lands_at_the_end_of_the_conversation_not_the_retained_window
         server, ticket_id, open_page, context,
         '[data-conversation-thread][data-conversation-placement-ready="true"]',
     )
+    _navigate_to_retained_history(page, target)
     retained_at_entry = page.evaluate(_NEWEST_RETAINED)
     # Without this the test can pass for the wrong reason. A window that already holds
     # the newest row never places a send from the wrong end.

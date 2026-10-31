@@ -12,10 +12,9 @@
   import { readConversation, readEventsAfter, advanceOwnerRead, messageContentOf, type DeliveredMessage } from '../lib/conversation/wire';
   import { mintOutgoingMessage, recallOutgoingMessages, rememberOutgoingMessages, type OutgoingMessage } from '../lib/conversation/outgoing';
   import { readComposerDraft, writeComposerDraft } from '../lib/conversation/composerDraft';
-  import { createPendingConversationFiles, pendingFilesAsPieces, restoredPendingFiles, pendingConversationFileBytes, CONVERSATION_FILE_ACCEPT, type PendingConversationFile } from '../lib/conversation/pendingFiles';
-  import { createPendingConversationImages, pendingImagesAsPieces, restoredPendingImages, releasePendingImages, type PendingConversationImage } from '../lib/conversation/pendingImages';
-  import { attachmentByteLabel } from './conversation/composer/attachments';
-  import { createVoiceCapture, formatVoiceTime, voiceCaptureSupported, type VoiceCapture, type VoiceCaptureState } from '../lib/conversation/voiceCapture';
+  import { pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from '../lib/conversation/pendingFiles';
+  import { pendingImagesAsPieces, restoredPendingImages, releasePendingImages, type PendingConversationImage } from '../lib/conversation/pendingImages';
+  import ReviewReplyInput from './ReviewReplyInput.svelte';
   import { fadeConversationExit } from '../lib/conversation/surfaceMotion';
   import { fateSentence } from '../lib/conversation/composer';
   import { unreadOwnerMessages, reviewMessageHref, reviewReplyEndpoint, reviewReplyReceipt, readReviewDraft, saveReviewDraft, draftStorageKey, attemptStorageKey, type OwnerMessage } from '../lib/review/messages';
@@ -47,12 +46,8 @@
   let intakeBusy = $state(false);
   let leaving = $state(false);
   let destroyed = false;
-  let input = $state<HTMLTextAreaElement|null>(null);
-  let fileInput = $state<HTMLInputElement|null>(null);
   let card = $state<HTMLDivElement|null>(null);
-  let voiceState = $state<VoiceCaptureState>({phase:'idle'});
-  let voice:VoiceCapture|null = null;
-  let voiceSupported = $state(false);
+  let voiceActive = $state(false);
   let nextId = 0;
   const chief = createQuery(()=>({...queries.chiefSettings(),enabled:item.owner_kind==='chief'}));
   const recapBody = selectedRecap(()=>item.recap_reference,()=>true);
@@ -60,9 +55,7 @@
   let disabled = $derived(busy || intakeBusy || !ready || retryingUnknown);
   let hasReply = $derived(Boolean(text.trim() || files.length || images.length));
   let through = $derived(events.at(-1)?.sequence ?? 0);
-  $effect(()=>{ writeComposerDraft(draftKey,text); });
-  $effect(()=>{ onBusy?.(busy || intakeBusy || voiceState.phase!=='idle'); });
-  $effect(()=>{ text; if(input) { input.style.height='auto'; input.style.height=`${Math.min(Math.max(input.scrollHeight,44),220)}px`; } });
+  $effect(()=>{ onBusy?.(busy || intakeBusy || voiceActive); });
   $effect(()=>{ if(ready) { const content=[...pendingImagesAsPieces(images),...pendingFilesAsPieces(files)]; void saveReviewDraft(conversationId,content).then(saved=>{if(!saved)error=new Error('The attachment could not be saved in this browser.');}); } });
 
   async function load():Promise<void> {
@@ -79,10 +72,6 @@
     } catch(problem) { if(!destroyed) error=problem; }
   }
   onMount(()=>{
-    voiceSupported=voiceCaptureSupported();
-    voice=createVoiceCapture({onState:state=>voiceState=state,onTranscript:transcript=>{
-      if(transcript)text=text.trim() ? `${text.trim()}\n\n${transcript}` : transcript;
-    }});
     void (async()=>{
       const [content,held]=await Promise.all([readReviewDraft(conversationId),recallOutgoingMessages(attemptStorageKey(conversationId))]);
       if(destroyed)return;
@@ -92,23 +81,9 @@
       ready=true;
       await load();
     })().catch(problem=>{error=problem;});
-    return ()=>{destroyed=true;voice?.dispose();releasePendingImages(images);onBusy?.(false);};
+    return ()=>{destroyed=true;releasePendingImages(images);onBusy?.(false);};
   });
 
-  async function attach(chosen:FileList|null):Promise<void> {
-    if(!chosen || disabled)return;
-    intakeBusy=true;error=null;
-    try {
-      const picked=[...chosen];
-      const pictureFiles=picked.filter(file=>file.type.startsWith('image/'));
-      const pictureResult=await createPendingConversationImages(pictureFiles,nextId,images.reduce((sum,image)=>sum+image.byteCount,0));
-      images=[...images,...pictureResult.accepted]; nextId=pictureResult.nextId;
-      const result=await createPendingConversationFiles(picked.filter(file=>!pictureFiles.includes(file)),nextId,pendingConversationFileBytes(files));
-      files=[...files,...result.accepted];nextId=result.nextId;
-      if(result.rejected.length || pictureResult.rejected.length)error=new Error('Some attachments have an unsupported format or exceed the attachment limit.');
-    } catch(problem){error=problem;}finally{intakeBusy=false;if(fileInput)fileInput.value='';}
-  }
-  function removeImage(id:number) { const removed=images.filter(image=>image.id===id);images=images.filter(image=>image.id!==id);releasePendingImages(removed); }
   async function resolve(bound:number):Promise<void> {
     leaving=true;
     // Freeze the painted card through the settled leave beat. Queue refresh can finish
@@ -117,7 +92,7 @@
     if(!destroyed)onResolved(bound);
   }
   async function markRead():Promise<void> {
-    if(busy || !loaded || !through || voiceState.phase!=='idle')return;
+    if(busy || !loaded || !through || voiceActive)return;
     busy=true;error=null;
     try { const bound=through;await advanceOwnerRead(conversationId,bound);await resolve(bound); }
     catch(problem){error=problem;}finally{busy=false;}
@@ -131,7 +106,7 @@
     await resolve(bound);
   }
   async function send():Promise<void> {
-    if(busy || intakeBusy || !ready || !loaded || !hasReply || voiceState.phase!=='idle')return;
+    if(busy || intakeBusy || !ready || !loaded || !hasReply || voiceActive)return;
     busy=true;error=null;
     try {
       if(attempt && retryingUnknown) {
@@ -172,7 +147,7 @@
 <div bind:this={card} data-review-card data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
   {#if !embedded}
   <div class="review-ticket-decision-line">
-    <button data-skip disabled={busy || intakeBusy || voiceState.phase!=='idle'} onclick={onSkip}>Skip &rsaquo;</button>
+    <button data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip &rsaquo;</button>
     <a data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={event=>{if(busy)event.preventDefault();}}>Open conversation &rsaquo;</a>
   </div>
   <h1 class="review-ticket-title">{item.title}</h1>
@@ -186,32 +161,10 @@
         <div class="review-message-run">
           {#each events as event (event.sequence)}<div class="review-message-said" data-review-message-sequence={event.sequence}><MessagePieces content={messageContentOf(event.payload)} {conversationId}/></div>{/each}
         </div>
-        <div class="review-reply" data-review-voice={voiceState.phase}>
-          {#if voiceState.phase!=='idle'}
-            <div class="review-voice">
-              {#if voiceState.phase==='recording'}<span class="live-text-shimmer">recording</span><span>{formatVoiceTime(voiceState.elapsedMs)}</span>
-                <button data-voice-stop aria-label="Stop recording and transcribe" onclick={()=>voice?.stopRecording()}>■</button>
-              {:else if voiceState.phase==='transcribing'}<span class="live-text-shimmer">transcribing</span>
-              {:else}<span>transcription failed · kept {formatVoiceTime(voiceState.keptMs)}</span><button data-voice-retry onclick={()=>voice?.retry()}>retry</button>{/if}
-              <button data-voice-cancel aria-label="Cancel recording" onclick={()=>voice?.cancel()}>×</button>
-            </div>
-          {:else}
-            <textarea bind:this={input} bind:value={text} data-review-reply rows="1" placeholder="Reply…" aria-label="Reply" disabled={disabled} onkeydown={event=>{if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();void send();}}}></textarea>
-            {#if images.length || files.length}<div class="review-attachments">
-              {#each images as image(image.id)}<span class="review-attachment">{image.fileName} · {attachmentByteLabel(image.byteCount)}<button aria-label={`Remove ${image.fileName}`} disabled={disabled} onclick={()=>removeImage(image.id)}>×</button></span>{/each}
-              {#each files as file(file.id)}<span class="review-attachment">{file.fileName} · {attachmentByteLabel(file.byteCount)}<button aria-label={`Remove ${file.fileName}`} disabled={disabled} onclick={()=>files=files.filter(entry=>entry.id!==file.id)}>×</button></span>{/each}
-            </div>{/if}
-            <div class="review-reply-tools">
-              <input bind:this={fileInput} hidden type="file" multiple accept={`image/png,image/jpeg,image/gif,image/webp,${CONVERSATION_FILE_ACCEPT}`} onchange={()=>void attach(fileInput?.files??null)}/>
-              <button class="review-tool" data-review-attach aria-label="Attach a file" disabled={disabled} onclick={()=>fileInput?.click()}><svg viewBox="0 0 24 24"><path d="M8 12.5l6.8-6.8a3 3 0 0 1 4.2 4.2l-8.2 8.2a5 5 0 0 1-7.1-7.1l8-8"/></svg></button>
-              <button class="review-tool" data-voice-record aria-label="Speak a reply" disabled={disabled || !voiceSupported} onclick={()=>void voice?.startRecording()}><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-              <button class="review-send" class:ready={hasReply} data-review-send aria-label={retryingUnknown?'Retry reply':'Send reply'} aria-busy={busy} disabled={busy || intakeBusy || !ready || !hasReply} onclick={()=>void send()}>
-                {#if busy}<span class="review-send-spinner"></span>{:else}<svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>{/if}
-              </button>
-            </div>
-          {/if}
-        </div>
-        <div class="review-read-row"><button data-review-mark-read disabled={busy || intakeBusy || !through || voiceState.phase!=='idle'} onclick={()=>void markRead()}>Mark read</button></div>
+        <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
+          {disabled} sendDisabled={busy || !ready} sending={busy}
+          sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
+        <div class="review-read-row"><button data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</button></div>
         {#if error}<ErrorLine {error}/>{/if}
       </div>
     {:else if error}<ErrorLine {error}/><button class="button button--quiet" onclick={()=>void load()}>Retry</button>{/if}
@@ -225,24 +178,8 @@
   .review-message-said+.review-message-said{position:relative;margin-top:var(--space-5);padding-top:var(--space-4)}
   .review-message-said+.review-message-said::before{content:"";position:absolute;inset-block-start:0;inset-inline-start:0;inline-size:var(--space-6);border-block-start:var(--border-hairline) solid var(--text-faintest);opacity:.55}
   .review-recap-request{margin-top:var(--space-2);font-size:var(--type-sm)}
-  .review-reply{margin-top:var(--space-4);background:var(--surface-recessed);border-radius:var(--radius-md);box-shadow:inset 0 1px 2px rgb(0 0 0 / 35%);padding:var(--space-3)}
-  textarea{width:100%;background:none;border:0;resize:none;color:var(--text-strong);font:inherit;font-size:var(--type-md);line-height:1.55;outline:none;min-height:44px;padding:0;overflow-y:auto;display:block;caret-color:var(--accent-bright)}
-  textarea::placeholder{color:var(--text-faintest)}
-  .review-reply-tools{display:flex;align-items:center;gap:var(--space-1);margin-top:var(--space-2)}
-  .review-tool{width:32px;height:32px;display:grid;place-items:center;background:none;border:0;color:var(--text-faintest);cursor:pointer;padding:0;border-radius:var(--radius-md)}
-  .review-tool svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
-  .review-send{margin-left:auto;width:32px;height:32px;flex:none;padding:0;border:0;border-radius:50%;background:var(--surface-2);color:var(--text-faintest);cursor:pointer;display:grid;place-items:center}
-  .review-send.ready{background:var(--accent-bright);color:var(--surface-ink)}
-  .review-send svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
   button:disabled{opacity:.5;cursor:default}
-  .review-tool:hover:not(:disabled),.review-read-row button:hover:not(:disabled){background-image:var(--interaction-hover);color:var(--text-strong)}
-  .review-send-spinner{width:14px;height:14px;border-radius:50%;border:2px solid color-mix(in srgb,var(--surface-ink) 30%,transparent);border-top-color:var(--surface-ink);animation:spin var(--motion-loop-spin) linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
+  .review-read-row button:hover:not(:disabled){background-image:var(--interaction-hover);color:var(--text-strong)}
   .review-read-row{margin-top:var(--space-3);margin-left:calc(var(--space-3) * -1)}
   .review-read-row button{font:inherit;font-size:var(--type-sm);line-height:1.6;padding:8px 12px;border:0;border-radius:var(--radius-pill);background:none;color:var(--text-faint);cursor:pointer}
-  .review-attachments{display:flex;gap:var(--space-2);flex-wrap:wrap;margin-top:var(--space-2)}
-  .review-attachment{display:inline-flex;gap:var(--space-2);align-items:center;border:var(--border-hairline) solid var(--border-color);padding:var(--space-1) var(--space-2);border-radius:var(--radius-md);font:var(--type-xs) var(--font-mono);overflow-wrap:anywhere;max-width:100%}
-  .review-attachment button{background:none;border:0;color:var(--text-faintest);cursor:pointer}
-  .review-voice{display:flex;gap:var(--space-2);align-items:center;min-height:44px}
-  .review-voice button{background:none;border:0;color:var(--text-strong);cursor:pointer;margin-left:auto}
 </style>

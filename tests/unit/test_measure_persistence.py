@@ -452,3 +452,51 @@ def test_assigned_worker_can_manage_taken_definitions(
     assert data.read_definitions(tmp_db, (measure.id,), missing_ok=True) == {}
     with pytest.raises(PlannerError, match="measure not found"):
         data.read_definitions(tmp_db, (measure.id,))
+
+
+def test_retained_history_follows_dependencies_but_recorded_dates_stay_on_the_root(
+    tmp_db: Connection,
+) -> None:
+    identifier = source(tmp_db)
+    leaf, unrelated = taken(tmp_db, identifier), taken(tmp_db, identifier)
+    run(tmp_db, identifier)
+    collect(
+        tmp_db,
+        identifier,
+        (
+            CandidateObservation(
+                leaf.id, "2026-10-20", None, HistoricalUnavailableReason.provider_has_no_value
+            ),
+            CandidateObservation(leaf.id, "2026-10-25", 2),
+            CandidateObservation(leaf.id, "2026-10-28", 3),
+            CandidateObservation(unrelated.id, "2026-10-10", 99),
+        ),
+        history=HistoryWindow("2026-10-10", "2026-10-28"),
+    )
+    root = leaf
+    for name in ("Intermediate", "Root"):
+        root = actions.create_measure(
+            tmp_db,
+            CreateMeasureBody(
+                project_id="project_vylo",
+                name=name,
+                unit="items",
+                origin=MeasureOrigin.assembled,
+                kind=MeasureKind.reading,
+                timezone="Europe/Berlin",
+                period=None,
+                source_id=None,
+                formula=ReferenceExpression(op="reference", measure_id=root.id, day_offset=0),
+            ),
+            principal=OWNER_PRINCIPAL,
+            now=NOW,
+        )
+    with data.transaction(tmp_db, read_only=True):
+        assert data.earliest_retained_date(tmp_db, root.id) == "2026-10-20"
+        assert data.read_recorded_dates(tmp_db, leaf.id, "2026-10-20", "2026-10-28") == {
+            "2026-10-20",
+            "2026-10-25",
+            "2026-10-28",
+        }
+        assert data.read_recorded_dates(tmp_db, root.id, "2026-10-20", "2026-10-28") == frozenset()
+        assert tmp_db.in_transaction

@@ -41,6 +41,7 @@ from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.measure_sources.runtime import Runtime
+from planner.scheduled_tickets.registry import build_participants
 from planner.server_lifecycle.application import ChangeStreamClosingServer
 from planner.tickets import data as ticket_data
 
@@ -158,7 +159,12 @@ def build_app(config: Config) -> FastAPI:
         build_clock(config),
         lambda: connect(config.db_path),
         backend_child_factories_for_test={key: make_child for key in ConversationBackendKey},
-        source_runtime_for_test=Runtime(),
+        slot_participants_for_test=lambda admission: build_participants(
+            config,
+            build_clock(config),
+            workspace_admission=admission,
+            source_runtime=Runtime(),
+        ),
     )
     install_connected_controls(app, config.db_path)
 

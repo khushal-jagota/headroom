@@ -419,19 +419,18 @@ def capture_conversation_attention(
     # Historical replay can publish attention before the goal schema exists.
     if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goals'"
-    ).fetchone() is None:
-        return
-    for row in conn.execute(
-        "SELECT g.id FROM goals g JOIN agents a ON a.agent_key='goal_' || g.id "
-        "WHERE a.conversation_id=?",
-        (conversation_id,),
-    ):
-        for notification_type, active in (
-            ("awaiting_reply", attention.unread_message),
-            ("awaiting_answer", attention.pending_ask),
-            ("errored", attention.errored),
+    ).fetchone() is not None:
+        for row in conn.execute(
+            "SELECT g.id FROM goals g JOIN agents a ON a.agent_key='goal_' || g.id "
+            "WHERE a.conversation_id=?",
+            (conversation_id,),
         ):
-            _record(conn, "goal", str(row[0]), notification_type, active, occurred_at)
+            for notification_type, active in (
+                ("awaiting_reply", attention.unread_message),
+                ("awaiting_answer", attention.pending_ask),
+                ("errored", attention.errored),
+            ):
+                _record(conn, "goal", str(row[0]), notification_type, active, occurred_at)
 
 
 def reconcile_attention(

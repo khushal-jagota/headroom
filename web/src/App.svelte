@@ -250,7 +250,7 @@
         {/each}
       </div>
     {/if}
-    <ShellStatus connectionState={$connectionStatus} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} />
     <div class="compact-bar-row">
       <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined} use:observeReviewLink={"review"}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
@@ -265,7 +265,7 @@
 
 {#snippet foot()}
   <div class="rail-foot" bind:this={desktopFoot}>
-    <ShellStatus connectionState={$connectionStatus} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} />
     <nav class="rail-utilities workspace-utility-nav" aria-label="Destinations">
       {#each SHELL_DESTINATIONS as destination}
         {#if destination.key === "feedback"}

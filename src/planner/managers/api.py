@@ -5,11 +5,17 @@ from __future__ import annotations
 from functools import partial
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.routing import APIRoute
 
-from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
+from planner.conversation.api import (
+    OwnerSendBody,
+    conversation_message_content,
+    delivery_fate_json,
+    video_send_admission,
+)
 from planner.conversation.contracts import require_conversation_backend_key
+from planner.conversation.video_uploads.contracts import UploadDestination
 from planner.core import authority
 from planner.core.authority import require_above, require_above_or_self
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
@@ -214,6 +220,7 @@ async def get_item_conversation_start_values(item_id: str, conn: DbConn, ctx: Ct
 async def send_to_item_conversation(
     item_id: str,
     body: OwnerSendBody,
+    request: Request,
     conn: DbConn,
     ctx: Ctx,
     conversations: Conversations,
@@ -227,12 +234,15 @@ async def send_to_item_conversation(
     name, the files attached to it, and what the conversation is to run on.
     """
     require_above(conn, ctx.principal, authority.manager(item_id))
-    return await _send_to_manager(item_id, body, conn, ctx, conversations, message_files, clk)
+    return await _send_to_manager(
+        item_id, body, request, conn, ctx, conversations, message_files, clk
+    )
 
 
 async def _send_to_manager(
     item_id: str,
     body: OwnerSendBody,
+    request: Request,
     conn: DbConn,
     ctx: Ctx,
     conversations: Conversations,
@@ -259,18 +269,31 @@ async def _send_to_manager(
             "an existing Manager conversation cannot change backend",
             {"conversation_id": current, "backend_key": overrides.backend_key.value},
         )
+    admission = video_send_admission(
+        request,
+        message_files,
+        body.content,
+        body.sender_message_id,
+        UploadDestination(
+            kind="manager", id=item_id, expected_conversation_id=body.conversation_id
+        ),
+        Principal(PrincipalKind.manager, item_id),
+        ctx.principal,
+    )
     delivered = await message_delivery_service.send_message(
         conversations,
         conn,
         clk,
         ctx,
         Principal(PrincipalKind.manager, item_id),
-        partial(
+        admission
+        or partial(
             conversation_message_content,
             message_files,
             sent=body.content,
             sender_message_id=body.sender_message_id,
         ),
+        admission=admission,
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=overrides,

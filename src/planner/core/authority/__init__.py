@@ -19,6 +19,7 @@ from planner.core.authority.logic import (
     stands_above_or_is_self,
 )
 from planner.core.authority.service import (
+    can_hold_review,
     chain_facts,
     is_above,
     is_above_or_self,
@@ -35,6 +36,7 @@ __all__ = [
     "ChainFacts",
     "Target",
     "TargetKind",
+    "can_hold_review",
     "chain_facts",
     "is_above",
     "is_above_or_self",

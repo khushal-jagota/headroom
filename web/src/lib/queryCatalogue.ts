@@ -3,7 +3,7 @@ import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
 import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
 import type { ConversationStartValues } from "./conversation/wire";
-import type { UsageDays, UsageSummary } from "./conversation/recordedUsageWire";
+import { usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BoardResponse,
@@ -53,11 +53,9 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
-  recordedUsage: (days: UsageDays, timezone: string) =>
-    jsonQuery<UsageSummary>(
-      ["recorded-usage", { days, timezone }],
-      `/api/conversation/usage/summary?days=${days}&timezone=${encodeURIComponent(timezone)}`
-    ),
+  updates: () => jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
+  recordedUsage: (input: UsageSummaryInput) =>
+    jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
   deploymentStatus: () =>
     versionedJsonQuery<DeploymentStatus>(["deployment-status"], "/api/deployment-status"),
   vpsStatusSummary: () =>

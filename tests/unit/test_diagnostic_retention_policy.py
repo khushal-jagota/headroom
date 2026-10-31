@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.unit.test_db import _migration_tree_through
 
 from planner.conversation.lifecycle import (
     LifecycleFact,
@@ -24,6 +26,7 @@ from planner.conversation.retention.contracts import (
 )
 from planner.conversation.retention.data import build_report, read_report
 from planner.conversation.retention.logic.rules import classify_conversation, event_fingerprint
+from planner.core.db import connect, create_schema
 
 
 def event(sequence: int, kind: str, payload: dict[str, object], at: int = 1) -> RetentionEvent:
@@ -248,28 +251,35 @@ def test_explicit_receipt_reconciliation_releases_uncertainty_without_removing_r
 
 
 def test_report_reads_without_initialization_and_binds_source_schema_and_database_identity(
-    tmp_db: sqlite3.Connection,
+    tmp_db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    first = read_report(path, as_of_unix=2_000_000)
-    assert first == read_report(path, as_of_unix=2_000_000)
-    tmp_db.execute("CREATE TABLE retention_test_fact (fact TEXT NOT NULL)")
-    tmp_db.execute("INSERT INTO retention_test_fact VALUES ('first')")
-    tmp_db.commit()
-    second = read_report(path, as_of_unix=2_000_000)
-    assert first.schema_fingerprint != second.schema_fingerprint
-    tmp_db.execute("UPDATE retention_test_fact SET fact='changed'")
-    tmp_db.commit()
-    third = read_report(path, as_of_unix=2_000_000)
-    assert second.source_fingerprint != third.source_fingerprint
-    assert second.schema_fingerprint == third.schema_fingerprint
-    assert second.database_identity == third.database_identity
-    with pytest.raises(ValueError, match="snapshot"):
-        build_report(tmp_db, database_path=path, as_of_unix=2_000_000)
-    tmp_db.execute("BEGIN")
-    with pytest.raises(ValueError, match="path differs"):
-        build_report(tmp_db, database_path=path.parent, as_of_unix=2_000_000)
-    tmp_db.rollback()
+    current_path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    with pytest.raises(ValueError, match="Unsupported diagnostic retention schema revision"):
+        read_report(current_path, as_of_unix=2_000_000)
+    # Build the supported schema rather than relabeling an incompatible current database.
+    _migration_tree_through(tmp_path, monkeypatch, "owner_message_preview")
+    path = tmp_path / "supported-report.db"
+    with closing(connect(str(path))) as supported_db:
+        create_schema(supported_db)
+        first = read_report(path, as_of_unix=2_000_000)
+        assert first == read_report(path, as_of_unix=2_000_000)
+        supported_db.execute("CREATE TABLE retention_test_fact (fact TEXT NOT NULL)")
+        supported_db.execute("INSERT INTO retention_test_fact VALUES ('first')")
+        supported_db.commit()
+        second = read_report(path, as_of_unix=2_000_000)
+        assert first.schema_fingerprint != second.schema_fingerprint
+        supported_db.execute("UPDATE retention_test_fact SET fact='changed'")
+        supported_db.commit()
+        third = read_report(path, as_of_unix=2_000_000)
+        assert second.source_fingerprint != third.source_fingerprint
+        assert second.schema_fingerprint == third.schema_fingerprint
+        assert second.database_identity == third.database_identity
+        with pytest.raises(ValueError, match="snapshot"):
+            build_report(supported_db, database_path=path, as_of_unix=2_000_000)
+        supported_db.execute("BEGIN")
+        with pytest.raises(ValueError, match="path differs"):
+            build_report(supported_db, database_path=path.parent, as_of_unix=2_000_000)
+        supported_db.rollback()
 
 
 @pytest.mark.parametrize(
@@ -302,10 +312,13 @@ def test_durable_unsettled_or_invalid_lifecycle_facts_block_closed_event_history
 
 
 def test_report_refuses_an_unfamiliar_projection_payload_store(
-    tmp_db: sqlite3.Connection,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    tmp_db.execute("CREATE TABLE conversation_view_future_payloads (payload TEXT)")
-    tmp_db.commit()
-    with pytest.raises(ValueError, match="projection schema"):
-        read_report(path, as_of_unix=2_000_000)
+    _migration_tree_through(tmp_path, monkeypatch, "owner_message_preview")
+    path = tmp_path / "supported-projection.db"
+    with closing(connect(str(path))) as conn:
+        create_schema(conn)
+        conn.execute("CREATE TABLE conversation_view_future_payloads (payload TEXT)")
+        conn.commit()
+        with pytest.raises(ValueError, match="projection schema"):
+            read_report(path, as_of_unix=2_000_000)

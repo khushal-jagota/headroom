@@ -8,15 +8,14 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
   const restorationText=textRestoration==='tall'
     ? '```text\n'+Array.from({length:1400},(_,index)=>`Interior code line ${index}: preserve this exact character through late layout.`).join('\n')+'\n```'
     : Array.from({length:400},(_,index)=>`Late paragraph 2000.${index}. `+'The final body differs from its provisional skeleton. '.repeat(3)).join('\n\n');
+  const openingRequest=new URLSearchParams(search).get('opening-request');
+  const positionTakeover=new URLSearchParams(search).has('position-takeover');
   const positionRace=new URLSearchParams(search).has('position-race');
   const positionBodies: Array<()=>void>=[];
   const positionProbe={hold:true,waiting:0,release:()=>{positionProbe.hold=false;for(const release of positionBodies.splice(0))release();}};
   (window as any).__positionProbe=positionProbe;
   const unreadText=new URLSearchParams(search).get('unread');
   const unread=unreadText===null?null:Number(unreadText);
-  const entryProbe={hold:new URLSearchParams(search).has('entry-hold'),fail:new URLSearchParams(search).has('entry-fail'),waiting:0,release:()=>{}};
-  (window as any).__entryProbe=entryProbe;
-  const hiddenUnread=new URLSearchParams(search).has('entry-hidden');
   const ownerWidth=new URLSearchParams(search).get('owner-width');
   const widthBody=JSON.stringify({kind:'prompt',sender_label:'owner',mode:'queue',sent_at_unix_milliseconds:1,content:[{piece:'text',text:'Short prompt.'}]});
   let releaseOwnerBody: (()=>void)|null=null;
@@ -108,8 +107,11 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
       const row=item(start+index);
       const previewBody=previewBodies.get(start+index);
       if(previewBody){row.row_kind=previewBody.kind;row.body={kind:'inline',value:previewBody};}
-      if(hiddenUnread && unread!==null && row.source_sequence>unread && row.source_sequence<=unread+100){
-        row.row_kind='token_usage';row.body={kind:'inline',value:{kind:'token_usage',input_tokens:1,output_tokens:1,cached_input_tokens:0,cost_usd:null}};
+      if(openingRequest && row.source_sequence===1990){
+        row.row_kind=openingRequest==='permission'?'permission_ask':'user_input';
+        row.body={kind:'inline',value:openingRequest==='permission'
+          ? {kind:'permission_ask',ask_id:'opening-permission',title:'Earlier live permission',detail:null,options:[{option_id:'allow',label:'Allow',option_kind:'allow_once'}],state:'live',dead_reason:null,answered_option_label:null}
+          : {kind:'user_input',request_id:'opening-input',questions:[{question_id:'choice',header:'Choice',question:'Earlier live question',options:[{label:'Continue',description:'Continue the work'}],multi_select:false,allow_other:true}],state:'live',dead_reason:null,answers:null,failure_detail:null}};
       }
       if(row.source_sequence>=1997 && row.source_sequence<=1999){
         row.row_kind='prompt';
@@ -123,7 +125,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
           ? {kind:'inline',value:JSON.parse(body)}
           : {kind:'deferred',reference:{body_id:'return:2000',version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
       }
-      if(positionRace && row.source_sequence>=1991){
+      if(positionRace && row.source_sequence>=(positionTakeover?2000:1991)){
         const body=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:Array.from({length:row.source_sequence===2000?400:18},(_,index)=>`Late paragraph ${row.source_sequence}.${index}. `+'The final body differs from its provisional skeleton. '.repeat(3)).join('\n\n')}]});
         row.row_kind='agent_message';
         row.body={kind:'deferred',reference:{body_id:'position:'+row.source_sequence,version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
@@ -204,10 +206,6 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
       if(returnProbe.fail)return Response.json({error:'Return admission failed'},{status:503});
       const cursored=url.searchParams.has('cursor');
       if(!cursored && returnProbe.failLatest)return Response.json({error:'Newest messages could not load'},{status:503});
-      if(unread!==null && cursored && url.searchParams.get('direction')==='newer'){
-        if(entryProbe.hold){entryProbe.waiting++;await new Promise<void>((resolve,reject)=>{const abort=()=>reject(new DOMException('Aborted','AbortError'));entryProbe.release=()=>{init?.signal?.removeEventListener('abort',abort);resolve();};if(init?.signal?.aborted)abort();else init?.signal?.addEventListener('abort',abort,{once:true});});}
-        if(entryProbe.fail)return Response.json({error:'Entry failed'},{status:503});
-      }
       if(cursored && url.searchParams.get('direction')==='newer' && latestProbe.blockForward)
         await gate('forward', init?.signal);
       else if(cursored && latestProbe.holdHistory) await gate('history', init?.signal);

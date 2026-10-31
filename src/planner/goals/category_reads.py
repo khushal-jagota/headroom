@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
-from typing import cast
 from zoneinfo import ZoneInfo
 
 from planner.datasets import data as datasets
@@ -25,24 +24,14 @@ from planner.measures.contracts import (
     MeasureValue,
     SourceHealthSummary,
 )
-from planner.measures.data import read_definitions, read_demanded
+from planner.measures.data import (
+    earliest_retained_date,
+    read_definitions,
+    read_demanded,
+    read_recorded_dates,
+)
 from planner.measures.logic.dates import calendar_date, date_range, invalid
 from planner.measures.logic.evaluation import Evaluation, demanded_pairs
-
-
-def earliest_measure_date(conn: sqlite3.Connection, identifier: str) -> str | None:
-    return cast(
-        str | None,
-        conn.execute(
-            "WITH RECURSIVE inputs(id) AS (SELECT ? UNION "
-            "SELECT input_measure_id FROM measure_dependencies "
-            "JOIN inputs ON measure_id=id) "
-            "SELECT MIN(date) FROM (SELECT date FROM measure_observations "
-            "WHERE measure_id IN inputs "
-            "UNION ALL SELECT date FROM measure_history_gaps WHERE measure_id IN inputs)",
-            (identifier,),
-        ).fetchone()[0],
-    )
 
 
 def _plans(
@@ -76,15 +65,13 @@ def _plans(
         if binding["kind"] == "dataset":
             definition = dataset_definitions[binding["dataset_id"]]
             zone = definition.timezone
-            earliest = conn.execute(
-                "SELECT MIN(date) FROM dataset_results WHERE dataset_id=?", (definition.id,)
-            ).fetchone()[0]
+            earliest = datasets.earliest_retained_date(conn, definition.id)
         else:
             zone = measure_definitions[binding["inputs"][0]["measure_id"]].timezone
             retained = [
                 day
                 for item in binding["inputs"]
-                if (day := earliest_measure_date(conn, item["measure_id"])) is not None
+                if (day := earliest_retained_date(conn, item["measure_id"])) is not None
             ]
             earliest = min(retained) if retained else None
         today = now.astimezone(ZoneInfo(zone)).date().isoformat()
@@ -176,15 +163,7 @@ def _scalar_values(
     observations = read_demanded(conn, pairs, definitions)
     evaluation = Evaluation(definitions, observations, now=now)
     submitted = {
-        identifier: frozenset(
-            row[0]
-            for row in conn.execute(
-                "SELECT date FROM measure_observations WHERE measure_id=? AND date>=? AND date<=? "
-                "UNION SELECT date FROM measure_history_gaps "
-                "WHERE measure_id=? AND date>=? AND date<=?",
-                (identifier, first, last, identifier, first, last),
-            )
-        )
+        identifier: read_recorded_dates(conn, identifier, first, last)
         for identifier, first, last in ranges
     }
     values = []

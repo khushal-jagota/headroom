@@ -612,7 +612,7 @@ def test_source_http_resources_and_actual_outcome_status(
         assert detail["run"]["status"] == "pending" and detail["test_candidates"] is None
 
 
-def test_explicit_runtime_constructor_executes_source_only_lifespan(tmp_db: Connection) -> None:
+def test_explicit_participants_constructor_executes_registered_lifespan(tmp_db: Connection) -> None:
     import threading
     import time
 
@@ -622,6 +622,7 @@ def test_explicit_runtime_constructor_executes_source_only_lifespan(tmp_db: Conn
     from planner.credentials.contracts import CredentialResolver
     from planner.measure_sources.contracts import RunAdmission, RunMetrics, RunResult
     from planner.measures.contracts import CandidateObservation
+    from planner.scheduled_tickets.registry import build_participants
 
     class FixtureRuntime:
         def __init__(self) -> None:
@@ -648,7 +649,14 @@ def test_explicit_runtime_constructor_executes_source_only_lifespan(tmp_db: Conn
     source, _ = configured_source(tmp_db, now=now, local_time="13:00")
     assert source.active_script is not None
     runtime = FixtureRuntime()
-    app = create_app(cfg, clock, lambda: connect(database), source_runtime_for_test=runtime)
+    app = create_app(
+        cfg,
+        clock,
+        lambda: connect(database),
+        slot_participants_for_test=lambda admission: build_participants(
+            cfg, clock, workspace_admission=admission, source_runtime=runtime
+        ),
+    )
     ticket_count = tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
     with TestClient(app) as client:
         response = client.post(

@@ -18,7 +18,6 @@ from planner.goals import data
 from planner.goals.category_reads import (
     category_projections,
     category_read_ranges,
-    earliest_measure_date,
 )
 from planner.goals.contracts import (
     ChartProjection,
@@ -48,7 +47,13 @@ from planner.measures.contracts import (
     MeasureValue,
     ReadMeasuresBody,
 )
-from planner.measures.data import read_definitions, read_demanded, read_measure, transaction
+from planner.measures.data import (
+    earliest_retained_date,
+    read_definitions,
+    read_demanded,
+    read_measure,
+    transaction,
+)
 from planner.measures.logic.dates import calendar_date, date_range, invalid
 from planner.measures.logic.evaluation import (
     Evaluation,
@@ -151,7 +156,7 @@ def reading_calendar(conn: sqlite3.Connection, goal: Goal, now: datetime) -> tup
 
 
 def _earliest_date(conn: sqlite3.Connection, identifier: str) -> str | None:
-    return earliest_measure_date(conn, identifier)
+    return earliest_retained_date(conn, identifier)
 
 
 def _formula_projections(

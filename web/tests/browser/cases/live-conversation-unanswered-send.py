@@ -1,8 +1,88 @@
 # ruff: noqa: E501
 """Independent browser case, extracted without assertion changes."""
 
+import sys
+from pathlib import Path
 
-def run_retirement(browser, urls):
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.state_barriers import establish_scrollback  # noqa: E402
+
+_ARM_MOTION = r"""({owner, suppressWheel=false})=>{
+  window.__nativeMotion?.cleanup();
+  const thread=document.querySelector('[data-conversation-thread]'),frames=[],events=[];
+  let stopped=false;
+  const completion=window.__observeNativeWheel(thread);
+  const read=()=>({ms:performance.now(),top:thread.scrollTop,
+    owner:thread.dataset.conversationPositionOwner,
+    motion:!!thread.closest('[data-conversation-pane]')?.hasAttribute('data-conversation-motion'),
+    same:thread===document.querySelector('[data-conversation-thread]')&&thread.isConnected});
+  const capture=kind=>{
+    const state=read(),last=frames.at(-1),previous=frames.at(-2);
+    const recent=!!previous&&state.ms-last.ms<=100&&last.ms-previous.ms<=100;
+    const valid=state.same&&state.owner===owner&&state.motion&&recent&&
+      previous.same&&last.same&&previous.owner===owner&&last.owner===owner&&
+      previous.motion&&last.motion&&Math.abs(last.top-previous.top)>.5;
+    const receipt={kind,...state,valid,expectedOwner:owner,frames:frames.slice(-2)};
+    return receipt;
+  };
+  const sample=()=>{if(stopped)return;frames.push(read());if(frames.length>360)frames.shift();requestAnimationFrame(sample);};
+  const wheel=event=>{
+    if(!thread.contains(event.target))return;
+    const receipt={...capture('wheel'),trusted:event.isTrusted,delta:event.deltaY};
+    receipt.valid=receipt.valid&&receipt.trusted;
+    events.push(receipt);
+    if(suppressWheel)event.stopPropagation();
+    requestAnimationFrame(()=>events.push({...read(),kind:'after-wheel'}));
+  };
+  const scroll=event=>{
+    if(event.target===thread&&events.some(item=>item.kind==='wheel'))
+      events.push({...read(),kind:event.type,trusted:event.isTrusted});
+  };
+  document.addEventListener('wheel',wheel,true);
+  thread.addEventListener('scroll',scroll);thread.addEventListener('scrollend',scroll);
+  window.__nativeMotion={frames,events,capture,completion,cleanup(){stopped=true;completion.cleanup();document.removeEventListener('wheel',wheel,true);thread.removeEventListener('scroll',scroll);thread.removeEventListener('scrollend',scroll);}};
+  requestAnimationFrame(sample);
+}"""
+
+
+def _arm_motion(page, owner, *, suppress_wheel=False):
+    page.evaluate(_ARM_MOTION, {"owner": owner, "suppressWheel": suppress_wheel})
+
+
+def _await_motion(page, code):
+    try:
+        page.wait_for_function("window.__nativeMotion.capture('ready').valid", timeout=5_000)
+    except Exception as error:
+        raise AssertionError((code, page.evaluate("window.__nativeMotion.capture('missing-phase')"))) from error
+
+
+def _motion_wheel(page, delta, code, *, late=False, consume="()=>null"):
+    try:
+        _await_motion(page, code)
+        if late:
+            page.wait_for_function("!window.__nativeMotion.capture('late').motion")
+        page.mouse.wheel(0, delta)
+        try:
+            page.wait_for_function("window.__nativeMotion.events.some(e=>e.kind==='after-wheel')", timeout=5_000)
+        except Exception as error:
+            raise AssertionError((code, page.evaluate("window.__nativeMotion.events"))) from error
+        events = page.evaluate("window.__nativeMotion.events")
+        delivered = next(event for event in events if event["kind"] == "wheel")
+        assert delivered["valid"], (code, events)
+        after = next(event for event in events if event["kind"] == "after-wheel")
+        assert after["same"] and after["owner"] == "manual", ("BEHAVIOR_WHEEL_CANCELLATION", events)
+        # The browser decision owns the deadline, including this ownership check
+        # and baseline consumption. This wait only observes its terminal state.
+        page.wait_for_function("""()=>{const s=window.__nativeMotion.completion.status();return s.failure||s.ready;}""", timeout=5_000)
+        status = page.evaluate("window.__nativeMotion.completion.status()")
+        assert not status['failure'], (status['failure']['reason'] if status['failure'] else 'SETUP_NATIVE_WHEEL', status)
+        page.evaluate("window.__nativeWheelBaseline=window.__nativeMotion.completion.consume(" + consume + ")")
+        return page.evaluate("[...window.__nativeMotion.events, ...window.__nativeMotion.completion.status().receipts.map(r=>({...r,kind:'native-wheel-'+r.kind}))]")
+    finally:
+        page.evaluate("window.__nativeMotion?.completion.cleanup()")
+
+
+def run_retirement(browser, urls, *, control=""):
     """Trusted input, browser anchoring, and view notifications share the live host.
 
     Distinct gap: delivery checks stop after placement. This phase proves the later
@@ -22,6 +102,7 @@ def run_retirement(browser, urls):
     samples = []
     checks = []
     errors = []
+    native_events = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     probe = r"""() => {
       const t=document.querySelector('[data-conversation-thread]'); if(!t)return null;
@@ -30,6 +111,8 @@ def run_retirement(browser, urls):
       const last=content.lastElementChild;
       const anchor=window.__retirementAnchor;
       const sent=[...t.querySelectorAll('[data-conversation-outgoing]')].at(-1);
+      const expectedSendId=window.__retirementSupersedingSendId??null;
+      const exactSend=expectedSendId===null?null:[...t.querySelectorAll('[data-conversation-outgoing]')].find(node=>node.getAttribute('data-conversation-outgoing')===expectedSendId);
       const css=getComputedStyle(t),height=room?.getBoundingClientRect().height??0;
       const gap=room?parseFloat(css.rowGap)+parseFloat(getComputedStyle(room).marginTop)+parseFloat(getComputedStyle(room).marginBottom):0;
       // Geometry alone remains valid when scroll chaining moves the entire host
@@ -67,6 +150,8 @@ def run_retirement(browser, urls):
         contentBottom:content.getBoundingClientRect().bottom-bounds.top,
         room:height,gap,totalTail:height+gap,paddingTop:parseFloat(css.paddingTop),paddingBottom:parseFloat(css.paddingBottom),
         sentTop:sent?sent.getBoundingClientRect().top-bounds.top:null,
+        supersedingSend:{expectedId:expectedSendId,id:exactSend?.getAttribute('data-conversation-outgoing')??null,
+          accepted:exactSend?.getAttribute('data-conversation-accepted')??null,top:exactSend?exactSend.getBoundingClientRect().top-bounds.top:null},
         anchor:anchor?.isConnected?{key:anchor.getAttribute('data-conversation-view-key')??anchor.getAttribute('data-conversation-row'),offset:anchor.getBoundingClientRect().top-bounds.top}:null,
         latest:!!document.querySelector('[aria-label="Jump to latest message"]'),
         placementReady:t.dataset.conversationPlacementReady,owner:t.dataset.conversationPositionOwner??null,paint};
@@ -80,6 +165,26 @@ def run_retirement(browser, urls):
         checks.append((label + ' has no intermediate position snap', all(abs(frame['top'] - before['top']) <= 1 for frame in frames), before, after))
         if before['anchor']:
             checks.append((label + ' preserves the reading line before each paint', all(frame['anchor'] and frame['anchor']['key'] == before['anchor']['key'] and abs(frame['anchor']['offset'] - before['anchor']['offset']) <= 1 for frame in frames), before, after))
+
+    def supersession_frame_contract(acceptance, after, send_id):
+        frames = [*frames_between(acceptance, after), after]
+
+        def at_target(frame):
+            sent = frame['supersedingSend']
+            return (sent['expectedId'] == send_id and sent['id'] == send_id
+                    and sent['accepted'] == 'true' and sent['top'] is not None
+                    and abs(sent['top'] - 32) < 2)
+
+        # Placement can move until this exact accepted send first reaches 32px.
+        # A later recovery cannot erase a departure or restart this boundary.
+        first_arrival = next((index for index, frame in enumerate(frames) if at_target(frame)), None)
+        held = frames[first_arrival:] if first_arrival is not None else []
+        violations = [frame for frame in held if not at_target(frame)]
+        return {'kind': 'accepted-send-frame-contract', 'sendId': send_id, 'target': 32,
+                'strictTolerance': 2, 'acceptance': acceptance, 'through': after,
+                'firstArrival': held[0] if held else None, 'framesAfterArrival': len(held),
+                'firstViolation': violations[0] if violations else None,
+                'violations': len(violations), 'passed': bool(held) and not violations}
 
     def sample(label):
         page.evaluate("label=>window.__retirementPhase=label", label)
@@ -293,25 +398,107 @@ def run_retirement(browser, urls):
         assert len([step for step in residual_steps if step > .5]) > 3, residual_motion
         assert max(residual_steps) < abs(residual_arrival['top'] - residual['top']) * .45, residual_motion
         accept('Cancel the next Latest motion with a real gesture.')
-        wheel(-80, 'latest-residual-before-cancel')
+        page.locator('[data-conversation-thread]').hover()
+        # Reserved room retires with this displacement, so the native bottom gap
+        # can remain zero. Positive room and Latest establish the required range.
+        native_events.append({"kind": "gesture-setup", "barrier": establish_scrollback(page, lambda: page.mouse.wheel(0, -80), min_clearance=0)})
+        cancel_setup = sample('latest-residual-before-cancel')
+        assert cancel_setup['totalTail'] > 0 and cancel_setup['latest'] and cancel_setup['owner'] == 'manual', ('SETUP_LATEST_GEOMETRY', cancel_setup)
+        _arm_motion(page, 'latest', suppress_wheel=control == 'broken-wheel')
+        cancel_box = page.locator('[data-conversation-thread]').bounding_box()
         page.get_by_role('button', name='Jump to latest message').click()
-        page.wait_for_timeout(40)
-        wheel(-120, 'latest-cancel-gesture')
-        remember_anchor()
-        canceled = pulse('latest-canceled-notification')
+        page.mouse.move(cancel_box['x'] + cancel_box['width'] / 2, cancel_box['y'] + cancel_box['height'] / 2)
+        page.evaluate("window.__retirementPhase='latest-cancel-gesture'")
+        delta = -100000 if control == 'zero-tail' else -1 if control == 'positive-tail' else -120
+        # Capture and emit together inside the admission callback. Python keeps
+        # the original observations and checks after this atomic baseline task.
+        consume = """()=>{
+          const read=(""" + probe + """);
+          window.__retirementPhase='cancel-predecessor';
+          const predecessor=read();
+          const t=document.querySelector('[data-conversation-thread]'),b=t.getBoundingClientRect();
+          window.__retirementAnchor=[...t.querySelectorAll('[data-conversation-view-key], [data-conversation-outgoing]')].find(n=>n.getBoundingClientRect().bottom>b.top+30&&n.getBoundingClientRect().top<b.bottom)??t.querySelector('[data-conversation-outgoing]');
+          window.__retirementPhase='latest-canceled-notification-before';
+          const before=read();
+          window.__pulse();
+          return {predecessor,before};
+        }"""
+        wheel_events = _motion_wheel(page, delta, 'SETUP_LATEST_WHEEL', late=control == 'late-wheel', consume=consume)
+        native_events.extend(wheel_events)
+        baseline = page.evaluate("window.__nativeWheelBaseline")
+        predecessor = baseline['predecessor']
+        samples.append({"label": 'cancel-predecessor', **predecessor})
+        native_events.append({"kind": "predecessor", "totalTail": predecessor['totalTail']})
+        if control == 'zero-tail':
+            assert predecessor['totalTail'] == 0, ('CONTROL_ZERO_TAIL', predecessor)
+        if control == 'positive-tail':
+            assert predecessor['totalTail'] > 0, ('CONTROL_POSITIVE_TAIL', predecessor)
+        before = baseline['before']
+        samples.append({"label": 'latest-canceled-notification-before', **before})
+        page.wait_for_timeout(260)
+        canceled = sample('latest-canceled-notification-after')
+        fixed_reading_frames(before, canceled, 'latest-canceled-notification')
+        checks.append(("notification cannot snap the manual reader", abs(canceled['top'] - before['top']) <= 1, before, canceled))
+        if before['anchor'] and canceled['anchor']:
+            checks.append(("notification preserves the reading line", abs(canceled['anchor']['offset'] - before['anchor']['offset']) <= 1, before, canceled))
         page.wait_for_timeout(300)
         after = sample('latest-canceled-settled')
-        assert abs(after['top'] - canceled['top']) <= 1, (canceled, after)
-        # Cancellation can land at the real bottom, where Latest is absent.
-        # Establish scrollback for the separate new-send interruption below.
-        wheel(-180, 'latest-before-new-send')
-        page.get_by_role('button', name='Jump to latest message').wait_for(state='visible')
+        assert abs(after['top'] - canceled['top']) <= 1, ('BEHAVIOR_WHEEL_CANCELLATION', canceled, after)
+        for check in checks:
+            assert check[1], ('BEHAVIOR_WHEEL_CANCELLATION', check)
+        native_events.append({'kind': 'original-cancellation-checks', 'passed': True})
+        wheel_after = next(event for event in wheel_events if event['kind'] == 'after-wheel')
+        assert wheel_after['same'] and wheel_after['owner'] == 'manual', ('BEHAVIOR_WHEEL_CANCELLATION_NEW_ONLY', wheel_events)
+        # This scenario creates its own answer room and never consumes leftovers
+        # from the preceding gesture cancellation.
+        accept('Establish independent room before send supersession.')
+        page.locator('[data-conversation-thread]').hover()
+        native_events.append({"kind": "send-setup", "barrier": establish_scrollback(page, lambda: page.mouse.wheel(0, -80), min_clearance=0)})
+        send_setup = sample('supersession-fresh-manual')
+        assert send_setup['totalTail'] > 0 and send_setup['latest'] and send_setup['owner'] == 'manual', ('SETUP_SEND_GEOMETRY', send_setup)
+        page.evaluate("window.__delivery='http-first';window.__nativeAcceptance=[]")
+        count = page.evaluate('window.__sends.length')
+        page.locator('[data-conversation-input]').fill('This fresh send supersedes Latest.')
+        _arm_motion(page, 'latest')
         page.get_by_role('button', name='Jump to latest message').click()
-        page.wait_for_timeout(35)
-        latest_send = accept('This fresh send supersedes Latest.')
-        assert abs(latest_send['sentTop'] - 32) < 2 and latest_send['totalTail'] > 100, latest_send
+        _await_motion(page, 'SETUP_LATEST_ACCEPTANCE')
+        page.evaluate("window.__nativeRequireAcceptance=true")
+        if control == 'broken-supersession':
+            page.evaluate('window.__nativeDisableSupersession=true')
+        page.locator('[data-conversation-input]').press('Enter')
+        page.wait_for_function('n=>window.__sends.length===n+1&&!!window.__resolveDelivery', arg=count)
+        superseding_send_id = page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
+        if control == 'late-acceptance':
+            page.wait_for_function("!window.__nativeMotion.capture('late').motion")
+        page.evaluate('window.__resolveDelivery()')
+        page.wait_for_function('window.__nativeAcceptance.length===1')
+        acceptance = page.evaluate('window.__nativeAcceptance[0]')
+        native_events.append(acceptance)
+        assert acceptance['valid'], ('SETUP_LATEST_ACCEPTANCE', acceptance)
+        # Check supersession while the old Latest intent can still own the pane.
+        page.evaluate('()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+        send_owner = page.locator('[data-conversation-thread]').get_attribute('data-conversation-position-owner')
+        page.locator('[data-conversation-outgoing]').last.wait_for()
+        page.wait_for_timeout(380)
+        page.evaluate("window.__publishOutcome(window.__sends.at(-1),'prompt')")
+        page.wait_for_timeout(200)
+        remember_anchor()
+        latest_send = sample('accepted-send')
+        frame_contract = supersession_frame_contract(acceptance, latest_send, superseding_send_id)
+        native_events.append(frame_contract)
+        assert abs(latest_send['sentTop'] - 32) < 2 and latest_send['totalTail'] > 100, ('BEHAVIOR_SEND_SUPERSESSION', latest_send)
         page.wait_for_timeout(300)
-        assert abs(sample('new-send-still-owns')['sentTop'] - 32) < 2
+        try:
+            assert abs(sample('new-send-still-owns')['sentTop'] - 32) < 2
+        finally:
+            frame_contract.update(supersession_frame_contract(acceptance, samples[-1], superseding_send_id))
+        native_events.append({'kind': 'original-supersession-checks', 'passed': True})
+        assert frame_contract['passed'], ('BEHAVIOR_SEND_SUPERSESSION', frame_contract)
+        assert send_owner != 'latest', ('BEHAVIOR_SEND_SUPERSESSION_NEW_ONLY', send_owner, acceptance)
+        if control:
+            for check in checks:
+                assert check[1], check
+            return
 
         # A second trusted gesture and an accepted send supersede queued retirement.
         # No wait between wheel and send lets already-queued observer work overlap.
@@ -364,6 +551,7 @@ def run_retirement(browser, urls):
     finally:
         data = page.evaluate('window.__retirementStop=true;({frames:window.__retirementFrames??[],events:window.__retirementEvents??[]})')
         data.update(samples=samples, checks=checks, errors=errors, seconds=round(time.perf_counter() - started, 3), newHosts=0)
+        data['nativeControl'] = {'control': control, 'events': native_events, 'motion': page.evaluate('window.__nativeMotion?.events??[]')}
         data['video'] = str(page.video.path())
         page.screenshot(path=str(output / 'retirement-final.png'))
         print('REPLY_SPACE_RETIREMENT_PROOF ' + json.dumps({'seconds':data['seconds'],'frames':len(data['frames']),'samples':len(samples)}), flush=True)
@@ -651,6 +839,9 @@ def run(browser, urls):
             case.wait_for_timeout(350)
             case.evaluate("window.__resolveDelivery()")
         else:
+            if outcome == 'cancelled':
+                case.locator('[data-conversation-thread]').hover()
+                _arm_motion(case, 'sent')
             case.evaluate("window.__resolveDelivery()")
         if outcome == "queued":
             case.locator('[data-conversation-held-stack]').wait_for()
@@ -663,9 +854,7 @@ def run(browser, urls):
             continue
         case.locator('[data-conversation-outgoing]').wait_for()
         if outcome == 'cancelled':
-            case.wait_for_timeout(80)
-            case.locator('[data-conversation-thread]').hover()
-            case.mouse.wheel(0,-160)
+            _motion_wheel(case, -160, 'SETUP_ACCEPTED_SEND_WHEEL')
         case.wait_for_timeout(450)
         if outcome == "http-first":
             case.evaluate("window.__publishOutcome(window.__sends[0], 'prompt')")

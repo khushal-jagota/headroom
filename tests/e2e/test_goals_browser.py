@@ -994,7 +994,7 @@ def test_goal_files_open_from_authored_page_and_historical_conversation(
     expect(page.locator("[data-artifacts-band]")).to_have_count(0)
     preview = page.locator('[data-block="text"] [data-file-preview]')
     expect(preview).to_have_count(1, timeout=WAIT_MS)
-    preview.get_by_role("link", name="Open field guide.md", exact=True).filter(
+    preview.get_by_role("link", name="field guide.md", exact=True).filter(
         visible=True
     ).first.click(timeout=WAIT_MS)
     artifact = page.locator("[data-ticket-artifact]")
@@ -1021,7 +1021,7 @@ def test_goal_files_open_from_authored_page_and_historical_conversation(
     api.direct_post(server, f"/api/test/signals/{conversation_id}/finish", {})
     api.direct_post(server, goal_path + "/conversation/reset", {})
     page.goto(server.base + f"/#/workspace/goal/{goal['id']}?conversation={conversation_id}")
-    conversation_link = page.get_by_role("link", name="Open field guide.md", exact=True)
+    conversation_link = page.get_by_role("link", name="field guide.md", exact=True)
     conversation_link.filter(visible=True).first.click(timeout=WAIT_MS)
     expect(artifact.get_by_role("heading", name="Durable field guide")).to_be_visible(
         timeout=WAIT_MS

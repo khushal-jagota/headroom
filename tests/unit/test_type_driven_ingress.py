@@ -179,19 +179,24 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(
         target = _create(client, "coding")
         parent = _create(client, "probe")
         unrelated = _create(client, "coding")
-        # Even a declared reviewer cannot file another Ticket's own proposal.
+        item = client.post(
+            "/api/managers", json={"title": "Supervisor", "project_id": "project_vylo"}
+        ).json()
+        assigned = client.patch(
+            f"/api/tickets/{target}",
+            json={"manager": {"kind": "manager", "id": item["id"]}},
+        )
+        assert assigned.status_code == 200, assigned.text
+        # General authority and review authority do not permit another Ticket's proposal.
         monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "probe", (authority.ticket(target),))
         scoped = client.post(
             f"/api/tickets/{target}/accept/brief",
             json={
                 "next_ceiling": "needs_success_condition",
-                "next_holder": {"kind": "ticket", "id": parent},
+                "next_holder": {"kind": "manager", "id": item["id"]},
             },
         )
         assert scoped.status_code == 200, scoped.text
-        item = client.post(
-            "/api/managers", json={"title": "Supervisor", "project_id": "project_vylo"}
-        ).json()
         attempts = (
             {
                 "X-Plan-Actor": "manager",

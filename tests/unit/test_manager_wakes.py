@@ -1094,12 +1094,12 @@ def test_delivery_uses_the_supervisor_boundary_and_closes_on_its_prompt(
 def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
     tmp_db: Connection, fake_clock: FakeClock, source: str
 ) -> None:
-    item_id, existing_id = _item_and_ticket(tmp_db, fake_clock)
+    _item_id, existing_id = _item_and_ticket(tmp_db, fake_clock)
     if source == "kickoff":
         ticket = tickets_data.create_ticket(
             tmp_db, title="Chief kickoff review", principal=OWNER_PRINCIPAL,
             now=10, title_max_chars=TITLE_MAX_CHARS, worker_type="coding",
-            brief="Chief must see this canonical proposal", manager_id=item_id,
+            brief="Chief must see this canonical proposal", manager_kind="chief",
             stated_holder=CHIEF_PRINCIPAL,
         )
         ticket_id = ticket.id
@@ -1107,7 +1107,10 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
         ticket_id = existing_id
         tickets_data.edit_ticket(
             tmp_db, ticket_id,
-            edit={"ceiling_holder": CHIEF_PRINCIPAL if source == "file" else OWNER_PRINCIPAL},
+            edit={
+                "manager": CHIEF_PRINCIPAL,
+                "ceiling_holder": CHIEF_PRINCIPAL if source == "file" else OWNER_PRINCIPAL,
+            },
             title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=10,
         )
         ticket = tickets_data.file_current_proposal(
@@ -1121,7 +1124,8 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
                 title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=12,
             )
     assert ticket.ceiling_holder == CHIEF_PRINCIPAL
-    assert ticket.manager_id == item_id
+    assert ticket.manager_kind == "chief"
+    assert ticket.manager_id is None
     assert ticket.pending_proposal is not None
     initial_stage = ticket.stage
     expected_revision = 2 if source == "readdress" else 1
@@ -1158,7 +1162,8 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
     unchanged = tickets_data.read_ticket(tmp_db, ticket_id)
     assert unchanged.stage == initial_stage
     assert unchanged.pending_proposal == ticket.pending_proposal
-    assert unchanged.manager_id == item_id
+    assert unchanged.manager_kind == "chief"
+    assert unchanged.manager_id is None
     # A later explicit owner reroute is still an address change, not employee delivery.
     tickets_data.edit_ticket(
         tmp_db, ticket_id, edit={"ceiling_holder": OWNER_PRINCIPAL},
@@ -1211,7 +1216,7 @@ def test_obsolete_sources_retire_before_batching_with_compared_facts(
             tickets_data.edit_ticket(
                 tmp_db,
                 ticket_id,
-                edit={"ceiling_holder": CHIEF_PRINCIPAL},
+                edit={"manager": CHIEF_PRINCIPAL, "ceiling_holder": CHIEF_PRINCIPAL},
                 title_max_chars=TITLE_MAX_CHARS,
                 principal=OWNER_PRINCIPAL,
                 now=4,
@@ -1230,7 +1235,7 @@ def test_obsolete_sources_retire_before_batching_with_compared_facts(
         tickets_data.edit_ticket(
             tmp_db,
             ticket_id,
-            edit={"ceiling_holder": CHIEF_PRINCIPAL},
+            edit={"manager": CHIEF_PRINCIPAL, "ceiling_holder": CHIEF_PRINCIPAL},
             title_max_chars=TITLE_MAX_CHARS,
             principal=OWNER_PRINCIPAL,
             now=3,

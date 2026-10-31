@@ -29,6 +29,8 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         turn_key:null,work_group_key:null,fold_rule:'never' as const,
         body:{kind:'inline' as const,value:{kind:'agent_message' as const,to_owner:true,
           content:[{piece:'text' as const,text:('Intent row '+index+'. ').repeat(30)}]}}}))}];
+    // This synthetic reader already owns its initial admitted content.
+    value.entryPhase='complete';
     value.load=(_scope,_cursor,_direction,replace)=>replace
       ?new Promise<boolean>(resolve=>intentLoads.push(resolve)):Promise.resolve(false);
     return value;
@@ -49,6 +51,48 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   import FileDocument from "../src/components/FileDocument.svelte";
   import VisibleMessageImage from "../src/components/conversation/VisibleMessageImage.svelte";
   import { observeVisibleContent } from "../src/lib/visibleContent";
+  import { presentationReady } from "../src/components/conversation/viewport/placement";
+  // Detached native DOM isolates readiness from viewport admission and network timing.
+  function presentationReadinessProof() {
+    const started = performance.now();
+    const rows: {name:string, expected:boolean, actual:boolean, pass:boolean}[] = [];
+    const record = (name:string, element:Element, expected:boolean) => {
+      const actual = presentationReady(element);
+      rows.push({name, expected, actual, pass:actual === expected});
+    };
+    for (const marker of ["aria-busy", "data-markdown-rendering"]) {
+      const root = document.createElement("div");
+      record(marker + "/empty", root, true);
+      root.setAttribute(marker, "true");
+      record(marker + "/unmanaged-root", root, false);
+      root.removeAttribute(marker);
+      const busy = document.createElement("div");
+      busy.setAttribute(marker, "true");
+      root.append(busy);
+      record(marker + "/unmanaged-descendant", root, false);
+      for (const dormant of ["released", "retained"]) {
+        const ancestor = document.createElement("section");
+        ancestor.dataset.visibleContentState = dormant;
+        ancestor.append(root);
+        // The queried root itself can inherit dormancy from outside its subtree.
+        root.dataset.visibleContentState = "active";
+        record(marker + "/" + dormant + "/nested-active", root, true);
+        record(marker + "/" + dormant + "/busy-root-inherits", busy, true);
+        root.removeAttribute("data-visible-content-state");
+        root.remove();
+        busy.dataset.visibleContentState = dormant;
+        record(marker + "/" + dormant + "/busy-self", root, true);
+        record(marker + "/" + dormant + "/queried-busy-self", busy, true);
+        busy.dataset.visibleContentState = "active";
+        record(marker + "/" + dormant + "/active-busy", root, false);
+        busy.removeAttribute(marker);
+        record(marker + "/" + dormant + "/active-clear", root, true);
+        busy.setAttribute(marker, "true");
+        busy.removeAttribute("data-visible-content-state");
+      }
+    }
+    return {rows, milliseconds:performance.now()-started, newHosts:0, newNavigations:0};
+  }
   // Queue delivery is controlled only for this marked leaf. Every other native
   // observer target on the existing preview page keeps its ordinary deliveries.
   (window as any).__visibilityQueueProof = async () => {
@@ -180,7 +224,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     } finally {
       try { dispose(); } finally { window.IntersectionObserver = NativeObserver; }
     }
-    return {rows, seconds:(performance.now()-started)/1000, newHosts:0, newNavigations:0,
+    return {rows, readiness:presentationReadinessProof(), seconds:(performance.now()-started)/1000, newHosts:0, newNavigations:0,
       nativeObserverRestored:window.IntersectionObserver === NativeObserver};
   };
   import { VISIBLE_CONTENT_INACTIVE_LIMIT } from "../src/lib/visibleContent/config";
