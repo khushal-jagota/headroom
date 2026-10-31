@@ -130,7 +130,7 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
             ),
         ]
         kind, payload = bad_payloads[bad_case]
-        row = registry.spool.add(
+        row = registry.outbox.add(
             OutboxEntry(
                 conversation_id=start.child.conversation_id, kind=kind, payload=as_object(payload)
             )

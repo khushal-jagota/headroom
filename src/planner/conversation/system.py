@@ -1155,11 +1155,10 @@ class SqliteProcessConversationSystem:
         to again — it would sit there until the idle sweep noticed. Whether a turn was
         running makes no difference to that.
 
-        Queue disposition and local ending hold the conversation lock. The ending
-        phase owns remote cancellation while the lock is free, so final native events
-        can commit before cancellation settles. Local cancellation retains the lock.
-        Remote retirement has its own task and quarantine fence, and its caller joins
-        after it releases the lock.
+        Queue disposition and turn ending hold the conversation lock. The ending
+        phase owns cancellation while the lock is free, so final native events can
+        commit before cancellation settles. Remote retirement has its own task and
+        quarantine fence, and its caller joins after it releases the lock.
         """
         state = await self._conversation_state(conversation_id)
         if state is None:
@@ -1170,12 +1169,7 @@ class SqliteProcessConversationSystem:
         await self._acquire_settled(state)
         try:
             await self._discard_held_prompts(state)
-            running = state.running_turn
-            if running is not None:
-                await self._revoke_turn_requests(state, running)
-            owns_ending = True
             try:
-                cancel_fact = None
                 child = state.child
                 if child is None and state.executor_child_reference is not None:
                     factory = self._backend_child_factories[state.record.backend_key]
@@ -1183,70 +1177,22 @@ class SqliteProcessConversationSystem:
                         child = factory.recover(state.executor_child_reference)
                         if child is not None:
                             state.child = child
-                if child is not None:
-                    if running is not None:
-                        if child_stops_outside_lock(child):
-                            reference = state.executor_child_reference
-                            reservation = state.reserved_turn
-                            self._set_phase(state, _ConversationPhase.ending)
-                            running.ending_is_the_cores = True
-                            state.lock.release()
-                            try:
-                                cancel_fact = await self._cancel_child_turn(state, child)
-                            finally:
-                                await state.lock.acquire()
-                            current_child = state.child
-                            current_turn = state.running_turn
-                            last_ended = state.last_ended_turn_token
-                            owns_ending = (
-                                not self._shutting_down
-                                and state.reserved_turn is reservation
-                                and (
-                                    (
-                                        current_turn is not None
-                                        and current_turn.token == running.token
-                                    )
-                                    or (current_turn is None and last_ended == running.token)
-                                )
-                                and (
-                                    last_ended is None
-                                    or (
-                                        last_ended.conversation_id == running.token.conversation_id
-                                        and last_ended.turn_number <= running.token.turn_number
-                                    )
-                                )
-                            )
-                            if (
-                                not owns_ending
-                                or not child_stops_outside_lock(current_child)
-                                or state.executor_child_reference != reference
-                            ):
-                                owns_ending = False
-                                return
-                            # Inventory can replace the proxy for this same native child.
-                            child = current_child
-                            running = current_turn
-                        else:
-                            cancel_fact = await self._cancel_child_turn(state, child)
-                    if state.child is child:
-                        assert child is not None
-                        await self._discard_child(state, child)
+                running = state.running_turn
                 if running is not None:
-                    await self._end_turn(
-                        state,
-                        running,
-                        ConversationTurnEnding.interrupted,
-                        None,
-                        cancel_fact=cancel_fact,
-                    )
+                    await self._cancel_and_end_running_turn(state, running)
+                # Inventory can replace the proxy while cancellation releases the lock.
+                child = state.child
+                if child is not None:
+                    await self._discard_child(state, child)
             finally:
-                if owns_ending and not self._shutting_down:
+                if not self._shutting_down:
                     self._settle_phase(state)
         finally:
             state.lock.release()
         cleanup = state.initial_shutdown_task
         if cleanup is not None and not cleanup.done():
             await asyncio.shield(cleanup)
+        await self._drain_held_prompts(state)
 
     async def _kill_initial_delivery(self, state: _ConversationState) -> bool:
         """Own local disposition without waiting for an unacknowledged native operation."""

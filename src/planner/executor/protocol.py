@@ -543,7 +543,6 @@ class ChildInventory:
     child: ChildReference
     active_turn: TurnToken | None
     pending_asks: tuple[AskReference, ...]
-    pending_user_input_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -699,13 +698,11 @@ class LiveReadRequest:
 
 
 class MacOutboxWriter(Protocol):
-    """The runner only produces durable output and checks its delivery barrier."""
+    """The runner produces durable output and counts items awaiting a receipt."""
 
     def add(self, entry: OutboxEntry, *, ticket_id: str | None = None) -> QueuedEnvelope: ...
 
-    def pending_count(self, conversation_id: str | None = None) -> int: ...
-
-    def has_pending(self, conversation_id: str | None = None) -> bool: ...
+    def pending_count(self) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)

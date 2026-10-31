@@ -9,11 +9,10 @@ import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 from uuid import uuid4
 
 from planner.conversation.backends.contracts import (
-    BackendAdapterError,
     BackendChild,
     BackendChildFactory,
     BackendPermissionAsk,
@@ -35,7 +34,6 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import ConversationTurnEnding, PlanEntry, ToolCallStatus
 from planner.conversation.logic.addressed_reply import with_runtime_prompt_context
-from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.conversation.message_content import MessageContent, MessageFile
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.production_backends import production_backend_child_factories
@@ -102,6 +100,35 @@ class _CommandAdmissionRefused(Exception):
     """An admission guard proved that the native command was not dispatched."""
 
 
+_REFUSALS = (
+    _CommandAdmissionRefused,
+    BackendPromptRejected,
+    BackendSpawnFailed,
+    SessionLoadFailed,
+    NeedsRebind,
+    PromptWriteRefused,
+)
+
+
+def _outcome(
+    command: ChildCommand, disposition: CommandDisposition, result: JsonObject
+) -> CommandOutcome:
+    return CommandOutcome(command.command_id, command.child, disposition, result)
+
+
+def _error_outcome(command: ChildCommand, error: Exception) -> CommandOutcome:
+    """Refused proves the provider was not reached. Anything else stays uncertain."""
+    refusal = next((kind for kind in _REFUSALS if isinstance(error, kind)), None)
+    return _outcome(
+        command,
+        CommandDisposition.refused if refusal is not None else CommandDisposition.uncertain,
+        {
+            "error_type": refusal.__name__ if refusal is not None else type(error).__name__,
+            "error_message": str(error),
+        },
+    )
+
+
 @dataclass
 class RunningChild:
     reference: ChildReference
@@ -113,17 +140,14 @@ class RunningChild:
     backend_key: ConversationBackendKey
     active_turn: TurnToken | None = None
     asks: dict[str, AskReference] = field(default_factory=dict)
-    user_inputs: dict[str, tuple[AskReference, BackendUserInputRequest]] = field(
-        default_factory=dict
-    )
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     model: str | None = None
     reasoning_effort: str | None = None
 
 
 class NativeEventSink:
-    def __init__(self, registry: MacRunner, reference: ChildReference) -> None:
-        self.registry = registry
+    def __init__(self, runner: MacRunner, reference: ChildReference) -> None:
+        self.runner = runner
         self.reference = reference
 
     async def _report(
@@ -132,14 +156,14 @@ class NativeEventSink:
         if isinstance(detail := arguments.get("detail"), str):
             arguments["detail"] = detail[:MAX_TOOL_DETAIL_CHARACTERS]
         if method in LIVE_BACKEND_EVENT_METHODS:
-            if self.registry.send_live_event is not None:
-                await self.registry.send_live_event(
+            if self.runner.send_live_event is not None:
+                await self.runner.send_live_event(
                     BackendEvent(
                         self.reference, method, turn, encode_backend_event(method, turn, arguments)
                     )
                 )
             return
-        await self.registry.report_event(self.reference, method, turn, arguments)
+        await self.runner.report_event(self.reference, method, turn, arguments)
 
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
@@ -285,6 +309,14 @@ class _CommandRecord:
     preparation: asyncio.Task[None] | None = None
     outcome: CommandOutcome | None = None
     invoking: bool = False
+    required_output: AnswerApplication | CommandOutcome | None = None
+    output_published: bool = False
+
+    @property
+    def phase(self) -> Literal["preparing", "invoking", "finished"]:
+        if self.outcome is not None:
+            return "finished"
+        return "invoking" if self.invoking else "preparing"
 
 
 class MacRunner:
@@ -292,7 +324,7 @@ class MacRunner:
         self,
         *,
         incarnation: str,
-        spool: MacOutboxWriter,
+        outbox: MacOutboxWriter,
         factory: Callable[[ResolvedConversationStart], BackendChildFactory] | None = None,
         panels_server_url: str = "",
         connection: Callable[[], Link | None] = lambda: None,
@@ -304,7 +336,7 @@ class MacRunner:
         self.workspace_home = workspace_home or Path.home()
         self.paths = paths
         self.incarnation = incarnation
-        self.spool = spool
+        self.outbox = outbox
         self.send_live_event: Callable[[BackendEvent], Awaitable[None]] | None = (
             self._send_live_event
         )
@@ -316,10 +348,6 @@ class MacRunner:
         self._children: dict[str, RunningChild] = {}
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
-        self._applications: dict[str, AnswerApplication] = {}
-        self._answers: dict[str, DurableAnswer] = {}
-        self._stop_proofs_published: set[str] = set()
-        self._applications_published: set[str] = set()
         self.admission_stopped = False
         self._retired_children: set[str] = set()
         self._retiring_children: set[str] = set()
@@ -332,7 +360,6 @@ class MacRunner:
         child = self._children.get(child_id or "")
         if (
             child is None
-            or child_id in self._retired_children
             or child_id in self._retiring_children
             or capability is None
             or not secrets.compare_digest(child.capability, capability)
@@ -427,9 +454,9 @@ class MacRunner:
             for piece in content:
                 if isinstance(piece, MessageFile) and piece.stored_file_id not in seen:
                     seen.add(piece.stored_file_id)
-                    await self.get_file(command, piece.stored_file_id)
+                    await self._download_input(command, piece.stored_file_id)
 
-    async def get_file(self, command: ChildCommand, stored_file_id: str) -> None:
+    async def _download_input(self, command: ChildCommand, stored_file_id: str) -> None:
         link = self.connection()
         if link is None:
             raise ConnectionError("executor link unavailable")
@@ -474,7 +501,7 @@ class MacRunner:
             record = _CommandRecord(command)
             self._commands[command.command_id] = record
         if record.outcome is not None:
-            await self._publish_required_output(command, record.outcome)
+            await self._publish_required_output(record)
             return record.outcome
         if record.task is None:
             record.task = asyncio.create_task(self._execute(command))
@@ -486,7 +513,7 @@ class MacRunner:
         for command_id in command_ids:
             record = self._commands.get(command_id)
             if record is not None and record.outcome is not None:
-                await self._publish_required_output(record.command, record.outcome)
+                await self._publish_required_output(record)
 
     def ask(self, command_ids: tuple[str, ...]) -> tuple[CommandState, ...]:
         states: list[CommandState] = []
@@ -495,13 +522,7 @@ class MacRunner:
             states.append(
                 CommandState(
                     command_id,
-                    "unknown"
-                    if record is None
-                    else "finished"
-                    if record.outcome is not None
-                    else "invoking"
-                    if record.invoking
-                    else "preparing",
+                    "unknown" if record is None else record.phase,
                     record.outcome if record is not None else None,
                 )
             )
@@ -513,7 +534,6 @@ class MacRunner:
                 child.reference,
                 child.active_turn,
                 tuple(child.asks.values()),
-                tuple(sorted(child.user_inputs)),
             )
             for child in self._children.values()
         )
@@ -566,34 +586,9 @@ class MacRunner:
             role_materials=ConversationRoleMaterials(role_text, tuple(identity.items())),
         )
 
-    def _reference_conflicts(self, reference: ChildReference, command_id: str) -> bool:
-        child = self._children.get(reference.child_id)
-        if child is not None and child.reference != reference:
-            return True
-        return any(
-            record.command.child != reference
-            for record in self._commands.values()
-            if record.command.child.child_id == reference.child_id
-            and record.command.command_id != command_id
-            and record.command.child.executor_incarnation == self.incarnation
-            and (
-                record.outcome is None
-                or record.outcome.result.get("reason")
-                not in ("incarnation_gone", "child_reference_conflict")
-            )
-        )
-
     async def _stop_exact_child(self, command: ChildCommand) -> CommandOutcome:
         reference = command.child
-
-        def outcome(disposition: CommandDisposition, reason: str) -> CommandOutcome:
-            return CommandOutcome(command.command_id, reference, disposition, {"reason": reason})
-
         child = self._children.get(reference.child_id)
-        if reference.executor_incarnation != self.incarnation:
-            return outcome(CommandDisposition.refused, "incarnation_gone")
-        if self._reference_conflicts(reference, command.command_id):
-            return outcome(CommandDisposition.refused, "child_reference_conflict")
         current = asyncio.current_task()
         stop_owner = next(
             (
@@ -602,18 +597,18 @@ class MacRunner:
                 if record.task is not None
                 and not record.task.done()
                 and record.command.child == reference
-                and record.command.operation == ChildOperation.stop
+                and record.command.operation is ChildOperation.stop
             ),
             current,
         )
         if stop_owner is not current:
             # Never join another stop: two owners otherwise wait on one another.
-            return outcome(CommandDisposition.refused, "child_stop_in_progress")
+            return _outcome(
+                command, CommandDisposition.refused, {"reason": "child_stop_in_progress"}
+            )
 
-        # Admission closes before the first await. Failed attempts retain this fence,
-        # but a later explicit stop can retry once its previous owner finished.
+        # Admission closes before the first await and stays closed across stop retries.
         self._retiring_children.add(reference.child_id)
-        preparing = {key for key, row in self._commands.items() if row.preparation is not None}
         for key, other in self._commands.items():
             if (
                 other.command.child == reference
@@ -626,59 +621,35 @@ class MacRunner:
             if record.task is not None
             and record.task is not current
             and record.command.child == reference
-            and record.command.operation != ChildOperation.stop
+            and record.command.operation is not ChildOperation.stop
             and not record.task.done()
         ]
-        if child is None:
-            settling = [
-                record.task
-                for key in preparing
-                if (record := self._commands[key]).command.child == reference
-                and record.task is not None
-            ]
-            if settling:
-                await asyncio.gather(*(asyncio.shield(task) for task in settling))
-                commands = [task for task in commands if not task.done()]
-            unsettled = (
-                bool(commands)
-                or bool(self._source_work.get(reference, 0))
-                or reference in self._failed_source_work
-                or any(
-                    application.ask.child == reference and key not in self._applications_published
-                    for key, application in self._applications.items()
-                )
-                or self.spool.has_pending(reference.conversation_id)
-            )
-            if unsettled:
-                return outcome(CommandDisposition.uncertain, "child_has_unsettled_work")
-        else:
-            try:
-                # Native-lock release alone is insufficient: wrappers can still mint
-                # command outcomes and callback applications after that release.
-                if commands:
-                    await asyncio.gather(*(asyncio.shield(task) for task in commands))
-                await self._finish_source_work(reference)
+        try:
+            if commands:
+                await asyncio.gather(*(asyncio.shield(task) for task in commands))
+            await self._finish_source_work(reference)
+            if child is not None:
                 async with child.lock:
                     self._mark_invoking(command)
                     await child.native.stop()
                 await self._finish_source_work(reference)
-                if reference in self._failed_source_work or any(
-                    application.ask.child == reference and key not in self._applications_published
-                    for key, application in self._applications.items()
-                ):
-                    raise RuntimeError("required source publication failed")
-            except Exception as error:
-                return CommandOutcome(
-                    command.command_id,
-                    reference,
-                    CommandDisposition.uncertain,
-                    {"error_type": type(error).__name__, "error_message": str(error)},
-                )
+            if reference in self._failed_source_work or any(
+                record.command.child == reference
+                and record.required_output is not None
+                and not record.output_published
+                for record in self._commands.values()
+            ):
+                raise RuntimeError("required source publication failed")
+        except Exception as error:
+            return _outcome(
+                command,
+                CommandDisposition.uncertain,
+                {"error_type": type(error).__name__, "error_message": str(error)},
+            )
         self._retired_children.add(reference.child_id)
-        self._retiring_children.discard(reference.child_id)
         if child is not None and self._children.get(reference.child_id) is child:
             self._children.pop(reference.child_id)
-        return CommandOutcome(command.command_id, reference, CommandDisposition.succeeded, {})
+        return _outcome(command, CommandDisposition.succeeded, {})
 
     async def _finish_source_work(self, reference: ChildReference) -> None:
         while idle := self._source_idle.get(reference):
@@ -746,10 +717,7 @@ class MacRunner:
         return {}
 
     def _check_child_admission(self, child: RunningChild) -> None:
-        if (
-            child.reference.child_id in self._retired_children
-            or child.reference.child_id in self._retiring_children
-        ):
+        if child.reference.child_id in self._retiring_children:
             raise _CommandAdmissionRefused("source child identity is retiring")
 
     async def _write_prompt(
@@ -822,30 +790,21 @@ class MacRunner:
     ) -> None:
         if answer is None:
             return
-        previous = self._answers.get(answer.answer_id)
-        if previous is not None and previous != answer:
-            raise ValueError("answer id reused with different recorded answer")
-        self._answers[answer.answer_id] = answer
         if child.active_turn is not None and child.active_turn != answer.ask.turn:
             raise _CommandAdmissionRefused("answer turn is no longer active")
-        if answer.ask.kind is AskKind.permission:
-            if child.asks.get(answer.ask.ask_id) != answer.ask:
-                raise _CommandAdmissionRefused("permission callback is gone")
-        else:
-            pending = child.user_inputs.get(answer.ask.ask_id)
-            if pending is None or pending[0] != answer.ask:
-                raise _CommandAdmissionRefused("user input callback is gone")
-            normalized = ordered_user_input_answers(
-                pending[1].questions, answer.user_input_answers or ()
+        if child.asks.get(answer.ask.ask_id) != answer.ask:
+            message = (
+                "permission callback is gone"
+                if answer.ask.kind is AskKind.permission
+                else "user input callback is gone"
             )
-            if normalized is None or normalized != answer.user_input_answers:
-                raise ValueError("recorded user input map is incomplete")
+            raise _CommandAdmissionRefused(message)
 
     def _answer_application(self, command: ChildCommand, ask: AskReference | None) -> JsonObject:
         if ask is None:
             return {}
         application = AnswerApplication(command.command_id, ask, now_ms())
-        self._applications[command.command_id] = application
+        self._commands[command.command_id].required_output = application
         return {"answer_application": encode_value(application)}
 
     async def _answer_permission(
@@ -862,8 +821,7 @@ class MacRunner:
         self._check_answer(child, command, args.answer)
         self._mark_invoking(command)
         await child.native.answer_user_input(args.request_id, args.answers)
-        pending = child.user_inputs.pop(args.request_id, None)
-        return self._answer_application(command, None if pending is None else pending[0])
+        return self._answer_application(command, child.asks.pop(args.request_id, None))
 
     def withdraw_commands(self, request: WithdrawCommands) -> tuple[str, ...]:
         if request.child.executor_incarnation != self.incarnation:
@@ -893,9 +851,26 @@ class MacRunner:
         self._commands[command.command_id].invoking = True
 
     async def _execute(self, command: ChildCommand) -> CommandOutcome:
+        record = self._commands[command.command_id]
+        try:
+            await self._prepare(record)
+            outcome = await self._dispatch(command)
+        except Exception as error:
+            outcome = _error_outcome(command, error)
+        record.outcome = outcome
+        if (
+            command.operation is ChildOperation.stop
+            and outcome.disposition is CommandDisposition.succeeded
+        ):
+            record.required_output = outcome
+        await self._publish_required_output(record)
+        return outcome
+
+    async def _prepare(self, record: _CommandRecord) -> None:
+        command = record.command
         if command.operation is not ChildOperation.stop:
             task = asyncio.create_task(self._prepare_inputs(command))
-            self._commands[command.command_id].preparation = task
+            record.preparation = task
             if command.command_id in self._withdrawn_commands:
                 task.cancel()
             try:
@@ -904,191 +879,69 @@ class MacRunner:
                 if command.command_id not in self._withdrawn_commands:
                     raise
             except Exception as error:
-                outcome = CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    CommandDisposition.refused,
-                    {
-                        "error_type": "BackendSpawnFailed"
-                        if command.operation is ChildOperation.start
-                        else "PromptWriteRefused",
-                        "error_message": str(error),
-                        "reason": "input_unavailable",
-                    },
+                refusal = (
+                    BackendSpawnFailed
+                    if command.operation is ChildOperation.start
+                    else PromptWriteRefused
                 )
-                self._commands[command.command_id].outcome = outcome
-                return outcome
+                raise refusal(str(error)) from error
             finally:
-                self._commands[command.command_id].preparation = None
+                record.preparation = None
         if command.command_id in self._withdrawn_commands:
-            outcome = CommandOutcome(
-                command.command_id,
-                command.child,
-                CommandDisposition.refused,
-                {"reason": "withdrawn_before_invocation"},
-            )
-            self._commands[command.command_id].outcome = outcome
-            return outcome
-        return await self._execute_ready(command)
+            raise _CommandAdmissionRefused("command withdrawn before provider invocation")
 
-    async def _execute_ready(self, command: ChildCommand) -> CommandOutcome:
+    async def _dispatch(self, command: ChildCommand) -> CommandOutcome:
         if command.child.executor_incarnation != self.incarnation:
-            outcome = CommandOutcome(
-                command.command_id,
-                command.child,
-                CommandDisposition.refused,
-                {"reason": "incarnation_gone"},
-            )
-        elif self._reference_conflicts(command.child, command.command_id):
-            outcome = CommandOutcome(
-                command.command_id,
-                command.child,
-                CommandDisposition.refused,
-                {"reason": "child_reference_conflict"},
-            )
-        elif command.operation == ChildOperation.stop:
-            outcome = await self._stop_exact_child(command)
-        elif (
-            command.child.child_id in self._retired_children
-            or command.child.child_id in self._retiring_children
-        ):
-            outcome = CommandOutcome(
-                command.command_id,
-                command.child,
-                CommandDisposition.refused,
-                {
-                    "error_type": "BackendSpawnFailed",
-                    "error_message": "source child identity was retired",
-                },
-            )
+            return _outcome(command, CommandDisposition.refused, {"reason": "incarnation_gone"})
+        if command.operation is ChildOperation.stop:
+            return await self._stop_exact_child(command)
+        if command.child.child_id in self._retiring_children:
+            raise BackendSpawnFailed("source child identity was retired")
+        args = command.arguments
+        if isinstance(args, StartRun):
+            result = await self._start_run(command, args)
         else:
-            try:
-                args = command.arguments
-                if isinstance(args, StartRun):
-                    result = await self._start_run(command, args)
-                else:
-                    child = self._children.get(command.child.child_id)
-                    if child is None or child.reference != command.child:
-                        return await self._remember_outcome(
-                            command,
-                            CommandOutcome(
-                                command.command_id,
-                                command.child,
-                                CommandDisposition.uncertain,
-                                {"reason": "child_gone"},
-                            ),
-                        )
-                    async with child.lock:
-                        self._check_child_admission(child)
-                        match args:
-                            case WritePrompt():
-                                result = await self._write_prompt(child, command, args)
-                            case Steer():
-                                result = await self._steer(child, command, args)
-                            case CancelTurn():
-                                result = await self._cancel_turn(child, command)
-                            case AnswerPermission():
-                                result = await self._answer_permission(child, command, args)
-                            case AnswerUserInput():
-                                result = await self._answer_user_input(child, command, args)
-                            case _:
-                                raise ValueError("unsupported child command")
-                outcome = CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    CommandDisposition.uncertain
-                    if result.get("kind") == "steer_uncertain"
-                    else CommandDisposition.succeeded,
-                    result,
-                )
-            except BackendPromptRejected as error:
-                outcome = CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    CommandDisposition.refused,
-                    {
-                        "error_type": "BackendPromptRejected",
-                        "error_message": str(error),
-                    },
-                )
-            except _CommandAdmissionRefused as error:
-                outcome = CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    CommandDisposition.refused,
-                    {
-                        "error_type": type(error).__name__,
-                        "error_message": str(error),
-                    },
-                )
-            except (ValueError, BackendAdapterError) as error:
-                # A native write failure does not prove non-delivery.
-                refusal_type = next(
-                    (
-                        kind
-                        for kind in (
-                            BackendSpawnFailed,
-                            SessionLoadFailed,
-                            NeedsRebind,
-                            PromptWriteRefused,
-                        )
-                        if isinstance(error, kind)
-                    ),
-                    None,
-                )
-                disposition = (
-                    CommandDisposition.refused
-                    if refusal_type is not None
-                    else CommandDisposition.uncertain
-                )
-                outcome = CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    disposition,
-                    {
-                        "error_type": (
-                            refusal_type.__name__
-                            if refusal_type is not None
-                            else type(error).__name__
-                        ),
-                        "error_message": str(error),
-                    },
-                )
-            except Exception as error:
-                outcome = CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    CommandDisposition.uncertain,
-                    {"error_type": type(error).__name__, "error_message": str(error)},
-                )
-        return await self._remember_outcome(command, outcome)
+            child = self._children.get(command.child.child_id)
+            if child is None or child.reference != command.child:
+                return _outcome(command, CommandDisposition.uncertain, {"reason": "child_gone"})
+            async with child.lock:
+                self._check_child_admission(child)
+                match args:
+                    case WritePrompt():
+                        result = await self._write_prompt(child, command, args)
+                    case Steer():
+                        result = await self._steer(child, command, args)
+                    case CancelTurn():
+                        result = await self._cancel_turn(child, command)
+                    case AnswerPermission():
+                        result = await self._answer_permission(child, command, args)
+                    case AnswerUserInput():
+                        result = await self._answer_user_input(child, command, args)
+                    case _:
+                        raise ValueError("unsupported child command")
+        return _outcome(
+            command,
+            CommandDisposition.uncertain
+            if result.get("kind") == "steer_uncertain"
+            else CommandDisposition.succeeded,
+            result,
+        )
 
-    async def _remember_outcome(
-        self, command: ChildCommand, outcome: CommandOutcome
-    ) -> CommandOutcome:
-        self._commands[command.command_id].outcome = outcome
-        await self._publish_required_output(command, outcome)
-        return outcome
-
-    async def _publish_required_output(
-        self, command: ChildCommand, outcome: CommandOutcome
-    ) -> None:
-        application = self._applications.get(command.command_id)
-        if application is not None:
-            await self._publish_application(application)
-        if (
-            command.operation is ChildOperation.stop
-            and outcome.disposition is CommandDisposition.succeeded
-            and command.command_id not in self._stop_proofs_published
-        ):
+    async def _publish_required_output(self, record: _CommandRecord) -> None:
+        output = record.required_output
+        if output is None or record.output_published:
+            return
+        if isinstance(output, AnswerApplication):
+            kind = EnvelopeKind.answer_application
+            child = output.ask.child
+            submission_id = "application_" + hashlib.sha256(output.answer_id.encode()).hexdigest()
+        else:
             # Last in this child's FIFO: accepting this item proves prior output arrived.
-            await self._emit(
-                outcome.child.conversation_id,
-                EnvelopeKind.child_stopped,
-                outcome,
-                submission_id="stopped_" + hashlib.sha256(outcome.command_id.encode()).hexdigest(),
-            )
-            self._stop_proofs_published.add(command.command_id)
+            kind = EnvelopeKind.child_stopped
+            child = output.child
+            submission_id = "stopped_" + hashlib.sha256(output.command_id.encode()).hexdigest()
+        await self._emit(child.conversation_id, kind, output, submission_id=submission_id)
+        record.output_published = True
 
     async def _emit(
         self,
@@ -1099,7 +952,7 @@ class MacRunner:
     ) -> None:
         payload = cast(JsonObject, encode_value(value))
         await asyncio.to_thread(
-            self.spool.add,
+            self.outbox.add,
             OutboxEntry(conversation_id, kind, payload, submission_id),
         )
 
@@ -1135,22 +988,16 @@ class MacRunner:
             request = cast(BackendUserInputRequest, arguments["request"])
             if turn is None:
                 raise ValueError("user input request lacks turn")
-            request_reference = AskReference(
+            child.asks[request.request_id] = AskReference(
                 reference, turn, request.request_id, AskKind.user_input
             )
-            previous = child.user_inputs.get(request.request_id)
-            pending = (request_reference, request)
-            if previous is not None and previous != pending:
-                raise ValueError("user input request identity changed")
-            child.user_inputs[request.request_id] = pending
         elif method == BackendEventMethod.turn_ended:
             if child.active_turn == turn:
                 child.active_turn = None
                 child.asks.clear()
-                child.user_inputs.clear()
         event = BackendEvent(reference, method, turn, encode_backend_event(method, turn, arguments))
         await asyncio.to_thread(
-            self.spool.add,
+            self.outbox.add,
             OutboxEntry(
                 reference.conversation_id,
                 EnvelopeKind.backend_event,
@@ -1165,23 +1012,9 @@ class MacRunner:
             else None,
         )
 
-    async def _publish_application(self, application: AnswerApplication) -> None:
-        if application.answer_id in self._applications_published:
-            return
-        submission_id = "application_" + hashlib.sha256(application.answer_id.encode()).hexdigest()
-        await self._emit(
-            application.ask.child.conversation_id,
-            EnvelopeKind.answer_application,
-            application,
-            submission_id=submission_id,
-        )
-        self._applications_published.add(application.answer_id)
-
     def _quiescence_counts(self) -> tuple[int, int, int, int]:
         active = sum(child.active_turn is not None for child in self._children.values())
-        callbacks = sum(
-            len(child.asks) + len(child.user_inputs) for child in self._children.values()
-        )
+        callbacks = sum(len(child.asks) for child in self._children.values())
         stopped_references = {
             record.command.child
             for record in self._commands.values()
@@ -1202,17 +1035,11 @@ class MacRunner:
             if (outcome := record.outcome) is not None
         )
         unresolved += sum(
-            record.command.operation is ChildOperation.stop
-            and outcome.disposition is CommandDisposition.succeeded
-            and command_id not in self._stop_proofs_published
-            for command_id, record in self._commands.items()
-            if (outcome := record.outcome) is not None
-        )
-        unresolved += sum(
-            answer_id not in self._applications_published for answer_id in self._applications
+            record.required_output is not None and not record.output_published
+            for record in self._commands.values()
         )
         unresolved += sum(self._source_work.values())
-        return active, callbacks, unresolved, self.spool.pending_count()
+        return active, callbacks, unresolved, self.outbox.pending_count()
 
     async def quiesce(self) -> Quiescence:
         # Admission closes synchronously before any awaited native operation.
