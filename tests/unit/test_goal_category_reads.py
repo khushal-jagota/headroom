@@ -6,6 +6,7 @@ No browser or new server fixture is necessary for these database boundaries.
 """
 
 import json
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from sqlite3 import Connection
@@ -24,16 +25,21 @@ from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, JsonDict, P
 from planner.datasets import actions as dataset_actions
 from planner.datasets.contracts import Dataset, UpdateDatasetBody
 from planner.goals import configuration, data, views
+from planner.goals.logic import reading_assembly as reading_rules
 from planner.goals.resource_versions import GoalResources
 from planner.measures import actions as measure_actions
 from planner.measures.contracts import (
     CandidateObservation,
+    CountPeriod,
     CreateMeasureBody,
     HistoricalUnavailableReason,
     HistoryWindow,
+    Measure,
+    MeasureDate,
     MeasureKind,
     MeasureOrigin,
 )
+from planner.measures.logic.evaluation import demanded_pairs
 
 
 def dataset_binding(item: Dataset) -> JsonDict:
@@ -98,7 +104,8 @@ def test_live_time_budget_uses_latest_submitted_date_including_explicit_gap(
     tmp_db: Connection,
 ) -> None:
     identifier = source(tmp_db)
-    spent, planned = taken(tmp_db, identifier), taken(tmp_db, identifier)
+    spent = taken(tmp_db, identifier)
+    planned = taken(tmp_db, identifier, kind=MeasureKind.period_count, period=CountPeriod.day)
     run(tmp_db, identifier)
     collect(
         tmp_db,
@@ -109,9 +116,20 @@ def test_live_time_budget_uses_latest_submitted_date_including_explicit_gap(
             CandidateObservation(spent.id, "2026-10-27", 3),
         ),
     )
+    document = page()
+    document["blocks"].append(
+        {
+            "type": "chart",
+            "id": "planned-formula",
+            "kind": "number",
+            "measure_id": planned.id,
+            "expectation": {"op": "constant", "value": 8},
+        }
+    )
     goal = create(
         tmp_db,
         kind="quantitative",
+        page=document,
         primary_chart={
             "type": "chart",
             "kind": "time-budget",
@@ -156,6 +174,22 @@ def test_live_time_budget_uses_latest_submitted_date_including_explicit_gap(
         tmp_db, goal.id, now, first_date="2026-10-26", last_date="2026-10-29"
     )
     assert all_summary(unavailable["charts"][goal.primary_chart["id"]])["date"] == "2026-10-28"
+    category_gap = next(
+        value
+        for value in unavailable["charts"][goal.primary_chart["id"]]["measure_values"]
+        if value["measure_id"] == planned.id and value["date"] == "2026-10-28"
+    )
+    formula_gap = next(
+        point["actual"]
+        for point in unavailable["charts"]["planned-formula"]["points"]
+        if point["date"] == "2026-10-28"
+    )
+    assert category_gap["status"] == formula_gap["status"] == "missing_input"
+    assert category_gap["missing_inputs"] == formula_gap["missing_inputs"] == (
+        {"measure_id": planned.id, "date": "2026-10-28"},
+    )
+    assert category_gap["coverage_status"] == "unknown"
+    assert formula_gap["coverage_status"] == "not_applicable"
     with pytest.raises(PlannerError, match="positive target"):
         create(tmp_db, primary_chart={"type": "chart", "kind": "time-budget"})
 
@@ -295,3 +329,72 @@ def test_named_assembled_inputs_do_not_create_future_actuals(tmp_db: Connection)
     assert summary["date"] == "2026-10-27" and summary["actual"]["value"] == 7
     future = next(value for value in result["values"] if value["date"] == "2026-10-28")
     assert future["value"] is None
+
+
+def test_named_input_recursion_recovery_keeps_the_union_demand_limit(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Independent recovered roots fit alone but must not bypass their combined budget."""
+    identifier = source(tmp_db)
+    dependencies = (taken(tmp_db, identifier), taken(tmp_db, identifier))
+    assembled = [
+        measure_actions.create_measure(
+            tmp_db,
+            CreateMeasureBody(
+                project_id="project_vylo",
+                name=f"Derived {index}",
+                unit="items",
+                origin=MeasureOrigin.assembled,
+                kind=MeasureKind.reading,
+                timezone="UTC",
+                period=None,
+                source_id=None,
+                formula={"op": "reference", "measure_id": dependency.id, "day_offset": 0},
+            ),
+            principal=OWNER_PRINCIPAL,
+            now=NOW,
+        )
+        for index, dependency in enumerate(dependencies)
+    ]
+    goal = create(
+        tmp_db,
+        primary_chart={
+            "type": "chart",
+            "kind": "bar",
+            "binding": {
+                "kind": "scalar_inputs",
+                "aggregation": "sum",
+                "inputs": [
+                    {"key": str(index), "label": measure.name, "measure_id": measure.id}
+                    for index, measure in enumerate(assembled)
+                ],
+            },
+        },
+    )
+
+    def bulk_depth(
+        roots: tuple[MeasureDate, ...],
+        definitions: Mapping[str, Measure],
+        *,
+        now: int,
+        limit: int | None = None,
+        missing_ok: bool = False,
+    ) -> set[MeasureDate]:
+        if len(roots) > 1:
+            raise RecursionError
+        return demanded_pairs(roots, definitions, now=now, limit=limit, missing_ok=missing_ok)
+
+    monkeypatch.setattr(reading_rules, "demanded_pairs", bulk_depth)
+    monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", 3)
+    with pytest.raises(PlannerError) as failure:
+        views.readings_json(
+            tmp_db,
+            goal.id,
+            datetime.fromtimestamp(NOW, UTC),
+            first_date="2026-10-27",
+            last_date="2026-10-27",
+        )
+    assert str(failure.value) == (
+        "goal projection exceeds 3 demanded measure/date pairs; request a narrower date range"
+    )

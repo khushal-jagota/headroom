@@ -20,7 +20,7 @@ from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 from planner.core.clock import RealClock
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, PlannerError, Principal, PrincipalKind
-from planner.goals import actions, data, views
+from planner.goals import actions, category_reads, data, views
 from planner.goals.contracts import ChartBlock, ChecklistBlock, Goal, GoalsResponse, SegmentedBlock
 from planner.goals.logic.documents import prepare_document
 from planner.goals.logic.status import (
@@ -1047,7 +1047,7 @@ def test_goal_projection_preserves_other_charts_when_dependency_depth_exceeds_in
     tmp_db: Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Demand discovery must return arithmetic_limit, with other charts still available."""
+    """Deep formula and named roots must not discard independent chart values."""
     measure = manual_measure(tmp_db)
     deep = measure_actions.create_measure(
         tmp_db,
@@ -1065,6 +1065,22 @@ def test_goal_projection_preserves_other_charts_when_dependency_depth_exceeds_in
         principal=OWNER_PRINCIPAL,
         now=NOW,
     )
+    ordinary = measure_actions.create_measure(
+        tmp_db,
+        CreateMeasureBody(
+            project_id="project_vylo",
+            name="ordinary",
+            unit="items",
+            origin=MeasureOrigin.assembled,
+            kind=MeasureKind.reading,
+            timezone="Europe/Berlin",
+            period=None,
+            source_id=None,
+            formula={"op": "constant", "value": 7},
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
     document = page()
     document["blocks"].append(
         {
@@ -1073,6 +1089,21 @@ def test_goal_projection_preserves_other_charts_when_dependency_depth_exceeds_in
             "kind": "number",
             "measure_id": measure.id,
             "expectation": {"op": "constant", "value": 7},
+        }
+    )
+    document["blocks"].append(
+        {
+            "id": "named",
+            "type": "chart",
+            "kind": "bar",
+            "binding": {
+                "kind": "scalar_inputs",
+                "aggregation": "sum",
+                "inputs": [
+                    {"key": "deep", "label": "Deep", "measure_id": deep.id},
+                    {"key": "ordinary", "label": "Ordinary", "measure_id": ordinary.id},
+                ],
+            },
         }
     )
     goal = create(
@@ -1087,7 +1118,7 @@ def test_goal_projection_preserves_other_charts_when_dependency_depth_exceeds_in
     )
     assert goal.primary_chart is not None
     # Model a long current definition graph without hundreds of SQLite writes.
-    definitions = {measure.id: measure}
+    definitions = {measure.id: measure, ordinary.id: ordinary}
     for index in range(300):
         identifier = deep.id if index == 0 else f"deep-{index}"
         formula = (
@@ -1097,6 +1128,7 @@ def test_goal_projection_preserves_other_charts_when_dependency_depth_exceeds_in
         )
         definitions[identifier] = replace(deep, id=identifier, formula=cast(Any, formula))
     monkeypatch.setattr(views, "read_definitions", lambda *args, **kwargs: definitions)
+    monkeypatch.setattr(category_reads, "read_definitions", lambda *args, **kwargs: definitions)
     previous_limit = sys.getrecursionlimit()
     try:
         sys.setrecursionlimit(200)
@@ -1114,6 +1146,9 @@ def test_goal_projection_preserves_other_charts_when_dependency_depth_exceeds_in
         == "arithmetic_limit"
     )
     assert reading["charts"]["unaffected"]["points"][0]["expected"]["value"] == 7
+    named = {value["measure_id"]: value for value in reading["charts"]["named"]["measure_values"]}
+    assert named[deep.id]["status"] == "arithmetic_limit"
+    assert named[ordinary.id]["status"] == "value" and named[ordinary.id]["value"] == 7
 
 
 def test_projection_explicit_minimum_date_does_not_underflow_default_window() -> None:
