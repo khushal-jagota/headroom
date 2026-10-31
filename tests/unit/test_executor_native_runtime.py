@@ -144,9 +144,7 @@ def native_registry(
     native = ScriptedChild()
     reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
 
-    def factory(
-        resolved: ResolvedConversationStart, capability: str, child: ChildReference
-    ) -> BackendChildFactory:
+    def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
         def create(**kwargs: object) -> BackendChild:
             native.sink = cast(BackendEventSink, kwargs["event_sink"])
             return cast(BackendChild, native)
@@ -165,7 +163,9 @@ def native_registry(
         ConversationBackendKey.codex,
         "test",
         None,
-        None,
+        ConversationRoleMaterials(
+            "worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_one"))
+        ),
         tmp_path,
         ConversationAccess.full,
     )
@@ -846,9 +846,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
 
         native = InspectingChild()
 
-        def factory(
-            resolved: ResolvedConversationStart, capability: str, child: ChildReference
-        ) -> BackendChildFactory:
+        def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
             # Bootstrap is complete before provider construction.
             for source in canonical_snapshot().sources:
                 assert (native_home / "skills" / source.skill_name / "SKILL.md").read_bytes() == (
@@ -953,6 +951,29 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
         outcome = await registry.run(command)
         assert outcome.disposition is CommandDisposition.refused
         assert outcome.result["error_type"] == "BackendSpawnFailed"
+        assert native.starts == 0
+        assert registry.children() == ()
+
+    asyncio.run(run())
+
+
+def test_native_start_requires_ticket_identity(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+) -> None:
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        assert isinstance(start.arguments, StartRun)
+        command = replace(
+            start,
+            arguments=replace(
+                start.arguments,
+                resolved_start=replace(start.arguments.resolved_start, role_materials=None),
+            ),
+        )
+        outcome = await registry.run(command)
+        assert outcome.disposition is CommandDisposition.refused
+        assert outcome.result["error_type"] == "BackendSpawnFailed"
+        assert outcome.result["error_message"] == "Mac runs require a Ticket identity"
         assert native.starts == 0
         assert registry.children() == ()
 

@@ -19,9 +19,16 @@ from uuid import uuid4
 
 import pytest
 from click.testing import CliRunner
+from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.cli.main import main
 from planner.conversation.backends.contracts import BackendChild
+from planner.conversation.contracts import (
+    ConversationAccess,
+    ConversationBackendKey,
+    ConversationRoleMaterials,
+    ResolvedConversationStart,
+)
 from planner.execution_identity import ChildReference
 from planner.executor import ipc_client
 from planner.executor.cli import executor_group
@@ -39,6 +46,7 @@ from planner.executor.protocol import (
     IpcRequest,
     IpcResponse,
     ReceiptDisposition,
+    StartRun,
     StopRun,
     encode_frame,
     read_typed_frame,
@@ -55,11 +63,27 @@ async def ipc_service(
         executor_id="synthetic",
         panels_server_url="https://unused",
     )
+    resolved = ResolvedConversationStart(
+        "c_one",
+        ConversationBackendKey.codex,
+        "test",
+        None,
+        ConversationRoleMaterials(
+            "worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_example"))
+        ),
+        root,
+        ConversationAccess.full,
+    )
     child = RunningChild(
         ChildReference(executor.identity.executor_incarnation, "child", "c_one"),
         "capability",
         cast(BackendChild, object()),
         ticket_id="t_example",
+        launch_input=StartRun(
+            resolved_start=resolved, canonical_skill_snapshot=canonical_snapshot()
+        ),
+        localized_start=resolved,
+        backend_key=resolved.backend_key,
     )
     executor.runner._children["child"] = child
     monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(root))
