@@ -888,7 +888,13 @@ def worker_type_save(as_json: bool) -> None:
         json_body=record,
         as_json=as_json,
     )
-    http.emit(data, as_json, f"{data['worker_type']} saved")
+    lines = [f"{data['worker_type']} saved"]
+    for migration in data.get("migrations", []):
+        lines.append(
+            f"{migration['title']}: Stage {migration['old_stage']} -> {migration['new_stage']}; "
+            f"ceiling {migration['old_ceiling']} -> {migration['new_ceiling']}"
+        )
+    http.emit(data, as_json, "\n".join(lines))
 
 
 @worker_type_group.command("skill")
@@ -2007,9 +2013,7 @@ def manager_create(
 @manager.command("list")
 @click.option("--search", default=None, help="Find a Manager by title.")
 @click.option("--active", is_flag=True, help="Only show active Managers (settled=false).")
-@click.option(
-    "--settled", is_flag=True, help="Only show settled Managers (finished destinations)."
-)
+@click.option("--settled", is_flag=True, help="Only show settled Managers (finished destinations).")
 @click.option("--project", default=None, help="Only show project name.")
 @click.option("--project-id", default=None, help="Only show project id.")
 @bounded_options

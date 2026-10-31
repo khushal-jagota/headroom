@@ -29,6 +29,7 @@ from planner.conversation.logic.pending_requests import (
 )
 from planner.tickets import derivation
 from planner.tickets.contracts import TicketStatus
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 class ConversationAttention(NamedTuple):
@@ -334,6 +335,7 @@ def capture_ticket_attention(
     occurred_at: int,
     *,
     conversation_result: ConversationAttention | None = None,
+    worker_type_definition: WorkerTypeDefinition | None = None,
 ) -> None:
     # Local import keeps the conversation storage and work-attention projection acyclic.
     from planner.work_attention import ticket_assignment_from_values
@@ -347,7 +349,8 @@ def capture_ticket_attention(
     if row is None:
         return
     facts = derivation.derive_ticket_facts(
-        derivation.stored_facts_from_row(row, has_live_blocker=bool(row["has_live_blocker"]))
+        derivation.stored_facts_from_row(row, has_live_blocker=bool(row["has_live_blocker"])),
+        worker_type_definition=worker_type_definition,
     )
     conversation = conversation_result
     if conversation is None:
@@ -368,6 +371,7 @@ def capture_ticket_attention(
         "assigned": ticket_assignment_from_values(
             stage=str(row["stage"]),
             worker_type=str(row["worker_type"]),
+            worker_type_definition=worker_type_definition,
         ),
         "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
     }
@@ -417,9 +421,10 @@ def capture_conversation_attention(
             )
 
     # Historical replay can publish attention before the goal schema exists.
-    if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goals'"
-    ).fetchone() is not None:
+    if (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goals'").fetchone()
+        is not None
+    ):
         for row in conn.execute(
             "SELECT g.id FROM goals g JOIN agents a ON a.agent_key='goal_' || g.id "
             "WHERE a.conversation_id=?",
