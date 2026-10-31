@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 from typing import Any, cast
 
@@ -33,10 +33,6 @@ def _record(value: Any) -> str:
     return _json(asdict(value))
 
 
-def _parse[T](model: type[T], value: str) -> T:
-    return type_adapter(model).validate_json(value)
-
-
 def _invalid(message: str) -> PlannerError:
     return PlannerError(ErrorCode.validation, message)
 
@@ -46,20 +42,12 @@ class VpsDatabase:
         self.db_path = db_path
 
     @contextmanager
-    def _transaction(
-        self,
-        transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
-        | None = None,
-        before_commit: Callable[[sqlite3.Connection], None] | None = None,
-    ) -> Iterator[sqlite3.Connection]:
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
         connection = connect(self.db_path)
         try:
-            with nullcontext() if transaction_context is None else transaction_context(connection):
-                connection.execute("BEGIN IMMEDIATE")
-                yield connection
-                if before_commit is not None:
-                    before_commit(connection)
-                connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
+            yield connection
+            connection.commit()
         except BaseException:
             connection.rollback()
             raise
@@ -295,32 +283,6 @@ class ExecutorStore(VpsDatabase):
                 now_ms,
             ),
         )
-
-    def assigned_ticket_children(
-        self, ticket_id: str, incarnation: str
-    ) -> tuple[ChildReference, ...]:
-        """Include absent, closed and delayed-start identities; retirement fences them all."""
-        connection = connect(self.db_path)
-        try:
-            rows = connection.execute(
-                "SELECT child_id,conversation_id FROM executor_child_assignments "
-                "WHERE executor_incarnation=? AND principal_kind='ticket' AND principal_id=? "
-                "ORDER BY child_id",
-                (incarnation, ticket_id),
-            ).fetchall()
-            return tuple(ChildReference(incarnation, row[0], row[1]) for row in rows)
-        finally:
-            connection.close()
-
-    def require_ready_connection(self, identity: ExecutorIdentity) -> None:
-        """Read only: also safe while the move writer owns its short write transaction."""
-        connection = connect(self.db_path)
-        try:
-            row = self._current(connection, identity)
-            if row["connection_state"] != ConnectionState.ready.value:
-                raise _invalid("Executor source is not ready")
-        finally:
-            connection.close()
 
     def has_closed_child_assignment(self, child: ChildReference) -> bool:
         """Historical identity evidence only; this grants no child/domain authority."""

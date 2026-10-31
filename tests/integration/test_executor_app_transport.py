@@ -189,16 +189,16 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
                 await asyncio.wait_for(prefix_sent.wait(), 2)
                 await eventually(lambda: bool(service.active), "upload did not reach native app")
                 generation = harness.mac.identity.connection_generation
-                # Native health request traverses control while file body stalls.
+                # Native inventory request traverses control while file body stalls.
                 from planner.executor.protocol import WireMessageKind
 
                 response = await asyncio.wait_for(
                     harness.endpoint.runs.link.request(
-                        WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1}}
+                        WireMessageKind.reconnect_ask, {"command_ids": []}
                     ),
                     2,
                 )
-                assert response.kind is WireMessageKind.health
+                assert response.kind is WireMessageKind.reconnect_result
                 assert harness.mac.identity.connection_generation == generation
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)

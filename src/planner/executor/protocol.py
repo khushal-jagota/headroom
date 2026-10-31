@@ -196,7 +196,6 @@ class FileManifest:
     relative_path: str
     sha256: str
     byte_count: int
-    media_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -727,12 +726,6 @@ class QuiescenceReceipt:
 
 class FrameReader(Protocol):
     async def readexactly(self, n: int) -> bytes: ...
-
-
-class ByteWriter(Protocol):
-    def write(self, data: bytes) -> None: ...
-    async def drain(self) -> None: ...
-    def close(self) -> None: ...
 
 
 class WebSocketPeer(Protocol):
