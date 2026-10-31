@@ -2,6 +2,12 @@
   "schema": 1,
   "entries": [
     {
+      "id": "goal-preview-controls",
+      "path": "web/tests/goal-preview-browser.test.mjs",
+      "cases": ["goal-preview"],
+      "companions": ["web/tests/workspace-rail-interaction.test.ts", "web/tests/manual-measurements.test.ts", "web/tests/goal-editing.test.ts"]
+    },
+    {
       "id": "shell-feedback",
       "path": "web/tests/shell-feedback-browser.test.mjs",
       "cases": [

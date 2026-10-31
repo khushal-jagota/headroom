@@ -393,7 +393,7 @@ def test_delete_between_backend_start_and_link_cannot_recreate_the_agent(
                 sender,
                 item.manager_agent_key,
                 text_message_content("Hello"),
-                conversation_start.manager_resolve(item),
+                conversation_start.manager_resolve(sender, item),
                 conversation_id=None,
                 created_conversation_id=created_id,
                 sender_label="owner",

@@ -52,13 +52,23 @@ def _read(
             require_above_or_self(
                 conn, request_context(request).principal, authority.manager(owner_id)
             )
+        elif kind == "goal":
+            require_above_or_self(
+                conn, request_context(request).principal, authority.goal(owner_id)
+            )
         elif conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {})
         current_row = conn.execute(
             "SELECT conversation_id FROM tickets WHERE id=?"
             if kind == "ticket"
             else "SELECT conversation_id FROM agents WHERE agent_key=?",
-            (owner_id if kind == "ticket" else manager_agent_key(owner_id, conn),),
+            (
+                owner_id
+                if kind == "ticket"
+                else "goal_" + owner_id
+                if kind == "goal"
+                else manager_agent_key(owner_id, conn),
+            ),
         ).fetchone()
         current_id = current_row[0] if current_row else None
         args = (kind, owner_id, current_id)
@@ -162,6 +172,8 @@ async def history_page(
     canonical: HistoryOwnerKind
     if kind == "ticket":
         canonical = "ticket"
+    elif kind == "goal":
+        canonical = "goal"
     elif kind in {"manager", "sprint_item", "orchestrator"}:
         canonical = "manager"
     else:

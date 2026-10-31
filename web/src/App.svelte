@@ -63,6 +63,7 @@
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./routes/SettingsRoute.svelte"));
       case "backends": return cachedImport("./BackendsRoute.svelte", () => import("./routes/BackendsRoute.svelte"));
       case "preview": return cachedImport("./FilePreviewRoute.svelte", () => import("./routes/FilePreviewRoute.svelte"));
+      case "dev": return cachedImport("./DevGoalComponentsRoute.svelte", () => import("./routes/DevGoalComponentsRoute.svelte"));
       default: return null;
     }
   });
@@ -301,6 +302,8 @@
           {#await import("./routes/FilePreviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "vps"}
           <VpsPage />
+        {:else if route.name === "dev"}
+          {#await import("./routes/DevGoalComponentsRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else}<div class="quiet-line">no such screen</div>{/if}
       {/snippet}
       {#if routeModule}<LazyRegion promise={routeModule} shape={routeShape} layout="fill">{@render selectedRoute()}</LazyRegion>{:else}{@render selectedRoute()}{/if}

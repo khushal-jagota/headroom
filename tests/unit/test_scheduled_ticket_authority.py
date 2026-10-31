@@ -20,6 +20,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
+from planner.goals.actions import create_goal
 from planner.managers import data as managers_data
 from planner.scheduled_tickets import actions, api, data
 from planner.scheduled_tickets.contracts import (
@@ -114,11 +115,19 @@ def test_canonical_actions_require_schedule_authority(
     tmp_db: Connection, chain: tuple[str, str, str], kind: PrincipalKind
 ) -> None:
     own, _unrelated, worker = chain
+    goal = create_goal(
+        tmp_db,
+        {"project_id": "project_vylo", "title": "Goal caller", "kind": "binary",
+         "primary_checklist_block_id": None},
+        principal=OWNER_PRINCIPAL,
+        now=1,
+    )
     principal = {
         PrincipalKind.owner: OWNER_PRINCIPAL,
         PrincipalKind.chief: CHIEF_PRINCIPAL,
         PrincipalKind.manager: Principal(PrincipalKind.manager, own),
         PrincipalKind.ticket: Principal(PrincipalKind.ticket, worker),
+        PrincipalKind.goal: Principal(PrincipalKind.goal, goal.id),
     }[kind]
     # Raw storage supplies history without attributing historical authorship.
     original = data.create_schedule(

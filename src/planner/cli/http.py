@@ -49,10 +49,15 @@ def _headers() -> dict[str, str]:
     if not actor:
         return {}
     headers = {"X-Plan-Actor": "manager" if actor == "sprint_item_supervisor" else actor}
+    if actor == "goal" and os.environ.get("PLAN_GOAL_ID", "").strip():
+        headers["X-Plan-Goal-ID"] = os.environ["PLAN_GOAL_ID"].strip()
     if actor == "worker" and ticket_id:
         headers["X-Plan-Ticket-ID"] = ticket_id
     if actor in {"manager", "sprint_item_supervisor"} and manager_id:
         headers["X-Plan-Manager-ID"] = manager_id
+    conversation_id = os.environ.get("PLAN_CONVERSATION_ID", "").strip()
+    if conversation_id:
+        headers["X-Plan-Conversation-ID"] = conversation_id
     return headers
 
 

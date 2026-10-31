@@ -50,13 +50,14 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
   }
 </script>
 
-<div style="height:650px;width:760px;margin:20px auto;display:flex;flex-direction:column">
+<div style={new URLSearchParams(location.search).has('credential') ? 'height:100dvh;width:100%;max-width:760px;margin:0 auto;display:flex;flex-direction:column' : 'height:650px;width:760px;margin:20px auto;display:flex;flex-direction:column'}>
 {#if shown}<LiveConversation
   conversationId={new URLSearchParams(location.search).has('unstarted')?null:'conversation-one'}
   composerPlaceholder={new URLSearchParams(location.search).get('placeholder')??undefined}
   persistenceKey="unanswered-send-fixture"
   label="Worker"
   conversationState="opened"
+  readOnly={new URLSearchParams(location.search).has('readOnly')}
   {sendMessage}
 />{/if}
 </div>
@@ -105,9 +106,19 @@ let coverage=history.length;
 let streamingText='';
 let streamingVersion=0;
 const sources:any[]=[];
+const credentialScenario=new URLSearchParams(location.search).get('credential');
+let credential:any=credentialScenario===null?null:{kind:'credential_request',request_id:'key-request-one',name:credentialScenario.startsWith('layout')?'Panels_very_long_production_account_'+ 'x'.repeat(160):'Panels_posthog_production',provider:'PostHog',use:'Read production usage',auth_kind:'bearer',header_name:null,help:'Account settings → Personal API keys. Choose access to usage data.',help_url:'https://posthog.com/docs/api/personal-api-keys',replacement:['replace','stale'].includes(credentialScenario)?{credential_id:'credential-one',name:'Panels_posthog_production',revision:3}:null,state:'pending',credential:null,delivery:null};
+if(credential&&['saved','reused','rejected'].includes(credentialScenario!)){credential.state=credentialScenario;credential.credential=credentialScenario==='rejected'?null:{id:'credential-one',reference:{scheme:'local',name:credential.name},auth_kind:'bearer',revision:1};}
+const restoredCredential=sessionStorage.getItem('credential-fixture:'+credentialScenario);
+if(credential&&restoredCredential)credential=JSON.parse(restoredCredential);
+if(credential)coverage++;
+let credentialAttempt=0;
+(window as any).__credentialActions=[];
+(window as any).__credentialDelivery=(status:string)=>{credential={...credential,delivery:{attempt_id:'attempt-one',status,refusal_reason:status==='refused'?'backend_did_not_start':null}};coverage++;(window as any).__pulse();};
 function currentSnapshot(lens:ConversationViewLens, transcript=true) {
   const current=viewSnapshot('conversation-one',lens,history,transcript);
   current.page.items.push(...recorded, ...(withheldNewest&&!incomplete?[withheldNewest]:[]));
+  if(credential)current.page.items.push({kind:'row',key:'credential-request-one',row_kind:'credential_request',order:{sequence:1,slot:0},source_sequence:1,sender_message_id:null,changed_through_sequence:coverage,created_at:1,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:credential}});
   if(incomplete)current.page.newer={projection_version:current.page.projection_version,lens,scope:current.page.scope,order:{sequence:coverage,slot:0}};
   current.coverage.through_sequence=coverage;
   current.status.revision=coverage;
@@ -142,6 +153,23 @@ let theServerIsDown = window.sessionStorage.getItem("server-is-down") === "yes";
 (globalThis as any).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   if (theServerIsDown) throw new TypeError("Failed to fetch");
+  if(url.startsWith('/api/credentials/requests/')){
+    const action=url.split('/').at(-1);
+    const body=init?.body?JSON.parse(String(init.body)):null;
+    (window as any).__credentialActions.push({action,body});
+    if((window as any).__credentialHold)await new Promise<void>(resolve=>(window as any).__credentialRelease=resolve);
+    if(action==='save'){
+      credentialAttempt++;
+      if(credentialScenario==='fail'&&credentialAttempt===1)return Response.json({error:{code:'save_failed',message:'not persisted'}},{status:500});
+      if(credentialScenario==='stale'&&credentialAttempt===1)return Response.json({error:{code:'stale_claim',detail:{current_credential:{id:'credential-one',reference:{scheme:'local',name:credential.name},revision:4}}}},{status:409});
+      credential={...credential,name:credential.replacement?credential.name:body.name,state:credential.replacement?'replaced':'saved',credential:{id:'credential-one',reference:{scheme:'local',name:credential.replacement?credential.name:body.name},auth_kind:'bearer',revision:credential.replacement?4:1},delivery:{attempt_id:'attempt-one',status:'started',refusal_reason:null}};
+    }else if(action==='reject')credential={...credential,state:'rejected',delivery:{attempt_id:'attempt-one',status:'started',refusal_reason:null}};
+    else if(action==='review')credential={...credential,replacement:{...credential.replacement,revision:4}};
+    else if(action==='retry-delivery')credential={...credential,delivery:{attempt_id:'attempt-two',status:'started',refusal_reason:null}};
+    coverage++;
+    sessionStorage.setItem('credential-fixture:'+credentialScenario,JSON.stringify(credential));
+    return Response.json(credential);
+  }
   if (/conversations\/conversation-one\/view\/body\/content/.test(url))return new Response(streamingText);
   if (/conversations\/conversation-one\/view\/receipts\?/.test(url)) {
     (globalThis as any).__recordReads += 1;

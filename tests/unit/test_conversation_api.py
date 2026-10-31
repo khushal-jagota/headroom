@@ -310,6 +310,7 @@ class _Harness:
         *,
         signal_composition: SignalRuntimeComposition | None = None,
         cleanup: AsyncExitStack | None = None,
+        store_options: dict[str, Any] | None = None,
     ) -> None:
         self.db_path = db_path
         self.store = ConversationStore(
@@ -322,6 +323,7 @@ class _Harness:
                 None if signal_composition is None else signal_composition.initialization
             ),
             transaction_control_guard=None if signal_composition is None else transaction_control,
+            **(store_options or {}),
         )
         self.live_tail = ConversationLiveTail()
         self.backends: dict[str, _FakeBackend] = {}

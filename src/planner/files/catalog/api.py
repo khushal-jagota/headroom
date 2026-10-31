@@ -20,6 +20,7 @@ from planner.core import authority
 from planner.core.authctx import request_context
 from planner.core.authority import require_above_or_self
 from planner.core.errors import ErrorCode, PlannerError
+from planner.files import goal_files
 from planner.files.catalog.config import (
     INVENTORY_CACHE_MAX_BYTES,
     INVENTORY_CACHE_OWNERS,
@@ -38,6 +39,7 @@ from planner.files.logic.listing import fold_directory
 from planner.files.logic.paths import (
     _validate_relative_path,
     _validate_safe_id,
+    goal_files_root,
     manager_files_root,
     ticket_files_root,
 )
@@ -200,14 +202,22 @@ def _read(
             require_above_or_self(
                 conn, request_context(request).principal, authority.manager(owner_id)
             )
+        elif kind == "goal":
+            goal_files.require_goal(conn, request_context(request).principal, owner_id)
         else:
             if conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None:
                 raise PlannerError(ErrorCode.not_found, "ticket not found", {})
-        db_path = request.app.state.config.db_path
-        root = (
-            ticket_files_root(db_path) if kind == "ticket" else manager_files_root(db_path)
-        ) / owner_id
-        prefix = f"/files/{'tickets' if kind == 'ticket' else 'managers'}/{owner_id}/"
+        configured_db = Path(request.app.state.config.db_path)
+        # Deployment ancestors are configured, not managed file links. Resolve only
+        # those ancestors so inventory still rejects a linked family or owner root.
+        db_path = configured_db.parent.resolve() / configured_db.name
+        root = {
+            "ticket": ticket_files_root,
+            "manager": manager_files_root,
+            "goal": goal_files_root,
+        }[kind](db_path) / owner_id
+        family = {"ticket": "tickets", "manager": "managers", "goal": "goals"}[kind]
+        prefix = f"/files/{family}/{owner_id}/"
         inventory = _inventory(root, prefix)
         rows = inventory.directories.get(directory, [])
         total = len(rows)

@@ -132,7 +132,7 @@ async def _deliver(
                     conn,
                     item.manager_agent_key,
                     content,
-                    conversation_start.manager_resolve(item),
+                    conversation_start.manager_resolve(conn, item),
                     conversation_id=conversation_start.read_agent_conversation(
                         conn, item.manager_agent_key
                     ),

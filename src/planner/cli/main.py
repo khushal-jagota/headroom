@@ -24,6 +24,7 @@ from urllib.parse import quote
 import click
 
 from planner.cli import http
+from planner.cli.artifact_io import read_artifact_source
 from planner.cli.errors import CompatibilityChoice, CompatibilityOption, PanelsGroup
 from planner.cli.record_projection import (
     RecordPart,
@@ -33,9 +34,14 @@ from planner.cli.record_projection import (
     render_text,
 )
 from planner.core.authctx import normalize_manager_identity
+from planner.credentials.cli import credential as credential_group
+from planner.datasets.cli import dataset as dataset_group
 from planner.environments.cli import environment as environment_group
+from planner.goals.cli import goal as goal_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.maintenance.cli import maintenance as maintenance_group
+from planner.measure_sources.cli import measure_source as measure_source_group
+from planner.measures.cli import measure as measure_group
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.previews.cli import preview as preview_group
 from planner.tickets.contracts import TicketLocale
@@ -69,6 +75,8 @@ def caller_principal() -> dict[str, str]:
     manager_id = normalize_manager_identity(
         os.environ.get(_MANAGER_ID_ENV), os.environ.get("PLAN_SPRINT_ITEM_ID")
     )
+    if actor == "goal" and os.environ.get("PLAN_GOAL_ID", "").strip():
+        return {"kind": "goal", "id": os.environ["PLAN_GOAL_ID"].strip()}
     if actor == "chief":
         return {"kind": "chief", "id": "chief"}
     if actor == "worker" and ticket_id:
@@ -443,6 +451,11 @@ def main() -> None:
 
 main.add_command(environment_group)
 main.add_command(maintenance_group)
+main.add_command(credential_group)
+main.add_command(goal_group)
+main.add_command(measure_group)
+main.add_command(dataset_group)
+main.add_command(measure_source_group)
 main.add_command(preview_group)
 environment_group.hidden = True
 
@@ -490,6 +503,7 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
 @main.command("send-message")
 @click.option("--owner", is_flag=True, help="Send to Khushal.")
 @click.option("--chief", is_flag=True, help="Send to the Chief of Staff.")
+@click.option("--goal", "goal_id", default=None, help="Send to a goal agent.")
 @click.option("--ticket", "ticket_id", default=None, help="Send to a Ticket worker.")
 @click.option(
     "--manager",
@@ -518,6 +532,7 @@ def send_message(
     chief: bool,
     ticket_id: str | None,
     manager_id: str | None,
+    goal_id: str | None,
     mode: str,
     message: str | None,
     body_file: str | None,
@@ -534,12 +549,13 @@ def send_message(
             chief,
             ticket_id is not None,
             manager_id is not None,
+            goal_id is not None,
         )
         if selected
     )
     if targets != 1:
         http.fail_validation(
-            "send-message requires exactly one of --owner, --chief, --ticket, or --manager",
+            "send-message requires exactly one of --owner, --chief, --ticket, --manager, or --goal",
             as_json,
         )
     if (message is None) == (body_file is None):
@@ -556,6 +572,8 @@ def send_message(
         recipient = {"kind": "chief", "id": "chief"}
     elif ticket_id is not None:
         recipient = {"kind": "ticket", "id": ticket_id}
+    elif goal_id is not None:
+        recipient = {"kind": "goal", "id": goal_id}
     else:
         assert manager_id is not None
         recipient = {"kind": "manager", "id": manager_id}
@@ -2190,15 +2208,6 @@ def manager_artifact_read(item_id: str, artifact_path: str, as_json: bool) -> No
     sys.stdout.write(content)
 
 
-def _read_artifact_source(spec: str, as_json: bool) -> str:
-    """Keep the note's exact text, including CRLF and its final newline, if any."""
-    try:
-        raw = sys.stdin.buffer.read() if spec == "-" else Path(spec).read_bytes()
-        return raw.decode("utf-8")
-    except (OSError, UnicodeError):
-        http.fail_validation(f"cannot read UTF-8 body file: {spec}", as_json)
-
-
 @manager_artifact.command("write")
 @click.argument("item_id")
 @click.argument("artifact_path")
@@ -2209,7 +2218,7 @@ def manager_artifact_write(item_id: str, artifact_path: str, body_file: str, as_
         "PUT",
         _artifact_url(item_id, artifact_path),
         as_json=as_json,
-        json_body={"content": _read_artifact_source(body_file, as_json)},
+        json_body={"content": read_artifact_source(body_file, as_json)},
     )
     http.emit(data, as_json, data["url"])
 

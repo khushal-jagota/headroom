@@ -37,6 +37,14 @@ Token edits retune the whole app. Component edits in the kit retune every screen
 
 Copy uses employee, ceiling, and holder. The Worker is an employee taking the task. The ceiling is the grant. The holder is who a parked proposal is addressed to.
 
+## Goal pages and managed files
+
+Goal pages use the shared page kit for checklists, charts, tables, layouts, and text. They are dashboards for the user. Explicit display choices control what the page shows. See [Goals](goals.md).
+
+Manager and goal artifacts use sibling roots. Manager files retain `files/sprint-items/<manager_id>/` and `/files/managers/` links. Goal files use `files/goals/<goal_id>/` and `/files/goals/` links. Their routes support reads, text writes, and deletion through the existing owner, Chief, or own-agent authority. Both use safe paths, symlink checks, media types, and `nosniff`.
+
+Goal workspaces use the shared Artifacts catalog and preview frame. Completion, deactivation, and conversation reset preserve the files. Managed file previews retain authored context and artifact links.
+
 ## Pointers
 
 `assets/tokens.css`, `assets/app.css`, [`DESIGN.md`](../DESIGN.md), and `web/src/components/` for the kit: `ScreenHeader`, `ListRow`, `StageMark`, `Button`, `SkeletonRegion`, and `web/src/components/conversation/`.

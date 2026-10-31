@@ -21,8 +21,9 @@ from planner.core.authority import require_above_or_self
 from planner.core.contracts import JsonDict
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.files import manager_files
+from planner.files import goal_files, manager_files
 from planner.files.logic.paths import (
+    resolve_goal_file,
     resolve_html_navigation,
     resolve_manager_file,
     resolve_ticket_file,
@@ -136,6 +137,41 @@ async def get_manager_file(
     return await _reusable(request, response, managed_file, media_type)
 
 
+@router.get("/files/goals/{goal_id}/{file_path:path}")
+async def get_goal_file(
+    request: Request, goal_id: str, file_path: str
+) -> Response:
+    _reject_raw_encoded_unsafe_path(request, "goal file not found")
+    with connect(request.app.state.config.db_path) as conn:
+        goal_files.require_goal(conn, request_context(request).principal, goal_id)
+    try:
+        managed_file = (
+            resolve_html_navigation(
+                request.app.state.config.db_path,
+                request.headers["x-panels-artifact-root"],
+                request.scope["raw_path"].decode("ascii"),
+            )
+            if "x-panels-artifact-root" in request.headers
+            else resolve_goal_file(
+                request.app.state.config.db_path, goal_id, file_path
+            ).absolute_path
+        )
+    except (ValueError, OSError, RuntimeError, UnicodeError) as exc:
+        raise PlannerError(ErrorCode.not_found, "goal file not found") from exc
+    media_type = (
+        mimetypes.guess_type(managed_file.name)[0] or "application/octet-stream"
+    )
+    disposition = "inline" if _may_inline(media_type) else "attachment"
+    response = FileResponse(
+        managed_file,
+        media_type=media_type,
+        filename=managed_file.name,
+        content_disposition_type=disposition,
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return await _reusable(request, response, managed_file, media_type)
+
+
 async def _reusable(
     request: Request, response: FileResponse, path: Path, media_type: str
 ) -> Response:
@@ -225,6 +261,40 @@ async def delete_manager_file(
     with connect(db_path) as conn:
         return manager_files.delete_file(
             conn, request_context(request).principal, manager_id, db_path, file_path
+        )
+
+
+@router.put("/files/goals/{goal_id}/{file_path:path}")
+async def write_goal_file(
+    request: Request, goal_id: str, file_path: str, raw: dict[str, Any]
+) -> JsonDict:
+    """Write one of this goal's managed files, at the path that reads it back.
+
+    The same address as the GET above, so a caller writes the string it will later read.
+    """
+    _reject_raw_encoded_unsafe_path(request, "goal file not found")
+    db_path = request.app.state.config.db_path
+    with connect(db_path) as conn:
+        return goal_files.write_file(
+            conn,
+            request_context(request).principal,
+            goal_id,
+            db_path,
+            file_path,
+            body_str(raw, "content"),
+        )
+
+
+@router.delete("/files/goals/{goal_id}/{file_path:path}")
+async def delete_goal_file(
+    request: Request, goal_id: str, file_path: str
+) -> JsonDict:
+    """Remove one of this goal's managed files."""
+    _reject_raw_encoded_unsafe_path(request, "goal file not found")
+    db_path = request.app.state.config.db_path
+    with connect(db_path) as conn:
+        return goal_files.delete_file(
+            conn, request_context(request).principal, goal_id, db_path, file_path
         )
 
 

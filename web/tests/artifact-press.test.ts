@@ -30,6 +30,13 @@ describe("the press that opens an artifact where it was named", () => {
     });
   });
 
+  it("opens goal catalog and conversation links with the shared preview rules", () => {
+    const target = { kind: "goal-file", goalId: "goal_1", path: "artifacts/field guide.md" };
+    expect(artifactForPressedLink(link("/files/goals/goal_1/artifacts/field%20guide.md"), press)).toEqual(target);
+    expect(artifactForPressedLink(link("#/preview?source=goal&goal=goal_1&path=artifacts%2Ffield%20guide.md"), press)).toEqual(target);
+    expect(artifactForPressedLink(link("/files/goals/goal_1/artifacts/archive.zip"), press)).toBeNull();
+  });
+
   it("leaves a managed file with nothing to preview as the download it is", () => {
     expect(artifactForPressedLink(link("/files/managers/si_1/archive.zip"), press)).toBeNull();
   });

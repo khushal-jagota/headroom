@@ -20,6 +20,8 @@ PROVIDER_SKIPS = {
         "set PANELS_REAL_HERMES_TESTS=1 with hermes installed to run this",
     "tests.integration.test_orchestrator_worker_real_lifecycle":
         "set PANELS_REAL_LUNA_LIFECYCLE=1 to run real provider calls",
+    "tests.integration.test_conversation_real_credential_requests":
+        "set PANELS_REAL_CREDENTIAL_REQUEST_TESTS=1 for billable native Sol high calls",
     "tests.integration.test_conversation_real_provider_permissions":
         "set PANELS_REAL_PERMISSION_TESTS=1 for billable real-provider permission exercises",
     "tests.integration.test_conversation_real_provider_steering":

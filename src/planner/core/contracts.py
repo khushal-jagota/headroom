@@ -19,6 +19,7 @@ class PrincipalKind(StrEnum):
     owner = "owner"
     chief = "chief"
     manager = "manager"
+    goal = "goal"
     ticket = "ticket"
 
     @classmethod
@@ -62,6 +63,7 @@ def principal_legacy_actor(principal: Principal) -> str:
         PrincipalKind.owner: "unattributed",
         PrincipalKind.chief: "chief",
         PrincipalKind.manager: "manager",
+        PrincipalKind.goal: "goal",
         PrincipalKind.ticket: "worker",
     }[principal.kind]
 
