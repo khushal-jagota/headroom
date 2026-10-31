@@ -2087,39 +2087,17 @@ class SqliteProcessConversationSystem:
     async def _queue(
         self,
         state: _ConversationState,
-        content: MessageContent,
-        sender_label: str,
-        model_change: str | None,
-        reasoning_effort_change: str | None,
-        sender_message_id: str | None,
-        sent_at_unix_milliseconds: int | None,
-        sender: Principal | None,
-        recipient: Principal | None,
-        reply_requested: bool,
-        recovery_references: tuple[DeploymentRecoveryReference, ...],
-        owner_read_through_sequence: int | None,
-        acknowledge_owner_on_failure: bool = True,
+        message: _Message,
         *,
         queue_reason: PromptQueueReason = PromptQueueReason.requested,
-        reasoning_effort_is_set: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         automatic_reservation: _ReservedTurn | None = None
         async with state.lock:
-            if sender_message_id is not None:
+            if message.sender_message_id is not None:
                 for position, held in enumerate(state.held_prompts, start=1):
-                    if held.sender_message_id != sender_message_id:
+                    if held.sender_message_id != message.sender_message_id:
                         continue
-                    if (
-                        held.content != content
-                        or held.sender_label != sender_label
-                        or held.model_change != model_change
-                        or held.reasoning_effort_change != reasoning_effort_change
-                        or held.reasoning_effort_is_set != reasoning_effort_is_set
-                        or held.sender != sender
-                        or held.recipient != recipient
-                        or held.recovery_references != recovery_references
-                    ):
+                    if not message.same_message_as(held):
                         raise ValueError("sender_message_id already names a different message")
                     return PromptDeliveryQueued(queue_position=position)
             # Held if anything at all is going on, and held if anything is already
@@ -2129,42 +2107,10 @@ class SqliteProcessConversationSystem:
                 or state.phase is not _ConversationPhase.idle
                 or state.held_prompts
             ):
-                return self._hold_prompt(
-                    state,
-                    content=content,
-                    sender_label=sender_label,
-                    model_change=model_change,
-                    reasoning_effort_change=reasoning_effort_change,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    sender=sender,
-                    recipient=recipient,
-                    reply_requested=reply_requested,
-                    recovery_references=recovery_references,
-                    queue_reason=queue_reason,
-                    owner_read_through_sequence=owner_read_through_sequence,
-                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    native_message_operation=native_message_operation,
-                )
+                return self._hold_prompt(state=state, queue_reason=queue_reason, message=message)
             if self._automatic_compaction_is_due(state):
                 held_fate = self._hold_prompt(
-                    state,
-                    content=content,
-                    sender_label=sender_label,
-                    model_change=model_change,
-                    reasoning_effort_change=reasoning_effort_change,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    sender=sender,
-                    recipient=recipient,
-                    reply_requested=reply_requested,
-                    recovery_references=recovery_references,
-                    queue_reason=queue_reason,
-                    owner_read_through_sequence=owner_read_through_sequence,
-                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    native_message_operation=native_message_operation,
+                    state=state, queue_reason=queue_reason, message=message
                 )
                 automatic_reservation = await self._reserve_turn(state, automatic_compaction=True)
             else:
@@ -2175,68 +2121,26 @@ class SqliteProcessConversationSystem:
             return held_fate
 
         return await self._deliver_and_finalize(
-            state,
-            reservation,
-            content=content,
-            sender_label=sender_label,
-            mode=PromptDeliveryMode.queue,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
-            recovery_references=recovery_references,
-            owner_read_through_sequence=owner_read_through_sequence,
-            acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-            reasoning_effort_is_set=reasoning_effort_is_set,
-            native_message_operation=native_message_operation,
+            state=state, reservation=reservation, mode=PromptDeliveryMode.queue, message=message
         )
 
     def _hold_prompt(
         self,
         state: _ConversationState,
+        message: _Message,
         *,
-        content: MessageContent,
-        sender_label: str,
-        model_change: str | None,
-        reasoning_effort_change: str | None,
-        sender_message_id: str | None,
-        sent_at_unix_milliseconds: int | None,
-        sender: Principal | None,
-        recipient: Principal | None,
-        reply_requested: bool,
-        recovery_references: tuple[DeploymentRecoveryReference, ...],
-        owner_read_through_sequence: int | None,
-        acknowledge_owner_on_failure: bool = True,
         queue_reason: PromptQueueReason = PromptQueueReason.requested,
-        reasoning_effort_is_set: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryQueued:
         """Put one admitted message at the tail. The conversation lock must be held."""
-        held = _Message(
-            reasoning_effort_is_set=reasoning_effort_is_set,
+        held = replace(
+            message,
             held_prompt_id=f"held_{uuid4().hex}",
-            content=content,
-            sender_label=sender_label,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             snapshot_sent_at_unix_milliseconds=(
-                sent_at_unix_milliseconds
-                if sent_at_unix_milliseconds is not None
+                message.sent_at_unix_milliseconds
+                if message.sent_at_unix_milliseconds is not None
                 else int(self._unix_time_now() * 1000)
             ),
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
-            recovery_references=recovery_references,
             queue_reason=queue_reason,
-            owner_read_through_sequence=owner_read_through_sequence,
-            acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-            native_message_operation=native_message_operation,
         )
         state.held_prompts.append(held)
         self._publish_held_prompts_changed(state)
