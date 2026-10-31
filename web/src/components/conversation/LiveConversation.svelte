@@ -73,7 +73,6 @@
     promoteHeldPrompt,
     readConversation,
     readComposerCatalog,
-    readScopedBackends,
     ConversationWireError,
     type BackendSnapshot,
     type ConversationBackendKey,
@@ -157,44 +156,16 @@
   let view = $state<ConversationView | null>(null);
   // Ticket suggestions use the same resolved workspace as ordinary creation.
   let pickerTicketId = $derived(uploadOwner?.kind === "ticket" ? uploadOwner.id : null);
-  let scopedChoices = $state<readonly BackendSnapshot[] | null>(null);
-  let pickerReadError = $state<string | null>(null);
-  let pickerReadGeneration = 0;
-  let pickerMounted = true;
-  onMount(() => () => {pickerMounted = false; pickerReadGeneration += 1;});
-  let capturedPickerRequest: import("../../lib/conversation/modelResolutionWire").TicketBackendScope | null = null;
-  let pickerContextKey = "";
-
-  async function readScopedChoices(request: import("../../lib/conversation/modelResolutionWire").TicketBackendScope, refresh = false): Promise<void> {
-    const generation = ++pickerReadGeneration;
-    const context = pickerContextKey;
-    try {
-      const result = await readScopedBackends(request, refresh);
-      if (!pickerMounted || generation !== pickerReadGeneration || context !== pickerContextKey) return;
-      scopedChoices = result;
-      pickerReadError = null;
-    } catch (error) {
-      if (!pickerMounted || generation !== pickerReadGeneration || context !== pickerContextKey) return;
-      pickerReadError = sentenceFor(error);
-    }
-  }
-
+  const pickerQuery = createQuery(() => ({
+    ...queries.ticketBackends(pickerTicketId ?? "", [locale, startValues?.workspace_folder, startValues?.workspace_path_policy]),
+    enabled: pickerTicketId !== null && !readOnly && startValues?.workspace_folder !== undefined
+  }), () => queryClient);
+  let pickerReadError = $derived(pickerTicketId !== null && pickerQuery.error ? sentenceFor(pickerQuery.error) : null);
   async function retryScopedChoices(): Promise<void> {
-    if (capturedPickerRequest) await readScopedChoices({...capturedPickerRequest}, true);
+    if (pickerTicketId === null) return;
+    await queryClient.fetchQuery({...queries.ticketBackends(pickerTicketId,
+      [locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
   }
-
-  $effect(() => {
-    const owner = pickerTicketId;
-    const workspace = startValues?.workspace_folder;
-    const context = JSON.stringify([owner, locale, workspace, startValues?.workspace_path_policy, readOnly]);
-    if (context === pickerContextKey) return;
-    pickerContextKey = context;
-    capturedPickerRequest = owner === null || readOnly || workspace === undefined ? null : {ticket_id: owner};
-    pickerReadGeneration += 1;
-    scopedChoices = null;
-    pickerReadError = null;
-    if (capturedPickerRequest) untrack(() => void readScopedChoices(capturedPickerRequest!));
-  });
 
   let remote = $derived(locale === "macos");
   const healthQuery = createQuery(() => ({...queries.executorHealth(), enabled:remote}), () => queryClient);
@@ -350,7 +321,7 @@
   $effect(() => {
     runningBackendKey = backendKey;
   });
-  let pickerBackends = $derived(pickerTicketId === null ? backends : scopedChoices ?? []);
+  let pickerBackends = $derived(pickerTicketId === null ? backends : pickerQuery.data ?? []);
   let backendSnapshot = $derived(
     pickerBackends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
   );

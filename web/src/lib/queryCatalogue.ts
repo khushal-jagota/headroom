@@ -4,7 +4,7 @@ import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
 import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
-import type { ConversationStartValues } from "./conversation/wire";
+import { readBackends, readScopedBackends, type ConversationStartValues, type BackendSnapshot } from "./conversation/wire";
 import { usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
@@ -34,8 +34,7 @@ type ChiefConversationReference = {
 
 // Every server resource that follows the change stream, in one place: its query
 // key and the API path it comes from. A screen names the resource it needs and
-// gets both. One-shot reads that nothing invalidates — the employee
-// configuration catalog — stay imperative fetches where they are used.
+// gets both. Model lists share ordinary query entries and explicit Refresh.
 export function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
   return resourceQuery<T>(queryKey, path);
 }
@@ -55,6 +54,14 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
+  backends: (refresh = false) => queryOptions<BackendSnapshot[]>({
+    queryKey: ["backends"], queryFn: () => readBackends(refresh), staleTime: Infinity, retry: false
+  }),
+  ticketBackends: (ticketId: string, context: readonly unknown[] = [], refresh = false) => queryOptions<BackendSnapshot[]>({
+    queryKey: ["ticket", ticketId, "backends", ...context],
+    queryFn: () => readScopedBackends({ticket_id: ticketId}, refresh),
+    staleTime: Infinity, retry: false
+  }),
   executorHealth: () => ({
     ...jsonQuery<ExecutorHealth>(["executor-health"], "/api/executor/health"),
     refetchInterval: MACHINE_HEALTH_POLL_MS,
