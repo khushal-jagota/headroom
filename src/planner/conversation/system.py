@@ -416,7 +416,9 @@ def _uncertain_row(
     )
 
 
-def _discarded_row(message: _Message) -> PromptDiscardedEventPayload:
+def _discarded_row(
+    message: _Message, suppression_reason: str | None = None
+) -> PromptDiscardedEventPayload:
     return PromptDiscardedEventPayload(
         content=message.content,
         sender_label=message.sender_label,
@@ -425,6 +427,7 @@ def _discarded_row(message: _Message) -> PromptDiscardedEventPayload:
         sender=message.sender,
         recipient=message.recipient,
         recovery_references=message.recovery_references,
+        suppression_reason=suppression_reason,
     )
 
 
@@ -1324,13 +1327,11 @@ class SqliteProcessConversationSystem:
             # to serialize. Its retained reservation cannot make exact source
             # retirement wait for the admission fact that retirement must settle.
             dependency = None
-        task = asyncio.create_task(
-            self._stop_initial_child(state, child, dependency, reference, token)
+        task = self._settle_in_background(
+            state, self._stop_initial_child(state, child, dependency, reference, token)
         )
         state.initial_shutdown_task = task
         state.initial_shutdown_child = child
-        state.settlement_tasks.add(task)
-        task.add_done_callback(state.settlement_tasks.discard)
         return task
 
     async def _stop_initial_child(
@@ -1374,9 +1375,7 @@ class SqliteProcessConversationSystem:
                     state.reserved_turn = None
                     pending.resolved.set()
         if state.held_prompts and not self._shutting_down:
-            drain = asyncio.create_task(self._drain_held_prompts(state))
-            state.settlement_tasks.add(drain)
-            drain.add_done_callback(state.settlement_tasks.discard)
+            self._settle_in_background(state, self._drain_held_prompts(state))
         return True
 
     async def is_running(self, conversation_id: str) -> bool:
@@ -2455,6 +2454,12 @@ class SqliteProcessConversationSystem:
             self._set_phase(state, _ConversationPhase.idle)
             self._publish_held_prompts_changed(state)
 
+    @staticmethod
+    async def _shutdown_fate(reservation: _ReservedTurn) -> PromptDeliveryFate:
+        await reservation.resolved.wait()
+        assert reservation.shutdown_fate is not None
+        return reservation.shutdown_fate
+
     async def _deliver_and_finalize(
         self,
         state: _ConversationState,
@@ -2501,9 +2506,7 @@ class SqliteProcessConversationSystem:
             raise
         except Exception as delivery_error:
             if reservation.shutdown_owned:
-                await reservation.resolved.wait()
-                assert reservation.shutdown_fate is not None
-                return reservation.shutdown_fate
+                return await self._shutdown_fate(reservation)
             if isinstance(delivery_error, PromptWriteFailed):
                 await self._record_delivery_uncertainty(state, reservation, reservation.messages)
                 return PromptDeliveryUncertain()
@@ -2521,18 +2524,12 @@ class SqliteProcessConversationSystem:
             raise
 
         if reservation.shutdown_owned:
-            await reservation.resolved.wait()
-            assert reservation.shutdown_fate is not None
-            return reservation.shutdown_fate
+            return await self._shutdown_fate(reservation)
         if delivery.suppression_reason is not None:
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
             await self._drain_held_prompts(state)
             return PromptDeliverySuppressed(delivery.suppression_reason)
         reservation.automatic_notice = delivery.automatic_notice
-        if reservation.shutdown_owned:
-            await reservation.resolved.wait()
-            assert reservation.shutdown_fate is not None
-            return reservation.shutdown_fate
         started = await self._finalize_delivery(
             state=state,
             reservation=reservation,
@@ -2544,9 +2541,7 @@ class SqliteProcessConversationSystem:
         if started:
             return PromptDeliveryStarted()
         if reservation.shutdown_owned:
-            await reservation.resolved.wait()
-            assert reservation.shutdown_fate is not None
-            return reservation.shutdown_fate
+            return await self._shutdown_fate(reservation)
         refusal = delivery.refusal_reason
         assert refusal is not None
         # The agent is free and this message is not going anywhere, so whatever was waiting
@@ -3262,16 +3257,23 @@ class SqliteProcessConversationSystem:
         )
         return attempt
 
+    @staticmethod
+    def _settle_in_background[T](
+        state: _ConversationState, operation: Coroutine[Any, Any, T]
+    ) -> asyncio.Task[T]:
+        task = asyncio.create_task(operation)
+        state.settlement_tasks.add(task)
+        task.add_done_callback(state.settlement_tasks.discard)
+        return task
+
     async def _own_settlement[T](
         self, state: _ConversationState, operation: Coroutine[Any, Any, T]
     ) -> T:
         """Keep the exchange and its recording alive after the caller leaves."""
         if asyncio.current_task() in state.settlement_tasks:
             return await operation
-        task = asyncio.create_task(operation)
+        task = self._settle_in_background(state, operation)
         register_capture_task(task)
-        state.settlement_tasks.add(task)
-        task.add_done_callback(state.settlement_tasks.discard)
         return await asyncio.shield(task)
 
     def _runtime_turn(self, conversation_id: str) -> object | None:
@@ -3744,31 +3746,14 @@ class SqliteProcessConversationSystem:
             state.last_ended_turn_token = running.token
             state.last_ended_turn_was_automatic_compaction = running.automatic_compaction
             state.running_turn = None
-        self._take_in_written_rows(state, written)
+        self._note_written(
+            state,
+            written,
+            agent_activity=not running.automatic_compaction,
+            compaction_confirmed=running.compaction_confirmed,
+            compaction_result=automatic_compaction_result,
+        )
         ended = written[-1]
-        if not running.automatic_compaction:
-            state.record = replace(
-                state.record,
-                latest_agent_activity_at=ended.created_at,
-                latest_agent_activity_sequence=ended.sequence,
-            )
-        if running.compaction_confirmed:
-            state.record = replace(
-                state.record,
-                automatically_compacted_through_sequence=(
-                    state.record.latest_agent_activity_sequence
-                ),
-                automatic_compaction_attempted_through_sequence=(
-                    state.record.latest_agent_activity_sequence
-                ),
-            )
-        elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
-            state.record = replace(
-                state.record,
-                automatic_compaction_attempted_through_sequence=(
-                    state.record.latest_agent_activity_sequence
-                ),
-            )
         # The ending commit precedes clearing the live turn. Announce the runtime
         # transition only after its state and committed record agree.
         change_signal.emit()
@@ -3985,13 +3970,7 @@ class SqliteProcessConversationSystem:
                 break
             await reserved.resolved.wait()
 
-        while True:
-            for barrier in tuple(state.steer_settlements):
-                await barrier.wait()
-            await state.lock.acquire()
-            if not state.steer_settlements:
-                break
-            state.lock.release()
+        await self._acquire_after_steers(state)
         running = state.running_turn
         if running is None or running.token != turn_token:
             state.lock.release()
@@ -4375,13 +4354,7 @@ class SqliteProcessConversationSystem:
         while (reservation := state.reserved_turn) is not None and token == reservation.token:
             await reservation.resolved.wait()
         # Steer settlement owns its runtime predictions until its commit completes.
-        while True:
-            for barrier in tuple(state.steer_settlements):
-                await barrier.wait()
-            await state.lock.acquire()
-            if not state.steer_settlements:
-                break
-            state.lock.release()
+        await self._acquire_after_steers(state)
         written: tuple[StoredConversationEvent, ...] = ()
         should_drain = False
         try:
@@ -4508,30 +4481,15 @@ class SqliteProcessConversationSystem:
                 if self._signal is None:
                     for operation in operations:
                         setattr(operation.target, operation.attribute, operation.value)
-                self._take_in_written_rows(state, written)
-                if (
-                    written
-                    and running is not None
+                self._note_written(
+                    state,
+                    written,
+                    agent_activity=running is not None
                     and not running.automatic_compaction
-                    and not compacted
-                ):
-                    last = written[-1]
-                    state.record = replace(
-                        state.record,
-                        latest_agent_activity_at=last.created_at,
-                        latest_agent_activity_sequence=last.sequence,
-                    )
-                if compacted:
-                    state.record = replace(
-                        state.record,
-                        automatically_compacted_through_sequence=state.record.latest_agent_activity_sequence,
-                        automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
-                    )
-                elif compaction_result is AutomaticCompactionResult.not_compacted:
-                    state.record = replace(
-                        state.record,
-                        automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
-                    )
+                    and not compacted,
+                    compaction_confirmed=compacted,
+                    compaction_result=compaction_result,
+                )
                 if live and isinstance(args, VendorSessionCursorRebound):
                     state.record = replace(
                         state.record, vendor_session_cursor=args.vendor_session_cursor
@@ -4557,10 +4515,8 @@ class SqliteProcessConversationSystem:
         if should_drain:
             # Return this event's committed result before the next prompt's provider I/O.
             # Register now so shutdown and quiescence also own the scheduled drain.
-            drain = asyncio.create_task(self._drain_held_prompts(state))
+            drain = self._settle_in_background(state, self._drain_held_prompts(state))
             register_capture_task(drain)
-            state.settlement_tasks.add(drain)
-            drain.add_done_callback(state.settlement_tasks.discard)
         return result
 
     # --- shared internals ---------------------------------------------------------------
@@ -4644,32 +4600,50 @@ class SqliteProcessConversationSystem:
             ),
             runtime_mutation=runtime_mutation,
         )
-        self._take_in_written_rows(state, (stored,))
-        if agent_activity:
+        self._note_written(
+            state,
+            (stored,),
+            agent_activity=agent_activity,
+            compaction_confirmed=automatic_compaction_confirmed,
+            owner_read_through_sequence=owner_read_through_sequence,
+        )
+        return stored
+
+    def _note_written(
+        self,
+        state: _ConversationState,
+        written: tuple[StoredConversationEvent, ...],
+        *,
+        agent_activity: bool = False,
+        compaction_confirmed: bool = False,
+        compaction_result: AutomaticCompactionResult | None = None,
+        owner_read_through_sequence: int | None = None,
+    ) -> None:
+        self._take_in_written_rows(state, written)
+        if agent_activity and written:
             state.record = replace(
                 state.record,
-                latest_agent_activity_at=stored.created_at,
-                latest_agent_activity_sequence=stored.sequence,
+                latest_agent_activity_at=written[-1].created_at,
+                latest_agent_activity_sequence=written[-1].sequence,
             )
-        if automatic_compaction_confirmed:
+        if compaction_confirmed:
             state.record = replace(
                 state.record,
-                automatically_compacted_through_sequence=(
-                    state.record.latest_agent_activity_sequence
-                ),
-                automatic_compaction_attempted_through_sequence=(
-                    state.record.latest_agent_activity_sequence
-                ),
+                automatically_compacted_through_sequence=state.record.latest_agent_activity_sequence,
+                automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
+            )
+        elif compaction_result is AutomaticCompactionResult.not_compacted:
+            state.record = replace(
+                state.record,
+                automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
             )
         if owner_read_through_sequence is not None:
             state.record = replace(
                 state.record,
                 owner_read_through_sequence=max(
-                    state.record.owner_read_through_sequence,
-                    owner_read_through_sequence,
+                    state.record.owner_read_through_sequence, owner_read_through_sequence
                 ),
             )
-        return stored
 
     def _take_in_written_rows(
         self, state: _ConversationState, written: tuple[StoredConversationEvent, ...]
@@ -4770,6 +4744,17 @@ class SqliteProcessConversationSystem:
         else:
             state.phase_settled.clear()
 
+    @staticmethod
+    async def _acquire_after_steers(state: _ConversationState) -> None:
+        """Take the lock only after all admitted steers have settled their receipts."""
+        while True:
+            for barrier in tuple(state.steer_settlements):
+                await barrier.wait()
+            await state.lock.acquire()
+            if not state.steer_settlements:
+                return
+            state.lock.release()
+
     async def _acquire_settled(self, state: _ConversationState) -> None:
         """Take the lock at a moment when nobody is part-way through anything.
 
@@ -4778,12 +4763,7 @@ class SqliteProcessConversationSystem:
         cannot stop a turn that has not started yet. Both wait for a resting phase.
         """
         while True:
-            for barrier in tuple(state.steer_settlements):
-                await barrier.wait()
-            await state.lock.acquire()
-            if state.steer_settlements:
-                state.lock.release()
-                continue
+            await self._acquire_after_steers(state)
             if state.phase in (_ConversationPhase.idle, _ConversationPhase.running):
                 return
             state.lock.release()

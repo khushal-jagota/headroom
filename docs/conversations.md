@@ -49,6 +49,12 @@ the previous choice if a save fails.
 
 Send Message is the door for a person, Chief, a Manager, or a Worker addressing someone. It resolves the recipient’s current conversation, creating the link on first use, and records who sent it.
 
+Panels keeps the admitted message together as it moves through sending, steering,
+waiting and recording. Its content, sender identity, address, requested model change
+and delivery receipt stay with it. The owner's read position is captured once when
+the message enters the conversation; waiting does not mark later agent messages read.
+Several held messages can share a backend write while each keeps its own notebook row.
+
 The fate is about delivery, not about whether the model agreed. A provider that explicitly rejects a prompt produces a visible refusal with its reason. Provider-reported model names and extra provider receipt fields are not stored in the notebook. Delivery acceptance, refusal and uncertainty still are.
 
 Model lists come from the machine that runs the Ticket, including Hermes. The Mac's
