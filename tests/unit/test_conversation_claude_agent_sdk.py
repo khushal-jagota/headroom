@@ -245,9 +245,7 @@ def test_ordinary_send_requires_observed_uuid_admission(
                     sender_label="owner", mode=PromptDeliveryMode.queue,
                     model_change=None, reasoning_effort_change=None,
                 )
-                fact = result.provider_submission
-                assert fact is not None and fact.status == "accepted"
-                assert fact.correlation_id == clients[0].streamed_messages[0]["uuid"]
+                assert result.composed_content_delivered is True
             else:
                 expected = BackendPromptRejected if admission is False else PromptWriteFailed
                 with pytest.raises(expected):
@@ -280,8 +278,7 @@ def test_observed_admission_survives_subsequent_query_failure(
                 sender_label="owner", mode=PromptDeliveryMode.queue,
                 model_change=None, reasoning_effort_change=None,
             )
-            assert result.provider_submission is not None
-            assert result.provider_submission.status == "accepted"
+            assert result.composed_content_delivered is True
             assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
         finally:
             await child.stop()

@@ -9,11 +9,6 @@ import type { ConversationTaskProgress } from '../taskProgress';
 import { whatThisRowSays, toolCallSentence, type RestLine } from '../restLine';
 import type { ConversationViewItem, ConversationViewPage, ViewHistoryScope, ViewPageCursor } from './contracts';
 
-/** Admission to normal presentation never changes source pages or their coverage. */
-export function admitsTranscriptItem(item: ConversationViewItem): boolean {
-    return item.kind !== 'row' || item.row_kind !== 'provider_selection_reported';
-}
-
 export function transcriptHistoryEdges(pages: readonly Pick<ConversationViewPage, 'scope' | 'items' | 'older' | 'newer'>[], items: readonly ConversationViewItem[]): {
     scope: ViewHistoryScope; cursor: ViewPageCursor; direction: 'older' | 'newer'; anchorKey: string | null;
 }[] {
@@ -40,8 +35,8 @@ function pieces(content: ViewMessagePiece[]): MessagePiece[] { return content.ma
 function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequence' | 'created_at'> & Partial<Pick<ConversationViewRow, 'sender_message_id'>>, body: ViewRowBody): TranscriptRow {
     const base = { key: item.key, sequence: item.source_sequence, createdAt: item.created_at };
     switch (body.kind) {
-        case 'prompt': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, mode: body.mode, sentAtUnixMilliseconds: body.sent_at_unix_milliseconds, ...(body.provider_submission ? {providerSubmission: body.provider_submission} : {}) };
-        case 'prompt_refused': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, reason: body.reason, sentence: refusalSentence(body.reason, body.refusal_detail), ...(body.provider_submission ? {providerSubmission: body.provider_submission} : {}) };
+        case 'prompt': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, mode: body.mode, sentAtUnixMilliseconds: body.sent_at_unix_milliseconds };
+        case 'prompt_refused': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, reason: body.reason, sentence: refusalSentence(body.reason, body.refusal_detail) };
         case 'prompt_uncertain':
         case 'prompt_discarded': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null };
         case 'agent_message': return { ...base, kind: body.kind, content: pieces(body.content), toOwner: body.to_owner };
@@ -49,7 +44,6 @@ function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequ
         case 'tool_call': return { ...base, kind: body.kind, toolCallId: body.tool_call_id, title: body.title, toolKind: body.tool_kind, detail: body.detail, startedDetail: body.started_detail, cappedDetailSequence: body.capped_detail_sequence, status: body.status, progress: null };
         case 'permission_ask': return { ...base, kind: body.kind, askId: body.ask_id, title: body.title, detail: body.detail, options: body.options, state: body.state, deadReason: body.dead_reason, answeredOptionLabel: body.answered_option_label, answerFate:body.answer_fate };
         case 'user_input': return { ...base, kind: body.kind, requestId: body.request_id, questions: body.questions, state: body.state, deadReason: body.dead_reason, answers: body.answers === null ? null : Object.fromEntries(body.answers.map(a => [a.question_id, { answers: a.answers }])), failureDetail: body.failure_detail, answerFate:body.answer_fate };
-        case 'provider_selection_reported': return { ...base, kind: body.kind, provider: body.provider, turnNumber: body.turn_number, childLifetime: body.child_lifetime, model: body.model, reasoningEffort: body.reasoning_effort };
         case 'model_changed': return { ...base, kind: body.kind, model: body.model, reasoningEffort: body.reasoning_effort };
         case 'token_usage': return { ...base, kind: body.kind, inputTokens: body.input_tokens, outputTokens: body.output_tokens, cachedInputTokens: body.cached_input_tokens, costUsd: body.cost_usd };
         case 'turn_ended': return { ...base, kind: body.kind, ending: body.ending, errorSummary: body.error_summary, automaticCompactionResult: body.automatic_compaction_result };

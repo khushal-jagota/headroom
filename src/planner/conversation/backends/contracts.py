@@ -25,17 +25,14 @@ and is not translated into a refusal.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from planner.conversation.admission.contracts import AdmissionExpectation
     from planner.execution_identity import ChildReference
 
 from planner.conversation.contracts import (
     AnswerFate,
     ComposerCatalogEntry,
-    ConversationBackendKey,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
@@ -44,7 +41,6 @@ from planner.conversation.events import (
     ConversationTurnEnding,
     PermissionAskOption,
     PlanEntry,
-    ProviderSubmissionFact,
     ToolCallStatus,
     UserInputAnswer,
     UserInputQuestion,
@@ -53,34 +49,8 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 
 
-@dataclass(frozen=True, slots=True)
-class BackendEmissionInputs:
-    model: str | None
-    reasoning_effort: str | None
-    workspace: Path
-
-
-class EmissionCheck(Protocol):
-    def __call__(self, prepared: BackendEmissionInputs | None = None) -> None: ...
-
-
 class BackendAdapterError(Exception):
     """Something an adapter was asked to do could not be done. Always say which."""
-
-
-class AdmissionRefused(BackendAdapterError):
-    """A final check proved no provider submission occurred."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        reason: str = "context_changed",
-        corrective_action: str = "verify_launch_context",
-    ) -> None:
-        super().__init__(message)
-        self.reason = reason
-        self.corrective_action = corrective_action
 
 
 class BackendSpawnFailed(BackendAdapterError):
@@ -116,12 +86,6 @@ class DeliveryCancelled(RuntimeError):
 
 class BackendPromptRejected(BackendAdapterError):
     """The provider explicitly rejected this correlated prompt before admission."""
-
-    def __init__(
-        self, message: str, *, provider_submission: ProviderSubmissionFact | None = None
-    ) -> None:
-        super().__init__(message)
-        self.provider_submission = provider_submission
 
 
 class PermissionAnswerWriteFailed(BackendAdapterError):
@@ -185,7 +149,6 @@ class BackendPromptAccepted:
     """
 
     composed_content_delivered: bool
-    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,7 +156,6 @@ class BackendSteerAccepted:
     """The provider admitted the message to the exact turn that the token names."""
 
     composed_content_delivered: bool = True
-    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,7 +163,6 @@ class BackendSteerRefused:
     """The adapter proved that the message was not admitted to the target turn."""
 
     refusal_reason: PromptDeliveryRefusalReason
-    provider_submission: ProviderSubmissionFact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,17 +198,6 @@ class BackendUserInputRequest:
 
 
 class BackendEventSink(Protocol):
-    async def provider_selection_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        provider: ConversationBackendKey,
-        source_kind: str,
-        model: str,
-        child_lifetime: str,
-        reasoning_effort: str | None = None,
-    ) -> None: ...
-
     """How an adapter tells the core what its backend just did.
 
     Every turn fact carries the turn token it belongs to, because the core alone decides
@@ -450,8 +400,6 @@ class BackendChild(Protocol):
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         """Spawn the process and create or resume its session.
 
@@ -476,8 +424,6 @@ class BackendChild(Protocol):
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
         reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Start a turn with this message, on these values.
@@ -533,8 +479,6 @@ class BackendChild(Protocol):
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         """Try to admit a message to the exact turn named by ``turn_token``.
 
@@ -663,15 +607,6 @@ class AgentMessageCompletedArguments:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ProviderSelectionReportedArguments:
-    provider: ConversationBackendKey
-    source_kind: str
-    model: str
-    child_lifetime: str
-    reasoning_effort: str | None = None
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
 class ToolCallStartedArguments:
     tool_call_id: str
     title: str
@@ -744,8 +679,7 @@ class ComposerCatalogReportedArguments:
 
 
 type DecodedBackendEventArguments = (
-    ProviderSelectionReportedArguments
-    | AgentMessageDeltaArguments
+    AgentMessageDeltaArguments
     | ModelThinkingHappenedArguments
     | AgentMessageCompletedArguments
     | ToolCallStartedArguments

@@ -915,20 +915,21 @@ def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _Wo
         "conv-busy", last_worker_step_sequence=4, compacted_through=9
     )
 
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
-    try:
-        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
-        assert _waited_for(lambda: len(world.held_prompts("conv-busy")) == 1)
-        assert readiness_loop.tell_every_worker_that_lost_its_memory() == []
-        # The second pass finds its own notice waiting and sends nothing.
-        sleep(0.2)
-    finally:
-        readiness_loop.stop()
-        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
-        thread.join(5)
-        asyncio_loop.close()
+    async def exercise() -> None:
+        for expected in (True, False):
+            assert (
+                await tell_a_worker_it_lost_its_memory(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=world.conversations,
+                    worker_type_registry=configured_worker_type_registry(),
+                    now=world.clock.now_unix,
+                )
+                is expected
+            )
+            assert len(await world.conversations.held_prompts("conv-busy")) == 1
 
-    assert len(world.held_prompts("conv-busy")) == 1
+    asyncio.run(exercise())
 
 
 # --- the polling loop ----------------------------------------------------------

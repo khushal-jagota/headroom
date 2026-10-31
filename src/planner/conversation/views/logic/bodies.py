@@ -99,7 +99,6 @@ def in_focus(payload: event.ConversationEventPayload, owner_label: str = "owner"
     return isinstance(
         payload,
         (
-            event.ProviderSelectionReportedEventPayload,
             event.ExplicitReplyMissingEventPayload,
             event.PermissionAskedEventPayload,
             event.PermissionAnsweredEventPayload,
@@ -128,7 +127,6 @@ def row_body(
             "sender_label": source.sender_label,
             "mode": source.mode,
             "sent_at_unix_milliseconds": sent_at_milliseconds(source, created_at),
-            "provider_submission": source.provider_submission,
         }
     if isinstance(source, event.PromptDeliveryRefusedEventPayload):
         return {
@@ -138,7 +136,6 @@ def row_body(
             "reason": source.refusal_reason,
             "refusal_detail": source.refusal_detail,
             "model_validation": refusal_validation(source.model_validation),
-            "provider_submission": source.provider_submission,
         }
     if isinstance(
         source, (event.PromptDeliveryUncertainEventPayload, event.PromptDiscardedEventPayload)
@@ -250,16 +247,6 @@ def row_body(
                 else "applied"
             )
         return input_body
-    if isinstance(source, event.ProviderSelectionReportedEventPayload):
-        return {
-            "kind": "provider_selection_reported",
-            "provider": source.provider,
-            "source_kind": source.source_kind,
-            "turn_number": source.turn_number,
-            "child_lifetime": source.child_lifetime,
-            "model": source.model,
-            "reasoning_effort": source.reasoning_effort,
-        }
     if isinstance(source, event.ModelChangedEventPayload):
         return {
             "kind": "model_changed",

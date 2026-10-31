@@ -104,7 +104,6 @@ def legacy_row(row: dict[str, Any]) -> dict[str, Any]:
         **{
             names.get(key, key): value
             for key, value in body.items()
-            if key != "provider_submission" or value is not None
         },
     }
     if result["kind"] == "prompt_refused":

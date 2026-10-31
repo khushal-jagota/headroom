@@ -365,17 +365,6 @@ async def _real_turn(
 class _RecordingSink:
     """Everything the adapter reported, for a test driving one child directly."""
 
-    async def provider_selection_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        provider: ConversationBackendKey,
-        source_kind: str,
-        model: str,
-        child_lifetime: str,
-        reasoning_effort: str | None = None,
-    ) -> None:
-        raise AssertionError("this provider does not report an applied selection")
 
     def __init__(self) -> None:
         self.agent_contents: list[MessageContent] = []

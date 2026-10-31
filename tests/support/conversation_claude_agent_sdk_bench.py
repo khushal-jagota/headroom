@@ -34,7 +34,6 @@ from planner.conversation.backends.claude_agent_sdk import (
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendUserInputRequest,
-    EmissionCheck,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -130,11 +129,7 @@ class _ScriptedClaudeSdkClient:
     async def query(
         self,
         prompt: str | AsyncIterable[dict[str, Any]],
-        *,
-        emission_check: EmissionCheck | None = None,
     ) -> None:
-        if emission_check is not None:
-            emission_check()
         if self.query_failure is not None:
             raise self.query_failure
         if isinstance(prompt, str):
@@ -240,7 +235,6 @@ class _RecordingSink:
         self.composer_catalog: list[tuple[ComposerCatalogEntry, ...]] = []
         self.token_usage: list[dict[str, Any]] = []
         self.compactions: list[TurnToken] = []
-        self.model_reports: list[tuple[TurnToken, dict[str, Any]]] = []
         # The order the facts a result message carries were told in. What is said about a
         # turn after its ending is said about a turn that has stopped running, and is
         # dropped — so the order is the whole of whether the counts arrive at all.
@@ -256,8 +250,6 @@ class _RecordingSink:
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         self.deltas.append((turn_token, text_delta))
 
-    async def provider_selection_reported(self, turn_token: TurnToken, **facts: Any) -> None:
-        self.model_reports.append((turn_token, facts))
 
     async def model_thinking_happened(self, turn_token: TurnToken) -> None:
         self.thinking_pulses.append(turn_token)
@@ -420,9 +412,7 @@ def _bench(
     """
     clients: list[_ScriptedClaudeSdkClient] = []
 
-    def make(
-        options: ClaudeAgentOptions, *, emission_check: EmissionCheck | None = None
-    ) -> _ScriptedClaudeSdkClient:
+    def make(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
         client = _ScriptedClaudeSdkClient(options, handshake=handshake)
         clients.append(client)
         return client

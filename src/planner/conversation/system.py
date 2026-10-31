@@ -42,11 +42,9 @@ from uuid import uuid4
 
 from pydantic import JsonValue
 
-from planner.conversation.backends.contracts import EmissionCheck
 from planner.conversation.contracts import NativeMessageAdmission, NativeMessageOperation
 
 if TYPE_CHECKING:
-    from planner.conversation.admission.contracts import AdmissionExpectation
     from planner.conversation.model_resolution.contracts import RemoteCatalogSource
     from planner.conversation.snapshot import BackendSnapshotService
 
@@ -58,7 +56,6 @@ from planner.conversation.backend_event_contracts import (
     child_stops_outside_lock,
 )
 from planner.conversation.backends.contracts import (
-    AdmissionRefused,
     AgentMessageCompletedArguments,
     AgentMessageDeltaArguments,
     BackendChild,
@@ -82,7 +79,6 @@ from planner.conversation.backends.contracts import (
     PlanUpdatedArguments,
     PromptWriteFailed,
     PromptWriteRefused,
-    ProviderSelectionReportedArguments,
     RetainedBackendChildFactory,
     RetainedBackendRun,
     SessionLoadFailed,
@@ -139,8 +135,6 @@ from planner.conversation.events import (
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
-    ProviderSelectionReportedEventPayload,
-    ProviderSubmissionFact,
     TokenUsageEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
@@ -185,11 +179,8 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
     CatalogWorkspaceBinding,
-    CorrectiveAction,
     ModelSelection,
     SelectionKind,
-    ValidationReason,
-    ValidationState,
 )
 from planner.conversation.publication.mutations import PlainFieldMutation, SignalRuntimeMutation
 from planner.conversation.storage import (
@@ -415,7 +406,6 @@ class _PromptDeliveryAttempt:
     suppression_reason: str | None = None
     messages: tuple[_HeldPrompt, ...] = ()
     automatic_notice: bool = False
-    provider_submission: ProviderSubmissionFact | None = None
 
 
 type _BackendEventHandler = Callable[[], Coroutine[Any, Any, None]]
@@ -440,7 +430,6 @@ class _ConversationState:
     backend_event_pump: asyncio.Task[None] | None = None
     backend_event_in_progress: bool = False
     child_event_sink: object | None = None
-    child_reported_model: str | None = None
     settlement_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     steer_settlements: set[asyncio.Event] = field(default_factory=set)
     reserved_turn: _ReservedTurn | None = None
@@ -1776,7 +1765,6 @@ class SqliteProcessConversationSystem:
                     original_selection=delivery.original_selection,
                     refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
-                    provider_submission=delivery.provider_submission,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
                     owner_read_through_sequence=(
@@ -1838,17 +1826,12 @@ class SqliteProcessConversationSystem:
                     else ()
                 ),
             )
-            steer_outcome = await self._steer_with_admission(
-                state,
-                steer_child,
+            steer_outcome = await steer_child.steer(
                 steer_turn_token,
                 wire_content,
                 sender_content=held.content,
                 sender_label=held.sender_label,
-                attempt_id=attempt.identity,
             )
-        except AdmissionRefused:
-            steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.model_resolution_failed)
         except PromptWriteRefused:
             steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
         except PromptWriteFailed:
@@ -2980,17 +2963,12 @@ class SqliteProcessConversationSystem:
                     else ()
                 ),
             )
-            steer_outcome = await self._steer_with_admission(
-                state,
-                child,
+            steer_outcome = await child.steer(
                 running.token,
                 wire_content,
                 sender_content=content,
                 sender_label=sender_label,
-                attempt_id=attempt.identity,
             )
-        except AdmissionRefused:
-            steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.model_resolution_failed)
         except PromptWriteRefused:
             steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
         except PromptWriteFailed:
@@ -3332,7 +3310,6 @@ class SqliteProcessConversationSystem:
             original_selection=delivery.original_selection,
             refusal_detail=delivery.refusal_detail,
             composed_content_delivered=delivery.composed_content_delivered,
-            provider_submission=delivery.provider_submission,
             record_refusal=delivery.record_refusal,
             phase_when_not_started=_ConversationPhase.idle,
             owner_read_through_sequence=owner_read_through_sequence,
@@ -3545,109 +3522,16 @@ class SqliteProcessConversationSystem:
             ),
         )
 
-    async def _steer_with_admission(
-        self,
-        state: _ConversationState,
-        child: BackendChild,
-        token: TurnToken,
-        content: MessageContent,
-        *,
-        sender_content: MessageContent,
-        sender_label: str,
-        attempt_id: str,
-    ) -> BackendSteerOutcome:
-        """Validate the running turn's accepted intent without changing next-turn intent."""
-
-        from planner.conversation.admission.policy import (
-            check_policy_dependencies,
-            checked_validation_policy,
-        )
-        from planner.conversation.admission.service import (
-            admission_check,
-            expectation_from_validation,
-        )
-        from planner.core.db import connect
-
-        conn = connect(self._store._db_path)
-        try:
-            ticket_row = conn.execute(
-                "SELECT id FROM tickets WHERE conversation_id=?",
-                (state.record.conversation_id,),
-            ).fetchone()
-            if ticket_row is None or state.record.backend_key is ConversationBackendKey.hermes:
-                return await child.steer(
-                    token, content, sender_content=sender_content, sender_label=sender_label
-                )
-            running = state.running_turn
-            basis = None if running is None else running.launch_validation
-            if (
-                running is None
-                or running.token != token
-                or state.child is not child
-                or basis is None
-                or basis.launch_token is None
-            ):
-                raise AdmissionRefused("running turn submission binding is unavailable")
-            validation = basis
-            if running.ended or running.ending_is_the_cores:
-                raise AdmissionRefused("running turn ownership changed")
-            dependencies = checked_validation_policy(conn, validation)
-            expectation = expectation_from_validation(
-                validation,
-                attempt_id=attempt_id,
-                conversation_id=state.record.conversation_id,
-                turn=token,
-                workspace=(
-                    CatalogWorkspaceBinding(
-                        state.record.workspace_folder, state.record.workspace_path_policy, None
-                    )
-                ),
-                executor_identity=(
-                    self.machine_catalog.identity
-                    if basis.selection.destination.value == "macos"
-                    and self.machine_catalog is not None
-                    else None
-                ),
-            )
-            accepted_running = running
-
-            class RunningContext:
-                def verify_context(inner) -> bool:
-                    check_policy_dependencies(conn, dependencies)
-                    return (
-                        state.running_turn is accepted_running
-                        and not accepted_running.ended
-                        and not accepted_running.ending_is_the_cores
-                        and state.child is child
-                    )
-
-            return await child.steer(
-                token,
-                content,
-                sender_content=sender_content,
-                sender_label=sender_label,
-                admission_expectation=expectation,
-                emission_check=admission_check(expectation, RunningContext()),
-            )
-        finally:
-            conn.close()
-
     async def _deliver_prompt_unsettled(
         self,
         state: _ConversationState,
         turn_token: TurnToken,
         reasoning_effort_is_set: bool = False,
         selection_kind: SelectionKind | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
-        emission_check: EmissionCheck | None = None,
         **kwargs: Any,
     ) -> _PromptDeliveryAttempt:
-        """Verify the real lifecycle intent immediately around child preparation and send."""
-        from planner.conversation.admission.service import (
-            admission_check,
-            expectation_from_validation,
-        )
-        from planner.conversation.backends.contracts import AdmissionRefused
+        """Check saved model intent and dispatch the prompt, retaining its validation."""
+
         from planner.core.db import connect
         from planner.core.errors import ErrorCode
         from planner.runtime.conversation_start import (
@@ -3677,7 +3561,6 @@ class SqliteProcessConversationSystem:
                 (state.record.conversation_id,),
             ).fetchone()
             if row is None:
-                from planner.conversation.admission.policy import checked_validation_policy
                 from planner.conversation.backend_state import BackendStateStore
                 from planner.conversation.launch_intent import bind_model_intent
                 from planner.tickets.contracts import TicketLocale
@@ -3692,8 +3575,6 @@ class SqliteProcessConversationSystem:
                         state,
                         turn_token,
                         **kwargs,
-                        admission_expectation=admission_expectation,
-                        emission_check=emission_check,
                         reasoning_effort_is_set=reasoning_effort_is_set,
                     )
                 selection = captured_held_selection or ModelSelection(
@@ -3714,31 +3595,15 @@ class SqliteProcessConversationSystem:
                         selection.backend_key
                     ),
                 )
-                checked_validation_policy(conn, validation)
-                workspace = CatalogWorkspaceBinding(
-                    state.record.workspace_folder, state.record.workspace_path_policy, None
-                )
-                identity = endpoint.identity if native and endpoint is not None else None
-                expectation = expectation_from_validation(
-                    validation,
-                    attempt_id=uuid4().hex,
-                    conversation_id=state.record.conversation_id,
-                    workspace=workspace,
-                    executor_identity=identity,
-                    turn=turn_token,
-                )
-                system = self
-
-                carried_validation = validation
-
-                class ConversationContext:
-                    def verify_context(self) -> bool:
-                        checked_validation_policy(conn, carried_validation)
-                        current = system.machine_catalog
-                        return not native or (
-                            current is not None and current.ready and current.identity == identity
-                        )
-
+                if validation.launch_token is None:
+                    return _PromptDeliveryAttempt(
+                        refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
+                        record_refusal=True,
+                        canonical_validation=validation,
+                        refusal_detail=(
+                            f"{validation.reason.value}: {validation.corrective_action.value}"
+                        ),
+                    )
                 kwargs["model_change"] = (
                     validation.launch_token
                     if kwargs.get("model_change") is not None
@@ -3756,8 +3621,6 @@ class SqliteProcessConversationSystem:
                     state,
                     turn_token,
                     canonical_validation=validation,
-                    admission_expectation=expectation,
-                    emission_check=admission_check(expectation, ConversationContext()),
                     **kwargs,
                     reasoning_effort_is_set=reasoning_effort_is_set,
                 )
@@ -3769,8 +3632,6 @@ class SqliteProcessConversationSystem:
                     state,
                     turn_token,
                     **kwargs,
-                    admission_expectation=admission_expectation,
-                    emission_check=emission_check,
                     reasoning_effort_is_set=reasoning_effort_is_set,
                 )
             if (
@@ -3779,8 +3640,9 @@ class SqliteProcessConversationSystem:
                 and captured_held_selection is None
                 and model is None
             ):
-                raise AdmissionRefused(
-                    "held prompt has no original provider token; explicit correction required"
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "held prompt has no original provider token; explicit correction required",
                 )
             try:
                 selection = read_launch_selection(conn, ticket_id)
@@ -3840,7 +3702,6 @@ class SqliteProcessConversationSystem:
                 ),
             )
             workspace = workspace_binding_from_start(values, selection.destination)
-            attempt_id = uuid4().hex
             validation = await self.validate_launch_selection(
                 selection,
                 workspace,
@@ -3868,26 +3729,7 @@ class SqliteProcessConversationSystem:
                         f"{validation.reason.value}: {validation.corrective_action.value}"
                     ),
                 )
-            from planner.conversation.admission.policy import (
-                check_policy_dependencies,
-                checked_validation_policy,
-            )
-
-            policy_dependencies = checked_validation_policy(conn, validation)
             selection = validation.selection
-            assert validation.launch_token is not None
-            expectation = expectation_from_validation(
-                validation,
-                attempt_id=attempt_id,
-                conversation_id=state.record.conversation_id,
-                turn=turn_token,
-                workspace=workspace,
-                executor_identity=(
-                    self.machine_catalog.identity
-                    if selection.destination.value == "macos" and self.machine_catalog is not None
-                    else None
-                ),
-            )
             kwargs["model_change"] = (
                 validation.launch_token
                 if kwargs.get("model_change") is not None
@@ -3902,30 +3744,10 @@ class SqliteProcessConversationSystem:
                 else None
             )
 
-            system = self
-
-            class CurrentContext:
-                def verify_context(self) -> bool:
-                    policy_conn = connect(system._store._db_path)
-                    try:
-                        check_policy_dependencies(policy_conn, policy_dependencies)
-                    finally:
-                        policy_conn.close()
-                    if selection.destination.value == "macos":
-                        endpoint = system.machine_catalog
-                        return (
-                            endpoint is not None
-                            and endpoint.ready
-                            and endpoint.identity == expectation.executor_identity
-                        )
-                    return True
-
             delivered = await self._deliver_prompt_unsettled_verified(
                 state,
                 turn_token,
                 canonical_validation=validation,
-                admission_expectation=expectation,
-                emission_check=admission_check(expectation, CurrentContext()),
                 **kwargs,
                 reasoning_effort_is_set=reasoning_effort_is_set,
             )
@@ -3934,40 +3756,7 @@ class SqliteProcessConversationSystem:
                 canonical_validation=validation,
                 original_selection=original_selection,
             )
-        except (PlannerError, AdmissionRefused) as error:
-            if isinstance(error, AdmissionRefused) and validation is not None:
-                reason = ValidationReason(error.reason)
-                action = CorrectiveAction(error.corrective_action)
-                validation = replace(
-                    validation,
-                    state=(
-                        ValidationState.incompatible
-                        if reason
-                        in (
-                            ValidationReason.model_incompatible,
-                            ValidationReason.effort_incompatible,
-                        )
-                        else ValidationState.unresolved
-                    ),
-                    reason=reason,
-                    corrective_action=action,
-                    launch_token=None,
-                )
-                if (
-                    ticket_id is not None
-                    and workspace is not None
-                    and model is None
-                    and effort is None
-                    and not effort_is_set
-                ):
-                    record_launch_validation(
-                        conn,
-                        ticket_id,
-                        validation,
-                        expected_workspace=workspace,
-                        now=int(self._unix_time_now()),
-                        notify=True,
-                    )
+        except PlannerError as error:
             return _PromptDeliveryAttempt(
                 refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
                 record_refusal=True,
@@ -3992,8 +3781,6 @@ class SqliteProcessConversationSystem:
         reply_senders: tuple[Principal, ...] = (),
         messages: tuple[_HeldPrompt, ...] = (),
         canonical_validation: CanonicalModelValidation | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
-        emission_check: EmissionCheck | None = None,
         reasoning_effort_is_set: bool = False,
     ) -> _PromptDeliveryAttempt:
         """Get the message onto a live child's wire, or name why that was impossible.
@@ -4040,8 +3827,6 @@ class SqliteProcessConversationSystem:
                 model=model_change,
                 reasoning_effort=reasoning_effort_change,
                 reasoning_effort_is_set=effort_is_set,
-                admission_expectation=admission_expectation,
-                emission_check=emission_check,
             )
         except BackendSpawnFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
@@ -4092,8 +3877,6 @@ class SqliteProcessConversationSystem:
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
                 automatic_compaction=automatic_compaction,
-                emission_check=emission_check,
-                admission_expectation=admission_expectation,
                 reasoning_effort_is_set=effort_is_set,
             )
         except PromptWriteRefused as refused:
@@ -4106,7 +3889,6 @@ class SqliteProcessConversationSystem:
                 PromptDeliveryRefusalReason.backend_rejected_prompt,
                 record_refusal=True,
                 refusal_detail=str(rejected),
-                provider_submission=rejected.provider_submission,
             )
         except NeedsRebind as rebind:
             rebound = await self._rebind_and_write_prompt(
@@ -4125,8 +3907,6 @@ class SqliteProcessConversationSystem:
                 messages=messages,
                 interruption_notice=interruption_notice,
                 reasoning_effort_is_set=effort_is_set,
-                admission_expectation=admission_expectation,
-                emission_check=emission_check,
             )
             return replace(
                 rebound,
@@ -4140,7 +3920,6 @@ class SqliteProcessConversationSystem:
             messages=messages,
             automatic_notice=automatic_notice,
             composed_content_delivered=accepted.composed_content_delivered,
-            provider_submission=accepted.provider_submission,
         )
 
     async def _rebind_and_write_prompt(
@@ -4161,8 +3940,6 @@ class SqliteProcessConversationSystem:
         messages: tuple[_HeldPrompt, ...] = (),
         interruption_notice: str | None = None,
         reasoning_effort_is_set: bool = False,
-        admission_expectation: AdmissionExpectation | None = None,
-        emission_check: EmissionCheck | None = None,
     ) -> _PromptDeliveryAttempt:
         """Start the child again on the new values, under the same conversation, and write.
 
@@ -4228,8 +4005,6 @@ class SqliteProcessConversationSystem:
                 model=model_change,
                 reasoning_effort=reasoning_effort_change,
                 reasoning_effort_is_set=reasoning_effort_is_set,
-                admission_expectation=admission_expectation,
-                emission_check=emission_check,
             )
         except BackendSpawnFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
@@ -4277,8 +4052,6 @@ class SqliteProcessConversationSystem:
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
                 automatic_compaction=automatic_compaction,
-                emission_check=emission_check,
-                admission_expectation=admission_expectation,
                 reasoning_effort_is_set=reasoning_effort_is_set,
             )
         except PromptWriteRefused as refused:
@@ -4291,7 +4064,6 @@ class SqliteProcessConversationSystem:
                 PromptDeliveryRefusalReason.backend_rejected_prompt,
                 record_refusal=True,
                 refusal_detail=str(rejected),
-                provider_submission=rejected.provider_submission,
             )
         except PromptWriteFailed:
             raise
@@ -4305,7 +4077,6 @@ class SqliteProcessConversationSystem:
             reservation.prompt_accepted = True
         return _PromptDeliveryAttempt(
             composed_content_delivered=accepted.composed_content_delivered,
-            provider_submission=accepted.provider_submission,
             messages=messages,
             automatic_notice=automatic_notice,
         )
@@ -4328,7 +4099,6 @@ class SqliteProcessConversationSystem:
         reply_requested: bool,
         recovery_references: tuple[DeploymentRecoveryReference, ...],
         composed_content_delivered: bool,
-        provider_submission: ProviderSubmissionFact | None = None,
         canonical_validation: CanonicalModelValidation | None = None,
         original_selection: ModelSelection | None = None,
         refusal_detail: str | None = None,
@@ -4395,7 +4165,6 @@ class SqliteProcessConversationSystem:
                                 sender_label=sender_label,
                                 mode=mode,
                                 refusal_reason=refusal,
-                                provider_submission=provider_submission,
                                 refusal_detail=refusal_detail,
                                 model_validation=self._validation_json(canonical_validation),
                                 sender_message_id=sender_message_id,
@@ -4484,7 +4253,6 @@ class SqliteProcessConversationSystem:
                         state.record.conversation_id,
                         native_message_operation=native_message_operation,
                         prompt=PromptEventPayload(
-                            provider_submission=provider_submission,
                             recovery_references=recovery_references,
                             content=content,
                             sender_label=sender_label,
@@ -4765,7 +4533,6 @@ class SqliteProcessConversationSystem:
                     original_selection=delivery.original_selection,
                     refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
-                    provider_submission=delivery.provider_submission,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
                     also_delivered=rest,
@@ -4861,7 +4628,6 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 PromptEventPayload(
-                    provider_submission=outcome.provider_submission,
                     recovery_references=recovery_references,
                     content=content,
                     sender_label=sender_label,
@@ -5171,8 +4937,6 @@ class SqliteProcessConversationSystem:
         model: str | None = None,
         reasoning_effort: str | None = None,
         reasoning_effort_is_set: bool = False,
-        admission_expectation: AdmissionExpectation | None = None,
-        emission_check: EmissionCheck | None = None,
     ) -> BackendChild:
         """The conversation's live child, spawned and bound on first need.
 
@@ -5187,14 +4951,7 @@ class SqliteProcessConversationSystem:
             return child
 
         resolved_start = state.record.resolved_start()
-        expectation = admission_expectation
-        if expectation is not None:
-            resolved_start = replace(
-                resolved_start,
-                model=expectation.launch_token,
-                reasoning_effort=expectation.reasoning_effort,
-            )
-        elif model is not None or reasoning_effort is not None or reasoning_effort_is_set:
+        if model is not None or reasoning_effort is not None or reasoning_effort_is_set:
             resolved_start = replace(
                 resolved_start,
                 model=resolved_start.model if model is None else model,
@@ -5252,8 +5009,6 @@ class SqliteProcessConversationSystem:
         await child.start(
             resolved_start,
             vendor_session_cursor=state.record.vendor_session_cursor,
-            emission_check=emission_check,
-            admission_expectation=admission_expectation,
         )
         if (
             child_stops_outside_lock(child)
@@ -5419,40 +5174,6 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
         return running
 
-    def _bind_provider_selection_report(
-        self,
-        state: _ConversationState,
-        running: _RunningTurn,
-        payload: ProviderSelectionReportedEventPayload,
-    ) -> ProviderSelectionReportedEventPayload:
-        basis = running.launch_validation
-        if basis is None or basis.launch_token is None:
-            return payload
-        return replace(
-            payload,
-            submitted_token=basis.launch_token,
-            requested_reasoning_effort=basis.selection.reasoning_effort,
-            blocks_submission=False,
-        )
-
-    async def _on_provider_selection_reported(
-        self,
-        state: _ConversationState,
-        turn_token: TurnToken,
-        payload: ProviderSelectionReportedEventPayload,
-        expected_sink: object | None = None,
-    ) -> None:
-        await self.take_backend_event(
-            turn_token,
-            ProviderSelectionReportedArguments(
-                provider=payload.provider,
-                source_kind=payload.source_kind,
-                model=payload.model,
-                reasoning_effort=payload.reasoning_effort,
-                child_lifetime=payload.child_lifetime,
-            ),
-            expected_sink=expected_sink,
-        )
 
     async def _on_token_usage_reported(
         self,
@@ -6009,11 +5730,6 @@ class SqliteProcessConversationSystem:
                 live = False
             if expected_sink is not None and state.child_event_sink is not expected_sink:
                 live = False
-            if (
-                isinstance(args, ProviderSelectionReportedArguments)
-                and args.provider != state.record.backend_key
-            ):
-                live = False
             if live and token is not None:
                 state.last_touched_monotonic = self._monotonic_now()
             payloads: tuple[ConversationEventPayload, ...] = ()
@@ -6042,7 +5758,6 @@ class SqliteProcessConversationSystem:
                 )
                 else None
             )
-            reported_payload = None
             if live:
                 if isinstance(args, ToolCallStartedArguments):
                     payloads = (
@@ -6063,25 +5778,6 @@ class SqliteProcessConversationSystem:
                     )
                 elif isinstance(args, PlanUpdatedArguments):
                     payloads = (PlanUpdatedEventPayload(entries=args.entries),)
-                elif (
-                    isinstance(args, ProviderSelectionReportedArguments)
-                    and token is not None
-                    and running is not None
-                    and args.provider == state.record.backend_key
-                ):
-                    reported_payload = self._bind_provider_selection_report(
-                        state,
-                        running,
-                        ProviderSelectionReportedEventPayload(
-                            args.provider,
-                            args.source_kind,
-                            args.model,
-                            args.reasoning_effort,
-                            token.turn_number,
-                            args.child_lifetime,
-                        ),
-                    )
-                    payloads = (reported_payload,)
                 elif isinstance(args, TokenUsageReportedArguments):
                     payloads = (
                         TokenUsageEventPayload(
@@ -6150,10 +5846,6 @@ class SqliteProcessConversationSystem:
                     live = False
 
             operations: list[PlainFieldMutation] = []
-            if reported_payload is not None:
-                operations.append(
-                    PlainFieldMutation(state, "child_reported_model", reported_payload.model)
-                )
             if predicted is not None:
                 operations.append(
                     PlainFieldMutation(
@@ -6579,34 +6271,6 @@ class _CoreBackendEventSink:
             )
         )
 
-    async def provider_selection_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        provider: ConversationBackendKey,
-        source_kind: str,
-        model: str,
-        child_lifetime: str,
-        reasoning_effort: str | None = None,
-    ) -> None:
-        async def record() -> None:
-            if self._state.child_event_sink is not self:
-                return
-            await self._system._on_provider_selection_reported(
-                self._state,
-                turn_token,
-                ProviderSelectionReportedEventPayload(
-                    provider,
-                    source_kind,
-                    model,
-                    reasoning_effort,
-                    turn_token.turn_number,
-                    child_lifetime,
-                ),
-                expected_sink=self,
-            )
-
-        self._enqueue(record)
 
     async def token_usage_reported(
         self,

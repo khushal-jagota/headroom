@@ -12,7 +12,6 @@ import aiohttp
 import pytest
 from starlette.responses import StreamingResponse
 from tests.integration.test_executor_end_to_end import boot, eventually
-from tests.support.executor_control import paused_outbox
 
 from planner.executor import app_transport
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
@@ -331,77 +330,6 @@ def test_duplicate_hello_preserves_active_file_reservations(
                 assert harness.endpoint.inbox.store.file_target(manifest).read_bytes() == b""
             finally:
                 await native_client.close()
-        finally:
-            await harness.close()
-
-    asyncio.run(run())
-
-
-def test_native_provider_report_reaches_core_once_without_blocking_steer(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Reuse the TLS host to prove native report dispatch and durable replay correlation."""
-    import json
-
-    from planner.conversation.contracts import (
-        ConversationBackendKey,
-        PromptDeliveryMode,
-        PromptDeliveryUncertain,
-    )
-    from planner.conversation.message_content import text_message_content
-    from planner.core.db import connect
-    from planner.executor.protocol import WireMessageKind, as_object
-
-    async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, backend_key=ConversationBackendKey.claude)
-        try:
-            assert harness.native.sink is not None and harness.native.turn is not None
-            turn = harness.native.turn
-            async with paused_outbox(harness.mac.outbox):
-                await harness.native.sink.provider_selection_reported(
-                    turn,
-                    provider=ConversationBackendKey.claude,
-                    source_kind="response_model",
-                    model="a-different-concrete-model",
-                    child_lifetime="captured-native-lifetime",
-                )
-                envelope = harness.mac.outbox.pending()[-1]
-            await eventually(
-                lambda: harness.events("provider_selection_reported") == 1,
-                "native model report did not reach the durable core",
-            )
-            connection = connect(harness.endpoint.db_path)
-            try:
-                payload = json.loads(
-                    connection.execute(
-                        "SELECT payload FROM conversation_events "
-                        "WHERE conversation_id=? AND kind=?",
-                        ("c_scripted", "provider_selection_reported"),
-                    ).fetchone()[0]
-                )
-                assert payload["turn_number"] == turn.turn_number
-                assert payload["child_lifetime"] == "captured-native-lifetime"
-                assert payload["model"] == "a-different-concrete-model"
-                assert payload["submitted_token"] == "scripted"
-                assert payload["blocks_submission"] is False
-            finally:
-                connection.close()
-            replay = await harness.mac.gateway.request(
-                WireMessageKind.envelope, as_object(envelope)
-            )
-            assert replay.kind is WireMessageKind.receipt
-            assert harness.events("provider_selection_reported") == 1
-            before = harness.native.prompt_count
-            result = await harness.system.send(
-                "c_scripted",
-                text_message_content("Continue after an observational model report"),
-                sender_label="Owner",
-                mode=PromptDeliveryMode.steer,
-            )
-            # This child has no steer method, so dispatch remains uncertain.
-            assert isinstance(result, PromptDeliveryUncertain)
-            assert harness.native.prompt_count == before
         finally:
             await harness.close()
 

@@ -21,7 +21,6 @@ from pydantic import TypeAdapter
 from tests.support.executor_control import paused_outbox
 from tests.support.executor_https import HttpsProxy, serve_executor_app
 
-from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
@@ -29,7 +28,6 @@ from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendPromptAccepted,
     BackendUserInputRequest,
-    EmissionCheck,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -39,6 +37,7 @@ from planner.conversation.contracts import (
     ConversationStartRequest,
     PromptDeliveryFate,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
@@ -80,11 +79,8 @@ from planner.executor.protocol import (
     OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
-    StartRun,
-    Steer,
     WireMessage,
     WireMessageKind,
-    WritePrompt,
     decode_command_arguments,
     encode_value,
 )
@@ -111,8 +107,6 @@ class ScriptedNativeChild:
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         del resolved_start, vendor_session_cursor
         self.start_count += 1
@@ -807,9 +801,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
         clients: list[_ScriptedClaudeSdkClient] = []
         cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
 
-        def client_factory(
-            options: ClaudeAgentOptions, *, emission_check: EmissionCheck | None = None
-        ) -> _ScriptedClaudeSdkClient:
+        def client_factory(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
             if clients:
                 assert clients[-1].disconnected, "replacement started before exact cleanup"
             client = _ScriptedClaudeSdkClient(options)
@@ -1049,10 +1041,6 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
             assert selected.selection_kind is SelectionKind.concrete
             assert selected.submitted_token == original.submitted_token == "scripted"
             assert selected.backend_key is ConversationBackendKey.codex
-            expectation = second.emission_inputs[0]["admission_expectation"]
-            assert isinstance(expectation, AdmissionExpectation)
-            assert expectation.selection.selection_kind is SelectionKind.concrete
-            assert expectation.selection.submitted_token == "scripted"
             assert observer.calls == 0
 
             async def finish_turn() -> None:
@@ -1602,11 +1590,8 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
 def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from pydantic import TypeAdapter
 
-    from planner.conversation.admission.contracts import AdmissionExpectation
     from planner.conversation.message_content import MessageFile, MessageText
-    from planner.executor.protocol import ChildCommand, CommandOutcome
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -1638,47 +1623,22 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
                     kept.stored_file_id, "application/octet-stream", "input.bin", len(contents)
                 ),
             )
-            commands: list[ChildCommand] = []
-            send_command = harness.endpoint.runs.send_command
-
-            async def observe_command(command: ChildCommand) -> CommandOutcome:
-                commands.append(command)
-                return await send_command(command)
-
-            monkeypatch.setattr(harness.endpoint.runs, "send_command", observe_command)
             generation = harness.mac.identity.connection_generation
             harness.endpoint.cut_input = True
             fate = await asyncio.wait_for(
                 harness.system.send("c_scripted", content, sender_label="Test"), 8
             )
             assert isinstance(fate, PromptDeliveryRefused), repr(fate)
-            assert fate.model_validation is not None
-            assert fate.model_validation["reason"] == "context_changed"
-            assert isinstance(commands[0].arguments, (StartRun, WritePrompt, Steer))
-            refused = TypeAdapter(AdmissionExpectation).validate_python(
-                commands[0].arguments.admission_expectation
-            )
-            assert refused.executor_identity is not None
-            assert refused.executor_identity.connection_generation == generation
+            assert fate.refusal_reason is PromptDeliveryRefusalReason.write_to_backend_failed
             assert harness.endpoint.input_cut_count == 1
             assert harness.mac.identity.connection_generation > generation
             assert harness.native.prompt_count == 1
             # The first operation is definitively refused. This separate user send
-            # must obtain fresh admission after reconnect, without replay of its authority.
+            # can deliver after reconnect without replaying the refused command.
             submitted = await asyncio.wait_for(
                 harness.system.send("c_scripted", content, sender_label="Test"), 8
             )
             assert isinstance(submitted, PromptDeliveryStarted), repr(submitted)
-            state = await harness.system._conversation_state("c_scripted")
-            assert state is not None and state.running_turn is not None
-            fresh = state.running_turn.launch_validation
-            assert fresh is not None
-            assert isinstance(commands[-1].arguments, (StartRun, WritePrompt, Steer))
-            admitted = TypeAdapter(AdmissionExpectation).validate_python(
-                encode_value(commands[-1].arguments.admission_expectation)
-            )
-            assert admitted.executor_identity == harness.mac.identity
-            assert admitted.attempt_id != refused.attempt_id
             assert harness.native.prompt_count == 2
             assert native_path.read_bytes() == contents
         finally:
@@ -1852,7 +1812,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
 
     from planner.execution_identity import ExecutorIdentity
     from planner.executor.link import ControlWebSocket, ExecutorAppClient
-    from planner.executor.protocol import ExecutorHealth, encode_value
+    from planner.executor.protocol import ExecutorHealth
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)

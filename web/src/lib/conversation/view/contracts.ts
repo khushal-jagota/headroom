@@ -5,7 +5,7 @@ export const VIEW_PROJECTION_VERSION = 4;
 
 export type ConversationViewLens = "focus" | "full";
 
-export type ViewRowKind = "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "explicit_reply_missing" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "provider_selection_reported" | "token_usage" | "context_compacted" | "turn_ended" | "turn_stopped";
+export type ViewRowKind = "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "explicit_reply_missing" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "turn_ended" | "turn_stopped";
 
 export type AskDeadReason = "turn_ended" | "no_ending_recorded";
 
@@ -33,22 +33,12 @@ export type ViewMessagePiece = ViewTextPiece | ViewImagePiece | ViewFilePiece;
 
 export type PromptDeliveryMode = "queue" | "send_now" | "steer";
 
-export type ConversationBackendKey = "hermes" | "codex" | "claude";
-
-export interface ProviderSubmissionFact {
-  provider: ConversationBackendKey;
-  status: "accepted" | "rejected";
-  observation_kind: string;
-  correlation_id: string;
-}
-
 export interface PromptRowBody {
   kind: "prompt";
   content: Array<ViewMessagePiece>;
   sender_label: string;
   mode: PromptDeliveryMode;
   sent_at_unix_milliseconds: number;
-  provider_submission: ProviderSubmissionFact | null;
 }
 
 export type PromptDeliveryRefusalReason = "no_such_conversation" | "backend_did_not_start" | "model_resolution_failed" | "session_did_not_load" | "write_to_backend_failed" | "no_running_turn_to_steer_into" | "backend_cannot_steer" | "command_cannot_join_running_turn" | "running_turn_changed_before_steer" | "running_turn_cannot_accept_steer" | "message_cannot_be_steered" | "backend_rejected_steer" | "backend_rejected_prompt";
@@ -60,7 +50,6 @@ export interface RefusedPromptRowBody {
   reason: PromptDeliveryRefusalReason;
   refusal_detail: string | null;
   model_validation: CanonicalModelValidation | null;
-  provider_submission: ProviderSubmissionFact | null;
 }
 
 export interface UndeliveredPromptRowBody {
@@ -152,16 +141,6 @@ export interface ModelRowBody {
   reasoning_effort: string | null;
 }
 
-export interface ProviderSelectionRowBody {
-  kind: "provider_selection_reported";
-  provider: ConversationBackendKey;
-  source_kind: string;
-  model: string;
-  reasoning_effort: string | null;
-  turn_number: number;
-  child_lifetime: string;
-}
-
 export interface UsageRowBody {
   kind: "token_usage";
   input_tokens: number | null;
@@ -185,7 +164,7 @@ export interface MarkerRowBody {
   kind: "context_compacted" | "turn_stopped";
 }
 
-export type ViewRowBody = PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | MissingReplyRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | ProviderSelectionRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody;
+export type ViewRowBody = PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | MissingReplyRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody;
 
 export interface ViewBodyReference {
   body_id: string;

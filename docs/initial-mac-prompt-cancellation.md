@@ -211,8 +211,6 @@ if test -d "$(dirname "$VERIFY_DB")/files"; then
   cp -a "$(dirname "$VERIFY_DB")/files" "$EVIDENCE/managed-files"
 fi
 cp -a "$PRIOR/app-config.yaml" "$EVIDENCE/prior-app-config.yaml"
-mkdir "$EVIDENCE/current/data"
-cp -a "$PRIOR/current/data/executor-launch.json" "$EVIDENCE/current/data/executor-launch.json"
 ```
 
 Do not copy only a live SQLite main file. Retain its WAL and SHM until the supported snapshot completes.
@@ -255,11 +253,12 @@ PY
 Keep immutable snapshots and the original executor root in place. A journal copy alone does not preserve referenced file bytes.
 Retain local command failures. Do not retry an unknown operation or infer idle state from a failed health read.
 
-Start the reviewed isolated package with the existing private environment. Copy no credentials into public output.
+Start the reviewed isolated package with the existing private environment and a new copy of its YAML configuration that enables the same logical executor. Keep the prior configuration as evidence. Copy no credentials into public output.
 
 ```sh
-python3 - <<'PY'
+"$EVIDENCE/current/app/.venv/bin/python" -I - <<'PY'
 import json, os, subprocess, time
+import yaml
 from pathlib import Path
 
 evidence = Path(os.environ['EVIDENCE'])
@@ -269,13 +268,16 @@ assert all(not Path('/proc', str(item['pid'])).exists() for item in old.values()
 assert not subprocess.check_output(['ss', '-H', '-ltn', 'sport = :8793'], text=True).strip()
 app = evidence / 'current/app'
 assert json.loads((app / 'manifest.json').read_text())['app_sha'] == os.environ['REPAIR_SHA']
-descriptor = json.loads((evidence / 'current/data/executor-launch.json').read_text())
-assert descriptor == {'version': 2, 'mode': 'remote', 'executor_id': 'mac-native-verification'}
+configuration = yaml.safe_load((evidence / 'prior-app-config.yaml').read_text())
+configuration['executor_id'] = 'mac-native-verification'
+configuration_path = evidence / 'app-config.yaml'
+configuration_path.write_text(yaml.safe_dump(configuration))
 record = json.loads((prior / 'server-owned.json').read_text())
 environment = record['environment'].copy()
 assert environment['PLAN_DB_PATH'] == os.environ['VERIFY_DB']
 assert environment['PLAN_PORT'] == '8793'
 assert environment['PLAN_CONFIG_PATH'] == str(prior / 'app-config.yaml')
+environment['PLAN_CONFIG_PATH'] = str(configuration_path)
 command = str(app / 'bin/panels-launcher')
 launched_at = time.time()
 with (evidence / 'server.log').open('ab') as log:

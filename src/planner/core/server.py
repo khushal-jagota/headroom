@@ -255,13 +255,11 @@ def create_app(
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
             )
         )
-        if os.environ.get("PLAN_EXECUTOR_MODE") == "remote":
+        if config.executor_id is not None:
             from planner.executor.routing import LocaleBackendChildFactory
             from planner.executor.vps_transport import VpsExecutor
 
-            executor_endpoint = VpsExecutor(
-                config.db_path, clock, machine_id=config.executor_id or "macos"
-            )
+            executor_endpoint = VpsExecutor(config.db_path, clock, machine_id=config.executor_id)
             backend_factories = {
                 key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
                 for key, local in backend_factories.items()

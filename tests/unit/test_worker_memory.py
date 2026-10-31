@@ -70,3 +70,30 @@ def test_a_memory_notice_answers_the_boundary_so_the_same_one_is_never_sent_twic
     _add_prompt(conn, "c1", sequence=9, sender_message_id="worker_step_memory_notice_xyz")
 
     assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1") is False
+
+
+@pytest.mark.parametrize(
+    "sender_message_id",
+    ["worker_step_memory_notice_uncertain", "worker_step_message_uncertain", "owner_message"],
+)
+def test_only_an_uncertain_notice_suppresses_the_scan_until_the_next_boundary(
+    conn: sqlite3.Connection, sender_message_id: str
+) -> None:
+    _make_conversation(conn, "c1", compacted=7)
+    _add_prompt(conn, "c1", sequence=3, sender_message_id="worker_step_message_first")
+    _add_ticket(conn, "worker", claim="out", conversation_id="c1")
+    conn.execute(
+        "INSERT INTO conversation_events VALUES ('c1',9,'prompt_delivery_uncertain',?,0)",
+        (json.dumps({"sender_message_id": sender_message_id}),),
+    )
+    expected = () if sender_message_id == "worker_step_memory_notice_uncertain" else ("worker",)
+    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == expected
+    # Uncertainty never answers the memory-loss note owed on an ordinary wake.
+    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1")
+
+    conn.execute(
+        "UPDATE conversations SET automatically_compacted_through_sequence=12 "
+        "WHERE conversation_id='c1'"
+    )
+    conn.execute("INSERT INTO conversation_events VALUES ('c1',13,'context_compacted','{}',0)")
+    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ("worker",)

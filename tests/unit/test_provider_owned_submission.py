@@ -11,11 +11,14 @@ from tests.unit.test_current_model_resolution import (
 )
 
 from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
-from planner.conversation.contracts import ConversationBackendKey as Backend
 from planner.conversation.contracts import (
     PromptDeliveryUncertain,
 )
-from planner.conversation.events import PromptDeliveryUncertainEventPayload, PromptEventPayload
+from planner.conversation.events import (
+    PromptDeliveryRefusedEventPayload,
+    PromptDeliveryUncertainEventPayload,
+    PromptEventPayload,
+)
 from planner.conversation.message_content import text_message_content
 from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -104,6 +107,13 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
                 conversation_id = result.conversation_id or harness.spawned_conversation_ids[-1]
                 if case == "rejected":
                     assert result.fate.refusal_reason.value == "backend_rejected_prompt"
+                    refusals = [
+                        e.payload for e in await harness.events(conversation_id)
+                        if isinstance(e.payload, PromptDeliveryRefusedEventPayload)
+                    ]
+                    assert len(refusals) == 1
+                    assert refusals[0].refusal_reason.value == "backend_rejected_prompt"
+                    assert refusals[0].refusal_detail == "provider refused correlated request"
                 else:
                     assert isinstance(result.fate, PromptDeliveryUncertain)
                     state = await harness.system._conversation_state(conversation_id)
@@ -124,11 +134,9 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
 def test_provider_events_and_held_messages_keep_their_original_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, early: bool
 ) -> None:
-    from planner.conversation.backends.contracts import BackendPromptAccepted, TurnToken
+    from planner.conversation.backends.contracts import BackendPromptAccepted
     from planner.conversation.events import (
         ConversationTurnEnding,
-        ProviderSelectionReportedEventPayload,
-        ProviderSubmissionFact,
         ToolCallStartedEventPayload,
         TurnEndedEventPayload,
     )
@@ -149,13 +157,6 @@ def test_provider_events_and_held_messages_keep_their_original_turn(
         if early and len(attempted_tokens) == 1:
             # These callbacks must finish before the provider returns acceptance.
             await self._sink.agent_message_delta(turn, "early delta")
-            await self._sink.provider_selection_reported(
-                turn,
-                provider=Backend.claude,
-                source_kind="response_model",
-                model="reported",
-                child_lifetime="fake-child",
-            )
             await self._sink.tool_call_started(
                 turn,
                 tool_call_id="early-tool",
@@ -171,9 +172,6 @@ def test_provider_events_and_held_messages_keep_their_original_turn(
             )
             return BackendPromptAccepted(
                 True,
-                provider_submission=ProviderSubmissionFact(
-                    Backend.claude, "accepted", "command_lifecycle.started", "uuid-1"
-                ),
             )
         return accepted
 
@@ -184,7 +182,7 @@ def test_provider_events_and_held_messages_keep_their_original_turn(
         try:
             ticket = tickets.create_ticket(
                 conn,
-                title="Captured provider facts",
+                title="Captured early events",
                 principal=OWNER_PRINCIPAL,
                 now=1000,
                 title_max_chars=200,
@@ -209,37 +207,10 @@ def test_provider_events_and_held_messages_keep_their_original_turn(
             if early:
                 events = await harness.events(conversation_id)
                 prompt = next(e for e in events if isinstance(e.payload, PromptEventPayload))
-                report = next(
-                    e
-                    for e in events
-                    if isinstance(e.payload, ProviderSelectionReportedEventPayload)
-                )
                 tool = next(e for e in events if isinstance(e.payload, ToolCallStartedEventPayload))
                 ended = next(e for e in events if isinstance(e.payload, TurnEndedEventPayload))
-                assert prompt.sequence < report.sequence < tool.sequence < ended.sequence
+                assert prompt.sequence < tool.sequence < ended.sequence
                 assert isinstance(prompt.payload, PromptEventPayload)
-                assert prompt.payload.provider_submission is not None
-                assert prompt.payload.provider_submission.correlation_id == "uuid-1"
-                await harness.system.send(
-                    conversation_id, text_message_content("second"), sender_label="Owner"
-                )
-                sink = harness.backend(conversation_id).sink
-                assert sink is not None
-                await sink.provider_selection_reported(
-                    TurnToken(conversation_id, 1),
-                    provider=Backend.claude,
-                    source_kind="response_model",
-                    model="late-wrong",
-                    child_lifetime="fake-child",
-                )
-                await harness.settle()
-                assert (
-                    sum(
-                        isinstance(e.payload, ProviderSelectionReportedEventPayload)
-                        for e in await harness.events(conversation_id)
-                    )
-                    == 1
-                )
             else:
                 await harness.system.send(
                     conversation_id, text_message_content("held original"), sender_label="Owner"

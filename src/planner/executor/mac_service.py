@@ -20,9 +20,10 @@ from planner.executor.catalog_relay import MacCatalogRelay
 from planner.executor.configuration import (
     RECONNECT_INTERVAL_SECONDS,
     ExecutorPaths,
+    validate_server_url,
 )
 from planner.executor.diagnostics import connection_diagnostics
-from planner.executor.link import Link, create_client_session, dial_link, validate_server_url
+from planner.executor.link import Link, create_client_session, dial_link
 from planner.executor.mac_agent_gateway import AgentGateway
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner, now_ms

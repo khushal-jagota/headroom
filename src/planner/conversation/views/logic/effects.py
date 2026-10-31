@@ -44,8 +44,6 @@ def event_effect(payload: event.ConversationEventPayload) -> EventEffect:
         return EventEffect("user_input", True, "user_input", payload.request_id, settlement=True)
     if isinstance(payload, event.PlanUpdatedEventPayload):
         return EventEffect(None, False, changes_plan=True)
-    if isinstance(payload, event.ProviderSelectionReportedEventPayload):
-        return EventEffect("provider_selection_reported", True)
     if isinstance(payload, event.ModelChangedEventPayload):
         return EventEffect("model_changed", False)
     if isinstance(payload, event.TokenUsageEventPayload):

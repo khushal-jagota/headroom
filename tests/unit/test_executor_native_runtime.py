@@ -14,14 +14,12 @@ from uuid import uuid4
 import pytest
 from pydantic import TypeAdapter
 
-from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
-    EmissionCheck,
     PromptWriteFailed,
     PromptWriteRefused,
     SessionLoadFailed,
@@ -39,11 +37,6 @@ from planner.conversation.contracts import (
 from planner.conversation.events import ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.contracts import (
-    CatalogWorkspaceBinding,
-    ModelSelection,
-    SelectionKind,
-)
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import ExecutorPaths
@@ -75,41 +68,6 @@ from planner.executor.protocol import (
     decode_command_arguments,
     encode_value,
 )
-from planner.tickets.contracts import TicketLocale
-
-
-def _fixture_admission(
-    registry: MacRunner,
-    reference: ChildReference,
-    resolved: ResolvedConversationStart,
-    *,
-    relative: str | None = None,
-    localized: Path | None = None,
-) -> AdmissionExpectation:
-    """Supply exact synthetic ownership without catalog or configuration proof."""
-    workspace = CatalogWorkspaceBinding(
-        resolved.workspace_folder, resolved.workspace_path_policy, relative
-    )
-    attempt_id = str(uuid4())
-    return AdmissionExpectation(
-        ModelSelection(
-            TicketLocale.macos,
-            resolved.backend_key,
-            resolved.model,
-            SelectionKind.concrete,
-            resolved.reasoning_effort,
-            "fixture-selection",
-        ),
-        workspace,
-        attempt_id,
-        resolved.model,
-        resolved.reasoning_effort,
-        resolved.conversation_id,
-        child=reference,
-        executor_identity=ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
-        ),
-    )
 
 
 def canonical_snapshot() -> CanonicalSkillSnapshot:
@@ -144,21 +102,13 @@ class ScriptedChild:
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
-        if emission_check is not None:
-            emission_check()
         self.starts += 1
         await asyncio.sleep(0)
 
     async def write_prompt(
         self, turn: TurnToken, content: MessageContent, **kwargs: object
     ) -> BackendPromptAccepted:
-        check = kwargs.get("emission_check")
-        if check is not None:
-            assert callable(check)
-            check()
         self.prompts += 1
         return BackendPromptAccepted(True)
 
@@ -283,7 +233,6 @@ def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
             arguments=replace(
                 start.arguments,
                 resolved_start=resolved,
-                admission_expectation=_fixture_admission(registry, start.child, resolved),
             ),
         )
         assert (await registry.run(start)).disposition is CommandDisposition.succeeded
@@ -486,8 +435,6 @@ def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and
             resolved_start: ResolvedConversationStart,
             *,
             vendor_session_cursor: str | None,
-            emission_check: EmissionCheck | None = None,
-            admission_expectation: AdmissionExpectation | None = None,
         ) -> None:
             native.starts += 1
             raise ValueError("executor is quiescing")
@@ -883,8 +830,6 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                 resolved_start: ResolvedConversationStart,
                 *,
                 vendor_session_cursor: str | None,
-                emission_check: EmissionCheck | None = None,
-                admission_expectation: AdmissionExpectation | None = None,
             ) -> None:
                 received.append(resolved_start)
                 assert vendor_session_cursor == "retained-native-session"
@@ -953,25 +898,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         # Exercise VPS encoding and Mac hydration with distinct home directories.
         monkeypatch.setattr(Path, "home", staticmethod(lambda: vps_home))
         remote = MacRemoteChild(reference, send, lambda start: canonical_snapshot())
-        if backend is ConversationBackendKey.hermes:
-            await remote.start(resolved, vendor_session_cursor="retained-native-session")
-        else:
-            expectation = _fixture_admission(
-                registry,
-                reference,
-                resolved,
-                relative=(
-                    "projects/same-checkout"
-                    if policy is WorkspacePathPolicy.legacy_home_mapping
-                    else None
-                ),
-                localized=workspace,
-            )
-            await remote.start(
-                resolved,
-                vendor_session_cursor="retained-native-session",
-                admission_expectation=expectation,
-            )
+        await remote.start(resolved, vendor_session_cursor="retained-native-session")
         assert received == constructed
         assert (paths.artifacts / "t_own" / "proof.txt").read_text() == "native artifact"
         assert received[0].workspace_folder == workspace

@@ -106,8 +106,8 @@ conversations keep local children. The VPS saves the exact Mac child assignment
 and run before emitting its start command, and requires a reconciled, ready link.
 The Mac runner localizes the workspace, downloads and verifies the command's inputs,
 installs the current canonical skills, and starts the selected provider.
-Immediately before a prompt or steer reaches the provider, it checks the retained
-child and launch inputs again. The direct command result reports admission;
+Before native invocation, it checks that the retained child can take work.
+The direct command result reports admission;
 recorded agent output takes the ordered outbox path independently.
 
 Code paths: `src/planner/runtime/worker_step_readiness_loop.py`,
@@ -452,9 +452,12 @@ answer permission, answer user input, or stop. JSON is decoded at the command bo
 a command cannot carry another operation's inputs or unknown settings. Start owns
 workspace localization, canonical skill installation, and native home setup.
 
-Provider calls receive their admission expectation and final write check explicitly.
-The Mac checks the retained child and its original launch inputs immediately before
-possible provider emission; the VPS still checks its authority before sending.
+Panels checks explicit model disables when it dispatches a prompt. Commands carry the
+chosen model and effort directly; providers accept or refuse them. The Mac checks
+that the child can still take work before invoking it. A stopped child takes no new
+work. A prompt already past that check can reach the provider before the stop ends it.
+A model disabled after dispatch can still run that turn. A cut input download refuses
+the prompt before provider invocation; a separate send can try again after reconnect.
 Omitted effort keeps the running value. An explicit clear requests the provider default.
 Native message writes carry their receipt participation through cancellation and the
 SQLite append, so another send cannot inherit it.
@@ -495,6 +498,9 @@ Missing or incompatible evidence defers the operation. The handshake remains the
 
 The outbox checks SQLite `user_version` on open and refuses incompatible formats.
 The [Mac operator runbook](mac-executor-installation.md) supplies the concrete checks.
+`python -m planner.environments.mac_executor` prints the GUI LaunchAgent plist from
+explicit inputs. It shares the executor connection's HTTPS origin validation and
+performs no installation or service actions.
 No automatic two-host update or general migration mechanism exists.
 
 ## Fresh installation and retained journals

@@ -53,7 +53,6 @@ from tests.support.conversation_scripted_acp_agent import (
     scripted_acp_agent_launch,
 )
 
-from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
@@ -61,7 +60,6 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendUserInputRequest,
-    EmissionCheck,
     PromptWriteRefused,
     TurnToken,
 )
@@ -178,24 +176,6 @@ class _ObservingSink:
         self._sink = sink
         self._conversation = conversation
 
-    async def provider_selection_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        provider: ConversationBackendKey,
-        source_kind: str,
-        model: str,
-        child_lifetime: str,
-        reasoning_effort: str | None = None,
-    ) -> None:
-        await self._sink.provider_selection_reported(
-            turn_token,
-            provider=provider,
-            source_kind=source_kind,
-            model=model,
-            child_lifetime=child_lifetime,
-            reasoning_effort=reasoning_effort,
-        )
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         await self._sink.agent_message_delta(turn_token, text_delta)
@@ -325,14 +305,10 @@ class _CountedChild:
         resolved_start: ResolvedConversationStart,
         *,
         vendor_session_cursor: str | None,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> None:
         await self._child.start(
             resolved_start,
             vendor_session_cursor=vendor_session_cursor,
-            emission_check=emission_check,
-            admission_expectation=admission_expectation,
         )
 
     async def write_prompt(
@@ -347,8 +323,6 @@ class _CountedChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
         reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         if self._conversation.known_prewrite_failure:
@@ -363,8 +337,6 @@ class _CountedChild:
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             automatic_compaction=automatic_compaction,
-            emission_check=emission_check,
-            admission_expectation=admission_expectation,
             reasoning_effort_is_set=reasoning_effort_is_set,
         )
         self._conversation.prompt_turn_numbers.append(turn_token.turn_number)
@@ -378,8 +350,6 @@ class _CountedChild:
         *,
         sender_content: MessageContent | None = None,
         sender_label: str,
-        emission_check: EmissionCheck | None = None,
-        admission_expectation: AdmissionExpectation | None = None,
     ) -> BackendSteerOutcome:
         if self._conversation.known_prewrite_failure:
             return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
@@ -388,8 +358,6 @@ class _CountedChild:
             content,
             sender_label=sender_label,
             sender_content=sender_content,
-            emission_check=emission_check,
-            admission_expectation=admission_expectation,
         )
 
     async def cancel_running_turn(self) -> None:
