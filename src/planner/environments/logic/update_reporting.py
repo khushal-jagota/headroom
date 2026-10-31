@@ -30,7 +30,7 @@ def final_report(
                         f"The requested application is installed, but {name} did not complete.")
         return ("unknown", "deployment_evidence_uncertain",
                 "The requested application is installed. Final check evidence is uncertain. "
-                "Inspect the recorded lifecycle and workflow checks.")
+                "Chief review is required. No action is needed from you.")
     return ("unknown", "admission_evidence_uncertain",
             "Update admission or installation evidence is uncertain. "
-            "Inspect the recorded request and lifecycle before owner recovery.")
+            "Work remains paused. Chief review is required.")

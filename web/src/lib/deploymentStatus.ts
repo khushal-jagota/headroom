@@ -8,7 +8,8 @@ export type VisibleDeploymentState =
   | "preparing"
   | "restarting"
   | "back_up"
-  | "problem";
+  | "problem"
+  | "unknown";
 
 function timestamp(value: string | null | undefined): number | null {
   if (typeof value !== "string") return null;
@@ -43,6 +44,32 @@ export function successPresentation(
   return { state: "back_up", wakeAt: deadline };
 }
 
+function unknownPresentation(
+  status: DeploymentStatus, connectionState: ConnectionStatus, now: number
+): VisibleDeploymentState {
+  if (!status.installation_confirmed) return "unknown";
+  if (connectionState !== "connected") return connectionState;
+  const deadline = timestamp(status.unknown_display_until);
+  return deadline !== null && now >= deadline ? connectionState : "unknown";
+}
+
+/** A stale cached progress body uses the same truth as a fresh unknown body. */
+export function deploymentStatusDetail(
+  status: DeploymentStatus | null | undefined, state: VisibleDeploymentState
+): string | null {
+  if (!status) return null;
+  if (state === "unknown") {
+    if (status.installation_confirmed) {
+      return "The requested app is installed and available. Its final report is unconfirmed. No action is needed from you.";
+    }
+    if (status.state === "unknown" && status.detail) return status.detail;
+    return status.work_paused
+      ? "Installation is unconfirmed. Work remains paused. Chief review is required."
+      : "Installation is unconfirmed. Chief review is required.";
+  }
+  return ["preparing", "restarting", "problem"].includes(state) ? status.detail : null;
+}
+
 export function resolveDeploymentStatus(
   status: DeploymentStatus | null | undefined,
   connectionState: ConnectionStatus,
@@ -57,10 +84,10 @@ export function resolveDeploymentStatus(
   }
   if (!status) return "reconnecting";
   if (status.state === "preparing") {
-    return isFresh(status, now) ? "preparing" : "reconnecting";
+    return isFresh(status, now) ? "preparing" : unknownPresentation(status, connectionState, now);
   }
   if (status.state === "restarting") {
-    return isFresh(status, now) ? "restarting" : "reconnecting";
+    return isFresh(status, now) ? "restarting" : unknownPresentation(status, connectionState, now);
   }
   if (status.state === "back_up") {
     return successPresentation(status, connectionState, now).state;
@@ -68,7 +95,7 @@ export function resolveDeploymentStatus(
   if (status.state === "idle") {
     return connectionState;
   }
-  return "reconnecting";
+  return unknownPresentation(status, connectionState, now);
 }
 
 export function deploymentStatusExpiry(
@@ -78,7 +105,7 @@ export function deploymentStatusExpiry(
 ): number | null {
   if (
     !status ||
-    !["preparing", "restarting", "back_up"].includes(status.state) ||
+    !["preparing", "restarting", "back_up", "unknown"].includes(status.state) ||
     status.outcome === "failed" ||
     status.outcome === "rolled_back"
   ) {
@@ -88,7 +115,10 @@ export function deploymentStatusExpiry(
     return successPresentation(status, connectionState, now).wakeAt;
   }
   const expiry = expiryTime(status);
-  return expiry !== null && expiry > now ? expiry : null;
+  if (status.state !== "unknown" && expiry !== null && expiry > now) return expiry;
+  const unknownDeadline = status.installation_confirmed && connectionState === "connected"
+    ? timestamp(status.unknown_display_until) : null;
+  return unknownDeadline !== null && unknownDeadline > now ? unknownDeadline : null;
 }
 
 export function deploymentStatusExpiryDelay(
@@ -107,6 +137,7 @@ export type StatusCardKey =
   | "Deployed"
   | "Reconnecting"
   | "Problem"
+  | "Deployment outcome unknown"
   | "update-ready"
   | "update-held"
   | "owner-update";
@@ -118,6 +149,7 @@ export function resolveStatusCard(
   // A failed deploy keeps its explanation visible over the page refresh prompt.
   // ShellStatus retains owner update controls beside that failure explanation.
   if (statusState === "problem") return "Problem";
+  if (statusState === "unknown") return "Deployment outcome unknown";
   if (release.updateAvailable) {
     return release.reloadRequested && release.compositionActive ? "update-held" : "update-ready";
   }

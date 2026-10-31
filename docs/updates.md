@@ -36,7 +36,9 @@ The supported schema floor is `video_upload_ledger`. Adoption refuses an unknown
 
 Before the local commit, writers are stopped and ordinary work stays closed. Restore is possible only in that window. After the commit, a failed status publication does not restore the database.
 
-If the runner vanishes before commit, work stays closed. When the lifecycle evidence expires, the state is recovery-required. Expiry does not open the app and does not restore a snapshot. The owner recovers on the deployment runner and chooses the snapshot and the fallback explicitly. The direct operator tool has no resume command. Its same-SHA path checks health. It does not finish a lost commit.
+If the runner vanishes before commit, work stays closed. Expired evidence means that installation is unconfirmed and Chief review is required. Expiry does not open the app, restore a snapshot, or prove that a restart is necessary. The screen gives no operator instructions. During an admission hold, Chief attention stays pending because agent work cannot start.
+
+If the recorded commit matches the running app and admission is open, the screen confirms that the app is installed and available. An unconfirmed final report needs no owner action. Its notice ends five minutes after progress expires, or five minutes after an explicit unknown report. Refresh does not reset that deadline. The durable evidence and Chief attention remain. Holds, failures, rollbacks, and revision mismatches never disappear through this deadline.
 
 ## Where it shows up
 
