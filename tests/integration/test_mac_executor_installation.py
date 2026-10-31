@@ -271,10 +271,23 @@ assert 'planner.core.db' not in sys.modules
             env=environment,
         )
     )
-    # The rendered service argv uses the ordinary installed console.
+    # Linux cannot execute the native Mach-O main executable.
+    assert plist["ProgramArguments"][0] == str(
+        paths.home / "Applications/Panels.app/Contents/MacOS/Panels"
+    )
+    assert (installed / "environments/mac_app/launcher.c").is_file()
+    # Exercise the same forwarded arguments through the installed internal runtime.
     # Eager help stops before transport, credentials, services, or providers execute.
     subprocess.run(
-        [*plist["ProgramArguments"], "--help"],
+        [
+            python,
+            "-I",
+            "-B",
+            "-m",
+            "planner.executor.entrypoint",
+            *plist["ProgramArguments"][1:],
+            "--help",
+        ],
         cwd=outside_source,
         env=environment,
         text=True,

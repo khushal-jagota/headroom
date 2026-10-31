@@ -32,6 +32,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 planner = [
   "py.typed",
+  "environments/mac_app/*.c",
   # The migrations directory is not an importable package (Alembic loads it by path), so
   # its files ship only because they are named here. Without them an installed Panels
   # cannot build or upgrade a database.

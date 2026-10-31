@@ -1,6 +1,9 @@
 # Mac executor installation and updates
 
-The executor uses one native Python environment, one source checkout, and one GUI LaunchAgent.
+The executor uses a native Panels app, one Python environment, one source checkout, and one GUI LaunchAgent.
+The app provides the proposed owner-local permission identity. Python remains internal to the existing installation.
+Apple Development signing does not establish a distributable or notarized release.
+Native requester attribution and consent persistence require the separate native checks below.
 The operator installs and updates it with ordinary package and service commands.
 This procedure preserves the existing persistent executor root.
 It supplies no automatic updater, deployment transaction, or automatic rollback.
@@ -298,6 +301,62 @@ PY
 If inspection refuses, preserve the root and stop. Do not repair or convert it through this installation procedure.
 Earlier draft journal formats have no reader or converter. Databases that ran earlier Mac/VPS branch migrations must be rebuilt.
 
+## Prepare the signed Panels app
+
+These commands are a procedure for a separately authorized native window.
+Source approval does not authorize compilation, signing, installation, prompts, or service changes on the Mac.
+The existing application owner coordinates the window and preserves the current installation.
+The isolated dogfood and startup investigation are outside this procedure.
+
+Use the normal owner account. Do not copy or export signing keys.
+The reviewed metadata check found one valid Apple Development identity, not Developer ID Application.
+Use that identity only for the owner-local route. Do not claim outside-App-Store distribution.
+A later distribution channel or certificate change needs a separate decision.
+
+After the current runbook's source and environment preparation, choose an absent candidate path outside the installed app:
+
+```sh
+APP="$HOME/Applications/Panels.app"
+CANDIDATE_APP="$EVIDENCE/Panels.app"
+LOCAL_IDENTITY="A374793985387F82D90D9EAFED73D60D907C26DC"
+"$VENV/bin/python" -I -B -m planner.environments.mac_app build \
+  --home "$HOME" --output "$CANDIDATE_APP" --revision "$CANDIDATE_SHA"
+/usr/bin/codesign --force --sign "$LOCAL_IDENTITY" "$CANDIDATE_APP"
+"$VENV/bin/python" -I -B -m planner.environments.mac_app verify \
+  --app "$CANDIDATE_APP" --identity "$LOCAL_IDENTITY" > "$EVIDENCE/candidate-signature.txt"
+```
+
+The build needs native arm64 macOS, Xcode Command Line Tools, and the existing fixed Python environment.
+It creates a new candidate and refuses replacement of the installed app. A failed build leaves its partial candidate for inspection.
+The compiler can apply an ad hoc signature. That signature is not accepted for installation.
+The explicit development signature replaces it. There is no ad hoc fallback.
+If signing requests keychain interaction, stop and return the decision to the owner. Do not change keychain policy.
+
+The bundle identifier is `com.panels.executor.app`. The native executable and display name are `Panels`.
+The C executable invokes the fixed environment with `-I -B -m planner.executor.entrypoint`.
+It forwards arguments without a shell and preserves the process identity and exit status through `execve`.
+The app contains no copied Python runtime or provider dependencies.
+Do not re-sign those external dependencies or infer attribution from their ancestry alone.
+
+For an update, preserve the old signed app before replacement. Verify both signatures and mutual designated requirements:
+
+```sh
+"$VENV/bin/python" -I -B -m planner.environments.mac_app verify \
+  --app "$CANDIDATE_APP" --previous "$APP" --identity "$LOCAL_IDENTITY" \
+  > "$EVIDENCE/update-signature-compatibility.txt"
+```
+
+A missing or invalid previous signature stops an update. The first transition from the Python console has no previous signed app.
+That first transition does not establish transfer of existing Python consent.
+Never invent a compatible requirement or weaken the signature check to continue.
+
+Only after identity-bound graceful exit, preserved state, and an authorized installation window, install the verified app at `$APP`.
+Retain the previous app outside that destination with `ditto` before replacement.
+Copy the candidate with `ditto`, then repeat signature verification against the installed destination.
+Do not bootstrap the job if the installed signature fails.
+An existing unrelated app at that location is a conflict, not permission to replace it.
+The installation owner must resolve that conflict first.
+
 ## Render and start one LaunchAgent
 
 The renderer prints XML to stdout. It does not install packages, write files, or control services.
@@ -389,3 +448,46 @@ Code paths: `src/planner/environments/mac_executor.py`, `src/planner/executor/cl
 `agent_backends/package-lock.json`.
 
 _Last verified: 2026-10-31. Commands checked against source; no live Mac operation occurred._
+
+
+## Narrow permission setup and native evidence
+
+First select the exact workspace and output directories. The preview performs no path traversal or protected access:
+
+```sh
+"$APP/Contents/MacOS/Panels" executor permissions --workspace "$WORKSPACE" --output "$OUTPUT"
+```
+
+The preview leaves symlinks unresolved. It lists the selected actions and likely Files and Folders categories.
+After the owner approves those actions and the native window, add `--check`.
+That action resolves paths, reads at most one workspace directory entry, and writes, reads, and removes one temporary output file.
+Resolution can itself require consent. Redirected paths can need different access from the preview's lexical category.
+The command does not scan workspace files, grant permissions, reset TCC, or request Full Disk Access.
+If access fails, review the exact paths and normal account permissions.
+For a denied Files and Folders grant, the owner uses System Settings > Privacy & Security > Files and Folders.
+New resources, revocation, or category-specific consent rules can require another owner choice.
+
+The native verification window must include these exact boundaries:
+
+1. Retain the installed app signature, designated requirement, resolved executable path, service plist, and macOS version.
+2. Select the resource and category that caused the original native dialog. Do not infer them from the Python label.
+3. Start through the reviewed LaunchAgent. Observe the actual responsible requester during the first authorized access.
+4. Run an ordinary selected-provider task whose real tool child accesses that resource. Retain process-chain and requester evidence.
+5. Repeat the same access in the same run, after provider restart, and after an authorized executor restart.
+6. Repeat after one ordinary locally signed app update. Require the new app to satisfy the old designated requirement and vice versa.
+7. Repeat after one compatible native Python update in the retained environment. Do not assume a path alone preserves consent.
+8. Check separately authorized denial and another resource. Use owner-controlled consent or a disposable test account, without resetting existing grants.
+
+Every enabled provider needs attribution evidence before the result covers it.
+If a requester appears as Python or a provider, stop and return the failed attribution boundary for review.
+If an update changes attribution or consent, retain the result without a persistence claim.
+Linux tests prove argument handling, package contents, and configuration only.
+A local development signature does not prove distribution readiness, successful provider attribution, or permission persistence.
+Future instance links must state disabled capabilities and test limits in the same message.
+
+Apple references: [file permissions and responsible code](https://developer.apple.com/forums/thread/678819),
+[native trampoline example](https://developer.apple.com/forums/thread/720057),
+[designated requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements),
+and [certificate types](https://developer.apple.com/help/account/certificates/certificates-overview/).
+
+_Last verified: 2026-10-31. Source and Linux software checks only; no native build, signing, installation, or consent check._

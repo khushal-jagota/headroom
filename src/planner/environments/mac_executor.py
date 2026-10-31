@@ -9,6 +9,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from planner.environments.mac_app.configuration import BUNDLE_ID
 from planner.executor.configuration import (
     LAUNCH_AGENT_RESTART_THROTTLE_SECONDS,
     validate_executor_launch,
@@ -70,8 +71,9 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
     return plistlib.dumps(
         {
             "Label": "com.panels.executor",
+            "AssociatedBundleIdentifiers": [BUNDLE_ID],
             "ProgramArguments": [
-                str(configuration.venv / "bin/panels"),
+                str(configuration.home / "Applications/Panels.app/Contents/MacOS/Panels"),
                 "executor",
                 "run",
                 "--application-revision",

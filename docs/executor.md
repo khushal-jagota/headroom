@@ -563,6 +563,10 @@ explicit inputs. It shares the executor connection's HTTPS origin validation and
 performs no installation or service actions.
 No automatic two-host update or general migration mechanism exists.
 
+The owner-local native app route uses a Panels Mach-O entry point and the existing fixed Python environment.
+The [installation procedure](mac-executor-installation.md#prepare-the-signed-panels-app) owns build, signing, consent, and native verification gates.
+Apple Development signing is not Developer ID distribution or evidence of permission persistence.
+
 ## Fresh installation and retained journals
 
 The installation path uses outbox format 5. There is no reader or converter for

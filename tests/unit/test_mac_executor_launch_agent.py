@@ -21,7 +21,7 @@ def test_agent_uses_account_home_gui_and_stable_data_with_spaces(tmp_path: Path)
     )
     plist = plistlib.loads(render_launch_agent(configuration))
     assert plist["ProgramArguments"][:3] == [
-        str(configuration.venv / "bin/panels"),
+        str(home / "Applications/Panels.app/Contents/MacOS/Panels"),
         "executor",
         "run",
     ]
@@ -42,6 +42,7 @@ def test_agent_uses_account_home_gui_and_stable_data_with_spaces(tmp_path: Path)
     assert plist["LimitLoadToSessionType"] == "Aqua"
 
     assert plist["Label"] == "com.panels.executor"
+    assert plist["AssociatedBundleIdentifiers"] == ["com.panels.executor.app"]
     assert plist["RunAtLoad"] is True
     assert plist["ThrottleInterval"] == 10
     assert plist["ProgramArguments"][3:] == [

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from pathlib import Path
 
 import click
 
@@ -75,3 +77,57 @@ def quiesce(exit_when_ready: bool) -> None:
     if response.error is not None:
         raise click.ClickException(str(response.error))
     click.echo(json.dumps(response.result))
+
+
+@executor_group.command("permissions")
+@click.option("--workspace", type=str, required=True)
+@click.option("--output", type=str, required=True)
+@click.option(
+    "--check", is_flag=True, help="Authorize the stated directory read and temporary output check."
+)
+def permissions(workspace: str, output: str, check: bool) -> None:
+    """Show narrow access needs. Only --check touches the selected directories."""
+    from planner.executor.permissions import access_description, check_access
+
+    home = Path.home()
+    workspace_path = Path(os.path.abspath(Path(workspace).expanduser()))
+    output_path = Path(os.path.abspath(Path(output).expanduser()))
+    click.echo(f"Workspace directory read: {workspace_path}")
+    click.echo(access_description(workspace_path, home))
+    click.echo(f"Output temporary write/read/remove: {output_path}")
+    if output_path == workspace_path or workspace_path in output_path.parents:
+        click.echo("Output reuses the workspace scope, subject to macOS protections.")
+    else:
+        click.echo(access_description(output_path, home))
+    click.echo(
+        "No Full Disk Access or unrelated permission is requested. "
+        "Python consent does not transfer automatically."
+    )
+    click.echo(
+        "If macOS requests consent, you decide. Denial remains effective. "
+        "Panels does not grant or reset access."
+    )
+    if not check:
+        click.echo(
+            "Preview only. Symlinks remain unresolved. Use --check "
+            "only after you approve these actions."
+        )
+        return
+    click.echo(
+        "Explicit check: path resolution can itself require "
+        "consent, including for redirected paths."
+    )
+    try:
+        resolved_workspace, resolved_output = check_access(workspace_path, output_path)
+    except (OSError, ValueError) as error:
+        raise click.ClickException(
+            f"Access check failed: {error}. Review the selected paths and account access. "
+            "For a denied macOS grant, use System Settings > Privacy "
+            "& Security > Files and Folders. "
+            "No retry or permission reset occurred."
+        ) from error
+    click.echo(f"Checked workspace: {resolved_workspace}\nChecked output: {resolved_output}")
+    click.echo(
+        "Directory and temporary file access passed. This does not prove "
+        "provider attribution or future consent persistence."
+    )
