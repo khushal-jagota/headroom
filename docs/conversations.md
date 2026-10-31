@@ -8,6 +8,12 @@ The conversation id belongs to its caller. A Ticket stores its own. Chief stores
 
 Only text that was sent into the agent is context the model can use on a later turn. The notebook is the append-only record of finished facts: a delivered prompt, a completed agent message, a tool call, a permission ask and its answer, a model change, a turn ending, an addressed message to the owner, a refusal, a discard. A row is written once.
 
+Single rows, turn endings and initial cancellation records use the same append path.
+It commits the whole batch together with activity, compaction, owner read position,
+attention and any failure wake. The failure wake uses the last row's error text.
+Mac receipts join this same append inside their receipt transaction. A replay or
+refusal does not apply the live conversation change.
+
 Live streaming text is shown while a turn runs and is not stored as notebook prose. Private reasoning is dropped. An open pane receives that live tail directly, so a running turn does not have to announce every token through the global change signal. Rows other screens depend on — delivered and refused prompts, asks, turn endings, model changes, messages to the owner — still announce themselves in the ordinary way.
 
 A message to the owner is a notebook row for Khushal. It does not invoke the backend. Editing a Ticket field, parking a proposal, or updating a recap in the database does not inform the Worker. Those become agent context only when a later prompt carries them.
