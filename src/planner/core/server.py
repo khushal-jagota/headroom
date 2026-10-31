@@ -255,7 +255,7 @@ def create_app(
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
             )
         )
-        if os.environ.get("PLAN_EXECUTOR_MODE") == "remote":
+        if config.executor_id is not None:
             from planner.executor.routing import LocaleBackendChildFactory
             from planner.executor.vps_transport import VpsExecutor
 
