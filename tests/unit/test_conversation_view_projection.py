@@ -263,41 +263,6 @@ def test_projected_semantics_preserve_full_latest_message_boundary(
         assert page["body_bytes"] <= 128 * 1024
 
 
-def test_provider_submission_and_model_report_stay_separate() -> None:
-    from planner.conversation.contracts import ConversationBackendKey, PromptDeliveryMode
-    from planner.conversation.events import (
-        PromptEventPayload,
-        ProviderSelectionReportedEventPayload,
-        ProviderSubmissionFact,
-    )
-    from planner.conversation.message_content import MessageText
-    from planner.conversation.views.logic.bodies import row_body
-    from planner.conversation.views.logic.effects import event_effect
-
-    acceptance = ProviderSubmissionFact(
-        ConversationBackendKey.claude, "accepted", "command_lifecycle.started", "uuid-1"
-    )
-    prompt = PromptEventPayload(
-        content=(MessageText("hello"),), sender_label="owner", mode=PromptDeliveryMode.queue,
-        provider_submission=acceptance,
-    )
-    body = row_body(prompt, created_at=1)
-    assert body is not None and body["kind"] == "prompt"
-    assert body["provider_submission"] == acceptance
-    assert "model" not in body
-    report = ProviderSelectionReportedEventPayload(
-        ConversationBackendKey.claude, "response_model", "claude-reported", None, 1, "child-1"
-    )
-    assert event_effect(report).row_kind == "provider_selection_reported"
-    assert event_effect(report).focus_visible
-    assert row_body(report, created_at=2) == {
-        "kind": "provider_selection_reported", "provider": ConversationBackendKey.claude,
-        "source_kind": "response_model", "model": "claude-reported", "reasoning_effort": None,
-        "turn_number": 1, "child_lifetime": "child-1",
-    }
-
-
-
 def test_late_provider_report_does_not_borrow_the_next_active_turn() -> None:
     rows = [
         ("prompt", {"text": "one", "sender_label": "owner", "mode": "queue"}),

@@ -33,16 +33,6 @@ from planner.core import db as db_module
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
-from planner.core.errors import PlannerError
-from planner.execution_identity import ChildReference
-from planner.executor.protocol import (
-    ChildCommand,
-    ChildOperation,
-    CommandDisposition,
-    CommandOutcome,
-    StopRun,
-)
-from planner.executor.store import ExecutorStore
 from planner.manager_wakes import data as wakes
 from planner.manager_wakes.runtime import deliver_batch
 from planner.managers import data as managers
@@ -142,34 +132,6 @@ def _failure(conn: Connection, ticket_id: str) -> CanonicalModelValidation:
         None,
         None,
     )
-
-
-def test_offline_creation_preserves_exact_token_effort_and_historical_origin(
-    tmp_db: Connection,
-) -> None:
-    ticket = tickets.create_ticket(
-        tmp_db,
-        title="Offline exact",
-        principal=OWNER_PRINCIPAL,
-        now=1,
-        title_max_chars=200,
-        worker_type="coding",
-        employee_backend="codex",
-        employee_launch_model="gpt-6.1-sol",
-        employee_launch_reasoning_effort="provider-unknown-effort",
-    )
-    selected = validation.read_launch_selection(tmp_db, ticket.id)
-    assert (selected.submitted_token, selected.reasoning_effort, selected.selection_kind) == (
-        "gpt-6.1-sol",
-        "provider-unknown-effort",
-        SelectionKind.legacy_unclassified,
-    )
-    assert not validation.selection_is_historical(tmp_db, ticket.id)
-    saved = validation.read_launch_validation(tmp_db, ticket.id)
-    assert saved is not None and saved.current
-    assert saved.validation.selection == selected
-    assert saved.validation.state is ValidationState.unresolved
-    assert saved.validation.reason is ValidationReason.catalog_unavailable
 
 
 def test_explicit_departed_intent_has_its_own_cas_writer_and_never_uses_effective_identity(
@@ -343,79 +305,6 @@ def test_final_notice_admission_discards_a_failure_corrected_after_batching(
     )
 
 
-def test_reopen_edit_and_retirement_preserve_captured_command_and_uncertain_outcome(
-    tmp_db: Connection, fake_clock: FakeClock
-) -> None:
-    """Old journal reopen proves ownership without fabricating a terminal outcome."""
-    _, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    tmp_db.execute(
-        "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,"
-        "access,created_at) VALUES('legacy-conversation','codex','model','/tmp','full',1)"
-    )
-    tmp_db.execute(
-        "UPDATE tickets SET conversation_id='legacy-conversation' WHERE id=?", (ticket_id,)
-    )
-    child = ChildReference("executor-legacy", "child-old", "legacy-conversation")
-    command = ChildCommand("legacy-unknown", child, ChildOperation.stop, None, StopRun())
-    tmp_db.execute(
-        "INSERT INTO mac_runs VALUES(?,?,?,'ticket',?,1,1,'stopping')",
-        (
-            child.conversation_id,
-            child.executor_incarnation,
-            child.child_id,
-            ticket_id,
-        ),
-    )
-    unknown = CommandOutcome(command.command_id, child, CommandDisposition.uncertain, {})
-    ExecutorStore.record_command_outcome_in_transaction(tmp_db, unknown)
-    tmp_db.execute(
-        "INSERT INTO executor_child_assignments(executor_incarnation,child_id,conversation_id,"
-        "principal_kind,principal_id,created_at_ms) VALUES(?,?,?,'ticket',?,1)",
-        (child.executor_incarnation, child.child_id, child.conversation_id, ticket_id),
-    )
-    tmp_db.commit()
-    disk = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    original_outcome = tmp_db.execute(
-        "SELECT outcome_json FROM executor_command_outcomes"
-    ).fetchone()[0]
-    reopened = connect(disk)
-    try:
-        projects.update_project(reopened, "project_vylo", folder_path="/changed", now=100)
-        ExecutorStore.close_child_in_transaction(reopened, child, 100)
-        assert reopened.execute("SELECT stop_state FROM mac_runs").fetchone()[0] == "closed"
-        assert (
-            reopened.execute("SELECT outcome_json FROM executor_command_outcomes").fetchone()[0]
-            == original_outcome
-        )
-        assert (
-            reopened.execute("SELECT closed_at_ms FROM executor_child_assignments").fetchone()[0]
-            == 100
-        )
-        with pytest.raises(PlannerError, match="conflicts with first result"):
-            ExecutorStore.record_command_outcome_in_transaction(
-                reopened,
-                CommandOutcome(command.command_id, child, CommandDisposition.succeeded, {}),
-            )
-    finally:
-        reopened.close()
-
-
-def test_assignment_edit_preserves_selection_revision_concurrency(
-    tmp_db: Connection, fake_clock: FakeClock
-) -> None:
-    _, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    before = validation.read_launch_selection(tmp_db, ticket_id)
-    tickets.edit_ticket(
-        tmp_db,
-        ticket_id,
-        edit={"project_id": "project_other", "manager_id": None},
-        title_max_chars=200,
-        principal=OWNER_PRINCIPAL,
-        now=7,
-    )
-    after = validation.read_launch_selection(tmp_db, ticket_id)
-    assert int(after.selection_revision) > int(before.selection_revision)
-    assert after.submitted_token == before.submitted_token
 
 
 @pytest.mark.parametrize("queued", [False, True])

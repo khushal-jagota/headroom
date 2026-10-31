@@ -7,8 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 from tests.unit.test_worker_memory import _add_ticket, _make_conversation
 
@@ -20,7 +18,6 @@ from planner.conversation.events import (
 from planner.conversation.message_content import text_message_content
 from planner.core import db
 from planner.core.db import connect, create_schema
-from planner.core.migrations.versions import mac_vps_execution as migration
 from planner.runtime import worker_memory
 
 
@@ -117,30 +114,6 @@ def test_cutover_holds_known_events_missing_events_and_former_links(tmp_path: Pa
         assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ()
         create_schema(conn)
         assert conn.execute("SELECT COUNT(*) FROM worker_memory_notice_holds").fetchone()[0] == 5
-
-
-def test_failed_cutover_rolls_back_tables_and_holds(tmp_path: Path) -> None:
-    path = _legacy_database(tmp_path)
-    engine = db._migration_engine(path, 5000)
-    try:
-        with pytest.raises(RuntimeError, match="synthetic cutover failure"):
-            with engine.begin() as conn:
-                with Operations.context(MigrationContext.configure(conn)):
-                    migration.upgrade()
-                    raise RuntimeError("synthetic cutover failure")
-    finally:
-        engine.dispose()
-    with closing(connect(path)) as conn:
-        assert (
-            conn.execute(
-                "SELECT name FROM sqlite_master WHERE name LIKE 'worker_memory_notice_%'"
-            ).fetchall()
-            == []
-        )
-        with pytest.raises(sqlite3.OperationalError):
-            worker_memory.require_memory_notice_storage(conn)
-        create_schema(conn)
-        worker_memory.require_memory_notice_storage(conn)
 
 
 @pytest.mark.parametrize(

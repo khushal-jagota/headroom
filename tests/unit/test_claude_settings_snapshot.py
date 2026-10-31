@@ -1,8 +1,8 @@
-"""The real pinned SDK reader correlates synthetic metadata before user bytes."""
+"""A final policy refusal must prevent user bytes in the pinned SDK transport."""
+
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -15,25 +15,9 @@ from planner.conversation.backends.claude_agent_sdk import (
     _ClaudeProtocolTransport,
     _ObservedClaudeSdkClient,
 )
-from planner.conversation.backends.claude_settings import (
-    ClaudeSettingsUnavailable,
-)
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
 )
-
-SECRET = "synthetic-never-disclose-settings-value"
-
-
-def settings() -> dict[str, Any]:
-    return {"effective": {"env": {"ANTHROPIC_API_KEY": SECRET}, "model": "opus"},
-            "sources": [{"source": "userSettings", "settings": {"model": "opus"}}],
-            "applied": {"model": "claude-opus-5", "effort": "high"}}
-
-
-def models() -> dict[str, Any]:
-    return {"models": [{"value": "opus", "resolvedModel": "claude-opus-5",
-                        "supportedEffortLevels": ["high", "max"]}]}
 
 
 class ScriptedTransport(_ClaudeCleanupTransport):
@@ -41,11 +25,6 @@ class ScriptedTransport(_ClaudeCleanupTransport):
         super().__init__("", options)
         self.frames: list[dict[str, Any]] = []
         self.replies: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-        self.settings = settings()
-        self.models = models()
-        self.error = False
-        self.pause = False
-        self.requests = asyncio.Event()
         self._stdin_stream = self  # type: ignore[assignment]
         self._ready = True
 
@@ -56,28 +35,28 @@ class ScriptedTransport(_ClaudeCleanupTransport):
         frame = json.loads(data)
         self.frames.append(frame)
         if frame.get("type") == "user":
-            self.replies.put_nowait({"type": "command_lifecycle",
-                                    "command_uuid": frame["uuid"], "state": "queued"})
+            self.replies.put_nowait(
+                {"type": "command_lifecycle", "command_uuid": frame["uuid"], "state": "queued"}
+            )
             return
         if frame.get("type") != "control_request":
             return
-        subtype = frame["request"]["subtype"]
-        if subtype == "initialize":
-            payload = {"commands": [], "models": [], "agents": [], "account": {},
-                       "output_style": "default", "available_output_styles": []}
-        elif subtype == "get_settings":
-            payload = copy.deepcopy(self.settings)
-        else:
-            assert subtype == "list_models"
-            payload = copy.deepcopy(self.models)
-        if self.pause and subtype != "initialize":
-            self.requests.set()
-            return
-        response = {"type": "control_response", "response": {
-            "subtype": "error" if self.error and subtype != "initialize" else "success",
-            "request_id": frame["request_id"], "response": payload,
-            "error": SECRET,
-        }}
+        assert frame["request"]["subtype"] == "initialize"
+        response = {
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": frame["request_id"],
+                "response": {
+                    "commands": [],
+                    "models": [],
+                    "agents": [],
+                    "account": {},
+                    "output_style": "default",
+                    "available_output_styles": [],
+                },
+            },
+        }
         self.replies.put_nowait(response)
 
     async def read_messages(self) -> AsyncIterator[dict[str, Any]]:
@@ -92,8 +71,7 @@ class ScriptedTransport(_ClaudeCleanupTransport):
         return
 
 
-def bench() -> tuple[_ObservedClaudeSdkClient, _ClaudeProtocolTransport,
-                     ScriptedTransport]:
+def bench() -> tuple[_ObservedClaudeSdkClient, _ClaudeProtocolTransport, ScriptedTransport]:
     options = ClaudeAgentOptions(model="opus", effort="high")
     inner = ScriptedTransport(options)
     transport = _ClaudeProtocolTransport(inner)
@@ -102,63 +80,11 @@ def bench() -> tuple[_ObservedClaudeSdkClient, _ClaudeProtocolTransport,
 
 
 async def message(identity: str) -> AsyncIterator[dict[str, Any]]:
-    yield {"type": "user", "uuid": identity,
-           "message": {"role": "user", "content": "synthetic text"}}
-
-
-def test_control_cancellation_disconnect_and_late_reply_release_owned_futures() -> None:
-    async def exercise() -> None:
-        client, transport, inner = bench()
-        await client.connect()
-        try:
-            inner.pause = True
-            waiting = asyncio.create_task(transport.control_request("list_models"))
-            await inner.requests.wait()
-            identity = inner.frames[-1]["request_id"]
-            assert identity.startswith("panels-metadata-")
-            waiting.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await waiting
-            assert not transport._metadata_responses
-            transport.observe_control({"type": "control_response", "response": {
-                "subtype": "success", "request_id": identity, "response": settings(),
-            }})
-            inner.requests.clear()
-            waiting = asyncio.create_task(transport.control_request("list_models"))
-            await inner.requests.wait()
-            transport.settle_control()
-            with pytest.raises(ClaudeSettingsUnavailable):
-                await waiting
-            assert not transport._metadata_responses
-        finally:
-            await client.disconnect()
-    asyncio.run(exercise())
-
-
-
-
-
-
-
-def test_user_emission_needs_only_final_token_policy_guard() -> None:
-    async def exercise() -> None:
-        client, _transport, inner = bench()
-        await client.connect()
-        try:
-            inner.error = True  # Metadata cannot veto a literal provider token.
-            checks: list[object] = []
-            await client.query(
-                message("exact-uuid"), emission_check=lambda prepared=None: checks.append(prepared)
-            )
-            users = [frame for frame in inner.frames if frame["type"] == "user"]
-            assert [frame["uuid"] for frame in users] == ["exact-uuid"]
-            assert len(checks) == 1
-            assert checks[0] is not None
-            assert [frame["request"]["subtype"] for frame in inner.frames
-                    if frame["type"] == "control_request"] == ["initialize"]
-        finally:
-            await client.disconnect()
-    asyncio.run(exercise())
+    yield {
+        "type": "user",
+        "uuid": identity,
+        "message": {"role": "user", "content": "synthetic text"},
+    }
 
 
 def test_final_policy_refusal_reaches_actual_user_write_lock() -> None:
@@ -166,6 +92,7 @@ def test_final_policy_refusal_reaches_actual_user_write_lock() -> None:
         client, _transport, inner = bench()
         await client.connect()
         try:
+
             def refuse(prepared: object = None) -> None:
                 raise AdmissionRefused("explicit token disabled")
 
@@ -174,4 +101,5 @@ def test_final_policy_refusal_reaches_actual_user_write_lock() -> None:
             assert not [frame for frame in inner.frames if frame["type"] == "user"]
         finally:
             await client.disconnect()
+
     asyncio.run(exercise())

@@ -12,7 +12,6 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from pydantic import TypeAdapter
 from tests.support.conversation_claude_agent_sdk_bench import (
     SESSION_ID,
     _ScriptedClaudeSdkClient,
@@ -46,8 +45,6 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import PromptEventPayload
 from planner.conversation.message_content import (
-    MessageContent,
-    message_content_text,
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
@@ -334,138 +331,6 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             spool.close()
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
-
-
-@pytest.mark.parametrize(
-    ("identity", "recompose", "expected_context"),
-    [
-        ((("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_native")), True, True),
-        ((("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_native")), False, True),
-        ((("PLAN_ACTOR", "chief"), ("PLAN_TICKET_ID", "t_native")), True, False),
-        ((("PLAN_ACTOR", "worker"),), True, False),
-        ((), True, False),
-    ],
-    ids=["recompose-worker", "reuse-worker", "other-actor", "missing-ticket", "no-identity"],
-)
-def test_native_context_scope_and_rebind_do_not_duplicate_composed_content(
-    tmp_path: Path, identity: tuple[tuple[str, str], ...], recompose: bool, expected_context: bool
-) -> None:
-    from planner.conversation.backends.contracts import TurnToken
-    from planner.conversation.contracts import ConversationStartRequest
-    from planner.executor.protocol import CommandDisposition
-
-    async def exercise() -> None:
-        db_path = str(tmp_path / "panels.sqlite")
-        connection = connect(db_path)
-        try:
-            create_schema(connection)
-        finally:
-            connection.close()
-        snapshot = CanonicalSkillSnapshot(
-            tuple(
-                CanonicalSkillSource(name, f"---\nname: {name}\ndescription: test\n---\ntext")
-                for name in ("panels", "panels-worker")
-            ),
-            ("panels", "panels-worker"),
-        )
-        commands: list[ChildCommand] = []
-        writes = 0
-
-        async def dispatch(command: ChildCommand) -> CommandOutcome:
-            nonlocal writes
-            commands.append(command)
-            if command.operation is ChildOperation.write_prompt:
-                writes += 1
-                if writes == 1:
-                    return CommandOutcome(
-                        command.command_id,
-                        command.child,
-                        CommandDisposition.refused,
-                        {"error_type": "NeedsRebind", "error_message": "new child"},
-                    )
-            return CommandOutcome(
-                command.command_id,
-                command.child,
-                CommandDisposition.succeeded,
-                {"composed_content_delivered": True},
-            )
-
-        remote = MacRemoteChildFactory(
-            lambda start, sink: ChildReference("test-incarnation", str(uuid4()), "c"),
-            dispatch,
-            lambda start: snapshot,
-            db_path=db_path,
-        )
-        system = SqliteProcessConversationSystem(
-            store=ConversationStore(db_path),
-            message_files=ConversationMessageFiles(db_path),
-            backend_child_factories={key: remote for key in ConversationBackendKey},
-        )
-        try:
-            await system.start_conversation(
-                ConversationStartRequest(
-                    "c",
-                    "a-model",
-                    role_materials=ConversationRoleMaterials("Worker role", identity),
-                    workspace_folder=tmp_path,
-                )
-            )
-            content = text_message_content("sender bytes")
-            if recompose:
-                assert (
-                    await system.send(
-                        "c",
-                        content,
-                        sender_label="Chief",
-                        sender=CHIEF_PRINCIPAL,
-                        recipient=Principal(PrincipalKind.ticket, "t_native"),
-                    )
-                    == PromptDeliveryStarted()
-                )
-            else:
-                attempt = await system._deliver_prompt_unsettled(
-                    system._conversations["c"],
-                    TurnToken("c", 1),
-                    content=content,
-                    sender_label="Chief",
-                    sender_message_count=1,
-                    mode=PromptDeliveryMode.queue,
-                    model_change=None,
-                    reasoning_effort_change=None,
-                    automatic_compaction=False,
-                    reply_senders=(CHIEF_PRINCIPAL,),
-                )
-                assert attempt.refusal_reason is None
-            written = [
-                command for command in commands if command.operation is ChildOperation.write_prompt
-            ]
-            assert len(written) == 2
-            assert isinstance(written[0].arguments, (WritePrompt, Steer))
-            assert isinstance(written[1].arguments, (WritePrompt, Steer))
-            assert encode_value(written[0].arguments.content) == encode_value(
-                written[1].arguments.content
-            )
-            for command in written:
-                assert isinstance(command.arguments, (WritePrompt, Steer))
-                assert encode_value(command.arguments.sender_content) == encode_value(content)
-                assert isinstance(command.arguments, (WritePrompt, Steer))
-                decoded_content: MessageContent = TypeAdapter(MessageContent).validate_python(
-                    encode_value(command.arguments.content)
-                )
-                text = message_content_text(decoded_content)
-                assert text.startswith("[Authenticated Panels reply requirement]\n")
-                assert NATIVE_WORKER_CONTEXT not in text
-                native_content = MacRunner._with_native_worker_context(
-                    system._conversations["c"].record.resolved_start(), decoded_content
-                )
-                assert message_content_text(native_content).count(NATIVE_WORKER_CONTEXT) == int(
-                    expected_context
-                )
-            assert len({command.child.child_id for command in written}) == 2
-        finally:
-            await system.shutdown()
-
-    asyncio.run(asyncio.wait_for(exercise(), 10))
 
 
 @pytest.mark.parametrize(

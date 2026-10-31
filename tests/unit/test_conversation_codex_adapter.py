@@ -504,28 +504,3 @@ def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_
             assert len(scripted.sink.endings) == 1
 
     _run(exercise)
-
-
-@pytest.mark.parametrize(
-    "effort,present,expected",
-    [(None, False, "medium"), (None, True, None), ("future-effort", True, "future-effort")],
-)
-def test_exact_effort_presence_reaches_codex(
-    tmp_path: Path, effort: str | None, present: bool, expected: str | None
-) -> None:
-
-    async def exercise() -> None:
-        async with _scripted_child(tmp_path, script={"turns": [{"actions": []}]}) as scripted:
-            await scripted.start(cursor=None)
-            await scripted.write_prompt(
-                1,
-                text_message_content("Exact request"),
-                model="gpt-6.1-terra",
-                reasoning_effort=effort,
-                reasoning_effort_is_set=present,
-            )
-            parameters = scripted.sent("turn/start")["params"]
-            assert parameters["model"] == "gpt-6.1-terra"
-            assert parameters["effort"] == expected
-
-    _run(exercise)

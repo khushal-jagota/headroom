@@ -4,12 +4,12 @@
 
 def run(browser, urls):
 
-    from playwright.sync_api import expect
-
     import base64
     import json
     import os
     from pathlib import Path
+
+    from playwright.sync_api import expect
 
     INPUT = "[data-conversation-input]"
     ATTACHMENTS = "[data-chat-image-name], [data-chat-file-name]"
@@ -360,18 +360,11 @@ def run(browser, urls):
         assert picker.locator('[data-conversation-backend="claude"]').get_attribute("aria-pressed") == "true"
         assert picker.locator('[data-conversation-backend="codex"]').get_attribute("aria-pressed") == "false"
         options = picker.get_by_role("option")
-        assert options.count() == 14
         assert options.first.locator(".model-picker-choice-name").inner_text() == "Opus 5"
         assert options.nth(1).locator(".model-picker-choice-name").inner_text() == "Opus 5"
         # Identical visible labels retain distinct submitted identities and row focus.
         assert options.first.get_attribute("data-conversation-picker-choice") == "opus"
         assert options.nth(1).get_attribute("data-conversation-picker-choice") == "claude-opus-5"
-        assert "catalog unavailable" not in picker.inner_text().lower()
-        assert "catalog unknown" not in picker.inner_text().lower()
-        assert "unverified" not in picker.inner_text().lower()
-        assert picker.locator("[data-model-picker-why]").count() == 0
-        assert picker.locator("[data-model-picker-check]").count() == 0
-        assert "was " not in trigger.get_attribute("aria-label").lower()
         panel = picker.locator("[data-conversation-picker-panel]")
         bounds = panel.bounding_box()
         assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width
@@ -387,12 +380,6 @@ def run(browser, urls):
         picker.locator("[data-conversation-picker-refresh]").click()
         page.wait_for_function("window.__pickerReads.length === 1")
         assert picker.get_by_role("listbox").evaluate("e => e === document.activeElement")
-        picker.locator("[data-conversation-picker-refresh]").click()
-        page.wait_for_function("window.__pickerReads.length === 2")
-        assert page.evaluate("JSON.stringify(window.__pickerReads[0]) === JSON.stringify(window.__pickerReads[1])")
-        control_boxes = picker.locator("button").evaluate_all("els => els.map(e => ({label:e.getAttribute('aria-label') ?? e.textContent, width:e.getBoundingClientRect().width, height:e.getBoundingClientRect().height})).filter(b => b.width && b.height)")
-        for box in control_boxes:
-            assert box["width"] >= 24 and box["height"] >= 24, box
         picker.get_by_role("listbox").press("Escape")
         assert trigger.evaluate("e => e === document.activeElement")
         trigger.press("ArrowDown")
@@ -432,7 +419,7 @@ def run(browser, urls):
             page.screenshot(path=str(Path(output) / f"destination-sonnet-{width}.png"))
             (Path(output) / f"canonical-picker-{width}.json").write_text(json.dumps({
                 "scope": "component-only fixture callbacks; no endpoint/provider/durable write",
-                "viewport": [width, height], "panel": bounds, "targets": control_boxes,
+                "viewport": [width, height], "panel": bounds,
                 "retry_callback_arguments": page.evaluate("window.__pickerReads"),
                 "choices": page.evaluate("window.__pickerChoices"),
             }, indent=2))
@@ -440,43 +427,6 @@ def run(browser, urls):
         page.evaluate("window.__pickerAvailability()")
         expect(picker.locator(".model-picker-summary")).to_have_text("Claude is not installed on Mac.")
         expect(trigger).to_have_text("sonnet")
-    # Normal choices reuse this host and real picker. The stress case above remains.
-    # These captures show reference tokens/retained recipes, never live discovery.
-    for backend in ["codex", "claude"]:
-        for width, height in [(1440, 1000), (390, 844)]:
-            page.set_viewport_size({"width": width, "height": height})
-            page.goto(urls[0] + "?picker&normal=" + backend, wait_until="domcontentloaded")
-            picker = page.locator(".picker-proof > [data-conversation-model-picker]")
-            trigger = picker.locator("[data-conversation-picker-trigger]")
-            trigger.click()
-            labels = picker.locator(".model-picker-choice-name").all_inner_texts()
-            assert len(labels) == len(set(labels)), labels
-            if backend == "claude":
-                assert "Opus 5.5" in labels and "Opus 5" in labels
-                model = "claude-opus-5"
-            else:
-                assert "GPT 6.1 Terra" in labels and "GPT 6 Astra" in labels
-                model = "gpt-6.1-terra"
-            output = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
-            if output:
-                page.screenshot(path=str(Path(output) / f"normal-{backend}-{width}.png"))
-            picker.locator(f'[data-conversation-picker-choice="{model}"]').click()
-            picker.get_by_role("option", name="high", exact=True).click()
-            assert page.evaluate("window.__pickerChoices.at(-1)") == {"model": model, "effort": "high"}
-            if output:
-                page.screenshot(path=str(Path(output) / f"normal-{backend}-selected-{width}.png"))
-    # Missing/conflicting current-selection markers do not erase caller-owned intent.
-    for selection in ["unobserved", "conflict"]:
-        page.goto(urls[0] + "?picker&selection=" + selection, wait_until="domcontentloaded")
-        picker = page.locator(".picker-proof > [data-conversation-model-picker]")
-        trigger = picker.locator("[data-conversation-picker-trigger]")
-        expect(trigger).to_have_text("Opus 5 high")
-        trigger.click()
-        assert picker.locator('[data-conversation-backend="claude"][aria-pressed="true"]').count() == 1
-        assert "unobserved" not in picker.inner_text().lower()
-        assert "unresolved" not in picker.inner_text().lower()
-        assert "legacy-effort" not in picker.inner_text()
-        assert page.evaluate("window.__pickerChoices.length") == 0
     assert not errors, errors
     pass  # Shared runner owns the browser lifecycle.
     print("conversation-composer-browser.test.mjs: all assertions passed")

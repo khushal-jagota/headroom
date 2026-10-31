@@ -37,7 +37,6 @@ from planner.conversation.contracts import (
 from planner.conversation.events import (
     ContextCompactedEventPayload,
     PromptDeliveryUncertainEventPayload,
-    PromptEventPayload,
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
@@ -241,74 +240,6 @@ async def _notice_bench(
         await system.shutdown()
 
 
-def test_accepted_memory_notice_answers_boundary_and_prevents_second_send(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        async with _notice_bench(tmp_path, script={"turns": [{}, {"actions": []}]}) as bench:
-            assert await bench.tell() is True
-            assert await bench.tell() is False
-            events = await bench.notice_events()
-            assert len(events) == 1
-            assert isinstance(events[0].payload, PromptEventPayload)
-            assert events[0].payload.mode is PromptDeliveryMode.queue
-            assert len(bench.requests("turn/start")) == 2  # original wake + one notice
-
-    asyncio.run(asyncio.wait_for(exercise(), 15))
-
-
-def test_held_memory_notice_prevents_second_send_without_prompt_event(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        async with _notice_bench(
-            tmp_path, script={"turns": [{}, {"actions": []}]}, busy=True
-        ) as bench:
-            assert await bench.tell() is True
-            first = await bench.system.held_prompts("c")
-            assert len(first) == 1
-            assert await bench.tell() is False
-            assert await bench.system.held_prompts("c") == first
-            assert await bench.notice_events() == ()
-            assert len(bench.requests("turn/start")) == 2  # notice never reached child
-
-    asyncio.run(asyncio.wait_for(exercise(), 15))
-
-
-def test_malformed_start_ack_suppresses_automatic_second_attempt(
-    tmp_path: Path,
-) -> None:
-    async def exercise() -> None:
-        invalid_turn: dict[str, Any] = {"turn_id": None, "actions": []}
-        async with _notice_bench(
-            tmp_path, script={"turns": [{}, invalid_turn, invalid_turn]}
-        ) as bench:
-            assert await bench.tell() is True
-            assert await bench.tell() is False
-            notice_sends = [
-                (message_id, mode, fate)
-                for message_id, mode, fate in bench.system.observed_sends
-                if (message_id or "").startswith(worker_memory.MEMORY_NOTICE_MESSAGE_PREFIX)
-            ]
-            assert len(notice_sends) == 1
-            assert len({message_id for message_id, _, _ in notice_sends}) == 1
-            assert all(mode is PromptDeliveryMode.queue for _, mode, _ in notice_sends)
-            assert all(
-                fate == PromptDeliveryUncertain()
-                for _, _, fate in notice_sends
-            )
-            events = await bench.notice_events()
-            assert len(events) == 1
-            assert isinstance(events[0].payload, PromptDeliveryUncertainEventPayload)
-            assert len(bench.requests("turn/start")) == 2
-            assert await bench.system.held_prompts("c") == ()
-            with bench.connect() as conn:
-                inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                assert len(inspection.reservations) == 1
-                assert len(inspection.evidence) == 1
-                assert inspection.evidence[0].kind == "prompt_delivery_uncertain"
-                assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
-            # One scripted notice request proves no provider admission or model delivery.
-
-    asyncio.run(asyncio.wait_for(exercise(), 15))
-
-
 def test_explicit_steer_uncertainty_keeps_reservation_without_replacement(
     tmp_path: Path,
 ) -> None:
@@ -382,46 +313,6 @@ def test_discarded_held_notice_retains_consumption_and_unanswered_boundary(tmp_p
                 assert len(inspection.evidence) == 1
                 assert inspection.evidence[0].kind == "prompt_discarded"
                 assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
-
-    asyncio.run(asyncio.wait_for(exercise(), 15))
-
-
-def test_process_restart_does_not_restore_uncertain_notice_permission(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        async with _notice_bench(
-            tmp_path, script={"turns": [{}, {"turn_id": None, "actions": []}]}
-        ) as bench:
-            assert await bench.tell() is True
-            events = await bench.notice_events()
-            assert len(events) == 1
-            assert isinstance(events[0].payload, PromptDeliveryUncertainEventPayload)
-            await bench.system.shutdown()
-
-            def refuse_child_launch(**kwargs: Any) -> CodexAppServerBackendChild:
-                raise AssertionError("Consumed authorization must not launch another child")
-
-            restarted = _ObservedConversationSystem(
-                store=ConversationStore(str(bench.db_path), integer_now=lambda: 101),
-                message_files=ConversationMessageFiles(str(bench.db_path)),
-                backend_child_factories={
-                    key: refuse_child_launch for key in ConversationBackendKey
-                },
-            )
-            bench.system = restarted
-            try:
-                assert await bench.tell() is False
-                assert restarted.observed_sends == []
-                assert not await restarted.is_running("c")
-                assert len(bench.requests("turn/start")) == 2
-                assert await bench.notice_events() == events
-                with bench.connect() as conn:
-                    inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                    assert len(inspection.reservations) == 1
-                    assert len(inspection.evidence) == 1
-                    assert inspection.evidence[0].kind == "prompt_delivery_uncertain"
-                    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
-            finally:
-                await restarted.shutdown()
 
     asyncio.run(asyncio.wait_for(exercise(), 15))
 

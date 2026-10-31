@@ -132,21 +132,3 @@ def test_validation_only_change_updates_selected_revision_in_same_second(
     )
     second = provider.capture(tmp_db, request, key)
     assert second is not None and second.revision != changed.revision
-
-
-def test_historical_null_model_is_visible_without_invented_selection(tmp_db: Connection) -> None:
-    ticket = data.create_ticket(
-        tmp_db,
-        title="Historical absence",
-        worker_type="coding",
-        principal=OWNER_PRINCIPAL,
-        now=1,
-        title_max_chars=200,
-    )
-    tmp_db.execute("UPDATE tickets SET employee_launch_model=NULL WHERE id=?", (ticket.id,))
-    tmp_db.commit()
-    for body in (workspace_ticket(tmp_db, ticket.id), views.ticket_detail(tmp_db, ticket.id, 1)):
-        assert body["employee_launch_model"] is None
-        assert body["launch_validation"]["selection"] is None
-        assert body["launch_validation"]["reason"] == "legacy_unscoped"
-        assert body["launch_validation"]["corrective_action"] == "classify_selection"

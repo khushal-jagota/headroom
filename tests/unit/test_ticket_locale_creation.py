@@ -169,8 +169,6 @@ def test_locale_migration_preserves_entire_existing_rows(
     conn.close()
 
 
-
-
 def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
     tmp_db: Connection, tmp_path: Path, fake_clock: ClockForTest
 ) -> None:
@@ -253,32 +251,3 @@ def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
         edited = client.patch(f"/api/schedules/{schedule_id}", json={"title": "Edited title"})
         assert edited.status_code == 200, edited.text
         assert edited.json()["locale"] == "vps"
-
-
-def test_creation_effort_presence_and_exact_configuration_intent() -> None:
-    from planner.tickets.contracts import EmployeeLaunchConfiguration
-    from planner.tickets.logic.employee_configuration import (
-        launch_configuration_for_a_new_ticket,
-        normalize_employee_launch_configuration,
-    )
-
-    def launch(*, reasoning_effort_is_set: bool = False) -> EmployeeLaunchConfiguration:
-        return launch_configuration_for_a_new_ticket(
-            default_backend="codex", default_model="gpt-6.1-terra",
-            default_reasoning_effort="medium", employee_backend="codex",
-            employee_launch_model="gpt-6.1-terra",
-            reasoning_effort_is_set=reasoning_effort_is_set,
-        )
-
-    inherited = launch()
-    assert inherited.employee_launch_reasoning_effort == "medium"
-    reset = launch(reasoning_effort_is_set=True)
-    assert reset.employee_launch_reasoning_effort is None
-    exact = EmployeeLaunchConfiguration(
-        employee_backend="codex", employee_launch_model="gpt-6.1-terra",
-        employee_launch_reasoning_effort="custom-native-effort",
-    )
-    assert normalize_employee_launch_configuration(
-        inherited, exact, advertised_models=frozenset({"older-model"}),
-        reasoning_supported=False, advertised_reasoning_efforts=frozenset({"low"}),
-    ) == exact

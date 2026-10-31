@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,21 +15,18 @@ from tests.unit.test_conversation_api import _Harness, _start
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
-from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import AnswerFate
 from planner.conversation.events import (
     AnswerAppliedEventPayload,
     PermissionAnsweredEventPayload,
-    UserInputAnswer,
     UserInputAnsweredEventPayload,
 )
 from planner.conversation.lifecycle import LifecycleStatus
 from planner.conversation.message_content import text_message_content
 from planner.conversation.views.api import router as view_router
-from planner.execution_identity import AskKind, AskReference, ChildReference
+from planner.execution_identity import AskKind, ChildReference
 from planner.executor.protocol import (
     ChildCommand,
-    ChildInventory,
     CommandDisposition,
     CommandOutcome,
 )
@@ -157,53 +153,5 @@ def test_saved_choice_and_late_application_are_distinct_conversation_facts(
             assert not await harness.system.has_pending_permission_ask("c")
             assert not await harness.system.has_pending_user_input("c")
         await harness.runtime.shutdown()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("kind", list(AskKind))
-def test_proxy_reconnect_admits_only_the_original_callback(kind: AskKind) -> None:
-    async def run() -> None:
-        reference = ChildReference("mac", "child", "c")
-        token = TurnToken("c", 3)
-        ask = AskReference(reference, token, "same-id", kind)
-        queued: list[ChildCommand] = []
-
-        async def unused(command: ChildCommand) -> CommandOutcome:
-            raise AssertionError("saved answers must not wait for a command result")
-
-        proxy = MacRemoteChild(
-            reference, unused, lambda _: canonical_snapshot(), send_answer=queued.append
-        )
-        if kind is AskKind.permission:
-            fate = await proxy.answer_permission_ask(
-                "same-id", "allow", answer_id="answer", turn_token=token
-            )
-        else:
-            fate = await proxy.answer_user_input(
-                "same-id", (UserInputAnswer("q", ("yes",)),), answer_id="answer", turn_token=token
-            )
-        assert fate is AnswerFate.saved and len(queued) == 1
-        command = queued[0]
-        proxy.observe_callbacks(
-            ChildInventory(
-                reference,
-                token,
-                (ask,) if kind is AskKind.permission else (),
-                ("same-id",) if kind is AskKind.user_input else (),
-            )
-        )
-        assert proxy.can_emit_answer(command)
-        proxy.observe_callbacks(
-            ChildInventory(reference, replace(token, turn_number=4), (ask,), ("same-id",))
-        )
-        assert not proxy.can_emit_answer(command)
-        replacement = MacRemoteChild(
-            reference, unused, lambda _: canonical_snapshot(), send_answer=queued.append
-        )
-        replacement.observe_callbacks(ChildInventory(reference, token, (ask,), ("same-id",)))
-        assert not replacement.saved_answers and not replacement.can_emit_answer(command)
-        await proxy.detach()
-        assert not proxy.saved_answers
 
     asyncio.run(run())

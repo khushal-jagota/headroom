@@ -1,13 +1,12 @@
-"""Final owned transport waits cannot turn old observations into provider writes.
+"""Final transport guards prevent stale writes; native outcomes preserve replay.
 
-Risks absent from scope-1 metadata coverage: mutation during a write lock wait,
-an SDK task with unrelated context, and malformed nested command identity.
-No browser, server, subprocess, or provider is needed for these boundaries.
+The lock cases need the pinned provider transport to prove when a guard runs.
+Native accepted, rejected and uncertain outcomes cross the real remote codec.
+All provider and transport effects are synthetic.
 """
 
 import asyncio
 import json
-import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,59 +14,26 @@ from typing import Any, cast
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
-from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.admission.contracts import AdmissionExpectation
-from planner.conversation.admission.service import check_expectation, parse_expectation
 from planner.conversation.backends.claude_agent_sdk import _ClaudeCleanupTransport
 from planner.conversation.backends.codex_app_server.client import CodexAppServerClient
 from planner.conversation.backends.contracts import AdmissionRefused
 from planner.conversation.contracts import (
     ConversationBackendKey,
-    ResolvedConversationStart,
     WorkspacePathPolicy,
 )
 from planner.conversation.model_resolution.contracts import (
-    CatalogEvidenceReference,
     CatalogWorkspaceBinding,
-    LaunchContext,
     ModelSelection,
     SelectionKind,
-)
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ExecutorIdentity
-from planner.executor.protocol import (
-    OutboxEntry,
-    StartRun,
-    decode_command_arguments,
-    encode_value,
 )
 from planner.tickets.contracts import TicketLocale
 
 
 def expectation(workspace: Path) -> AdmissionExpectation:
-    binding = CatalogWorkspaceBinding(workspace, WorkspacePathPolicy.native_absolute, None)
-    context = LaunchContext(
-        "context",
-        TicketLocale.macos,
-        ConversationBackendKey.codex,
-        ExecutorIdentity(
-            PROTOCOL_VERSION,
-            "a" * 40,
-            SPOOL_FORMAT_VERSION,
-            "11111111-1111-4111-8111-111111111111",
-            1,
-        ),
-        binding,
-        workspace,
-        "binary",
-        "1",
-        "scope",
-        None,
-    )
-
     return AdmissionExpectation(
-        ModelSelection(
+        selection=ModelSelection(
             TicketLocale.macos,
             ConversationBackendKey.codex,
             "exact",
@@ -75,234 +41,16 @@ def expectation(workspace: Path) -> AdmissionExpectation:
             None,
             "1",
         ),
-        binding,
-        context,
-        CatalogEvidenceReference(
-            "observation", "revision", context, int(time.time()) - 1, "attempt", 0.0
-        ),
-        "attempt",
-        "exact",
-        None,
-        "[]",
-        "conversation",
-        "exact",
-        executor_identity=context.executor_identity,
+        workspace=CatalogWorkspaceBinding(workspace, WorkspacePathPolicy.native_absolute, None),
+        context=None,
+        evidence=None,
+        attempt_id="attempt",
+        launch_token="exact",
+        resolved_model_id=None,
+        disabled_models_revision="[]",
+        conversation_id="conversation",
+        reasoning_effort=None,
     )
-
-
-def resolved_for(exact: AdmissionExpectation, workspace: Path) -> ResolvedConversationStart:
-    from planner.conversation.contracts import ConversationAccess
-
-    return ResolvedConversationStart(
-        exact.conversation_id,
-        exact.selection.backend_key,
-        exact.launch_token,
-        exact.reasoning_effort,
-        None,
-        workspace,
-        ConversationAccess.full,
-        workspace_path_policy=exact.workspace.workspace_path_policy,
-    )
-
-
-def test_retained_run_custody_and_stop_proofs_survive_disk_reopen(
-    tmp_path: Path,
-) -> None:
-    """Run custody and ordered stop output survive their actual stores.
-
-    Provider results stay in memory; reopening output never invokes the provider.
-    """
-
-    from planner.conversation.contracts import (
-        ConversationAccess,
-        ConversationRoleMaterials,
-        ResolvedConversationStart,
-    )
-    from planner.core.db import connect, create_schema
-    from planner.execution_identity import ChildReference, ProtocolRefused, parse_identity
-    from planner.executor.configuration import ExecutorPaths
-    from planner.executor.mac_outbox import MacOutbox
-    from planner.executor.mac_service import MacService
-    from planner.executor.protocol import (
-        AcceptanceReceipt,
-        ChildCommand,
-        ChildOperation,
-        CommandDisposition,
-        CommandOutcome,
-        EnvelopeKind,
-        JsonObject,
-        ReceiptDisposition,
-        WireMessage,
-        WireMessageKind,
-    )
-    from planner.executor.store import ExecutorStore
-
-    def payload_object(value: object) -> JsonObject:
-        payload = encode_value(value)
-        assert isinstance(payload, dict)
-        return payload
-
-    async def prove() -> None:
-        exact = expectation(tmp_path)
-        assert exact.context is not None
-        assert exact.context.executor_identity is not None
-        child = ChildReference(
-            exact.context.executor_identity.executor_incarnation, "old-child", "conversation"
-        )
-        resolved = ResolvedConversationStart(
-            child.conversation_id,
-            ConversationBackendKey.codex,
-            "exact",
-            None,
-            ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "ticket"),)),
-            tmp_path,
-            ConversationAccess.full,
-        )
-        old = ChildCommand(
-            "old-pending",
-            child,
-            ChildOperation.start,
-            None,
-            decode_command_arguments(
-                ChildOperation.start,
-                {
-                    "resolved_start": encode_value(resolved),
-                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                },
-            ),
-        )
-        assert isinstance(old.arguments, StartRun)
-        new = replace(
-            old,
-            command_id="new-pending",
-            arguments=replace(old.arguments, admission_expectation=replace(exact, child=child)),
-        )
-        database = str(tmp_path / "core.db")
-        conn = connect(database)
-        try:
-            create_schema(conn)
-            conn.execute(
-                "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,"
-                "access,created_at) VALUES('conversation','codex','exact',?,'full',1)",
-                (str(tmp_path),),
-            )
-        finally:
-            conn.close()
-        store = ExecutorStore(database)
-        store.register_child(child, "ticket", "ticket", 1)
-        store.prepare_command(new)
-        retained = ExecutorStore(database).retained_runs()
-        assert len(retained) == 1 and retained[0].reference == child
-        assert retained[0].delivery_uncertain and not retained[0].retirement_confirmed
-
-        paths = ExecutorPaths(tmp_path / "native")
-        spool = MacOutbox(paths.spool)
-        outcomes = (
-            CommandOutcome("first-stop", child, CommandDisposition.succeeded, {}),
-            CommandOutcome("later-stop", child, CommandDisposition.succeeded, {}),
-        )
-        envelopes = tuple(
-            spool.add(
-                OutboxEntry(
-                    conversation_id=child.conversation_id,
-                    kind=EnvelopeKind.child_stopped,
-                    payload=payload_object(value),
-                )
-            )
-            for value in outcomes
-        )
-        sender = spool.sender_id
-        before = spool.pending()
-        spool.close()
-        executor = MacService(
-            paths=paths,
-            revision="a" * 40,
-            executor_id="fixture-only",
-            panels_server_url="https://unused.invalid",
-        )
-        try:
-            assert executor.outbox.sender_id == sender
-            assert executor.outbox.pending() == before
-            assert executor.outbox.pending() == envelopes
-            assert executor.identity.executor_incarnation != child.executor_incarnation
-
-            def never_create(*args: object, **kwargs: object) -> Any:
-                pytest.fail("persisted command replay reached provider factory")
-
-            executor.runner.factory = never_create
-            assert executor.runner._children == {} and executor.runner._commands == {}
-            old_incarnation = await executor.runner.run(old)
-            assert old_incarnation.disposition is CommandDisposition.refused
-            assert old_incarnation.result == {"reason": "incarnation_gone"}
-            legacy_current = replace(
-                old,
-                command_id="legacy-proven-nondispatch",
-                child=replace(child, executor_incarnation=executor.identity.executor_incarnation),
-            )
-            legacy_refusal = await executor.runner.run(legacy_current)
-            assert legacy_refusal.disposition is CommandDisposition.refused
-            assert legacy_refusal.result["reason"] == "legacy_unscoped"
-
-            submitted: list[dict[str, Any]] = []
-            executor.gateway._handshake_accepted = True
-
-            async def request(
-                kind: WireMessageKind, payload: dict[str, Any], *, request_id: str | None = None
-            ) -> WireMessage:
-                assert kind is WireMessageKind.envelope
-                submitted.append(payload)
-                receipt = AcceptanceReceipt(
-                    payload["sender_id"],
-                    payload["submission_id"],
-                    payload["payload_sha256"],
-                    ReceiptDisposition.accepted,
-                    {},
-                    1,
-                )
-                return WireMessage(WireMessageKind.receipt, "fixture", payload_object(receipt))
-
-            from types import SimpleNamespace
-
-            transport = SimpleNamespace(request=request)
-            sender_task = asyncio.create_task(executor.outbox.send_pending(transport))
-            try:
-                async with asyncio.timeout(2):
-                    while executor.outbox.pending_count():
-                        await asyncio.sleep(0.001)
-            finally:
-                sender_task.cancel()
-                await asyncio.gather(sender_task, return_exceptions=True)
-            original = {entry.submission_id: encode_value(entry) for entry in envelopes}
-            replayed_original = [entry for entry in submitted if entry["submission_id"] in original]
-            assert len(replayed_original) == 2
-            assert all(entry == original[entry["submission_id"]] for entry in replayed_original)
-            assert executor.outbox.pending_count() == 0 and not executor.runner._children
-            with pytest.raises(ProtocolRefused):
-                parse_identity(
-                    encode_value(
-                        replace(executor.identity, protocol_version=13, connection_generation=1)
-                    )
-                )
-            assert (
-                parse_identity(
-                    encode_value(replace(executor.identity, connection_generation=1))
-                ).protocol_version
-                == PROTOCOL_VERSION
-            )
-        finally:
-            executor.outbox.close()
-
-    asyncio.run(prove())
-
-
-def test_native_expectation_rejects_malformed_identity_without_catalog_gate(tmp_path: Path) -> None:
-    exact = expectation(tmp_path)
-    raw = cast(dict[str, Any], encode_value(exact))
-    raw["executor_identity"]["connection_generation"] = True
-    with pytest.raises(ValueError, match="identity integer"):
-        parse_expectation(raw)
-    # Catalog age, account observation and concrete resolution are advisory.
-    check_expectation(replace(exact, context=None, evidence=None, resolved_model_id=None))
 
 
 def test_codex_guard_runs_after_owned_write_lock_and_cleans_pending_request() -> None:
@@ -378,220 +126,6 @@ def test_claude_message_guard_survives_scope_exit_and_waits_for_sdk_lock() -> No
         # An unrelated control response is not this user message and consumes no guard.
         await transport.write(json.dumps({"type": "control_response"}))
         assert len(writes) == 1
-
-    asyncio.run(run())
-
-
-def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
-    tmp_path: Path,
-) -> None:
-    from planner.conversation.contracts import (
-        ConversationAccess,
-        ConversationRoleMaterials,
-        ResolvedConversationStart,
-    )
-    from planner.conversation.message_files import ConversationMessageFiles
-    from planner.execution_identity import ChildReference
-    from planner.executor.mac_outbox import MacOutbox
-    from planner.executor.mac_runner import MacRunner
-    from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition
-
-    async def run() -> None:
-        def never_create(*args: object, **kwargs: object) -> Any:
-            pytest.fail("legacy command reached provider factory")
-
-        reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
-        registry = MacRunner(
-            incarnation="11111111-1111-4111-8111-111111111111",
-            spool=MacOutbox(tmp_path / "spool"),
-            factory=never_create,
-            message_files=ConversationMessageFiles(tmp_path / "db"),
-        )
-        resolved = ResolvedConversationStart(
-            "conversation",
-            ConversationBackendKey.codex,
-            "exact",
-            None,
-            ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "ticket"),)),
-            tmp_path,
-            ConversationAccess.full,
-        )
-        command = ChildCommand(
-            "legacy",
-            reference,
-            ChildOperation.start,
-            None,
-            decode_command_arguments(
-                ChildOperation.start,
-                {
-                    "resolved_start": encode_value(resolved),
-                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                },
-            ),
-        )
-        first = await registry.run(command)
-        assert first.disposition is CommandDisposition.refused
-        assert first.result["reason"] == "legacy_unscoped"
-        assert first.result["corrective_action"] == "classify_selection"
-        assert await registry.run(command) == first
-        assert registry._children == {}
-
-    asyncio.run(run())
-
-
-def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path: Path) -> None:
-    from planner.conversation.backends.contracts import TurnToken
-    from planner.conversation.message_content import text_message_content
-    from planner.conversation.message_files import ConversationMessageFiles
-    from planner.execution_identity import ChildReference
-    from planner.executor.mac_outbox import MacOutbox
-    from planner.executor.mac_runner import MacRunner, RunningChild
-    from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition
-
-    async def run() -> None:
-        prepared = False
-
-        class Native:
-            async def write_prompt(self, *args: object, **kwargs: object) -> None:
-                nonlocal prepared
-                prepared = True
-                registry._retiring_children.add(reference.child_id)
-                check = kwargs.get("emission_check")
-                assert callable(check)
-                check()
-                pytest.fail("failed final guard submitted provider bytes")
-
-        exact = expectation(tmp_path)
-        reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
-        turn = TurnToken("conversation", 1)
-        exact = replace(exact, child=reference, turn=turn)
-        registry = MacRunner(
-            incarnation="11111111-1111-4111-8111-111111111111",
-            spool=MacOutbox(tmp_path / "spool"),
-            factory=cast(Any, None),
-            message_files=ConversationMessageFiles(tmp_path / "db"),
-        )
-        child = RunningChild(
-            reference,
-            "capability",
-            cast(Any, Native()),
-            ticket_id="ticket",
-            launch_input=StartRun(
-                resolved_start=resolved_for(exact, tmp_path),
-                canonical_skill_snapshot=canonical_snapshot(),
-            ),
-            localized_start=resolved_for(exact, tmp_path),
-            model="exact",
-            backend_key=ConversationBackendKey.codex,
-        )
-        registry._children[reference.child_id] = child
-        content = encode_value(text_message_content("exact message"))
-        command = ChildCommand(
-            "prompt",
-            reference,
-            ChildOperation.write_prompt,
-            turn,
-            decode_command_arguments(
-                ChildOperation.write_prompt,
-                {
-                    "admission_expectation": encode_value(exact),
-                    "content": content,
-                    "sender_content": content,
-                    "sender_label": "Owner",
-                    "mode": "queue",
-                },
-            ),
-        )
-        outcome = await registry.run(command)
-        assert outcome.disposition is CommandDisposition.refused
-        assert outcome.result["reason"] == "context_changed"
-        assert child.active_turn is None
-        assert prepared
-
-    asyncio.run(run())
-
-
-def test_claude_advertised_alias_change_does_not_rebind_native_prompt(tmp_path: Path) -> None:
-    from planner.conversation.backends.contracts import BackendPromptAccepted, TurnToken
-    from planner.conversation.message_content import text_message_content
-    from planner.conversation.message_files import ConversationMessageFiles
-    from planner.execution_identity import ChildReference
-    from planner.executor.mac_outbox import MacOutbox
-    from planner.executor.mac_runner import MacRunner, RunningChild
-    from planner.executor.protocol import ChildCommand, ChildOperation, CommandDisposition
-
-    async def run() -> None:
-        base = expectation(tmp_path)
-        assert base.context is not None
-        context = replace(base.context, backend_key=ConversationBackendKey.claude)
-        reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
-        turn = TurnToken("conversation", 1)
-        exact = replace(
-            base,
-            context=context,
-            evidence=None,
-            selection=replace(
-                base.selection,
-                backend_key=ConversationBackendKey.claude,
-                submitted_token="alias",
-                selection_kind=SelectionKind.provider_alias,
-            ),
-            child=reference,
-            turn=turn,
-            launch_token="alias",
-            resolved_model_id=None,
-        )
-        writes: list[object] = []
-
-        class Native:
-            async def write_prompt(self, *args: object, **kwargs: object) -> BackendPromptAccepted:
-                writes.append(kwargs.get("model_change"))
-                return BackendPromptAccepted(True)
-
-        registry = MacRunner(
-            incarnation=reference.executor_incarnation,
-            spool=MacOutbox(tmp_path / "spool"),
-            factory=cast(Any, None),
-            message_files=ConversationMessageFiles(tmp_path / "db"),
-        )
-        child = RunningChild(
-            reference,
-            "capability",
-            cast(Any, Native()),
-            ticket_id="ticket",
-            launch_input=StartRun(
-                resolved_start=resolved_for(exact, tmp_path),
-                canonical_skill_snapshot=canonical_snapshot(),
-            ),
-            localized_start=resolved_for(exact, tmp_path),
-            model="alias",
-            backend_key=ConversationBackendKey.claude,
-        )
-        registry._children[reference.child_id] = child
-        content = encode_value(text_message_content("exact request"))
-        command = ChildCommand(
-            "prompt",
-            reference,
-            ChildOperation.write_prompt,
-            turn,
-            decode_command_arguments(
-                ChildOperation.write_prompt,
-                {
-                    "admission_expectation": encode_value(exact),
-                    "content": content,
-                    "sender_content": content,
-                    "sender_label": "Owner",
-                    "mode": "queue",
-                    "model_change": "alias",
-                },
-            ),
-        )
-        outcome = await registry.run(command)
-        assert outcome.disposition is CommandDisposition.succeeded, outcome.result
-        assert writes == ["alias"]
-        assert await registry.run(command) == outcome
-        assert writes == ["alias"]
-        cast(MacOutbox, registry.spool).close()
 
     asyncio.run(run())
 

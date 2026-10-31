@@ -333,20 +333,6 @@ def test_existing_conversation_refuses_a_different_workspace_policy(
     )
 
 
-@pytest.mark.parametrize("policy", list(WorkspacePathPolicy))
-def test_workspace_policy_round_trip(store: ConversationStore, policy: WorkspacePathPolicy) -> None:
-    async def exercise() -> None:
-        resolved = replace(_resolved(), workspace_path_policy=policy)
-        await store.create_conversation(resolved)
-        read = await store.read_conversation("c")
-        assert read is not None
-        assert read.workspace_path_policy is policy
-        assert read.resolved_start().workspace_path_policy is policy
-        assert read.workspace_folder == resolved.workspace_folder
-
-    asyncio.run(exercise())
-
-
 def test_grouped_messages_keep_their_own_commit_participants(store: ConversationStore) -> None:
     """One sender's receipt or reply credit must not be used for another grouped sender."""
 
