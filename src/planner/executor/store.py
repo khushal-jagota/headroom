@@ -287,15 +287,21 @@ class ExecutorStore(VpsDatabase):
     def child_assignment(self, child: ChildReference) -> tuple[str, str] | None:
         connection = connect(self.db_path)
         try:
-            row = connection.execute(
-                "SELECT principal_kind,principal_id FROM executor_child_assignments "
-                "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
-                "AND closed_at_ms IS NULL",
-                (child.executor_incarnation, child.child_id, child.conversation_id),
-            ).fetchone()
-            return (row[0], row[1]) if row else None
+            return self.open_child_assignment(connection, child)
         finally:
             connection.close()
+
+    @staticmethod
+    def open_child_assignment(
+        connection: sqlite3.Connection, child: ChildReference
+    ) -> tuple[str, str] | None:
+        row = connection.execute(
+            "SELECT principal_kind,principal_id FROM executor_child_assignments "
+            "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
+            "AND closed_at_ms IS NULL",
+            (child.executor_incarnation, child.child_id, child.conversation_id),
+        ).fetchone()
+        return (row[0], row[1]) if row else None
 
     def close_child(self, child: ChildReference, now_ms: int) -> None:
         with self._transaction() as connection:

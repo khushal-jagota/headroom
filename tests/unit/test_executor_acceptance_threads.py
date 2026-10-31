@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from tests.support.executor_control import deliver, message_link
+from tests.support.executor_inbox import lookup_receipt
 from tests.unit.test_executor_authoritative_store import CHILD, IDENTITY, envelope
 from tests.unit.test_executor_authoritative_store import store as store
 from tests.unit.test_executor_request_deadlines import peer
@@ -160,7 +161,7 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
                 await asyncio.wait_for(accepting, 2)
             receipt = await asyncio.wait_for(replay, 2)
             assert receipt.disposition is ReceiptDisposition.accepted
-            assert store.lookup_receipt(queued.sender_id, queued.submission_id) == receipt
+            assert lookup_receipt(store, queued.sender_id, queued.submission_id) == receipt
             assert await asyncio.wait_for(stopping, 2) == outcome
         finally:
             release.set()
