@@ -370,10 +370,15 @@ class ConversationRoleMaterials:
 
 
 class WorkspacePathPolicy(StrEnum):
-    """Map a path below the server home to the agent home, or use it as stored."""
+    """Select a mapped path, an absolute path, or the executor-owned workspace.
+
+    For executor_default, workspace_folder is an unused absolute placeholder.
+    Only native admission resolves and provisions that workspace.
+    """
 
     home_relative = "home_relative"
     absolute = "absolute"
+    executor_default = "executor_default"
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,7 +397,8 @@ class ConversationStartRequest:
     no floor default: absent means the conversation is started without them, and for
     reasoning effort that is a real answer — some models take none.
 
-    ``workspace_folder`` is the folder the agent runs in.
+    ``workspace_folder`` is the folder the agent runs in, except for executor_default.
+    That policy carries an unused placeholder until native admission resolves it.
     """
 
     conversation_id: str
@@ -414,7 +420,8 @@ class ResolvedConversationStart:
     here because each has a floor default; ``model`` is always concrete because the
     request had to name one. ``reasoning_effort`` and ``role_materials`` stay optional
     because neither has a floor default — there is nothing to fall back to, so absent
-    stays absent.
+    stays absent. For executor_default, native admission must replace the folder
+    placeholder and policy before a local backend adapter can use this request.
     """
 
     conversation_id: str

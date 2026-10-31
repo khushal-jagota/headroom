@@ -583,3 +583,39 @@ def test_first_spawn_refusal_retention_preserves_a_replacement_link(
         assert read_ticket(tmp_db, ticket.id).conversation_id == "replacement"
 
     asyncio.run(exercise())
+
+
+def test_unconfigured_mac_uses_executor_workspace_without_replacing_explicit_choices(
+    tmp_db: Connection, ticket: Ticket, tmp_path: Path
+) -> None:
+    from planner.runtime.conversation_start import workspace_for_project
+    from planner.tickets.api import _conversation_start_values_json
+    from planner.tickets.contracts import TicketLocale
+
+    tmp_db.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket.id,))
+    mac = read_ticket(tmp_db, ticket.id)
+    values = worker_resolve(tmp_db, mac)
+    assert values.workspace_path_policy is WorkspacePathPolicy.executor_default
+    assert _conversation_start_values_json(values)["workspace_folder"] is None
+    assert _conversation_start_values_json(values)["workspace_path_policy"] == "executor_default"
+    project = create_project(tmp_db, name="No checkout", now=2)
+    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == (
+        Path("/"),
+        WorkspacePathPolicy.executor_default,
+    )
+    missing = tmp_path / "explicit-missing"
+    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id, explicit=missing) == (
+        missing,
+        WorkspacePathPolicy.absolute,
+    )
+    update_project(tmp_db, project.id, folder_path=missing, now=3)
+    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == (
+        missing,
+        WorkspacePathPolicy.absolute,
+    )
+    from planner.runtime.conversation_start import _default_workspace_folder
+
+    assert workspace_for_project(tmp_db, TicketLocale.vps, None) == (
+        _default_workspace_folder(tmp_db),
+        WorkspacePathPolicy.home_relative,
+    )

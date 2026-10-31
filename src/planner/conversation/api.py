@@ -58,6 +58,7 @@ from planner.conversation.contracts import (
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
     PromptDeliveryUncertain,
+    WorkspacePathPolicy,
     backend_supports_steer,
 )
 from planner.conversation.events import (
@@ -1008,7 +1009,12 @@ async def _conversation_view(runtime: ConversationRuntime, conversation_id: str)
         "supports_steer": backend_supports_steer(record.backend_key),
         "model": record.model,
         "reasoning_effort": record.reasoning_effort,
-        "workspace_folder": str(record.workspace_folder),
+        "workspace_folder": (
+            None
+            if record.workspace_path_policy == WorkspacePathPolicy.executor_default
+            else str(record.workspace_folder)
+        ),
+        "workspace_path_policy": record.workspace_path_policy.value,
         "access": str(record.access),
         "latest_sequence": record.latest_sequence,
         "owner_read_through_sequence": record.owner_read_through_sequence,

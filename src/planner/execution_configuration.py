@@ -2,5 +2,5 @@
 
 from typing import Final
 
-PROTOCOL_VERSION: Final = 17
+PROTOCOL_VERSION: Final = 18
 SPOOL_FORMAT_VERSION: Final = 5

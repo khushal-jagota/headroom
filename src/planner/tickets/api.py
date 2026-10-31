@@ -35,6 +35,7 @@ from planner.conversation.api import (
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import (
     ConversationSystem,
+    WorkspacePathPolicy,
     require_conversation_backend_key,
 )
 from planner.conversation.message_files import ConversationMessageFiles
@@ -1108,7 +1109,11 @@ def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict
         "backend_key": values.backend_key.value,
         "model": values.model,
         "reasoning_effort": values.reasoning_effort,
-        "workspace_folder": str(values.workspace_folder),
+        "workspace_folder": (
+            None
+            if values.workspace_path_policy == WorkspacePathPolicy.executor_default
+            else str(values.workspace_folder)
+        ),
         "workspace_path_policy": values.workspace_path_policy.value,
     }
 

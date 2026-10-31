@@ -33,6 +33,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.logic.addressed_reply import with_runtime_prompt_context
 from planner.conversation.message_content import MessageFile
@@ -353,12 +354,18 @@ class MacRunner:
         skill_generation: Path,
     ) -> ResolvedConversationStart:
         try:
-            relative = workspace_home_relative
-            workspace = localize_workspace(
-                resolved.workspace_folder,
-                workspace_home=self.workspace_home,
-                workspace_home_relative=relative if isinstance(relative, str) else None,
-            )
+            if resolved.workspace_path_policy == WorkspacePathPolicy.executor_default:
+                self.paths.workspace.mkdir(parents=True, exist_ok=True)
+                workspace = localize_workspace(
+                    self.paths.workspace, workspace_home=self.workspace_home
+                )
+                workspace.relative_to(self.paths.root.resolve(strict=True))
+            else:
+                workspace = localize_workspace(
+                    resolved.workspace_folder,
+                    workspace_home=self.workspace_home,
+                    workspace_home_relative=workspace_home_relative,
+                )
         except (OSError, ValueError) as error:
             raise BackendSpawnFailed(f"Mac workspace unavailable: {error}") from error
         original = resolved.role_materials
@@ -388,6 +395,7 @@ class MacRunner:
         return replace(
             resolved,
             workspace_folder=workspace,
+            workspace_path_policy=WorkspacePathPolicy.absolute,
             role_materials=ConversationRoleMaterials(role_text, tuple(identity.items())),
         )
 

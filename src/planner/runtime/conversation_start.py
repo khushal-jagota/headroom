@@ -199,6 +199,8 @@ def workspace_for_project(
                 return project_folder, policy
             if project_folder.is_dir():
                 return project_folder.resolve(strict=False), policy
+    if locale == TicketLocale.macos:
+        return Path("/"), WorkspacePathPolicy.executor_default
     return _default_workspace_folder(conn), WorkspacePathPolicy.home_relative
 
 

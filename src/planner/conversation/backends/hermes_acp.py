@@ -132,6 +132,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
@@ -420,6 +421,8 @@ class HermesAcpBackendChild:
         was never given and cannot be asked to stop — leaving a hermes running, its wire
         open and its reader tasks alive, for a conversation that has no child at all.
         """
+        if resolved_start.workspace_path_policy == WorkspacePathPolicy.executor_default:
+            raise BackendSpawnFailed("executor workspace requires native resolution")
         self._resolved_start = resolved_start
         try:
             connection = await self._spawn(resolved_start)

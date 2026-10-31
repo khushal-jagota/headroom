@@ -1776,3 +1776,19 @@ def test_explicit_usage_refresh_preserves_observation_after_all_failure_outcomes
                 assert (await client.get(f"{CONVERSATION_PREFIX}/usage/limits")).json() == initial
 
     _run(exercise)
+
+
+def test_executor_default_view_never_presents_placeholder_as_workspace(harness: _Harness) -> None:
+    from planner.conversation.contracts import ConversationStartRequest, WorkspacePathPolicy
+
+    async def exercise() -> None:
+        await harness.runtime.system.start_conversation(ConversationStartRequest(
+            conversation_id="native-default", model="a-model",
+            workspace_folder=Path("/"), workspace_path_policy=WorkspacePathPolicy.executor_default,
+        ))
+        async with harness.client() as client:
+            response = await client.get("/api/conversation/conversations/native-default")
+            assert response.status_code == 200
+            assert response.json()["workspace_folder"] is None
+            assert response.json()["workspace_path_policy"] == "executor_default"
+    _run(exercise)

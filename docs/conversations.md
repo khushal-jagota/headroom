@@ -178,8 +178,19 @@ usual default: `~/projects` when that directory exists, otherwise the applicatio
 Invalid explicit values stop startup.
 
 An explicit conversation workspace takes precedence. A Worker's usable Project directory
-also takes precedence over the server default. Chief, goals, Managers, and Workers without
-a usable Project directory share the default for their server's database.
+also takes precedence over the server default. Chief, goals, Managers, and VPS Workers
+without a usable Project directory share the default for their server's database.
+
+A Mac Worker without an explicit workspace or Project folder uses the persistent
+Panels workspace under the native executor data root. The default path is
+`~/Library/Application Support/Panels/executor/workspace`. `PLAN_EXECUTOR_ROOT`
+changes the data root and therefore this workspace. Native admission creates only
+this application-owned default directory. Explicit paths retain strict validation.
+
+The `executor_default` workspace policy selects this native-owned directory.
+Its stored `/` placeholder is not a working directory. Public views omit that path
+and display “Panels workspace (Mac).” Native admission replaces it with the real
+path before any provider starts.
 
 A conversation keeps its original workspace through resume and server restart. A new
 configuration affects new conversations. Reset the agent's conversation to use the new

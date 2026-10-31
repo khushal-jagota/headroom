@@ -141,6 +141,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
@@ -822,6 +823,8 @@ class ClaudeAgentSdkBackendChild:
         """
         if self._client is not None or self._reader is not None:
             raise BackendSpawnFailed("the previous Claude child still owns cleanup handles")
+        if resolved_start.workspace_path_policy == WorkspacePathPolicy.executor_default:
+            raise BackendSpawnFailed("executor workspace requires native resolution")
         self._resolved_start = resolved_start
         minted_session_id = None if vendor_session_cursor is not None else str(uuid.uuid4())
         options = self._options(resolved_start, vendor_session_cursor, minted_session_id)

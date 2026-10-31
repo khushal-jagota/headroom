@@ -117,6 +117,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
@@ -389,6 +390,8 @@ class CodexAppServerBackendChild:
         vendor_session_cursor: str | None,
     ) -> None:
         """Spawn codex, shake hands, and bind the thread this conversation runs in."""
+        if resolved_start.workspace_path_policy == WorkspacePathPolicy.executor_default:
+            raise BackendSpawnFailed("executor workspace requires native resolution")
         self._resolved_start = resolved_start
         self._model = resolved_start.model
         self._reasoning_effort = resolved_start.reasoning_effort

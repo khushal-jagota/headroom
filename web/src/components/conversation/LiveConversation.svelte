@@ -993,7 +993,8 @@
   {backendKey}
   conversationExists={started}
   backends={pickerBackends}
-  workspaceFolder={view?.workspace_folder ?? null}
+  workspaceFolder={view?.workspace_path_policy === "executor_default"
+    ? "Panels workspace (Mac)" : view?.workspace_folder ?? null}
   {reader}
   {acknowledgedMessageIds}
   transcriptLoading={ownerLoading || opening || (reader?.loading === true && reader.status === null)}

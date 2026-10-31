@@ -491,3 +491,20 @@ Apple references: [file permissions and responsible code](https://developer.appl
 and [certificate types](https://developer.apple.com/help/account/certificates/certificates-overview/).
 
 _Last verified: 2026-10-31. Source and Linux software checks only; no native build, signing, installation, or consent check._
+
+
+## Persistent default workspace
+
+An unconfigured Mac Worker uses `<executor data root>/workspace`. The standard
+path is `~/Library/Application Support/Panels/executor/workspace`. An explicit
+`PLAN_EXECUTOR_ROOT` selects the root for this path. The workspace survives source,
+virtual environment, and signed application replacement. Native admission creates
+this one directory on demand. Explicit workspace choices are never created or
+replaced by this rule. A missing explicit path still refuses the start.
+
+This selector requires protocol 18 on both VPS and Mac. Spool format 5 remains
+unchanged. Quiesce through supported controls and retain the current database and
+spool before the coordinated update. Upgrade the populated database through its
+forward migration. Do not reset it. Verify matched peer identities before the
+normal disposable Worker attempt. The old Mac cannot interpret `executor_default`.
+A rollback requires a coordinated compatible pair and the retained database backup.

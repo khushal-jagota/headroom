@@ -22,7 +22,7 @@ from tests.integration.test_navigation_cumulative_migration import (
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "mac_vps_execution"
+FINAL_HEAD = "executor_default_workspace"
 SENTINELS: dict[str, tuple[object, ...]] = {
     "mac_inbox_positions": (
         "sender",
@@ -172,5 +172,79 @@ def test_migration_drops_unused_model_catalog_tables(tmp_path: Path) -> None:
                 "model_variant_resolutions", "model_catalogue_models",
                 "scoped_model_catalog_observations", "scoped_model_catalog_rows",
             })
+    finally:
+        engine.dispose()
+
+
+def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_path: Path) -> None:
+    path = tmp_path / "executor-workspace.db"
+    _seed_pre_lifecycle(path).dispose()
+    engine = _migration_engine(str(path), 1000)
+    try:
+        with engine.begin() as connection:
+            config = _alembic_config(connection)
+            command.upgrade(config, "mac_vps_execution")
+            conn = _raw(connection)
+            _seed_available_sentinels(conn)
+            conn.execute(
+                "UPDATE conversations SET workspace_path_policy='absolute' "
+                "WHERE conversation_id='historical'"
+            )
+            conn.execute(
+                "INSERT INTO conversation_reply_credits VALUES('current',1,'ticket','t_one')"
+            )
+            conn.execute("CREATE INDEX retained_workspace_index ON conversations(workspace_folder)")
+            conn.execute(
+                "CREATE TRIGGER retained_workspace_trigger AFTER UPDATE ON conversations "
+                "BEGIN SELECT 1; END"
+            )
+            tables = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name!='alembic_version'"
+                )
+            ]
+            rows = {name: list(conn.execute(f'SELECT * FROM "{name}"')) for name in tables}
+            schema = list(
+                conn.execute(
+                    "SELECT name,sql FROM sqlite_master WHERE type IN ('index','trigger') "
+                    "AND tbl_name='conversations' ORDER BY name"
+                )
+            )
+            command.upgrade(config, "head")
+            for name, before in rows.items():
+                assert list(conn.execute(f'SELECT * FROM "{name}"')) == before, name
+            assert (
+                list(
+                    conn.execute(
+                        "SELECT name,sql FROM sqlite_master WHERE type IN ('index','trigger') "
+                        "AND tbl_name='conversations' ORDER BY name"
+                    )
+                )
+                == schema
+            )
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+            conn.execute(
+                "UPDATE conversations SET workspace_path_policy='executor_default' "
+                "WHERE conversation_id='current'"
+            )
+            with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+                conn.execute("UPDATE conversations SET workspace_path_policy='unknown'")
+            conn.execute(
+                "UPDATE conversations SET workspace_path_policy='home_relative' "
+                "WHERE conversation_id='current'"
+            )
+        # Ordinary startup of the same populated DB must keep all dependent history.
+        conn = db.connect(str(path))
+        try:
+            db.create_schema(conn)
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+            assert conn.execute("SELECT COUNT(*) FROM conversation_events").fetchone()[0] > 0
+            assert conn.execute("SELECT COUNT(*) FROM ticket_conversations").fetchone()[0] > 0
+            assert (
+                conn.execute("SELECT COUNT(*) FROM conversation_reply_credits").fetchone()[0] == 1
+            )
+        finally:
+            conn.close()
     finally:
         engine.dispose()

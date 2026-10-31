@@ -54,6 +54,11 @@ class ExecutorPaths:
     root: Path
 
     @property
+    def workspace(self) -> Path:
+        """The persistent application-owned default for unconfigured native Workers."""
+        return self.root / "workspace"
+
+    @property
     def spool(self) -> Path:
         return self.root / "spool"
 

@@ -862,6 +862,10 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             ConversationBackendKey.claude: mac_home / " claude config ",
         }[backend]
         paths = ExecutorPaths(mac_home / "executor-data")
+        if policy is WorkspacePathPolicy.executor_default:
+            configured_workspace = Path("/")
+            workspace = paths.workspace
+            assert not workspace.exists()
         spool = MacOutbox(paths.spool)
         received: list[ResolvedConversationStart] = []
         constructed: list[ResolvedConversationStart] = []
@@ -951,6 +955,22 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         assert received == constructed
         assert (paths.artifacts / "t_own" / "proof.txt").read_text() == "native artifact"
         assert received[0].workspace_folder == workspace
+        assert received[0].workspace_path_policy is WorkspacePathPolicy.absolute
+        if policy is WorkspacePathPolicy.executor_default:
+            assert workspace.is_dir()
+            assert not (mac_home / "projects" / "owned-default").exists()
+            marker = workspace / "retained.txt"
+            marker.write_text("keep")
+            localized = registry._localize_start(
+                resolved,
+                reference,
+                "capability",
+                None,
+                {"PLAN_TICKET_ID": "t_own"},
+                paths.skills,
+            )
+            assert localized.workspace_folder == workspace
+            assert marker.read_text() == "keep"
         assert received[0].role_materials is not None
         identity = dict(received[0].role_materials.identity_environment_variables)
         assert identity["PLAN_TICKET_FILES_DIR"] == str(paths.artifacts / "t_own")
@@ -1074,5 +1094,46 @@ def test_absent_stop_orders_proof_after_output_and_preserves_old_outcomes(
         acknowledge_pending(spool)
         assert (await registry.quiesce()).ready
         assert native.starts == 0
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("obstruction", ["file", "escaped_symlink"])
+def test_executor_default_file_refuses_without_provider_construction(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    tmp_path: Path,
+    obstruction: str,
+) -> None:
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        registry.paths.root.mkdir(parents=True)
+        retained = registry.paths.workspace
+        if obstruction == "escaped_symlink":
+            outside = tmp_path / "outside"
+            outside.mkdir()
+            retained = outside / "retained.txt"
+            registry.paths.workspace.symlink_to(outside, target_is_directory=True)
+        retained.write_text("retain")
+        assert isinstance(start.arguments, StartRun)
+        resolved = replace(
+            start.arguments.resolved_start,
+            workspace_folder=Path("/"),
+            workspace_path_policy=WorkspacePathPolicy.executor_default,
+        )
+        # Exercise wire hydration, not only the in-memory enum.
+        args = decode_command_arguments(
+            ChildOperation.start,
+            {
+                "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                "resolved_start": encode_value(resolved),
+            },
+        )
+        outcome = await registry.run(replace(start, arguments=args))
+        assert outcome.disposition is CommandDisposition.refused
+        error = outcome.result["error_message"]
+        assert isinstance(error, str)
+        assert "Mac workspace unavailable" in error
+        assert native.starts == 0
+        assert retained.read_text() == "retain"
 
     asyncio.run(run())

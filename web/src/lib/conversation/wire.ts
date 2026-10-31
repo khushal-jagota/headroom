@@ -197,7 +197,8 @@ export type ConversationView = {
   supports_steer: boolean;
   model: string | null;
   reasoning_effort: string | null;
-  workspace_folder: string;
+  workspace_folder: string | null;
+  workspace_path_policy?: "home_relative" | "absolute" | "executor_default";
   access: string;
   latest_sequence: number;
   owner_read_through_sequence: number;
@@ -516,8 +517,8 @@ export type OwnerSendBody = {
  * is on reported no catalogue. A start on that is refused rather than guessed at.
  */
 export type ConversationStartValues = {
-  workspace_folder?: string;
-  workspace_path_policy?: "home_relative" | "absolute";
+  workspace_folder?: string | null;
+  workspace_path_policy?: "home_relative" | "absolute" | "executor_default";
   backend_key: ConversationBackendKey;
   model: string | null;
   reasoning_effort: string | null;
