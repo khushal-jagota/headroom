@@ -2857,8 +2857,12 @@ class SqliteProcessConversationSystem:
                 reasoning_effort=reasoning_effort_change,
                 reasoning_effort_is_set=reasoning_effort_is_set,
             )
-        except BackendSpawnFailed:
-            return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
+        except BackendSpawnFailed as error:
+            return _PromptDeliveryAttempt(
+                PromptDeliveryRefusalReason.backend_did_not_start,
+                record_refusal=True,
+                refusal_detail=str(error),
+            )
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
@@ -2952,7 +2956,8 @@ class SqliteProcessConversationSystem:
             return replace(
                 rebound,
                 record_refusal=(
-                    rebound.refusal_reason is not None and rebind.failed_child_recovery
+                    rebound.record_refusal
+                    or (rebound.refusal_reason is not None and rebind.failed_child_recovery)
                 ),
             )
         except PromptWriteFailed:

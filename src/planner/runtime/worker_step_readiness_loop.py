@@ -34,6 +34,7 @@ from planner.conversation.contracts import (
     PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
+    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
@@ -141,7 +142,8 @@ async def _admitted_start_ready_worker_step(
     Every check happens before anything is sent: an occupied worker is skipped outright,
     and the claim re-runs the readiness decision under the write lock. Once the send
     reports started, queued, or injected, the delivery cannot be taken back. The claim is
-    given back only when the send was refused, or when a failure occurred before a fate.
+    given back for other refusals, or when a failure occurred before a fate.
+    A definite backend start failure stays errored for explicit recovery.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
     """
     conn = connect_database()
@@ -234,6 +236,7 @@ async def _admitted_start_ready_worker_step(
                 mode=PromptDeliveryMode.queue,
                 sender_message_id=sender_message_id,
                 worker_type_registry=worker_type_registry,
+                retain_backend_start_failure=not paired_opener,
                 now=now(),
             )
             conversation_id = delivered.conversation_id
@@ -249,7 +252,7 @@ async def _admitted_start_ready_worker_step(
             return WorkerStepStartResult(started=False)
 
         if isinstance(fate, PromptDeliveryRefused):
-            # The refusal is on the record before the claim is given back, so a release
+            # The refusal is on the record before the claim changes, so a release
             # that itself fails cannot swallow the one line that says why nothing ran.
             _log.error(
                 "worker step send was refused (ticket=%s conversation=%s reason=%s)",
@@ -258,7 +261,19 @@ async def _admitted_start_ready_worker_step(
                 fate.refusal_reason.value,
             )
             remove_tentative_bindings()
-            give_the_claim_back()
+            if (
+                not paired_opener
+                and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
+            ):
+                tickets_data.mark_worker_step_claim_errored(
+                    conn,
+                    ticket_id,
+                    expected_claim=taken_claim,
+                    expected_claim_revision=taken_claim_revision,
+                    now=now(),
+                )
+            else:
+                give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliverySuppressed):

@@ -216,3 +216,5 @@ The backend and Ticket contracts still export those same types. The conversation
 package exports its in-memory stand-in directly, without a lazy import.
 
 _Last verified: 2026-10-31._
+
+An automatic Worker attempt that receives `backend_did_not_start` retains the failed conversation for explicit recovery. Its refused-prompt row includes the native exception detail. Ordinary first-send cleanup for other refusals stays unchanged.

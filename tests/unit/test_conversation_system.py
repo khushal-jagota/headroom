@@ -3253,3 +3253,35 @@ def test_shutdown_retains_unconfirmed_local_child_and_revokes_callbacks(
         assert await harness.events("c") == before
 
     _run(exercise)
+
+
+@pytest.mark.parametrize("mode", [PromptDeliveryMode.queue, PromptDeliveryMode.send_now])
+def test_spawn_refusal_retains_native_detail_after_rebind(
+    harness: _Harness, mode: PromptDeliveryMode
+) -> None:
+    from planner.conversation.events import PromptDeliveryRefusedEventPayload
+
+    async def exercise() -> None:
+        await _start(harness)
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.backend("c").needs_rebind_once = True
+        harness.backend("c").spawn_fails = True
+        fate = await harness.system.send(
+            "c",
+            text_message_content("retry"),
+            sender_label="owner",
+            sender_message_id="spawn-refusal",
+            mode=mode,
+        )
+        assert isinstance(fate, PromptDeliveryRefused)
+        assert fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
+        events = await harness.events("c")
+        refused = [
+            e.payload for e in events if isinstance(e.payload, PromptDeliveryRefusedEventPayload)
+        ]
+        assert len(refused) == 1
+        assert refused[0].refusal_detail == "c"
+        assert refused[0].sender_message_id == "spawn-refusal"
+
+    _run(exercise)

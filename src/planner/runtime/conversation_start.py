@@ -42,6 +42,7 @@ from planner.conversation.contracts import (
     NativeMessageOperation,
     PromptDeliveryFate,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
@@ -423,6 +424,7 @@ async def send_to_ticket_conversation(
     recipient: Principal | None = None,
     reply_requested: bool = True,
     worker_type_registry: WorkerTypeRegistry | None = None,
+    retain_backend_start_failure: bool = False,
     now: int,
     recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
@@ -455,6 +457,8 @@ async def send_to_ticket_conversation(
 
     Creating and delivering are one act. If the delivery does not land, the conversation
     goes with it and the Ticket is left with none, which is the state it was in before.
+    Automatic Worker attempts can opt into retaining a definite backend start failure
+    for explicit recovery. This does not retain other refusals or raised exceptions.
 
     A message carrying a change also updates the Ticket's last-chosen columns, but only
     when the delivery started. A held message applies its change when it later runs, and a
@@ -487,6 +491,7 @@ async def send_to_ticket_conversation(
             ticket,
             content,
             created_conversation_id=created_conversation_id,
+            retain_backend_start_failure=retain_backend_start_failure,
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
@@ -622,6 +627,7 @@ async def _make_a_conversation_and_send_into_it(
     recipient: Principal | None,
     reply_requested: bool,
     worker_type_registry: WorkerTypeRegistry | None,
+    retain_backend_start_failure: bool = False,
     now: int,
     recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
@@ -715,6 +721,16 @@ async def _make_a_conversation_and_send_into_it(
             system, conn, ticket.id, making, now=now
         )
         raise
+    if (
+        isinstance(fate, PromptDeliveryRefused)
+        and retain_backend_start_failure
+        and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
+    ):
+        # This exact conversation holds the refusal for explicit recovery. Do not
+        # relink it: a concurrent reset can already have selected a newer one.
+        return DeliveredMessage(
+            conversation_id=making, fate=fate, newly_accepted=receipt.newly_accepted
+        )
     if isinstance(fate, PromptDeliveryRefused):
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now

@@ -1024,3 +1024,132 @@ def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: s
         assert not started.started
         assert ticket.worker_step_claim is WorkerStepClaim.none
         assert ticket.conversation_id is None
+
+
+def test_definite_start_failure_stays_failed_until_one_explicit_retry(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Real conversation persistence is required: the in-memory fake cannot prove
+    # that native detail survives cleanup and remains in the linked transcript.
+    from tests.unit.test_conversation_system import _Harness, _run
+
+    from planner.conversation.events import PromptDeliveryRefusedEventPayload
+
+    ticket_id = world.ready_ticket()
+    ids = iter(("native-refusal-detail", "retry-refusal-detail", "retry-success"))
+    monkeypatch.setattr("planner.runtime.conversation_start.new_conversation_id", lambda: next(ids))
+    harness = _Harness(Path(world.db_path))
+    harness.backend("native-refusal-detail").spawn_fails = True
+    harness.backend("retry-refusal-detail").spawn_fails = True
+
+    async def start() -> WorkerStepStartResult:
+        return await start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=harness.system,
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
+
+    async def retry() -> dict[str, object]:
+        with closing(world.connect()) as conn:
+            return await worker_restart.restart_worker(
+                harness.system,
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                write_employee_configuration=None,
+                start_worker_step=start,
+                now=world.clock.now_unix,
+            )
+
+    async def exercise() -> None:
+        try:
+            assert (await start()).delivery_fate == "refused"
+            failed = world.ticket(ticket_id)
+            assert failed.ticket_status is TicketStatus.errored
+            assert failed.conversation_id == "native-refusal-detail"
+            assert world.skill_bindings() == []
+            rows = await harness.events(failed.conversation_id)
+            refusals = [
+                r.payload for r in rows if isinstance(r.payload, PromptDeliveryRefusedEventPayload)
+            ]
+            assert len(refusals) == 1
+            assert refusals[0].refusal_detail == "native-refusal-detail"
+            for _ in range(3):
+                assert not (await start()).started
+                assert world.ticket(ticket_id) == failed
+            assert harness.spawned_conversation_ids == ["native-refusal-detail"]
+            assert (await retry())["delivery_fate"] == "refused"
+            failed_retry = world.ticket(ticket_id)
+            assert failed_retry.ticket_status is TicketStatus.errored
+            assert failed_retry.conversation_id == "retry-refusal-detail"
+            assert not (await start()).started
+            assert world.ticket(ticket_id) == failed_retry
+            assert harness.spawned_conversation_ids == [
+                "native-refusal-detail",
+                "retry-refusal-detail",
+            ]
+            assert (await retry())["started"] is True
+            assert world.ticket(ticket_id).conversation_id == "retry-success"
+            assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
+            # Explicit recovery does not delete the original refusal history.
+            assert await harness.events("native-refusal-detail") == rows
+            assert harness.spawned_conversation_ids == [
+                "native-refusal-detail",
+                "retry-refusal-detail",
+                "retry-success",
+            ]
+        finally:
+            await harness.system.shutdown()
+
+    _run(exercise)
+
+
+def test_definite_start_failure_cannot_erase_a_newer_claim(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = world.ready_ticket(conversation_id="start-failed")
+    world.start_conversation("start-failed")
+    world.conversations.arm_backend_start_failure("start-failed")
+    mark_errored = tickets_data.mark_worker_step_claim_errored
+    newer: list[Ticket] = []
+
+    def race(
+        conn: sqlite3.Connection,
+        ticket_id: str,
+        *,
+        expected_claim: WorkerStepClaim,
+        expected_claim_revision: int,
+        now: int,
+        notify_manager: bool = True,
+    ) -> bool:
+        previous = world.ticket(ticket_id)
+        assert tickets_data.release_worker_step_claim(
+            conn,
+            ticket_id,
+            expected_claim=previous.worker_step_claim,
+            expected_claim_revision=previous.worker_step_claim_revision,
+            now=1,
+        )
+        taken = tickets_data.claim_ticket_for_worker_step(
+            conn,
+            ticket_id,
+            readiness_check=worker_step_readiness.is_ready_for_worker_step,
+            now=1,
+        )
+        assert taken is not None
+        newer.append(taken)
+        return mark_errored(
+            conn,
+            ticket_id,
+            expected_claim=expected_claim,
+            expected_claim_revision=expected_claim_revision,
+            now=now,
+            notify_manager=notify_manager,
+        )
+
+    monkeypatch.setattr(tickets_data, "mark_worker_step_claim_errored", race)
+    assert world.start_step(ticket_id).delivery_fate == "refused"
+    assert world.ticket(ticket_id) == newer[0]
+    assert newer[0].worker_step_claim is WorkerStepClaim.out

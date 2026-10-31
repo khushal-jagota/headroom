@@ -41,7 +41,7 @@ from planner.conversation.in_memory_conversation_system import (
 )
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.workspace_admission import WorkspaceAdmission
-from planner.core.contracts import Principal
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import PlannerError
 from planner.projects.data import create_project, update_project
 from planner.runtime.conversation_start import (
@@ -535,3 +535,51 @@ def test_mac_project_path_is_resolved_on_the_execution_host(
         "SELECT workspace_folder FROM conversations WHERE conversation_id = ?", (conversation_id,)
     ).fetchone()
     assert row[0] == str(tmp_path / "mac-only")
+
+
+@pytest.mark.parametrize("retain", [False, True])
+def test_first_spawn_refusal_retention_preserves_a_replacement_link(
+    tmp_db: Connection, ticket: Ticket, retain: bool
+) -> None:
+    class FailingStart(_LinkWatchingConversationSystem):
+        async def start_conversation(self, request: ConversationStartRequest) -> None:
+            await self._system.start_conversation(request)
+            self._system.arm_backend_start_failure(request.conversation_id)
+
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        watching = FailingStart(system, tmp_db, ticket.id)
+        # Simulate a replacement selected while the initial send awaits its receipt.
+        original_send = watching.send_with_receipt
+
+        async def replace_then_refuse(
+            *args: object, **kwargs: object
+        ) -> AddressedPromptDeliveryReceipt:
+            receipt = await original_send(*args, **kwargs)  # type: ignore[arg-type]
+            tmp_db.execute(
+                "UPDATE tickets SET conversation_id = 'replacement' WHERE id = ?", (ticket.id,)
+            )
+            tmp_db.commit()
+            return receipt
+
+        watching.send_with_receipt = replace_then_refuse  # type: ignore[method-assign]
+        result = await send_to_ticket_conversation(
+            watching,
+            tmp_db,
+            ticket.id,
+            text_message_content("start"),
+            conversation_id=None,
+            created_conversation_id="failed-initial",
+            sender_label="loop",
+            sender_message_id="initial-attempt",
+            sender=OWNER_PRINCIPAL,
+            recipient=Principal(PrincipalKind.ticket, ticket.id),
+            retain_backend_start_failure=retain,
+            now=1,
+        )
+        assert isinstance(result.fate, PromptDeliveryRefused)
+        assert result.fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
+        assert result.conversation_id == ("failed-initial" if retain else None)
+        assert read_ticket(tmp_db, ticket.id).conversation_id == "replacement"
+
+    asyncio.run(exercise())
