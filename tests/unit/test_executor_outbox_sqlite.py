@@ -20,12 +20,10 @@ import pytest
 from pydantic import TypeAdapter
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
-from planner.executor.files import snapshot_file
 from planner.executor.mac_outbox import DATABASE_NAME, MacOutbox
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
-    FileScope,
     FileSnapshot,
     JsonObject,
     OutboxEntry,
@@ -138,14 +136,13 @@ os._exit(0)
 
 
 def test_lost_receipt_retains_same_item_and_blob_until_confirmed(tmp_path: Path) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
+    source = tmp_path / "artifacts" / "tickets" / "t_one"
+    source.mkdir(parents=True)
     (source / "file").write_bytes(b"first bytes")
-    snap = snapshot_file(
-        root=source, relative_path="file", scope=FileScope.ticket, owner_id="t_one"
-    )
     outbox = MacOutbox(tmp_path / "outbox")
-    first = outbox.add(OutboxEntry("c_one", EnvelopeKind.backend_event, {}, "event", (snap,)))
+    first = outbox.add(
+        OutboxEntry("c_one", EnvelopeKind.backend_event, {}, "event"), ticket_id="t_one"
+    )
     blob = outbox.snapshots("event")[0].local_path
     assert blob.read_bytes() == b"first bytes"
     outbox.close()  # Received confirmation was lost before the Mac persisted it.

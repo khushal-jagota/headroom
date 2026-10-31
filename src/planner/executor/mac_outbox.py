@@ -14,7 +14,6 @@ import threading
 import time
 from collections import defaultdict
 from contextlib import ExitStack
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -30,7 +29,6 @@ from planner.executor.configuration import (
 )
 from planner.executor.files import (
     contained_path,
-    copy_verified,
     directory_descriptor,
     fsync_directory,
     fsync_file,
@@ -172,7 +170,7 @@ class MacOutbox:
                 self._capturing += 1
             try:
                 snapshots, updates = self._capture(ticket_id)
-                return self._add(replace(entry, snapshots=snapshots), updates=updates)
+                return self._add(entry, snapshots=snapshots, updates=updates)
             finally:
                 with self._lock:
                     self._capturing -= 1
@@ -295,7 +293,11 @@ class MacOutbox:
         return tuple(snapshots), updates
 
     def _add(
-        self, entry: OutboxEntry, *, updates: list[tuple[object, ...]] | tuple[()] = ()
+        self,
+        entry: OutboxEntry,
+        *,
+        snapshots: tuple[FileSnapshot, ...] = (),
+        updates: list[tuple[object, ...]] | tuple[()] = (),
     ) -> QueuedEnvelope:
         with self._lock:
             safe_component(entry.conversation_id)
@@ -308,86 +310,72 @@ class MacOutbox:
                     entry.kind,
                     entry.payload,
                 ) or (
-                    entry.snapshots
-                    and old.file_dependencies != tuple(s.manifest for s in entry.snapshots)
+                    snapshots
+                    and old.file_dependencies != tuple(s.manifest for s in snapshots)
                 ):
                     raise ValueError("submission id reused with different content")
                 return old
-            snapshots = entry.snapshots
-            try:
-                for snapshot in snapshots:
-                    target = self._blobs / snapshot.manifest.sha256
-                    if not target.exists():
-                        temporary = self._blobs / (".tmp-" + uuid4().hex)
-                        copy_verified(snapshot.local_path, temporary, snapshot.manifest)
-                        os.replace(temporary, target)
-                fsync_directory(self._blobs)
-                payload = {
-                    "payload": entry.payload,
-                    "files": encode_value(tuple(s.manifest for s in snapshots)),
-                }
-                encoded = json.dumps(
-                    payload, sort_keys=True, separators=(",", ":"), allow_nan=False
-                ).encode()
-                child = entry.payload.get("child")
-                if not isinstance(child, dict):
-                    ask = entry.payload.get("ask")
-                    child = ask.get("child") if isinstance(ask, dict) else None
-                child_id = str(child.get("child_id", "")) if isinstance(child, dict) else ""
-                with self._db:
-                    cursor = self._db.execute(
-                        "INSERT INTO items"
-                        "(submission_id,conversation_id,child_id,kind,payload_json) "
-                        "VALUES(?,?,?,?,?)",
-                        (submission, entry.conversation_id, child_id, entry.kind.value, encoded),
-                    )
-                    assert cursor.lastrowid is not None
-                    self._db.executemany(
-                        "INSERT INTO item_files VALUES(?,?,?,?)",
-                        [
-                            (
-                                cursor.lastrowid,
-                                m.manifest.relative_path,
-                                m.manifest.sha256,
-                                m.manifest.byte_count,
-                            )
-                            for m in snapshots
-                        ],
-                    )
-                    self._db.executemany(
-                        "INSERT INTO ticket_files VALUES(?,?,?,?,?) "
-                        "ON CONFLICT(ticket_id,relative_path) DO UPDATE SET "
-                        "byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,"
-                        "sha256=excluded.sha256",
-                        updates,
-                    )
-                    if entry.kind is EnvelopeKind.child_stopped:
-                        self._db.execute(
-                            "DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL",
-                            (child_id,),
-                        )
-                    assert cursor.lastrowid is not None
-                    envelope = self._envelope(
+            payload = {
+                "payload": entry.payload,
+                "files": encode_value(tuple(s.manifest for s in snapshots)),
+            }
+            encoded = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode()
+            child = entry.payload.get("child")
+            if not isinstance(child, dict):
+                ask = entry.payload.get("ask")
+                child = ask.get("child") if isinstance(ask, dict) else None
+            child_id = str(child.get("child_id", "")) if isinstance(child, dict) else ""
+            with self._db:
+                cursor = self._db.execute(
+                    "INSERT INTO items"
+                    "(submission_id,conversation_id,child_id,kind,payload_json) "
+                    "VALUES(?,?,?,?,?)",
+                    (submission, entry.conversation_id, child_id, entry.kind.value, encoded),
+                )
+                assert cursor.lastrowid is not None
+                self._db.executemany(
+                    "INSERT INTO item_files VALUES(?,?,?,?)",
+                    [
                         (
                             cursor.lastrowid,
-                            submission,
-                            entry.conversation_id,
-                            child_id,
-                            entry.kind.value,
-                            encoded,
-                            None,
+                            m.manifest.relative_path,
+                            m.manifest.sha256,
+                            m.manifest.byte_count,
                         )
+                        for m in snapshots
+                    ],
+                )
+                self._db.executemany(
+                    "INSERT INTO ticket_files VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(ticket_id,relative_path) DO UPDATE SET "
+                    "byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,"
+                    "sha256=excluded.sha256",
+                    updates,
+                )
+                if entry.kind is EnvelopeKind.child_stopped:
+                    self._db.execute(
+                        "DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL",
+                        (child_id,),
                     )
-                    # Reject an unsendable item before acknowledging its durable addition.
-                    encode_message(
-                        WireMessage(WireMessageKind.envelope, "0" * 32, self._object(envelope))
+                envelope = self._envelope(
+                    (
+                        cursor.lastrowid,
+                        submission,
+                        entry.conversation_id,
+                        child_id,
+                        entry.kind.value,
+                        encoded,
+                        None,
                     )
-                self._notify()  # Only a committed item may wake sending.
-                return envelope
-            finally:
-                for snapshot in snapshots:
-                    if snapshot.local_path.parent.name == ".executor-snapshots":
-                        snapshot.local_path.unlink(missing_ok=True)
+                )
+                # Reject an unsendable item before acknowledging its durable addition.
+                encode_message(
+                    WireMessage(WireMessageKind.envelope, "0" * 32, self._object(envelope))
+                )
+            self._notify()  # Only a committed item may wake sending.
+            return envelope
 
     @staticmethod
     def _object(value: object) -> JsonObject:
