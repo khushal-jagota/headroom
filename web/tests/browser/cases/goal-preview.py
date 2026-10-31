@@ -1054,6 +1054,203 @@ def resolved_chart_color(page, token):
     }""", token)
 
 
+def gauge_visual_equivalence(browser, url):
+    """Measure the extraction boundary in the existing application/HTTP host.
+
+    Existing helpers own the full pointer matrix. These probes add the missing
+    gauge layout, native-input accessibility, and two distinct motion mechanisms.
+    The same file runs before and after extraction; receipts use semantic keys.
+    """
+    started = time.monotonic()
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root) / "gauge-equivalence" if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    receipts = []
+    recorder = """() => {
+      const records = [];
+      const watched = new WeakSet();
+      let phase = 'reveal';
+      function watch(meter) {
+        if (watched.has(meter)) return;
+        watched.add(meter);
+        const host = meter.closest('[data-chart-id]');
+        if (!host) return;
+        const manual = !!meter.closest('.manual-measurement');
+        const record = {chart:host.dataset.chartId, manual, phase, samples:[]};
+        records.push(record);
+        const start = performance.now();
+        function sample(now) {
+          if (!meter.isConnected) return;
+          const fill = meter.querySelectorAll('path')[1];
+          const readout = meter.nextElementSibling;
+          const style = getComputedStyle(fill);
+          const fraction = manual ? parseFloat(style.strokeDasharray) :
+            fill.getTotalLength() / (42 * Math.PI * 1.5);
+          const digits = readout?.querySelector('[class*="digits"]');
+          record.samples.push({ms:now-start, fraction,
+            opacity:Number(style.opacity), stroke:style.stroke,
+            count:digits ? Number(digits.textContent) : null});
+          if (now-start < 1800) requestAnimationFrame(sample);
+        }
+        requestAnimationFrame(sample);
+      }
+      window.__gaugeEvidence = records;
+      window.__gaugeArm = nextPhase => {
+        phase = nextPhase;
+        document.querySelectorAll('svg[role=meter]').forEach(meter => {
+          watched.delete(meter); watch(meter);
+        });
+      };
+      new MutationObserver(() => document.querySelectorAll('svg[role=meter]')
+        .forEach(watch)).observe(document, {childList:true,subtree:true});
+    }"""
+
+    def snapshot(chart):
+        return chart.evaluate("""node => {
+          const origin = node.getBoundingClientRect();
+          const rect = element => {
+            if (!element) return null;
+            const box = element.getBoundingClientRect();
+            return {x:box.x-origin.x,y:box.y-origin.y,width:box.width,height:box.height};
+          };
+          const meter = node.querySelector('svg[role=meter]');
+          const readout = meter?.nextElementSibling;
+          const input = node.querySelector('input');
+          const summary = node.querySelector('.support-summary');
+          const paths = meter ? [...meter.querySelectorAll('path')].slice(0,2) : [];
+          return {host:{width:origin.width,height:origin.height},
+            meter:rect(meter),readout:rect(readout),input:rect(input),summary:rect(summary),
+            attributes:meter ? Object.fromEntries(['role','aria-label','aria-valuemin',
+              'aria-valuemax','aria-valuenow','aria-valuetext','focusable']
+              .map(name => [name,meter.getAttribute(name)])) : null,
+            summaryExpanded:summary?.getAttribute('aria-expanded') ?? null,
+            inputHidden:input ? !!input.closest('[aria-hidden=true],[inert]') : null,
+            inputLabel:input?.getAttribute('aria-label') ?? null,
+            inputValue:input?.value ?? null,
+            readoutHidden:readout?.getAttribute('aria-hidden') ?? null,
+            paths:paths.map(path => {const css=getComputedStyle(path);return {
+              d:path.getAttribute('d'),stroke:css.stroke,strokeWidth:css.strokeWidth,
+              strokeLinecap:css.strokeLinecap,opacity:css.opacity,
+              dasharray:css.strokeDasharray};}),
+            layout:readout ? {display:getComputedStyle(readout).display,
+              gap:getComputedStyle(readout).gap,
+              pointerEvents:getComputedStyle(readout).pointerEvents} : null};
+        }""")
+
+    for phone, reduced in ((False, False), (False, True), (True, False), (True, True)):
+        mode = f"{'phone' if phone else 'desktop'}-{'reduced' if reduced else 'normal'}"
+        context = browser.new_context(
+            viewport={"width": 390 if phone else 1280, "height": 844 if phone else 900},
+            has_touch=phone, is_mobile=phone,
+            reduced_motion="reduce" if reduced else "no-preference",
+        )
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        page.add_init_script(f"({recorder})()")
+        settle_ms = 80 if reduced else 1900
+        fixture = GoalFixture()
+        fixture.observations["cumulative_target"] = {TODAY: 8}
+        manual = fixture.goals["cumulative_target"]
+        manual["page"]["blocks"] = [{**manual["primary_chart"],
+            "id": "support-manual-gauge", "placement": "supporting"}]
+        readonly = fixture.goal("readonly-gauge", "Read-only gauge", 6)
+        readonly["kind"] = "quantitative"
+        readonly["primary_chart"] = {
+            "type": "chart", "kind": "gauge", "id": "readonly-gauge",
+            "placement": "primary", "title": "Read-only gauge", "domain": [0, 20],
+            "target": 12, "unit": "events", "ranges": [
+                {"id": key, "label": label, "series": [{"name": "Current", "points": [
+                    {"label": TODAY, "value": value}]}]}
+                for key, label, value in (("week", "Week", 8), ("month", "Month", 16))
+            ],
+        }
+        readonly["page"]["blocks"] = [{**readonly["primary_chart"],
+            "id": "support-readonly-gauge", "placement": "supporting"}]
+        page.route("**/api/**", fixture.respond)
+        row = {"mode": mode, "surfaces": {}, "motion": {}, "focus": {}}
+        receipts.append(row)
+        errors = []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        try:
+            for identity, support_id in (("cumulative_target", "support-manual-gauge"),
+                                         ("readonly-gauge", "support-readonly-gauge")):
+                page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
+                chart = page.locator(f'[data-chart-id="{identity}"]')
+                meter = chart.get_by_role("meter")
+                expect(meter).to_be_visible()
+                meter.scroll_into_view_if_needed()
+                # Keep initial reveal samples before a screenshot waits for stability.
+                page.wait_for_timeout(settle_ms)
+                row["surfaces"][identity + ":normal"] = snapshot(chart)
+                if identity == "cumulative_target":
+                    value = chart.get_by_role("textbox")
+                    expect(value).to_have_attribute("data-reading", "8")
+                    assert not row["surfaces"][identity + ":normal"]["inputHidden"]
+                    value.focus()
+                    assert value.evaluate("node => node === document.activeElement")
+                    row["focus"][identity] = value.get_attribute("aria-label")
+                else:
+                    figure = chart.locator("figure[tabindex]")
+                    if phone:
+                        touch_inspection(page, context.new_cdp_session(page), chart, figure)
+                    else:
+                        desktop_inspection(page, chart, figure)
+                    row["focus"][identity] = figure.get_attribute("aria-label")
+                if output:
+                    chart.screenshot(path=str(output / f"{mode}-{identity}-normal.png"))
+
+                support = page.locator(f'[data-chart-id="{support_id}"]')
+                if phone:
+                    summary = support.locator(".support-summary")
+                    expect(summary).to_have_attribute("aria-expanded", "false")
+                    row["surfaces"][identity + ":smallest"] = snapshot(support)
+                    summary.tap()
+                    expect(summary).to_have_attribute("aria-expanded", "true")
+                expect(support.get_by_role("meter")).to_be_visible()
+                support.get_by_role("meter").scroll_into_view_if_needed()
+                page.wait_for_timeout(settle_ms)
+                row["surfaces"][identity + ":support-expanded"] = snapshot(support)
+                if output:
+                    support.screenshot(path=str(output / f"{mode}-{identity}-support.png"))
+                if phone:
+                    page.set_viewport_size({"width": 320, "height": 844})
+                    row["surfaces"][identity + ":narrow320"] = snapshot(support)
+                    page.set_viewport_size({"width": 390, "height": 844})
+
+                page.evaluate("window.__gaugeArm('update')")
+                if identity == "cumulative_target":
+                    chart.get_by_role("button", name="+1", exact=True).click()
+                    expect(chart.get_by_role("textbox")).to_have_attribute("data-reading", "9")
+                else:
+                    chart.get_by_role("button", name="Month", exact=True).click()
+                    expect(meter).to_have_attribute("aria-valuenow", "16")
+                page.wait_for_timeout(settle_ms)
+                row["surfaces"][identity + ":updated"] = snapshot(chart)
+                row["motion"][identity] = page.evaluate("window.__gaugeEvidence")
+
+            page.goto(url + "#/workspace", wait_until="domcontentloaded")
+            for identity in ("cumulative_target", "readonly-gauge"):
+                chart = page.locator(f'[data-goal-card="{identity}"] [data-chart-id="{identity}"]')
+                expect(chart.get_by_role("meter")).to_be_visible()
+                chart.scroll_into_view_if_needed()
+                page.wait_for_timeout(settle_ms)
+                row["surfaces"][identity + ":small"] = snapshot(chart)
+                if output:
+                    chart.screenshot(path=str(output / f"{mode}-{identity}-small.png"))
+            assert errors == [], errors
+            row["errors"] = errors
+        finally:
+            if output:
+                (output / "measurement.json").write_text(json.dumps({
+                    "browser": browser.version, "seconds": time.monotonic() - started,
+                    "modes": receipts,
+                }, indent=2) + "\n")
+            context.close()
+    print(f"gauge extraction equivalence probes: passed (+{time.monotonic() - started:.2f}s)",
+          flush=True)
+
+
 def manual_unit_spacing(browser, url):
     # Shared formatting tests own the suffix matrix. This boundary proves that
     # manual controls, comparisons, and split flex counters use that contract.
@@ -1699,6 +1896,7 @@ def run(browser, urls):
     manual_unit_spacing(browser, urls[0])
     authored_goal_presentation(browser, urls[0])
     native_goal_edits(browser, urls[0])
+    gauge_visual_equivalence(browser, urls[0])
 
 
 class NativeGoalEditFixture(GoalFixture):
