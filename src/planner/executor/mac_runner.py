@@ -59,6 +59,7 @@ from planner.execution_identity import (
     ChildReference,
 )
 from planner.executor.configuration import (
+    MAX_TOOL_DETAIL_CHARACTERS,
     NATIVE_SKILLS_DIR_ENV,
     NATIVE_WORKER_CONTEXT,
     ExecutorPaths,
@@ -190,6 +191,8 @@ class NativeEventSink:
     async def _report(
         self, method: BackendEventMethod, turn: TurnToken | None, arguments: dict[str, object]
     ) -> None:
+        if isinstance(detail := arguments.get("detail"), str):
+            arguments["detail"] = detail[:MAX_TOOL_DETAIL_CHARACTERS]
         if method in LIVE_BACKEND_EVENT_METHODS:
             if self.registry.send_live_event is not None:
                 await self.registry.send_live_event(

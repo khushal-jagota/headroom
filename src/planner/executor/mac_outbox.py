@@ -6,12 +6,14 @@ import asyncio
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import stat
 import threading
 import time
 from collections import defaultdict
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -183,18 +185,30 @@ class MacOutbox:
         checked_ns = time.time_ns()
 
         def walk(folder: Path) -> None:
-            with directory_descriptor(folder):
-                pass
-            with os.scandir(folder) as entries:
-                for entry in sorted(entries, key=lambda item: item.name):
-                    if entry.is_dir(follow_symlinks=False):
-                        walk(Path(entry.path))
-                        continue
+            try:
+                with directory_descriptor(folder), os.scandir(folder) as entries:
+                    ordered = sorted(entries, key=lambda item: item.name)
+            except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
+                logging.getLogger(__name__).warning(
+                    "Skipping unreadable artifact directory: %s", folder
+                )
+                return
+            for entry in ordered:
+                with ExitStack() as sources:
                     relative = Path(entry.path).relative_to(root).as_posix()
-                    source = contained_path(root, relative)
-                    info = entry.stat(follow_symlinks=False)
-                    if not stat.S_ISREG(info.st_mode):
-                        raise ValueError("artifact is not regular file")
+                    try:
+                        source = contained_path(root, relative)
+                        info = entry.stat(follow_symlinks=False)
+                        if not stat.S_ISDIR(info.st_mode) and not stat.S_ISREG(info.st_mode):
+                            raise ValueError("artifact is not regular file")
+                    except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
+                        logging.getLogger(__name__).warning(
+                            "Skipping unreadable artifact: %s", relative
+                        )
+                        continue
+                    if stat.S_ISDIR(info.st_mode):
+                        walk(source)
+                        continue
                     with self._lock:
                         previous = self._db.execute(
                             "SELECT byte_count,modified_ns,sha256 FROM ticket_files "
@@ -218,19 +232,30 @@ class MacOutbox:
                                 )
                                 snapshots.append(FileSnapshot(manifest, self._blobs / previous[2]))
                             continue
+                    try:
+                        incoming = sources.enter_context(regular_descriptor(source))
+                    except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
+                        logging.getLogger(__name__).warning(
+                            "Skipping unreadable artifact: %s", relative
+                        )
+                        continue
                     temporary = self._blobs / (".tmp-" + uuid4().hex)
                     digest = hashlib.sha256()
                     count = 0
                     try:
-                        with (
-                            regular_descriptor(source) as incoming,
-                            os.fdopen(
-                                os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
-                                "wb",
-                            ) as outgoing,
-                        ):
+                        with os.fdopen(
+                            os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
+                            "wb",
+                        ) as outgoing:
                             before = os.fstat(incoming)
-                            while block := os.read(incoming, FILE_CHUNK_BYTES):
+                            while True:
+                                try:
+                                    block = os.read(incoming, FILE_CHUNK_BYTES)
+                                except (FileNotFoundError, NotADirectoryError, PermissionError):
+                                    count = -1
+                                    break
+                                if not block:
+                                    break
                                 outgoing.write(block)
                                 digest.update(block)
                                 count += len(block)
@@ -240,7 +265,10 @@ class MacOutbox:
                                 after.st_mtime_ns,
                                 after.st_ctime_ns,
                             ) or count != after.st_size:
-                                raise ValueError("artifact changed during capture")
+                                logging.getLogger(__name__).warning(
+                                    "Skipping unreadable or changing artifact: %s", relative
+                                )
+                                continue
                             outgoing.flush()
                             fsync_file(outgoing.fileno())
                         sha256 = digest.hexdigest()
