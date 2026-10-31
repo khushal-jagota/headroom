@@ -55,6 +55,7 @@ from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import NATIVE_WORKER_CONTEXT, ExecutorPaths
+from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
@@ -180,6 +181,15 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
+            connection=MacConnection(
+                ExecutorIdentity(
+                    PROTOCOL_VERSION,
+                    "a" * 40,
+                    SPOOL_FORMAT_VERSION,
+                    reference.executor_incarnation,
+                    1,
+                )
+            ),
             outbox=spool,
             factory=factory,
             message_files=ConversationMessageFiles(db_path),

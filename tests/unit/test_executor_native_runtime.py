@@ -46,6 +46,7 @@ from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSI
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.mac_agent_gateway import AgentGateway
+from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
 from planner.executor.mac_service import MacService
@@ -157,6 +158,11 @@ def native_registry(
     registry = MacRunner(
         paths=ExecutorPaths(tmp_path / "executor"),
         incarnation=reference.executor_incarnation,
+        connection=MacConnection(
+            ExecutorIdentity(
+                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
+            )
+        ),
         outbox=spool,
         factory=factory,
         message_files=ConversationMessageFiles(tmp_path / "unused"),
@@ -306,9 +312,8 @@ def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
         gateway = AgentGateway(
             runner=registry,
             outbox=spool,
-            identity=lambda: ExecutorIdentity(
-                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, registry.incarnation, 1
-            ),
+            connection=registry.connection,
+            request_exit=asyncio.Event().set,
             settle_catalogs=settle_catalogs,
         )
         child = registry._children[start.child.child_id]
@@ -895,6 +900,15 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
         registry = MacRunner(
             incarnation=reference.executor_incarnation,
+            connection=MacConnection(
+                ExecutorIdentity(
+                    PROTOCOL_VERSION,
+                    "a" * 40,
+                    SPOOL_FORMAT_VERSION,
+                    reference.executor_incarnation,
+                    1,
+                )
+            ),
             outbox=spool,
             factory=factory,
             paths=paths,

@@ -11,8 +11,6 @@ from tests.support.executor_control import MessageReader, deliver, message_link
 
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.mac_agent_gateway import AgentGateway
-from planner.executor.mac_service import MacService
 from planner.executor.protocol import WireMessage, WireMessageKind
 
 IDENTITY = ExecutorIdentity(
@@ -30,16 +28,6 @@ def peer() -> Any:
     writer.wait_closed = AsyncMock()
     writer.is_closing.return_value = False
     return writer
-
-
-def requester(writer: Any) -> MacService:
-    executor = MacService.__new__(MacService)
-    executor.identity = IDENTITY
-    executor.gateway = AgentGateway.__new__(AgentGateway)
-    executor.gateway._identity = lambda: executor.identity
-    executor.gateway._link = message_link(writer, IDENTITY)
-    executor.gateway._handshake_accepted = False
-    return executor
 
 
 @pytest.mark.parametrize("blocked", ["response", "drain", "lock"])
