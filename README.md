@@ -84,18 +84,19 @@ Before starting agent work, configure and authenticate the backend you intend to
 
 Voice input uses Groq transcription; set `PLAN_GROQ_API_KEY` to enable it. This is separate from your agent subscription.
 
-Choose the appropriate Worker, Model, and Reasoning settings before approving a new Ticket's kickoff. Provider authentication and access are separate from this repository's installation. See the [conversation system](docs/conversation-system.md) and [Worker settings](docs/worker-types.md) for details.
+Choose the appropriate Worker, Model, and Reasoning settings before approving a new Ticket's kickoff. Provider authentication and access are separate from this repository's installation. See [Conversations](docs/conversations.md) and [Worker types](docs/worker-types.md) for details.
 
 Headroom runs on one host and stores its work record there. Agents still use their configured model providers. Ticket gates govern workflow progression; they are not an operating-system sandbox.
 
 ## Documentation
 
-- [System map](docs/README.md) — the main documentation entry point.
-- [Tickets and gates](docs/tickets-and-gates.md) — stages, ownership, scope, and approval.
-- [Worker orchestration](docs/worker-orchestration.md) — how ready work starts.
-- [Managers](docs/managers.md) — shared direction, Ticket assignments, and supervisors.
-- [CLI](docs/cli.md) — direct actions and agent commands.
-- [Deployment](docs/deployment.md) and [backups](docs/backups.md) — operating an installation.
+The map, with one line for each page, is [docs/README.md](docs/README.md).
+
+- [The product](docs/product.md) — what Headroom is for, and how a piece of work moves.
+- [Tickets](docs/tickets.md) and [proposals](docs/proposals.md) — stages, ceilings, and the single approval door.
+- [Conversations](docs/conversations.md) — the only path into an agent.
+- [Run locally](docs/running-locally.md) — what the server above actually is. The commands in this file are the install.
+- [Deployment](docs/deployment.md) — publication, replacement, and recovery limits.
 
 ## Development
 

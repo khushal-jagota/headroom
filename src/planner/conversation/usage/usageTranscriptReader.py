@@ -6,9 +6,7 @@ Node streams become synchronous byte streams, called outside the event loop.
 
 from __future__ import annotations
 
-import json
 import os
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -88,81 +86,10 @@ def guardMatches(handle: BinaryIO, position: TranscriptParsePosition) -> bool:
         return False
 
 
-def selectedAllowanceObservation(line: str, provisional: bool) -> dict[str, Any] | None:
-    """Approved extension: emit only allowance metadata, never transcript bodies."""
-    if '"rate_limits"' not in line and '"rateLimitInfo"' not in line:
-        return None
-    try:
-        record = json.loads(line)
-    except ValueError:
-        return None
-    if not isinstance(record, dict):
-        return None
-    payload = record.get("payload")
-    if not isinstance(payload, dict):
-        # Claude SDK rate_limit_event carries rateLimitInfo at the top level.
-        payload = record if record.get("type") == "rate_limit_event" else {}
-    selected: dict[str, Any] = {key: record[key] for key in ("timestamp", "type") if key in record}
-    selected["provisional"] = provisional
-
-    # Only the explicitly selected allowance shape crosses the adapter boundary.
-    def window(value: Any) -> dict[str, Any] | None:
-        if not isinstance(value, dict):
-            return None
-        return {
-            key: value[key]
-            for key in (
-                "used_percent",
-                "window_minutes",
-                "resets_at",
-                "usedPercent",
-                "windowDurationMins",
-                "resetsAt",
-                "utilization",
-                "resetsAtMs",
-            )
-            if key in value
-        }
-
-    for field in ("rate_limits", "rateLimitInfo"):
-        if field == "rate_limits" and payload.get("type") != "token_count":
-            continue
-        raw = payload.get(field)
-        if not isinstance(raw, dict):
-            continue
-        limits = {
-            key: raw[key]
-            for key in (
-                "limit_id",
-                "limit_name",
-                "limitId",
-                "limitName",
-                "plan_type",
-                "rate_limit_reached_type",
-                "rateLimitType",
-                "utilization",
-                "resetsAt",
-            )
-            if key in raw
-        }
-        for key in ("primary", "secondary", "five_hour", "seven_day", "fiveHour", "sevenDay"):
-            if key in raw and raw[key] is None:
-                limits[key] = None
-                continue
-            value = window(raw.get(key))
-            if value is not None:
-                limits[key] = value
-        selected[field] = limits
-    return selected if "rate_limits" in selected or "rateLimitInfo" in selected else None
-
-
 def readTranscriptRecords(
     filePath: str,
     provider: str,
     resumeFrom: TranscriptParsePosition | None = None,
-    *,
-    observationCallback: Callable[[dict[str, Any]], None] | None = None,
-    resumeCallback: Callable[[bool], None] | None = None,
 ) -> TranscriptParseResult | None:
     try:
         handle = Path(filePath).open("rb")
@@ -182,16 +109,10 @@ def readTranscriptRecords(
                 codexState = dict(resumeFrom["codexState"])
             start = resumeFrom["resumeOffset"]
             resumed = True
-        if resumeCallback is not None:
-            resumeCallback(resumed)
 
         def parseLine(
             line: str, state: dict[str, Any], out: list[dict[str, Any]], provisional: bool = False
         ) -> None:
-            if observationCallback is not None:
-                observation = selectedAllowanceObservation(line, provisional)
-                if observation is not None:
-                    observationCallback(observation)
             if provider == "codex":
                 if (
                     not mightCarryUsage(line, provider)

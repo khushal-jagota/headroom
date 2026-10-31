@@ -28,7 +28,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Memory
 - **Panels ticket fields, recap, and artifacts** — keep the current stage, evidence, judgment calls, next step, and blockers with the ticket that owns the work.
-- **docs/** — plain-language documentation of what exists and how it works, split by system (`docs/README.md` is the map; `docs/CLAUDE.md` holds the conventions). Simple sentences, no jargon — a smart non-engineer must be able to read it; if a section can't be understood without reading the code, rewrite the section. Kept **current, not frozen**: written as work completes, and corrected in the same breath when a feature changes or is removed — a doc still describing deleted machinery is a bug, not history. History is git's.
+- **docs/** — plain-language documentation of what exists and how it works, split by system (`docs/README.md` is the map; `docs/CLAUDE.md` holds the conventions, and `docs/AGENTS.md` is the same source). Simple sentences, no jargon — a smart non-engineer must be able to read it; if a section can't be understood without reading the code, rewrite the section. Kept **current, not frozen**: written as work completes, and corrected in the same breath when a feature changes or is removed — a doc still describing deleted machinery is a bug, not history. History is git's.
 
 ## Verification
 - Apply the test-admission policy in **PRINCIPLES.md** during existing plan and implementation review. Record each added test's distinct risk, existing coverage gap, chosen layer, reused setup, and any new connected case or browser host cost.

@@ -1,129 +1,49 @@
-# Owner-controlled updates
+# Updates
 
-Panels offers a checked, retained application for the owner to install. A merge to
-`main` publishes that release without changing the running workspace.
-The existing deployment runner installs it only after an owner request.
-[Production deployment](deployment.md) describes the archive checks and service operations.
-[Executable archive runtime](archive-runtime.md) defines the supported host and CPU
-boundary. New candidates require its versioned contract and target execution proof.
-Legacy installed applications remain valid baselines, but legacy candidates require republication.
+An update is the owner installing a release that publication already sealed. Merging to `main` publishes. It does not change the running workspace. The deployment runner installs a release only after an owner request, and only that pinned release. The mechanics of the archive, the health budgets, and the restore boundary are [Deployment](deployment.md).
 
 ```text
 retained release → owner chooses now or idle → durable pinned request
-                                                   ↓
-                           runner validates → final admission → local replacement
-                                                   ↓
-                                local app healthy → post-health workflow result
+                                                  ↓
+                          runner validates → final admission → replace app
+                                                  ↓
+                               local app healthy → post-health result
 ```
 
-## Owner choices
+## The owner actions
 
-**Update now** requests the selected release. Active or unknown workspace activity
-requires explicit confirmation. Active turns can stop during this choice.
-Existing interruption records account for stopped work without replay of uncertain sends.
+The shell offers **Update when idle** and **Start update** when a usable release is waiting. Start update is the immediate install. If the workspace is active, or if activity cannot be known, the screen asks for an explicit confirmation: work is active and the update can interrupt it, or activity is unknown and the update can interrupt work. Proceed with update continues. Active turns can stop. Existing interruption records account for stopped work. They do not replay an uncertain send.
 
-**Update when idle** waits until workspace activity is known and idle. The existing
-readiness loop processes the request. It does not create a second scheduler.
-The runner checks activity again at final admission under the same barrier that
-controls conversation start, send, and background start. If activity changes, the
-idle request returns to pending without stopping the service.
+Update when idle waits until workspace activity is known and idle. While it waits, the shell says the update waits for idle. The existing readiness loop notices the request. There is no second scheduler. The runner checks activity again at the last moment, under the same barrier that guards conversation start and background start. If something is running, the request returns to pending and the service stays up.
 
-**Cancel pending update** cancels a pending or dispatched request before runner claim.
-Cancellation and claim are exclusive. Once the runner claims it, cancellation reports
-that application already began.
+Cancel update cancels a request the runner has not claimed. A confirmed cancellation before claim says the update was canceled before installation and the previous version stayed active. That is a neutral outcome. It is not a failed deployment and it is not a rollback. The archive keeps at most 32 canceled requests as reporting evidence. If an older receipt is gone, that report stays uncertain. The current request is what still controls the buttons. Once the runner has claimed a request, cancellation reports that application already began. While a request is pending, dispatched, or applying, a new one is blocked. After a failure, both actions return if the release is still usable. An expired release has no retry on that failure.
 
-Each request pins its publication, archive, proof, source SHA, and digests. It never
-silently changes to a newer release. A missing or expired publication requires a new
-selection. The owner can select a newer retained release directly without installing
-intermediate releases.
+Each request pins the publication, the archive, the proof, the source SHA, and the digests. It never slides forward to a newer commit. A missing or expired publication needs a new selection. The owner can pick a newer retained release directly and skip the ones in between.
 
-The request record stays outside database snapshots. A database restore cannot replay
-its claim. A failed or uncertain dispatch does not automatically repeat that dispatch.
-The owner inspects repository runner evidence before a new request.
+The request record lives outside database snapshots. Restoring a database does not replay a claim. A failed or uncertain dispatch does not retry itself. The owner looks at the runner evidence and asks again if they still want it.
 
-A local **applied** result means that the app is installed. The deployment status
-separately reports the final workflow result. Failed skill or published-route checks
-leave the installed app in place and report that the workflow is incomplete.
-The browser offers a separate page refresh when its loaded app differs from the server.
+A local applied result means the app is installed. Deployment status separately reports whether skill reconciliation and the published HTTP/2 check finished. Those can fail and leave the new app in place. A failed skill or route check does not mean the app is unhealthy. Missing admission or installation evidence stays an explicit uncertainty. The finalizer reports each of those checks apart from application health, and a stale finalizer cannot rewrite a replacement attempt, even when two requests name the same SHA. The browser offers a refresh when the app it loaded differs from the server. That refresh does not replace the push service worker by itself.
 
-Code paths: `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`,
-`src/planner/environments/update_service.py`, `update_requests.py`, `update_api.py`.
+## Who can ask, and what the runner will accept
 
-## Retained release and schema support
+Update actions use the owner principal check. Chief, Managers, and Ticket Workers are refused. A missing actor header is treated as the owner under the current trusted-caller contract. That is not spoof-resistant authentication. It adds no login. Workers receive no dispatch credential and no restart operation.
 
-Availability comes from a successful trusted `main` push through the publication workflow.
-Both its executable artifact and proof artifact must remain available and unexpired.
-The archive retains executable modes and safe links. Adoption checks its exact bytes,
-manifest, runtime, and pinned receipt. It neither rebuilds nor reruns publication suites.
-Artifacts request 30-day retention. Repository retention and deletion can remove them
-earlier. Such a release stops appearing as available.
+The operator supplies `PLAN_UPDATE_REPOSITORY` as `owner/repository` and `PLAN_UPDATE_TOKEN_FILE` as a protected file holding the dispatch credential. Without them, Headroom says owner updates are unavailable. It does not invent a release. The dispatch credential is separate from the runner’s read-only workflow token. Only the manual adoption operation on `main`, without the rehearsal flag, selects the production runner. Pushes run publication on hosted machines.
 
-The supported schema floor is `video_upload_ledger`. Adoption refuses an unknown
-schema ancestry or a database before that floor before service shutdown.
-Cumulative migrations support direct upgrades from the floor and later supported states.
-This floor does not prove universal data safety. Existing stopped-service snapshots
-and the recovery boundary still apply.
+The supported schema floor is `video_upload_ledger`. Adoption refuses an unknown ancestry, or a database older than that floor, before it stops the service. The floor is not a promise that every historical database is safe to migrate. Cancelled-Ticket recovery in [Deployment](deployment.md) still applies. New candidates also need the runtime contract in [Archive runtime](archive-runtime.md). A legacy installed app can remain the fallback. A legacy candidate without the contract cannot be installed. It has to be republished.
 
-The executable payload is `panels-app.tar.gz`. The separate publication receipt binds
-the run, executable artifact, manifest, archive hash, schema floor, and expiry.
-Trusted GitHub artifact metadata supplies the proof artifact identity.
-Installation checks current workspace preconditions independently of publication-time
-live state.
+## If the runner is lost
 
-Code paths: `src/planner/environments/update_contracts.py`, `update_provider.py`,
-`update_artifacts.py`, `update_runner.py`, `.github/workflows/deploy.yml`.
+Before the local commit, writers are stopped and ordinary work stays closed. Restore is possible only in that window. After the commit, a failed status publication does not restore the database.
 
-## Operator configuration and authority
+If the runner vanishes before commit, work stays closed. When the lifecycle evidence expires, the state is recovery-required. Expiry does not open the app and does not restore a snapshot. The owner recovers on the deployment runner and chooses the snapshot and the fallback explicitly. The direct operator tool has no resume command. Its same-SHA path checks health. It does not finish a lost commit.
 
-The operator supplies `PLAN_UPDATE_REPOSITORY` as `owner/repository` and
-`PLAN_UPDATE_TOKEN_FILE` as a protected file containing the repository dispatch credential.
-Credential creation and installation remain separate operator work. This feature does
-not provision credentials or change repository protections.
-Without configuration, Panels reports that owner updates are unavailable.
-Repository access failures produce an unavailable state without a fabricated release.
+## Where it shows up
 
-Update HTTP actions use the existing owner-principal check. Named Chief, Manager,
-and Ticket Worker principals receive a refusal. Missing actor headers currently mean
-owner under the existing trusted-caller contract. This is not spoof-resistant owner
-authentication. It adds no login, GitHub confirmation, or new identity system.
-Workers receive no dispatch credential or authorized restart operation.
+The actions sit in the shell status pill, not on a Settings page. Deployment outcome text also appears in the smaller VPS status summary. The machine graphs on the VPS page are a different system. See [VPS](vps.md).
 
-The dispatch pins the request and release to the existing workflow's adoption operation.
-Only that manual operation on `main`, without the rehearsal flag, selects the dedicated
-self-hosted production runner. Main pushes run publication on hosted machines.
-The runner uses the built-in workflow token only for read-only artifact access.
-Workflow permissions are `contents: read` and `actions: read`.
-The server's dispatch credential remains separate from this runner token.
+## Pointers
 
-Code paths: `src/planner/core/authctx.py`, `src/planner/core/trusted_ingress.py`,
-`src/planner/environments/update_provider.py`, `.github/workflows/deploy.yml`.
+`web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`, and `src/planner/environments/update_service.py`, `update_requests.py`, `update_admission.py`.
 
-## Startup admission and runner loss
-
-The runner stops old writers before the verified snapshot and application replacement.
-A candidate starts with health and status available, plus controlled startup and
-migration writes. Ordinary HTTP and CLI work, conversation recovery, background loops,
-tail writes, and file cleanup stay closed until the matching local commit.
-The lifecycle observer opens ordinary work once after that commit.
-
-Restore remains possible only before normal candidate work opens. After local commit,
-a status publication failure never restores the database. Skill and HTTP/2 failures
-report the installed SHA and incomplete workflow instead of undoing admitted work.
-New snapshots exclude uploads and Ticket artifacts. Adoption leaves those files untouched.
-
-If the runner disappears before commit, normal work stays closed. Expired lifecycle
-evidence becomes a visible recovery-required state. Expiry grants neither admission
-nor permission to restore. The owner recovers through the deployment runner with an
-explicit snapshot and fallback selection when those are needed.
-No automatic continuation or maximum outage is promised after runner loss.
-
-The existing direct `app-deploy` operator tool has no resume command. Its same-SHA
-path checks health only. It does not finish a lost startup commit or reconstruct
-missing recovery choices. A failed recovery needs explicit operator continuation.
-
-Code paths: `src/planner/environments/update_admission.py`, `deployment.py`,
-`deployment_lifecycle.py`, `src/planner/core/server.py`.
-
----
-
-_Last verified: 2026-10-28 against source. No hosted publication or production adoption claimed._
+_Last verified: 2026-10-30 against source. No hosted publication or production adoption is claimed from this checkout._

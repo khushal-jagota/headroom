@@ -32,7 +32,7 @@
   const statusState = $derived(resolveDeploymentStatus(deployment.data, connectionState, clock));
   const baseStatusWord = $derived(resolveStatusCard(statusState, $releaseState));
   const hasOwnerUpdate = $derived(activeUpdateRequest(updates.data?.request) ||
-    (updates.data?.configured && usableUpdate(updates.data.available, clock)) || updates.data?.request?.state === "failed");
+    (updates.data?.configured && usableUpdate(updates.data.available, clock)) || ["failed", "cancelled"].includes(updates.data?.request?.state ?? ""));
   const statusWord = $derived(baseStatusWord ?? (hasOwnerUpdate ? "owner-update" : null));
   const statusKey = $derived(statusWord ?? (navigationHealth ? "navigation" : null));
   let displayedWord = $state<StatusCardKey | "navigation" | null>(null);
@@ -185,7 +185,7 @@
   aria-hidden={statusKey === null ? "true" : undefined} style={motionStyle}>
   <div role="status" aria-live="polite" inert={closing ? true : undefined}>
     {#if displayedWord}
-      <div class="status-card" data-state={card?.state ?? (displayedHealth?.state === "degraded" ? "wrong" : "changing")}
+      <div class="status-card" class:owner-update-only={displayedWord === "owner-update" && !displayedHealth} data-state={card?.state ?? (displayedHealth?.state === "degraded" ? "wrong" : "changing")}
         data-connection-status data-connection-state={connectionState} data-status-state={statusState}>
         {#if card && displayedWord !== "owner-update"}
           {#if card.action}
@@ -195,6 +195,9 @@
           {:else}
             <div class="status-base">{@render cardBody(card)}</div>
           {/if}
+        {/if}
+        {#if deployment.data?.detail && (displayedWord === "Problem" || (deployment.data?.state === "unknown" && displayedWord === "Reconnecting"))}
+          <div class="deployment-detail">{deployment.data.detail}</div>
         {/if}
         {#if (displayedWord === "owner-update" || displayedWord === "Problem") && updates.data}
           <UpdateActions status={updates.data} now={clock} />
@@ -233,6 +236,9 @@
     transition: opacity var(--glide-exit) var(--glide-leave), transform var(--glide-exit) var(--glide-leave);
   }
   .status-card[data-state="wrong"] { background: var(--error-surface); color: var(--text-strong); }
+  /* Keep the shared measurement target and transitions. Only standalone update
+     controls lose card chrome; Problem and navigation keep their existing card. */
+  .status-card.owner-update-only { padding: 0; margin-bottom: 0; border-radius: 0; background: transparent; }
   .status-detail { flex-basis: 100%; }
   .status-base { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .status-base:has(.status-detail) { flex-wrap: wrap; }
@@ -252,7 +258,10 @@
   .status-refresh:hover { background-image: var(--interaction-hover); }
   .status-refresh:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: var(--space-1); }
   @keyframes status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-  @media (max-width: 720px) { .status-card { margin: 0; border-radius: 0; } }
+  @media (max-width: 720px) {
+    .status-card { margin: 0; border-radius: 0; }
+    .status-card.owner-update-only { padding: var(--space-3); }
+  }
   @media (prefers-reduced-motion: reduce) {
     .status-slot, .status-card { transition-duration: 1ms; transition-delay: 0ms; }
     .status-card[data-state="changing"] .status-mark, .navigation-health[data-state="changing"] .status-mark { animation: none; }

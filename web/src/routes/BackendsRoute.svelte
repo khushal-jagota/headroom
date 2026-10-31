@@ -12,6 +12,8 @@
   import { nestedHref, prefixHref, type UtilityHref } from "../lib/utilityAddress";
   import { queries } from "../lib/queryCatalogue";
   import { readUsageLimits, type UsageDays, type UsageProvider } from "../lib/conversation/recordedUsageWire";
+  import { refreshBackendSnapshots } from "../lib/conversation/backendRefresh";
+  import type { BackendUsageRefreshOutcome } from "../lib/conversation/wire";
   import { refreshUsage } from "../lib/usage/usage";
   import { makeWindow } from "../lib/usage/usageFormat";
   import type { ServerProviderUsageLimits } from "../lib/usage/contracts";
@@ -23,7 +25,7 @@
   let providerSelection = $state<string[] | null>(null);
   const recorded = createQuery(() => ({ ...queries.recordedUsage(windowSelection), enabled: tab === "tokens" || tab === "cost", retry: false }));
   const summary = $derived(recorded.data ?? null);
-  const limits = createQuery(() => ({ queryKey: ["usage-limits", summary?.readAt ?? null], queryFn: readUsageLimits, enabled: tab === "limits", retry: false }));
+  const limits = createQuery(() => ({ queryKey: ["usage-limits"], queryFn: readUsageLimits, enabled: tab === "limits", retry: false }));
   let lastLimits = $state<Readonly<Record<string, ServerProviderUsageLimits>>>({});
   $effect(() => { if (limits.data) lastLimits = limits.data; });
   const allowance = $derived(limits.data ?? lastLimits);
@@ -31,6 +33,7 @@
   const selectedProviders = $derived(providerSelection === null ? providerKeys : providerKeys.filter(provider => providerSelection?.includes(provider)));
   const recordedProviders = $derived(selectedProviders.filter((provider): provider is UsageProvider => provider === "codex" || provider === "claude" || provider === "grok"));
   let refreshing = $state(false);
+  let refreshOutcomes = $state<BackendUsageRefreshOutcome[]>([]);
   let refreshError = $state<string | null>(null);
   let now = $state(Date.now());
   function selectWindow(value: UsageDays) {
@@ -43,7 +46,9 @@
     refreshError = null;
     try {
       if (tab === "limits") {
-        // The local limits endpoint completes a local scan before it returns.
+        const result = await refreshBackendSnapshots();
+        refreshOutcomes = result.outcomes;
+        refreshError = result.error;
         await limits.refetch({ throwOnError: true });
       } else {
         const nextWindow = makeWindow(days, new Date(), days === 1 ? "hour" : "day");
@@ -69,8 +74,8 @@
     {#if refreshError}<p class="error" role="alert">{refreshError}</p>{/if}
     {#if tab === "limits"}
       {#if limits.error}<p class="error" role="alert">Could not refresh limits. Showing the last known values.</p>{/if}
-      <SkeletonRegion shape="rows" loading={limits.isPending && !Object.keys(allowance).length && !limits.error} loadingText="Reading local subscription limits…">
-        <UsageLimits limits={allowance} providers={selectedProviders} {now} />
+      <SkeletonRegion shape="rows" loading={limits.isPending && !Object.keys(allowance).length && !limits.error} loadingText="Reading subscription limits…">
+        <UsageLimits limits={allowance} providers={selectedProviders} outcomes={refreshOutcomes} {now} />
       </SkeletonRegion>
     {:else}
       {#if recorded.error}<p class="error" role="alert">Usage unavailable{summary ? " · showing saved totals" : ""}</p>{/if}
@@ -81,5 +86,5 @@
   {/if}
 </section>
 <style>
-  .backends-page { max-width:70rem; margin:0 auto; padding:var(--space-5); }.error { color:var(--accent-error); font-size:var(--type-sm); }@media(max-width:600px) { .backends-page { padding:var(--space-3); } }
+  .backends-page { width:min(100%,1016px); margin:0 auto; padding:var(--space-5); }.error { color:var(--accent-error); font-size:var(--type-sm); }@media(max-width:600px) { .backends-page { padding:var(--space-3); } }
 </style>

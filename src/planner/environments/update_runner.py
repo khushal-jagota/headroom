@@ -247,6 +247,8 @@ def main() -> int:
                 elif recorded.state == "applying":
                     if (
                         committed is not None
+                        and committed.deployment_id
+                        == os.environ.get("PANELS_DEPLOYMENT_ID", arguments.request_id)
                         and committed.requested_sha == arguments.app_sha
                         and committed.serving_sha == arguments.app_sha
                         and committed.phase in {"app_healthy", "succeeded", "failed"}

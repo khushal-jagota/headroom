@@ -11,7 +11,10 @@ def startup_requires_commit(store: DeploymentLifecycleStore, app_sha: str | None
         record is not None
         and app_sha is not None
         and record.requested_sha == app_sha
-        and record.phase in {"preparing", "restarting", "verifying"}
+        and (
+            record.phase in {"preparing", "restarting", "verifying"}
+            or (record.phase == "unknown" and record.serving_sha != app_sha)
+        )
     )
 
 
@@ -21,5 +24,5 @@ def matching_commit(store: DeploymentLifecycleStore, app_sha: str | None) -> boo
         record is not None
         and record.requested_sha == app_sha
         and record.serving_sha == app_sha
-        and record.phase in {"app_healthy", "succeeded", "failed"}
+        and record.phase in {"app_healthy", "succeeded", "failed", "unknown"}
     )

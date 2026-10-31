@@ -2,8 +2,9 @@
 
 The *values* live in `assets/tokens.css` (the only place a colour, radius, spacing step,
 duration, or type size is written — never hardcode one). This file is the *how*: the
-principles those tokens serve. Warm near-black surfaces, one amber accent that means
-"needs the human", a shared sans type scale. Restraint over decoration.
+principles those tokens serve. Warm near-black surfaces, one accent — the soft steel
+`--accent-bright` — that means "needs the human", a shared sans type scale. Restraint
+over decoration. How those choices show up in the product is `docs/design.md`.
 
 Distilled from `tokens.css`, `PRINCIPLES.md`, and the Vylo conversation reference (no-divider fades,
 bubble-less assistant, recessed composer).
@@ -35,12 +36,12 @@ bubble-less assistant, recessed composer).
    gradient), and get depth from a recessed surface (`--surface-recessed` + an inset shadow) or a
    raise, not borders. Spend a `--border-color` hairline only where a real seam is needed.
 
-4. **One accent, one meaning.** `--accent-bright` (amber) means *needs the human* — a pending
-   approval, a required action. Never decorative. If amber is everywhere it says nothing; that
-   is why it stays out of the conversation thread and shows up on the gate.
+4. **One accent, one meaning.** `--accent-bright` means *needs the human* — a pending
+   approval, a required action. Never decorative. If the accent is everywhere it says nothing; that
+   is why it stays out of ordinary agent prose and shows up on the gate and on the enabled Send control.
 
 5. **Asymmetry carries meaning.** Different things look different. The human's message is a
-   contained pill; the agent's is bare prose. The gate is amber; settled state is quiet. Don't
+   contained pill; the agent's is bare prose. The gate is the accent; settled state is quiet. Don't
    make everything a rounded card with a shadow.
 
 6. **Scannable and self-evident.** Design billboards, not brochures — visual weight equals
@@ -61,13 +62,13 @@ bubble-less assistant, recessed composer).
    (`--font-ui`). Hierarchy comes from size, weight, spacing, and emphasis. Former
    serif text keeps its larger 18px prose, 28px display, and 30px hero sizes.
    Smaller body text uses 15px and section titles use 20px. Code, diffs, tool output,
-   and `code`, `pre`, `kbd`, and `samp` retain monospace because alignment carries meaning. No italics except
-   input placeholders.
+   and `code`, `pre`, `kbd`, and `samp` retain monospace because alignment carries meaning. Italics are for
+   input placeholders and the quiet line on a Manager page.
 
 10. **Depth is rationed to the ask.** The one raised approval surface earns a top highlight
-    and a long soft shadow, with the solid-amber Approve glowing beneath.
+    and a long soft shadow, with the accent Approve glowing beneath.
     Nothing else on any page is elevated. Hairlines survive only where a real list needs a seam
-    (the ticket stage spine, the sprint/ideas/backlog rows) and at the conversation rail edge; blocks are
+    (the ticket stage spine, manager and idea rows) and at the conversation rail edge; blocks are
     otherwise separated by space, not lines.
 
 ## Applied so far
