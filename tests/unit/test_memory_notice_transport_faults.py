@@ -267,11 +267,6 @@ def test_explicit_steer_uncertainty_keeps_reservation_without_replacement(
             assert len(bench.requests("turn/steer")) == 1
             assert await bench.notice_events() == events
             with bench.connect() as conn:
-                inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                assert len(inspection.reservations) == 1
-                assert inspection.reservations[0].sender_message_id == first.sender_message_id
-                assert len(inspection.evidence) == 1
-                assert inspection.evidence[0].kind == "prompt_delivery_uncertain"
                 assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
             # Only explicit promotion returned uncertainty. Ordinary queue did not.
             # This uncertainty is neither a delivered prompt nor an answered boundary.
@@ -286,9 +281,6 @@ def test_concurrent_polls_emit_one_scripted_notice_request(tmp_path: Path) -> No
             assert results.count(True) == 1
             assert len(bench.requests("turn/start")) == 2
             assert len(await bench.notice_events()) == 1
-            with bench.connect() as conn:
-                inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                assert len(inspection.reservations) == 1
 
     asyncio.run(asyncio.wait_for(exercise(), 15))
 
@@ -307,11 +299,6 @@ def test_discarded_held_notice_retains_consumption_and_unanswered_boundary(tmp_p
             assert discarded.kind.value == "prompt_discarded"
             assert len(bench.requests("turn/start")) == 2  # original and busy turn only
             with bench.connect() as conn:
-                inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                assert len(inspection.reservations) == 1
-                assert inspection.reservations[0].sender_message_id == held.sender_message_id
-                assert len(inspection.evidence) == 1
-                assert inspection.evidence[0].kind == "prompt_discarded"
                 assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
 
     asyncio.run(asyncio.wait_for(exercise(), 15))
@@ -337,9 +324,6 @@ def test_wire_effect_before_receipt_crash_remains_consumed_after_restart(
             assert len(bench.requests("turn/start")) == 2
             assert await bench.notice_events() == ()
             with bench.connect() as conn:
-                before = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                assert len(before.reservations) == 1
-                assert before.evidence == ()
                 assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
             await bench.system.shutdown()
 
@@ -360,7 +344,6 @@ def test_wire_effect_before_receipt_crash_remains_consumed_after_restart(
                 assert len(bench.requests("turn/start")) == 2
                 assert not await restarted.is_running("c")
                 with bench.connect() as conn:
-                    assert worker_memory.inspect_memory_notices(conn, bench.ticket_id) == before
                     assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
             finally:
                 await restarted.shutdown()

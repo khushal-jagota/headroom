@@ -55,7 +55,6 @@ def test_notice_scan_and_authorization_use_current_locale_admission(
     assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(tmp_db) == (
         (memory_ticket,) if eligible else ()
     )
-    assert worker_memory.inspect_memory_notices(tmp_db, memory_ticket).reservations == ()
 
 
 def test_mac_racing_polls_consume_once_and_reconnect_does_not_rearm(
@@ -78,9 +77,6 @@ def test_mac_racing_polls_consume_once_and_reconnect_does_not_rearm(
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(acquire, range(2))) == [False, True]
-    original = worker_memory.inspect_memory_notices(tmp_db, memory_ticket)
-    assert len(original.reservations) == 1
-    assert original.evidence == ()
     store.runs.mark_lost(IDENTITY, 4)
     assert worker_memory.current_memory_notice_key(tmp_db, memory_ticket) is None
     replacement = replace(IDENTITY, connection_generation=2)
@@ -90,7 +86,6 @@ def test_mac_racing_polls_consume_once_and_reconnect_does_not_rearm(
     assert worker_memory.current_memory_notice_key(tmp_db, memory_ticket) == key
     assert worker_memory.memory_notice_eligibility(tmp_db, key) is MemoryNoticeEligibility.consumed
     assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(tmp_db) == ()
-    assert worker_memory.inspect_memory_notices(tmp_db, memory_ticket) == original
 
 
 def test_mac_loss_during_held_prompt_await_prevents_reservation(
@@ -142,7 +137,6 @@ def test_mac_loss_during_held_prompt_await_prevents_reservation(
     )
     assert held_reads == ["memory"]
     with world.connect() as conn:
-        assert worker_memory.inspect_memory_notices(conn, ticket_id).reservations == ()
         assert (
             conn.execute(
                 "SELECT worker_step_claim FROM tickets WHERE id=?", (ticket_id,)

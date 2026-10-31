@@ -25,9 +25,6 @@ from planner.runtime.worker_memory_contracts import (
     MemoryNoticeAcquisition,
     MemoryNoticeEligibility,
     MemoryNoticeEventKey,
-    MemoryNoticeEvidence,
-    MemoryNoticeHold,
-    MemoryNoticeInspection,
     MemoryNoticeReservation,
 )
 from planner.tickets import locale_configuration
@@ -215,58 +212,6 @@ def consume_memory_notice_authorization(
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
-
-
-def inspect_memory_notices(conn: sqlite3.Connection, ticket_id: str) -> MemoryNoticeInspection:
-    """Read original associations and actual event references without inferred delivery."""
-    reservations = tuple(
-        MemoryNoticeReservation(
-            key=MemoryNoticeEventKey(
-                ticket_id=str(row[0]),
-                conversation_id=str(row[1]),
-                context_compacted_sequence=int(row[2]),
-            ),
-            sender_message_id=str(row[3]),
-            consumed_at=int(row[4]),
-        )
-        for row in conn.execute(
-            "SELECT * FROM worker_memory_notice_reservations WHERE ticket_id=? "
-            "ORDER BY conversation_id,context_compacted_sequence",
-            (ticket_id,),
-        )
-    )
-    holds = tuple(
-        MemoryNoticeHold(
-            ticket_id=str(row[0]),
-            conversation_id=str(row[1]),
-            context_compacted_sequence=None if row[2] is None else int(row[2]),
-            created_at=int(row[3]),
-            reason=str(row[4]),
-        )
-        for row in conn.execute(
-            "SELECT * FROM worker_memory_notice_holds WHERE ticket_id=? "
-            "ORDER BY conversation_id,context_compacted_sequence",
-            (ticket_id,),
-        )
-    )
-    evidence = tuple(
-        MemoryNoticeEvidence(
-            conversation_id=str(row[0]),
-            sequence=int(row[1]),
-            kind=str(row[2]),
-            sender_message_id=str(row[3]),
-        )
-        for row in conn.execute(
-            "SELECT e.conversation_id,e.sequence,e.kind,"
-            "json_extract(e.payload,'$.sender_message_id') "
-            "FROM conversation_events e JOIN worker_memory_notice_reservations r "
-            "ON r.conversation_id=e.conversation_id AND "
-            "r.sender_message_id=json_extract(e.payload,'$.sender_message_id') "
-            "WHERE r.ticket_id=? ORDER BY e.conversation_id,e.sequence",
-            (ticket_id,),
-        )
-    )
-    return MemoryNoticeInspection(reservations=reservations, holds=holds, evidence=evidence)
 
 
 def require_memory_notice_storage(conn: sqlite3.Connection) -> None:
