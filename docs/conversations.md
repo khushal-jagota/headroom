@@ -83,11 +83,13 @@ Empty content is rejected before a fate exists.
 
 Permission asks are always shown and always wait. Headroom does not auto-approve and does not remember a grant. An answer lands only on an ask that is still pending on the live turn. Claude and Codex can also ask structured questions. Hermes stays on the permission flow. Production runs use full tool access. The asks still appear, because the agent decided to ask.
 
+Permission choices and structured question answers follow the same rules. Once an answer is on its way, a second answer cannot take its place. If the backend refuses it while the turn is still live, the request waits for another answer. A choice saved for an offline Mac stays in the notebook even if the turn ends before delivery finishes. Only a separate acknowledgment proves it reached the original callback. See [saved answers](executor.md#a-lost-connection-supplies-no-answer).
+
 Voice input never sends audio into the conversation. The mic captures a clip, Groq transcribes it when `PLAN_GROQ_API_KEY` is set, and the text drops into the draft. That key is separate from any agent subscription.
 
 One video, MP4, MOV, or WebM, up to 250 MiB, can be attached. The upload can finish before Send. Headroom validates it with ffprobe, holds it under a disk budget, and expires an unused upload after a day. The agent receives a link or a path. Headroom does not transcode it and does not promise the model understands it.
 
-A deploy can kill a running session. After the new runtime is admitted, eligible conversations receive one recovery prompt through the ordinary send path. Nothing is replayed. A queued recovery does not count as resumed. Only a started turn whose prompt actually contains the notice does. See [Deployment](deployment.md).
+A deploy can kill a running session. After the new runtime is admitted, eligible conversations receive one recovery prompt through the ordinary send path. Nothing is replayed. A queued recovery does not count as resumed. Only a started turn whose prompt actually contains the notice does. If its write may have crossed the wire but the acknowledgment is lost, the notebook records one uncertain row with the recovery reference. Recovery becomes unable to resume; the reservation and child remain fenced, and Panels does not retry. See [Deployment](deployment.md).
 
 ## Three conversations, one contract
 
@@ -115,5 +117,9 @@ The human’s message is a contained pill. The agent’s message is bare prose. 
 ## Pointers
 
 The contract is `src/planner/conversation/contracts.py`. The system and the three adapters live under `src/planner/conversation/`. Send Message is `src/planner/message_delivery/`. The pane is `web/src/components/conversation/`.
+
+Shared turn tokens and Ticket locales are defined in `src/planner/execution_identity.py`.
+The backend and Ticket contracts still export those same types. The conversation
+package exports its in-memory stand-in directly, without a lazy import.
 
 _Last verified: 2026-10-31._

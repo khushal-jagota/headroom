@@ -302,6 +302,9 @@ transfer's private storage. The copy checks length and hash before it is offered
 to the Mac. Both machines install received files through the same checked copy,
 atomic rename and directory flush.
 
+File manifests name the scope, owner, relative path, byte count and SHA-256 hash.
+Transfers do not use a media type or report download progress.
+
 Snapshots and hashes use bounded streams. One submission per conversation can
 proceed at a time. Separate conversations can progress while a large transfer
 waits. The outbox retains blobs until its item has a confirmed receipt.
@@ -573,7 +576,8 @@ File bytes use `link_files.py`, with bounded HTTP streaming and length and hash
 checks. Reservations belong to one connection generation. The domain code still
 checks which child may send or receive each file, and installs files before accepting
 dependent work. `protocol.py` holds the shared message shapes and codecs; execution
-identity types remain in their separate leaf file. The Link does not own children,
+identity types, turn tokens, and Ticket locales live in `execution_identity.py`,
+which imports neither conversation nor Ticket code. The Link does not own children,
 commands, the outbox, or database writes.
 
 Connection diagnostics omit credentials, addresses, paths, exception messages, and remote payloads.

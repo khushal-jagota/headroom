@@ -253,14 +253,6 @@ class InMemoryConversationSystem:
             require_idle=require_idle,
         )
 
-    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
-        state = self._conversations.get(conversation_id)
-        if state is not None and (state.running_turn is not None or state.held_prompts):
-            return False
-        # All mutations in this deterministic implementation are synchronous.
-        operation()
-        return True
-
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         if self.workspace_admission.closed:
             raise RuntimeError("Workspace admission is closed for an owner update.")

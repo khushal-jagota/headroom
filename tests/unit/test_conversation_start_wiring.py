@@ -124,9 +124,6 @@ class _LinkWatchingConversationSystem:
     ) -> bool:
         return await self._system.run_with_workspace_admission(operation, require_idle=require_idle)
 
-    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
-        return await self._system.run_if_idle(conversation_id, operation)
-
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         self.start_requests.append(request)
         await self._system.start_conversation(request)
