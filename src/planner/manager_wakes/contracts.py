@@ -12,7 +12,6 @@ class WakeSourceKind(StrEnum):
     proposal = "proposal"
     worker_error = "worker_error"
     turn_failure = "turn_failure"
-    launch_validation = "launch_validation"
 
 
 class WakeBatchStatus(StrEnum):

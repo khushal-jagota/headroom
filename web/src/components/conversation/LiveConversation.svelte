@@ -646,7 +646,6 @@
       mode,
       pickedModel: picked.model,
       pickedReasoningEffort: picked.reasoningEffort,
-      selectionKind: picked.selectionKind,
       effortIsSet: picked.effortIsSet,
       pickedBackend: picked.backendKey
     }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}) };
@@ -802,7 +801,6 @@
     const away = await send(uncertain.content, uncertain.mode, {
       model: uncertain.pickedModel ?? null,
       reasoningEffort: uncertain.pickedReasoningEffort ?? null,
-      selectionKind: uncertain.selectionKind,
       effortIsSet: uncertain.effortIsSet,
       backendKey: uncertain.pickedBackend
     }, uncertain.displayMessageId ?? uncertain.messageId);

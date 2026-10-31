@@ -13,7 +13,6 @@ from tests.unit.test_executor_native_runtime import ScriptedChild
 from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
 
-from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.core.clock import Clock
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
@@ -56,7 +55,6 @@ def ticket(conn: Connection) -> Ticket:
         employee_backend="codex",
         employee_launch_model="test",
         employee_launch_reasoning_effort="high",
-        selection_kind=SelectionKind.concrete,
     )
 
 

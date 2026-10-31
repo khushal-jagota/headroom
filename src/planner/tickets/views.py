@@ -101,43 +101,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
     }
 
 
-def launch_validation_json(conn: sqlite3.Connection, ticket_id: str) -> JsonDict:
-    """Expose canonical facts without any presentation labels or inferred support."""
-    from pydantic import TypeAdapter
-
-    from planner.conversation.model_resolution.contracts import (
-        CorrectiveAction,
-        ValidationReason,
-        ValidationState,
-    )
-    from planner.tickets.validation.contracts import LaunchValidationProjection
-    from planner.tickets.validation.data import read_launch_selection, read_launch_validation
-
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    projection: LaunchValidationProjection
-    if ticket.employee_launch_model is None:
-        projection = {
-            "selection": None,
-            "validation": None,
-            "current": False,
-            "transition_revision": None,
-            "state": ValidationState.unresolved,
-            "reason": ValidationReason.legacy_unscoped,
-            "corrective_action": CorrectiveAction.classify_selection,
-        }
-    else:
-        stored = read_launch_validation(conn, ticket_id)
-        projection = {
-            "selection": read_launch_selection(conn, ticket_id),
-            "validation": None if stored is None else stored.validation,
-            "current": stored is not None and stored.current,
-            "transition_revision": None if stored is None else stored.transition_revision,
-        }
-    encoded = TypeAdapter(LaunchValidationProjection).dump_python(projection, mode="json")
-    assert isinstance(encoded, dict)
-    return encoded
-
-
 def ticket_creation_json(conn: sqlite3.Connection, ticket: Ticket, now: int) -> JsonDict:
     definition = configured_worker_type_registry().require(ticket.worker_type)
     destination = proposal_routing.parked_destination(
@@ -152,7 +115,6 @@ def ticket_creation_json(conn: sqlite3.Connection, ticket: Ticket, now: int) -> 
         recipient = f"the manager {row['title']}"
     return {
         **ticket_json(ticket, now),
-        "launch_validation": launch_validation_json(conn, ticket.id),
         **supervision_receipt(
             ticket, worker_type_definition=definition, review_recipient=recipient
         ),
@@ -357,7 +319,6 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
 def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> JsonDict:
     ticket_id = ticket.id
     detail = ticket_json(ticket, now)
-    detail["launch_validation"] = launch_validation_json(conn, ticket_id)
     detail["record_sha256"] = tickets_data.ticket_record_sha256(conn, ticket_id)
     blocker_summary = ticket_blocks.blocker_summary(conn, ticket_id)
     conversation_rows = conn.execute(

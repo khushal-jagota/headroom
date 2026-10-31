@@ -1,5 +1,4 @@
 import type { ModelPickerDisplaySelection } from "../modelPickerFacts";
-import type { SelectionKind } from "../modelResolutionWire";
 import type { RunValues } from "../composer";
 import type {
   BackendModel,
@@ -12,7 +11,6 @@ export type ComposerRunSelection = Readonly<{
   pickedBackend: ConversationBackendKey | null;
   pickedModel: string | null;
   pickedReasoningEffort: string | null;
-  selectionKind?: SelectionKind;
   effortIsSet?: boolean;
 }>;
 

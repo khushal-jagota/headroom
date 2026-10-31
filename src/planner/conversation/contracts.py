@@ -25,14 +25,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal, Protocol, TypedDict
-
-if TYPE_CHECKING:
-    from planner.conversation.model_resolution.contracts import SelectionKind
+from typing import Final, Literal, Protocol, TypedDict
 
 from planner.conversation.message_content import MessageContent
 from planner.conversation.workspace_admission import WorkspaceAdmission
-from planner.core.contracts import ErrorCode, JsonDict, PlannerError, Principal
+from planner.core.contracts import ErrorCode, PlannerError, Principal
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
 
@@ -612,7 +609,6 @@ class PromptDeliveryRefused:
     """
 
     refusal_reason: PromptDeliveryRefusalReason
-    model_validation: JsonDict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -747,7 +743,10 @@ class ConversationSystem(Protocol):
         ...
 
     async def run_with_workspace_admission(
-        self, operation: Callable[[], None], *, require_idle: bool,
+        self,
+        operation: Callable[[], None],
+        *,
+        require_idle: bool,
     ) -> bool:
         """Atomically recheck activity, claim adoption, and close start/send admission."""
         ...
@@ -791,7 +790,6 @@ class ConversationSystem(Protocol):
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
-        selection_kind: SelectionKind | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
@@ -850,7 +848,6 @@ class ConversationSystem(Protocol):
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
-        selection_kind: SelectionKind | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,

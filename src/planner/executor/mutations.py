@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
@@ -43,10 +43,6 @@ def cli_mutation(method: str, path: str, body: Any) -> tuple[str, JsonObject]:
     raise ValueError(f"This executor does not support {method} {path}")
 
 
-if TYPE_CHECKING:
-    from planner.conversation.model_resolution.contracts import CanonicalModelValidation
-
-
 def write_ticket_mutation(
     connection: sqlite3.Connection,
     write: CliWrite,
@@ -54,7 +50,6 @@ def write_ticket_mutation(
     clock: Clock,
     *,
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
-    creation_validation: CanonicalModelValidation | None = None,
 ) -> JsonObject:
     """Effect and receipt use the caller's open transaction; no native I/O here."""
     from planner.tickets.api import write_create_ticket, write_patch_ticket
@@ -93,7 +88,10 @@ def write_ticket_mutation(
         }
     if write.operation == "ticket.create":
         return write_create_ticket(
-            body, connection, RequestContext(principal), clock, validation=creation_validation
+            body,
+            connection,
+            RequestContext(principal),
+            clock,
         )
     ticket_id = args.get("ticket_id")
     if not isinstance(ticket_id, str):

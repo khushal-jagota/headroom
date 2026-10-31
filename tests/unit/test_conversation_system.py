@@ -699,8 +699,10 @@ def test_disabled_saved_model_refuses_dispatch_until_reenabled(harness: _Harness
         )
         assert isinstance(refused, PromptDeliveryRefused)
         assert refused.refusal_reason is PromptDeliveryRefusalReason.model_resolution_failed
-        assert refused.model_validation is not None
-        assert refused.model_validation["reason"] == "model_incompatible"
+        rows = await harness.store.read_events_after("c", 0)
+        refused_rows = [row for row in rows if row.kind.value == "prompt_delivery_refused"]
+        assert len(refused_rows) == 1
+        assert "disabled" in str(refused_rows[0].payload)
         assert harness.backend("c").writes == []
         policy.write_model_enablement(backend_key, "exact-provider-model", True)
         sent = await harness.system.send("c", text_message_content("allowed"), sender_label="Owner")
@@ -1941,13 +1943,14 @@ def test_promoted_send_now_claims_one_message_and_preserves_fifo(
             is None
         )
 
-        # Promotion does not retarget either captured request. FIFO remains,
-        # while different original choices require separate turns.
+        # Messages without explicit changes use the model current at dispatch.
+        # Their FIFO order survives promotion, and they may share the next turn.
         await harness.complete_turn("c")
-        assert harness.backend("c").written_texts() == ("incumbent", "selected", "first")
-        assert harness.backend("c").model == "a-model"
-        await harness.complete_turn("c")
-        assert harness.backend("c").written_texts() == ("incumbent", "selected", "first", "last")
+        assert harness.backend("c").written_texts() == (
+            "incumbent",
+            "selected",
+            "first\n\nowner:\nlast",
+        )
         assert harness.backend("c").model == "selected-model"
 
     _run(exercise)

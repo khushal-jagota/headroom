@@ -490,7 +490,6 @@ async def boot(
             project_id=project.id,
             employee_backend=backend_key.value,
             employee_launch_model=model,
-            selection_kind="concrete",
             employee_launch_reasoning_effort=reasoning_effort,
         )
         worker_ticket_id = ticket.id
@@ -681,8 +680,10 @@ def test_prompt_survives_short_link_drop_once_with_attachment(
             assert harness.endpoint.runs.link is not None
             harness.endpoint.runs.link.close()
             await eventually(
-                lambda: harness.endpoint.runs.ready
-                and harness.mac.identity.connection_generation > generation,
+                lambda: (
+                    harness.endpoint.runs.ready
+                    and harness.mac.identity.connection_generation > generation
+                ),
                 "Follow-up reconnect did not finish",
             )
             assert harness.native.prompt_count == 2
@@ -933,14 +934,13 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
     asyncio.run(run())
 
 
-def test_lifecycle_expectation_crosses_authenticated_native_admission(
+def test_exact_model_and_effort_cross_authenticated_native_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Authored kind crosses the real lifecycle/TLS boundary without inferred intent."""
+    """Exact model and effort cross the real lifecycle/TLS boundary without a catalog read."""
     import time
 
     from planner.conversation.message_content import MessageText
-    from planner.conversation.model_resolution.contracts import SelectionKind
     from planner.runtime.conversation_start import (
         conversation_link_lock,
         send_to_ticket_conversation,
@@ -948,7 +948,6 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
     from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
     from planner.tickets import data
     from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
-    from planner.tickets.validation.data import read_launch_selection
 
     class CapturedNativeChild(ScriptedNativeChild):
         def __init__(self) -> None:
@@ -997,11 +996,7 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                 project_id=project_id,
                 employee_backend="codex",
                 employee_launch_model="scripted",
-                selection_kind="legacy_unclassified",
             )
-            from planner.runtime.conversation_start import resolve_ticket_launch_selection
-
-            _, binding = resolve_ticket_launch_selection(conn, ticket)
             from tests.support.executor_catalog import ScriptedBackendSnapshots
 
             observer = harness.mac.catalog.snapshots
@@ -1012,8 +1007,6 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
             assert snapshots.available_models and observer.calls > 0
             observer.calls = 0
             observer.block = True
-            original = read_launch_selection(conn, ticket.id)
-            assert original.selection_kind is SelectionKind.legacy_unclassified
             exact_text = "Exact lifecycle selection: café\nsecond line"
             async with conversation_link_lock(f"ticket:{ticket.id}"):
                 delivery = await send_to_ticket_conversation(
@@ -1023,9 +1016,7 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                     text_message_content(exact_text),
                     conversation_id=None,
                     created_conversation_id="c_combined_admission",
-                    runs_under=ConversationStartOverrides(
-                        model="scripted", selection_kind=SelectionKind.concrete
-                    ),
+                    runs_under=ConversationStartOverrides(),
                     sender_label="Test",
                     sender=CHIEF_PRINCIPAL,
                     recipient=Principal(PrincipalKind.ticket, ticket.id),
@@ -1037,10 +1028,9 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
             assert second.start_count == second.prompt_count == 1, fate
             assert len(second.delivered_text) == 1
             assert exact_text in second.delivered_text[0]
-            selected = read_launch_selection(conn, ticket.id)
-            assert selected.selection_kind is SelectionKind.concrete
-            assert selected.submitted_token == original.submitted_token == "scripted"
-            assert selected.backend_key is ConversationBackendKey.codex
+            selected = data.read_ticket(conn, ticket.id)
+            assert selected.employee_launch_model == "scripted"
+            assert selected.employee_backend == "codex"
             assert observer.calls == 0
 
             async def finish_turn() -> None:
@@ -2420,12 +2410,14 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             assert writer is not None
             writer.close()
             await eventually(
-                lambda: harness.endpoint.runs.ready
-                and harness.endpoint.runs.link is not writer
-                and all(
-                    (saved := harness.endpoint.catalog.retained(backend)) is not None
-                    and saved.available_models[0].model_id == "reconnected-model"
-                    for backend in ConversationBackendKey
+                lambda: (
+                    harness.endpoint.runs.ready
+                    and harness.endpoint.runs.link is not writer
+                    and all(
+                        (saved := harness.endpoint.catalog.retained(backend)) is not None
+                        and saved.available_models[0].model_id == "reconnected-model"
+                        for backend in ConversationBackendKey
+                    )
                 ),
                 "Reconnect did not refresh the machine lists",
             )

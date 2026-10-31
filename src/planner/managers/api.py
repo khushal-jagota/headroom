@@ -247,12 +247,6 @@ async def _send_to_manager(
     message_files: MessageFiles,
     clk: Clk,
 ) -> JsonDict:
-    if body.selection_kind is not None:
-        raise PlannerError(
-            ErrorCode.validation,
-            "explicit selection_kind requires a Ticket launch context",
-            {},
-        )
     item = managers_data.read_manager(conn, item_id).item
     created_conversation_id = conversation_start.new_conversation_id()
     overrides = ConversationStartOverrides(

@@ -21,7 +21,6 @@ from planner.conversation.events import (
     UserInputAnswer,
     UserInputQuestion,
 )
-from planner.conversation.model_resolution.contracts import CanonicalModelValidation
 from planner.core.contracts import Principal
 
 VIEW_PROTOCOL_VERSION = 1
@@ -84,7 +83,6 @@ class RefusedPromptRowBody(TypedDict):
     sender_label: str
     reason: PromptDeliveryRefusalReason
     refusal_detail: str | None
-    model_validation: CanonicalModelValidation | None
 
 
 class UndeliveredPromptRowBody(TypedDict):

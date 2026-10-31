@@ -83,7 +83,6 @@ def _setup(
                     "ceiling_holder": {"kind": "manager", "id": "manager"},
                     "employee_backend": "codex",
                     "employee_launch_model": "gpt-6-sol",
-                    "selection_kind": "concrete",
                     "employee_launch_reasoning_effort": "high",
                 }
             },

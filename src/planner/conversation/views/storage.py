@@ -8,11 +8,8 @@ from collections.abc import Iterator
 from dataclasses import asdict, is_dataclass, replace
 from typing import Literal, cast
 
-from pydantic import TypeAdapter
-
 from planner.conversation import events as event
 from planner.conversation.contracts import AnswerFate, ConversationBackendKey
-from planner.conversation.model_resolution.contracts import CanonicalModelValidation
 from planner.conversation.retention.read import sequence_expired
 from planner.conversation.views.configuration import (
     BODY_CHUNK_BYTES,
@@ -45,8 +42,6 @@ class ViewBodyChanged(ValueError):
 
 
 def _json_default(value: object) -> object:
-    if isinstance(value, CanonicalModelValidation):
-        return TypeAdapter(CanonicalModelValidation).dump_python(value, mode="json")
     if is_dataclass(value) and not isinstance(value, type):
         return asdict(value)
     raise TypeError(f"Not a wire value: {type(value).__name__}")

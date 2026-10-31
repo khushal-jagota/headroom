@@ -1,4 +1,4 @@
-"""Exact intent, scoped evidence, truthful picker facts, and legacy admission refusal.
+"""Exact saved models, explicit effort, and Worker defaults at the public send boundary.
 
 Reuse the existing synthetic database and conversation fake factory. Each case
 protects a boundary that the retired family-upgrade expectations did not prove.
@@ -7,26 +7,15 @@ protects a boundary that the retired family-upgrade expectations did not prove.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from tests.unit.test_conversation_system import _Harness
 
 from planner.conversation.contracts import ConversationBackendKey as Backend
-from planner.conversation.contracts import (
-    WorkspacePathPolicy,
-)
 from planner.conversation.message_content import text_message_content
-from planner.conversation.model_resolution.contracts import (
-    CatalogWorkspaceBinding,
-    ModelSelection,
-    SelectionKind,
-    ValidationState,
-)
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core.db import connect, create_schema
-from planner.tickets.contracts import TicketLocale
 
 
 class Catalogue(BackendSnapshotService):
@@ -63,20 +52,6 @@ class Catalogue(BackendSnapshotService):
         )
 
 
-def workspace() -> CatalogWorkspaceBinding:
-    return CatalogWorkspaceBinding(Path("/workspace"), WorkspacePathPolicy.native_absolute, None)
-
-
-def selection(
-    token: str = "gpt-6-sol",
-    kind: SelectionKind = SelectionKind.concrete,
-    effort: str | None = "high",
-    **changes: object,
-) -> ModelSelection:
-    base = ModelSelection(TicketLocale.vps, Backend.codex, token, kind, effort, "selection-1")
-    return replace(base, **changes)  # type: ignore[arg-type]
-
-
 def setup(tmp_path: Path) -> tuple[BackendSnapshotService, None, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "models.db"
@@ -102,7 +77,6 @@ def test_actual_creation_route_preserves_offline_explicit_effort(
     from planner.runtime import conversation_start
     from planner.tickets import api as ticket_api
     from planner.tickets import data as tickets
-    from planner.tickets.validation.data import read_launch_validation
 
     service, _, path = setup(tmp_path)
     harness = _Harness(path)
@@ -134,10 +108,6 @@ def test_actual_creation_route_preserves_offline_explicit_effort(
             current = tickets.read_ticket(conn, result["id"])
             assert current.employee_launch_model == "opaque-id"
             assert current.employee_launch_reasoning_effort == "unpublished-effort"
-            stored = read_launch_validation(conn, current.id)
-            assert stored is not None
-            assert stored.validation.state is ValidationState.compatible
-            assert stored.validation.selection.reasoning_effort == "unpublished-effort"
             assert harness.spawned_conversation_ids == []
         finally:
             await harness.system.shutdown()
@@ -180,7 +150,6 @@ def test_explicit_default_effort_reaches_the_provider_on_the_next_send(
                 title_max_chars=200,
                 employee_backend="claude",
                 employee_launch_model="fable",
-                selection_kind=SelectionKind.provider_alias,
                 employee_launch_reasoning_effort="high",
             )
             async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
@@ -233,10 +202,14 @@ def test_explicit_default_effort_reaches_the_provider_on_the_next_send(
                 await backend.write_has_begun.wait()
                 # Regression: configuration must refuse rather than deadlock with a send.
                 try:
-                    with pytest.raises(PlannerError, match="conversation operation"):
+                    with pytest.raises(PlannerError, match="frozen"):
                         await ticket_api.put_ticket_employee_configuration(
                             ticket.id,
-                            {},
+                            {
+                                "employee_backend": "claude",
+                                "employee_launch_model": "fable",
+                                "employee_launch_reasoning_effort": None,
+                            },
                             request,
                             conn,
                             RequestContext(OWNER_PRINCIPAL),
@@ -257,11 +230,16 @@ def test_explicit_default_effort_reaches_the_provider_on_the_next_send(
     asyncio.run(asyncio.wait_for(exercise(), 10))
 
 
-@pytest.mark.parametrize("backend", [Backend.codex, Backend.hermes])
+@pytest.mark.parametrize(
+    ("backend", "missing_saved_model"),
+    [(Backend.codex, False), (Backend.hermes, False), (Backend.claude, True)],
+    ids=["codex-exact", "hermes-exact", "worker-default"],
+)
 def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     backend: Backend,
+    missing_saved_model: bool,
 ) -> None:
     """An offline catalog does not postpone the real worker claim or exact-token send."""
     import time
@@ -298,7 +276,6 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
                 if backend is Backend.hermes
                 else "gpt-6-sol",
                 employee_launch_reasoning_effort="high",
-                selection_kind=SelectionKind.concrete,
             )
             tickets.accept_proposal(
                 conn,
@@ -319,12 +296,53 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
                     now=lambda: stamp,
                 )
 
+            if missing_saved_model:
+                # Retained staging Tickets can have no saved model. Their old backend
+                # must not be paired with the Worker type's model from another backend.
+                conn.execute(
+                    "UPDATE tickets SET employee_launch_model=NULL WHERE id=?", (ticket.id,)
+                )
+                conn.commit()
+                profile = configured_worker_type_registry().require("coding").worker_profile
+                from planner.conversation.backend_state import BackendStateStore
+                from planner.runtime.worker_step_readiness import worker_step_blocker
+                from planner.tickets.contracts import WorkerStepClaim
+
+                policy = BackendStateStore(str(path))
+                policy.write_model_enablement(
+                    Backend(profile.default_backend), profile.default_model, False
+                )
+                assert not (await run()).started
+                blocked = tickets.read_ticket(conn, ticket.id)
+                assert blocked.conversation_id is None
+                assert blocked.worker_step_claim is WorkerStepClaim.none
+                assert "disabled" in str(
+                    worker_step_blocker(
+                        conn,
+                        blocked,
+                        worker_type_definition=configured_worker_type_registry().require("coding"),
+                    )
+                )
+                assert (
+                    conn.execute(
+                        "SELECT count(*) FROM manager_wakes WHERE ticket_id=?", (ticket.id,)
+                    ).fetchone()[0]
+                    == 0
+                )
+                policy.write_model_enablement(
+                    Backend(profile.default_backend), profile.default_model, True
+                )
+
             result = await run()
             assert result.started
             current = tickets.read_ticket(conn, ticket.id)
-            assert current.employee_launch_model == (
-                "fixture-hermes-model" if backend is Backend.hermes else "gpt-6-sol"
-            )
+            if missing_saved_model:
+                assert current.employee_backend == profile.default_backend
+                assert current.employee_launch_model == profile.default_model
+            else:
+                assert current.employee_launch_model == (
+                    "fixture-hermes-model" if backend is Backend.hermes else "gpt-6-sol"
+                )
             assert current.conversation_id is not None
             actual = harness.backend(current.conversation_id)
             assert actual.model == current.employee_launch_model
@@ -332,136 +350,5 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
         finally:
             conn.close()
             await harness.system.shutdown()
-
-    asyncio.run(exercise())
-
-
-@pytest.mark.parametrize("initial", [True, False])
-def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial: bool
-) -> None:
-    """A deliberate same-token kind choice must survive the actual send and held line."""
-    import time
-    from datetime import UTC, datetime
-
-    from fastapi import FastAPI, Request
-    from tests.support.principals import OWNER_PRINCIPAL
-
-    from planner.conversation.api import OwnerSendBody, SentTextPiece
-    from planner.core.authctx import RequestContext
-    from planner.core.clock import TestClock
-    from planner.runtime import conversation_start
-    from planner.tickets import api as ticket_api
-    from planner.tickets import data as tickets
-    from planner.tickets.validation.data import read_launch_selection
-
-    stamp = int(time.time())
-    service, _, path = setup(tmp_path)
-    harness = _Harness(path)
-    harness.clock.now = float(stamp)
-    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
-
-    async def exercise() -> None:
-        nonlocal harness
-        conn = connect(str(path))
-        try:
-            ticket = tickets.create_ticket(
-                conn,
-                worker_type="coding",
-                title="Exact picker kind",
-                principal=OWNER_PRINCIPAL,
-                now=stamp,
-                title_max_chars=200,
-                employee_backend="claude",
-                employee_launch_model="fable",
-                selection_kind=SelectionKind.provider_alias,
-            )
-            if not initial:
-                async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
-                    first = await conversation_start.send_to_ticket_conversation(
-                        harness.system,
-                        conn,
-                        ticket.id,
-                        text_message_content("First"),
-                        conversation_id=None,
-                        sender_label="Owner",
-                        now=stamp,
-                    )
-                conversation_id = first.conversation_id
-                assert conversation_id is not None
-            body = OwnerSendBody(
-                content=[SentTextPiece(piece="text", text="Explicit concrete choice")],
-                model="fable",
-                selection_kind=SelectionKind.concrete,
-                reasoning_effort=None,
-                sender_label="Owner",
-                sender_message_id="exact-kind",
-            )
-            response = await ticket_api.send_to_ticket_conversation(
-                ticket.id,
-                body,
-                Request({"type": "http", "app": FastAPI()}),
-                conn,
-                RequestContext(OWNER_PRINCIPAL),
-                TestClock(datetime.fromtimestamp(stamp, UTC)),
-                harness.system,
-                harness.message_files,
-            )
-            assert response["fate"] == ("started" if initial else "queued")
-            if not initial:
-                assert conversation_id is not None
-                replay = await ticket_api.send_to_ticket_conversation(
-                    ticket.id,
-                    body,
-                    Request({"type": "http", "app": FastAPI()}),
-                    conn,
-                    RequestContext(OWNER_PRINCIPAL),
-                    TestClock(datetime.fromtimestamp(stamp, UTC)),
-                    harness.system,
-                    harness.message_files,
-                )
-                assert replay["fate"] == "queued"
-                with pytest.raises(ValueError, match="different message"):
-                    await ticket_api.send_to_ticket_conversation(
-                        ticket.id,
-                        body.model_copy(update={"selection_kind": SelectionKind.provider_alias}),
-                        Request({"type": "http", "app": FastAPI()}),
-                        conn,
-                        RequestContext(OWNER_PRINCIPAL),
-                        TestClock(datetime.fromtimestamp(stamp, UTC)),
-                        harness.system,
-                        harness.message_files,
-                    )
-                (retained_held,) = await harness.system.held_prompts(conversation_id)
-                from planner.conversation.contracts import (
-                    HeldPromptPromotionMode,
-                    PromptDeliveryQueued,
-                    PromptDeliveryStarted,
-                )
-
-                held_id = retained_held.held_prompt_id
-                retained = await harness.system.promote_held_prompt(
-                    conversation_id,
-                    held_id,
-                    HeldPromptPromotionMode.steer,
-                )
-                assert isinstance(retained, PromptDeliveryQueued)
-                assert await harness.system.held_prompts(conversation_id) == (retained_held,)
-                promoted = await harness.system.promote_held_prompt(
-                    conversation_id,
-                    held_id,
-                    HeldPromptPromotionMode.send_now,
-                )
-                assert isinstance(promoted, PromptDeliveryStarted)
-            selection = read_launch_selection(conn, ticket.id)
-            assert selection.selection_kind is SelectionKind.concrete
-            assert selection.submitted_token == "fable"
-            assert selection.reasoning_effort is None
-            current = tickets.read_ticket(conn, ticket.id)
-            assert current.conversation_id is not None
-            assert harness.backend(current.conversation_id).model == "fable"
-        finally:
-            await harness.system.shutdown()
-            conn.close()
 
     asyncio.run(exercise())

@@ -87,7 +87,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             brief="Brief",
             employee_backend="codex",
             employee_launch_model="scripted",
-            selection_kind="concrete",
         )
         sender = Principal(PrincipalKind.ticket, ticket.id)
         reference = ChildReference("incarnation", "child", "c_source")

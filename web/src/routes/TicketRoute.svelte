@@ -541,7 +541,6 @@
                   backendKey: (setupChoices.request?.employee_backend ?? setupChoices.intent?.employee_backend ?? detail.employee_backend) as import("../lib/conversation/wire").ConversationBackendKey,
                   model: setupChoices.intent ? setupChoices.intent.employee_launch_model : detail.employee_launch_model,
                   reasoningEffort: setupChoices.intent ? setupChoices.intent.employee_launch_reasoning_effort : detail.employee_launch_reasoning_effort,
-                  selectionKind: setupChoices.intent?.selection_kind
                 }}
                 scopedBackends={setupChoices.response ?? []}
                 snapshotLoading={setupChoices.loading} configurationSaving={setupChoices.saving}

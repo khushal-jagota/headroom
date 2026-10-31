@@ -1,5 +1,5 @@
-import type { SelectionKind, CanonicalModelValidation, BackendScopeRequest } from "./modelResolutionWire";
-export type { CanonicalModelValidation, ModelSelection, BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
+import type { BackendScopeRequest } from "./modelResolutionWire";
+export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
 
 import { mutationHeaders } from "../releaseMonitor";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
@@ -257,7 +257,6 @@ export type ConversationEvent =
         mode: PromptDeliveryMode;
         refusal_reason: PromptDeliveryRefusalReason;
         refusal_detail?: string | null;
-        model_validation?: CanonicalModelValidation;
         sender_message_id?: string;
       } & AddressedMessageFields
     >
@@ -362,7 +361,7 @@ export type PromptDeliveryFate =
   | { fate: "started" }
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
-  | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason; model_validation?: CanonicalModelValidation }
+  | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
   | { fate: "uncertain" }
   | { fate: "suppressed"; reason: string };
 
@@ -371,7 +370,7 @@ export type HeldPromptPromotionResult =
   | ({ promoted: true } & (
       | { fate: "started" }
       | { fate: "injected" }
-      | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason; model_validation?: CanonicalModelValidation }
+      | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
       | { fate: "uncertain" }
       | { fate: "suppressed"; reason: string }
     ));
@@ -496,7 +495,6 @@ export type OwnerSendBody = {
   /** Omitted preserves effort; null explicitly requests provider default. */
   reasoning_effort?: string | null;
   /** Ticket model intent only; omitted preserves historical classification. */
-  selection_kind?: SelectionKind;
   content: SentMessagePiece[];
   sender_label: string;
   mode: PromptDeliveryMode;

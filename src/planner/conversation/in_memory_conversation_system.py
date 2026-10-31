@@ -43,7 +43,6 @@ from planner.conversation.contracts import (
     backend_supports_steer,
 )
 from planner.conversation.events import UserInputAnswer, UserInputQuestion
-from planner.conversation.launch_intent import validate_launch_intent
 from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -59,7 +58,6 @@ from planner.conversation.message_content import (
     require_message_content,
     sender_labeled_composed_message_content,
 )
-from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal
 
@@ -203,7 +201,6 @@ class _HeldPrompt:
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
 
     reasoning_effort_is_set: bool = False
-    selection_kind: SelectionKind | None = None
 
 
 @dataclass
@@ -286,7 +283,6 @@ class InMemoryConversationSystem:
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
-        selection_kind: SelectionKind | None = None,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -304,7 +300,6 @@ class InMemoryConversationSystem:
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             reasoning_effort_is_set=reasoning_effort_is_set,
-            selection_kind=selection_kind,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -326,7 +321,6 @@ class InMemoryConversationSystem:
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
-        selection_kind: SelectionKind | None = None,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -337,7 +331,6 @@ class InMemoryConversationSystem:
         record_refusal: bool = False,
         native_message_operation: NativeMessageOperation | None = None,
     ) -> AddressedPromptDeliveryReceipt:
-        validate_launch_intent(model_change, selection_kind)
 
         # This implementation has no await within admission or delivery.
         if self.workspace_admission.closed:
@@ -366,7 +359,6 @@ class InMemoryConversationSystem:
                     held.model_change,
                     held.reasoning_effort_change,
                     held.reasoning_effort_is_set,
-                    held.selection_kind,
                 ) != (
                     content,
                     sender_label,
@@ -375,7 +367,6 @@ class InMemoryConversationSystem:
                     model_change,
                     reasoning_effort_change,
                     reasoning_effort_is_set,
-                    selection_kind,
                 ):
                     raise ValueError("sender_message_id already names a different message")
                 return AddressedPromptDeliveryReceipt(
@@ -444,7 +435,6 @@ class InMemoryConversationSystem:
                 reply_requested=reply_requested,
                 recovery_references=recovery_references,
                 reasoning_effort_is_set=reasoning_effort_is_set,
-                selection_kind=selection_kind,
             )
         elif mode is PromptDeliveryMode.steer:
             if any(not isinstance(piece, MessageText) for piece in content):
@@ -488,7 +478,6 @@ class InMemoryConversationSystem:
                     reply_requested=reply_requested,
                     recovery_references=recovery_references,
                     reasoning_effort_is_set=reasoning_effort_is_set,
-                    selection_kind=selection_kind,
                 )
         else:
             # send-now against a busy agent: the incumbent dies first, and this message runs
@@ -536,13 +525,11 @@ class InMemoryConversationSystem:
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         reasoning_effort_is_set: bool = False,
-        selection_kind: SelectionKind | None = None,
     ) -> PromptDeliveryQueued:
         state.held_prompts_created += 1
         state.held_prompts.append(
             _HeldPrompt(
                 reasoning_effort_is_set=reasoning_effort_is_set,
-                selection_kind=selection_kind,
                 held_prompt_id=f"held-{state.held_prompts_created}",
                 content=content,
                 sender_label=sender_label,
@@ -685,7 +672,6 @@ class InMemoryConversationSystem:
             held.model_change is not None
             or held.reasoning_effort_change is not None
             or held.reasoning_effort_is_set
-            or held.selection_kind is not None
         ):
             return PromptDeliveryQueued(queue_position=position + 1)
         del state.held_prompts[position]

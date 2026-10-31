@@ -96,7 +96,6 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                 title_max_chars=200,
                 employee_backend=backend.value,
                 employee_launch_model="a-model",
-                selection_kind="concrete",
                 locale=TicketLocale.macos,
                 project_id=project.id,
             )

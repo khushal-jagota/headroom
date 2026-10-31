@@ -16,7 +16,7 @@ Codex can be signed in from the screen. Claude and Hermes keep their own login c
 used on the Mac. Claude supplies its models through the CLI handshake; Panels keeps
 no written Claude model table. Ticket composers use their Ticket's machine, with the
 Mac's last list retained on the VPS while it is offline. See [Executor](executor.md).
-Models can be enabled or disabled in the catalog the composers use. A disabled model is blocked in the picker and at Ticket creation.
+Models can be enabled or disabled in the catalog the composers use. A disabled model is blocked in the picker, at Ticket creation, when saving a Ticket configuration and when dispatching a message. Automatic Worker steps show a blocker until that model is enabled or the choice changes.
 
 ## What feeds the page
 

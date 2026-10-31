@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final, Literal, NotRequired, Required, TypedDict
+from typing import Final, Literal, Required, TypedDict
 
 from planner.conversation.contracts import ConversationSignal
 from planner.core.contracts import JsonDict, Principal
@@ -196,7 +196,6 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # Null or omission keeps the existing defaults. A nonblank explicit effort must
     # validate against the resolved model before creation, even for direct callers.
     employee_launch_reasoning_effort: str | None
-    selection_kind: str
     locale: str
     title: str  # default ""
     brief: str  # default ""; intake text for the Brief field
@@ -270,7 +269,6 @@ class EmployeeConfigurationBody(TypedDict):
     employee_backend: str
     employee_launch_model: str
     employee_launch_reasoning_effort: str | None
-    selection_kind: NotRequired[str]
 
 
 @dataclass

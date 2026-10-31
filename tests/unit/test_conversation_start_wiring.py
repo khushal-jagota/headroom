@@ -40,7 +40,6 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
-from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal
 from planner.core.errors import PlannerError
@@ -118,7 +117,10 @@ class _LinkWatchingConversationSystem:
         return self._system.workspace_activity()
 
     async def run_with_workspace_admission(
-        self, operation: Callable[[], None], *, require_idle: bool,
+        self,
+        operation: Callable[[], None],
+        *,
+        require_idle: bool,
     ) -> bool:
         return await self._system.run_with_workspace_admission(operation, require_idle=require_idle)
 
@@ -142,7 +144,6 @@ class _LinkWatchingConversationSystem:
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
-        selection_kind: SelectionKind | None = None,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -160,7 +161,6 @@ class _LinkWatchingConversationSystem:
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             reasoning_effort_is_set=reasoning_effort_is_set,
-            selection_kind=selection_kind,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -181,7 +181,6 @@ class _LinkWatchingConversationSystem:
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
-        selection_kind: SelectionKind | None = None,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -200,7 +199,6 @@ class _LinkWatchingConversationSystem:
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             reasoning_effort_is_set=reasoning_effort_is_set,
-            selection_kind=selection_kind,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,

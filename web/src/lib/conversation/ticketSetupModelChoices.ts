@@ -1,9 +1,9 @@
 import type { EmployeeConfigurationSnapshot, TicketDetail } from "../types";
 import type { BackendSnapshot, ConversationBackendKey, ConversationStartValues } from "./wire";
-import type { SelectionKind, TicketBackendScope } from "./modelResolutionWire";
+import type { TicketBackendScope } from "./modelResolutionWire";
 
-export type SetupConfigurationWrite = EmployeeConfigurationSnapshot & { selection_kind: SelectionKind };
-type SetupTicket = Pick<TicketDetail, "id" | "record_sha256" | "locale" | "launch_validation" | "employee_backend" | "employee_launch_model" | "employee_launch_reasoning_effort">;
+export type SetupConfigurationWrite = EmployeeConfigurationSnapshot;
+type SetupTicket = Pick<TicketDetail, "id" | "record_sha256" | "locale" | "employee_backend" | "employee_launch_model" | "employee_launch_reasoning_effort">;
 export type TicketSetupChoicesState = {
   response: readonly BackendSnapshot[] | null;
   intent: SetupConfigurationWrite | null;
@@ -68,7 +68,7 @@ export function createTicketSetupModelChoices(dependencies: {
     sync(ticket: SetupTicket | null, workspace?: Pick<ConversationStartValues, "workspace_folder" | "workspace_path_policy">): void {
       const nextScope = JSON.stringify([ticket?.id, ticket?.locale, workspace?.workspace_folder, workspace?.workspace_path_policy]);
       const next = ticket ? JSON.stringify([ticket.id, ticket.record_sha256, ticket.locale,
-        ticket.employee_backend, ticket.employee_launch_model, ticket.employee_launch_reasoning_effort, ticket.launch_validation, nextScope]) : "";
+        ticket.employee_backend, ticket.employee_launch_model, ticket.employee_launch_reasoning_effort, nextScope]) : "";
       if (disposed || next === signature) return;
       const configurationChanged = current?.id !== ticket?.id || current?.employee_backend !== ticket?.employee_backend
         || current?.employee_launch_model !== ticket?.employee_launch_model
@@ -91,11 +91,10 @@ export function createTicketSetupModelChoices(dependencies: {
       else intents.set(current.employee_backend, {
         employee_backend: current.employee_backend, employee_launch_model: current.employee_launch_model,
         employee_launch_reasoning_effort: current.employee_launch_reasoning_effort,
-        selection_kind: "legacy_unclassified"
       });
       const intent = intents.get(backend) ?? {
         employee_backend: backend, employee_launch_model: null,
-        employee_launch_reasoning_effort: null, selection_kind: "legacy_unclassified" as const
+        employee_launch_reasoning_effort: null
       };
       publish({request: {ticket_id: current.id, employee_backend: backend}, intent});
       return Promise.resolve();
@@ -106,7 +105,7 @@ export function createTicketSetupModelChoices(dependencies: {
       const backend = state.request?.employee_backend ?? current.employee_backend;
       const intent: SetupConfigurationWrite = {
         employee_backend: backend, employee_launch_model: model,
-        employee_launch_reasoning_effort: effort, selection_kind: "legacy_unclassified"
+        employee_launch_reasoning_effort: effort
       };
       return mutate(() => dependencies.save(ticketId, intent), intent);
     },

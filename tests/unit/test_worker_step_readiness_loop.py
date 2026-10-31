@@ -21,7 +21,6 @@ from typing import cast
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.contracts import (
     ConversationStartRequest,
     ConversationSystem,
@@ -33,12 +32,6 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import MessageContent, text_message_content
-from planner.conversation.model_resolution.contracts import (
-    CanonicalModelValidation,
-    CatalogWorkspaceBinding,
-    ModelSelection,
-    SelectionKind,
-)
 from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
@@ -66,43 +59,11 @@ TODAY_DAY_ID = "day_2026-07-06"
 # --- the world under test ------------------------------------------------------
 
 
-class _ScopedMetadataConversationSystem(InMemoryConversationSystem):
-    def __init__(self, db_path: str, clock: TestClock) -> None:
-        super().__init__()
-        self.db_path = db_path
-
-    async def validate_launch_selection(
-        self,
-        selection: ModelSelection,
-        workspace: CatalogWorkspaceBinding,
-    ) -> CanonicalModelValidation:
-        # Explicit fixture ingress supplies concrete intent; no resolver-selected
-        # model or effort substitutes for the requested tuple.
-        from planner.conversation.launch_intent import bind_model_intent
-
-        return bind_model_intent(
-            selection,
-            disabled_models=BackendStateStore(self.db_path).read_disabled_models(
-                selection.backend_key
-            ),
-        )
-
-
-class _MetadataDelegate:
-    _validation_source: _ScopedMetadataConversationSystem
+class _RetirementDelegate:
+    _retirement_source: InMemoryConversationSystem
 
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
-        return await self._validation_source.retirement_is_confirmed(conversation_id)
-
-    async def validate_launch_selection(
-        self,
-        selection: ModelSelection,
-        workspace: CatalogWorkspaceBinding,
-    ) -> CanonicalModelValidation:
-        return await self._validation_source.validate_launch_selection(
-            selection,
-            workspace,
-        )
+        return await self._retirement_source.retirement_is_confirmed(conversation_id)
 
 
 class _World:
@@ -113,7 +74,7 @@ class _World:
         with closing(connect(self.db_path)) as conn:
             create_schema(conn)
         self.clock = TestClock(FIXED_NOW)
-        self.conversations = _ScopedMetadataConversationSystem(self.db_path, self.clock)
+        self.conversations = InMemoryConversationSystem()
 
     def connect(self) -> sqlite3.Connection:
         return connect(self.db_path)
@@ -138,7 +99,6 @@ class _World:
                 title_max_chars=200,
                 employee_backend="codex",
                 employee_launch_model="gpt-6.1-sol",
-                selection_kind=SelectionKind.concrete,
             )
             ticket = tickets_data.accept_proposal(
                 conn,
@@ -238,14 +198,14 @@ class _World:
         )
 
 
-class _MutateOnKillConversationSystem(_MetadataDelegate):
+class _MutateOnKillConversationSystem(_RetirementDelegate):
     def __init__(
         self,
         base: InMemoryConversationSystem,
         mutate: Callable[[], None],
     ) -> None:
         self.base = base
-        self._validation_source = cast(_ScopedMetadataConversationSystem, base)
+        self._retirement_source = base
         self.mutate = mutate
 
     async def is_running(self, conversation_id: str) -> bool:
@@ -256,10 +216,10 @@ class _MutateOnKillConversationSystem(_MetadataDelegate):
         await self.base.kill(conversation_id)
 
 
-class _PauseKillConversationSystem(_MetadataDelegate):
+class _PauseKillConversationSystem(_RetirementDelegate):
     def __init__(self, base: InMemoryConversationSystem) -> None:
         self.base = base
-        self._validation_source = cast(_ScopedMetadataConversationSystem, base)
+        self._retirement_source = base
         self.kill_started = asyncio.Event()
         self.release_kill = asyncio.Event()
 
@@ -671,12 +631,12 @@ def test_an_old_uncertain_delivery_cannot_error_a_newer_claim(world: _World) -> 
     assert ticket.worker_step_claim_revision == newer_claim.worker_step_claim_revision
 
 
-class _UncertainConversationSystem(_MetadataDelegate):
+class _UncertainConversationSystem(_RetirementDelegate):
     """Report an ambiguous send without admitting the worker-step opener."""
 
     def __init__(self, system: InMemoryConversationSystem) -> None:
         self._system = system
-        self._validation_source = cast(_ScopedMetadataConversationSystem, system)
+        self._retirement_source = system
 
     async def is_running(self, conversation_id: str) -> bool:
         return await self._system.is_running(conversation_id)
@@ -694,7 +654,6 @@ class _UncertainConversationSystem(_MetadataDelegate):
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
-        selection_kind: SelectionKind | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
@@ -809,12 +768,12 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     assert {row["binding_status"] for row in world.skill_bindings()} == {"provisional"}
 
 
-class _QueueingConversationSystem(_MetadataDelegate):
+class _QueueingConversationSystem(_RetirementDelegate):
     """Idle when asked, busy by the time the send arrives."""
 
     def __init__(self, system: InMemoryConversationSystem, conversation_id: str) -> None:
         self._system = system
-        self._validation_source = cast(_ScopedMetadataConversationSystem, system)
+        self._retirement_source = system
         self._conversation_id = conversation_id
 
     async def is_running(self, conversation_id: str) -> bool:
@@ -833,7 +792,6 @@ class _QueueingConversationSystem(_MetadataDelegate):
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
-        selection_kind: SelectionKind | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
@@ -854,7 +812,6 @@ class _QueueingConversationSystem(_MetadataDelegate):
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             reasoning_effort_is_set=reasoning_effort_is_set,
-            selection_kind=selection_kind,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             owner_read_through_sequence=owner_read_through_sequence,
