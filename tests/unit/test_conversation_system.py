@@ -2624,29 +2624,6 @@ def test_turn_replacement_waits_for_accepted_steer_receipt_and_sender_obligation
     _run(exercise)
 
 
-def test_idle_write_refuses_a_send_reserved_before_backend_write(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await _start(harness)
-        backend = harness.backend("c")
-        backend.write_has_begun = asyncio.Event()
-        backend.writes_wait_for_release = asyncio.Event()
-        sending = asyncio.create_task(
-            harness.system.send(
-                "c",
-                text_message_content("work"),
-                sender_label="Owner",
-            )
-        )
-        await backend.write_has_begun.wait()
-        written: list[str] = []
-        assert not await harness.system.run_if_idle("c", lambda: written.append("moved"))
-        assert written == []
-        backend.writes_wait_for_release.set()
-        await sending
-
-    _run(exercise)
-
-
 # These cases exercise the real durable queue and admission transaction. The fake only
 # replaces the child wire; session barriers expose state changes before final admission.
 def _review_notice(db_path: Path, *, conversation_id: str = "c") -> tuple[str, str, str]:

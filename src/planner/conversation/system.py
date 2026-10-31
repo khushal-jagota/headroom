@@ -546,28 +546,6 @@ class SqliteProcessConversationSystem:
             require_idle=require_idle,
         )
 
-    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            operation()
-            return True
-        if state.lock.locked():
-            return False
-        async with state.lock:
-            if (
-                state.phase is not _ConversationPhase.idle
-                or state.reserved_turn is not None
-                or state.running_turn is not None
-                or state.held_prompts
-                or state.admitted_sender_messages
-                or state.sender_messages_being_delivered
-                or state.steer_settlements
-                or any(not task.done() for task in state.settlement_tasks)
-            ):
-                return False
-            operation()
-            return True
-
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation. Writing its row is the first thing that happens.
 
@@ -1385,29 +1363,12 @@ class SqliteProcessConversationSystem:
         child: BackendChild,
         *,
         reservation: _ReservedTurn | None = None,
-        nonadmitted_turn: TurnToken | None = None,
+        wait_for_reservation: bool = True,
     ) -> asyncio.Task[bool]:
         """Fence the captured identity before its cleanup owner yields the lock."""
         reference = state.executor_child_reference
         if reference is None:
             raise ValueError("Retirement lacks retained identity")
-        if nonadmitted_turn is not None:
-            # Only the owner of this exact refused write may remove its circular
-            # reservation dependency. The reservation itself remains unresolved.
-            if (
-                state.child is not child
-                or state.executor_child_reference != reference
-                or state.reserved_turn is not reservation
-                or (
-                    reservation is not None
-                    and (reservation.token != nonadmitted_turn or reservation.shutdown_owned)
-                )
-                or (
-                    state.last_ended_turn_token is not None
-                    and state.last_ended_turn_token.turn_number >= nonadmitted_turn.turn_number
-                )
-            ):
-                raise ValueError("Nonadmission does not own this child and turn")
         existing = state.initial_shutdown_task
         if existing is not None and not existing.done():
             if state.initial_shutdown_child is not child:
@@ -1426,7 +1387,7 @@ class SqliteProcessConversationSystem:
         pending = state.reserved_turn
         dependency = pending if pending is not None and pending.token == token else None
         if dependency is not None and (
-            dependency.token == nonadmitted_turn
+            not wait_for_reservation
             or (
                 state.phase is _ConversationPhase.idle
                 and state.child_is_quarantined
@@ -3131,26 +3092,7 @@ class SqliteProcessConversationSystem:
                 assert reservation.shutdown_fate is not None
                 return reservation.shutdown_fate
             if isinstance(delivery_error, PromptWriteFailed):
-                async with state.lock:
-                    state.child_is_quarantined = True
-                    state.executor_delivery_uncertain = True
-                    await self._append_event(
-                        state,
-                        PromptDeliveryUncertainEventPayload(
-                            content=content,
-                            sender_label=sender_label,
-                            mode=mode,
-                            sender_message_id=sender_message_id,
-                            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                            sender=sender,
-                            recipient=recipient,
-                        ),
-                        lifecycle=(_prompt_fact(reservation.token, LifecycleStatus.unknown),),
-                        native_message_operation=native_message_operation,
-                    )
-                self._set_phase(state, _ConversationPhase.idle)
-                # Preserve the unresolved reservation and quarantine; record the
-                # unknown delivery without inventing refusal or native execution.
+                await self._record_delivery_uncertainty(state, reservation, reservation.messages)
                 return PromptDeliveryUncertain()
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
             if drain_after_delivery_exception:
@@ -3317,6 +3259,10 @@ class SqliteProcessConversationSystem:
             finally:
                 shutdown.cancel()
                 await asyncio.gather(shutdown, return_exceptions=True)
+        except PromptWriteFailed:
+            # Each delivery caller records the unknown outcome with its message
+            # references. Keep the turn intent while its reservation is retained.
+            raise
         except BaseException:
             if reservation is not None and reservation.shutdown_owned:
                 raise
@@ -3583,7 +3529,7 @@ class SqliteProcessConversationSystem:
                     state,
                     old_child,
                     reservation=reservation,
-                    nonadmitted_turn=turn_token,
+                    wait_for_reservation=False,
                 )
             else:
                 state.child_is_quarantined = True
@@ -4554,27 +4500,6 @@ class SqliteProcessConversationSystem:
                     else reasoning_effort
                 ),
             )
-        if resolved_start.role_materials is not None:
-            identity = dict(resolved_start.role_materials.identity_environment_variables)
-            ticket_id = identity.get("PLAN_TICKET_ID")
-            if ticket_id:
-                from planner.files.logic.paths import ticket_files_root
-
-                artifact_root = (ticket_files_root(self._store._db_path) / ticket_id).resolve()
-                resolved_start = replace(
-                    resolved_start,
-                    role_materials=replace(
-                        resolved_start.role_materials,
-                        identity_environment_variables=tuple(
-                            (key, value)
-                            for key, value in (
-                                resolved_start.role_materials.identity_environment_variables
-                            )
-                            if key != "PLAN_TICKET_FILES_DIR"
-                        )
-                        + (("PLAN_TICKET_FILES_DIR", str(artifact_root)),),
-                    ),
-                )
         factory = self._backend_child_factories[state.record.backend_key]
         sink = _CoreBackendEventSink(self, state)
         state.child_event_sink = sink

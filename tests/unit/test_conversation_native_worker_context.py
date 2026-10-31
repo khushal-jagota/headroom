@@ -139,7 +139,11 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             ),
             model_change=None,
         )
-        await store.update_vendor_session_cursor("c_native", cursor)
+        with connect(db_path) as connection:
+            store.update_remote_identity_in_transaction(
+                connection, "c_native", vendor_session_cursor=cursor
+            )
+            connection.commit()
         names = ("panels", "panels-worker", "panels-worker-coding")
         snapshot = CanonicalSkillSnapshot(
             tuple(

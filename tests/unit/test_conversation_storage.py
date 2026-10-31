@@ -223,9 +223,8 @@ def test_storage_write_retries_real_sqlite_busy_after_rollback(tmp_path: Path) -
                     ),
                 )
             ),
-            asyncio.create_task(store.update_vendor_session_cursor("c", "retained-session")),
             asyncio.create_task(
-                store.append_message_to_owner(
+                store.append_event(
                     "c",
                     MessageToOwnerEventPayload(
                         content=text_message_content("explicit reply"),
@@ -250,8 +249,6 @@ def test_storage_write_retries_real_sqlite_busy_after_rollback(tmp_path: Path) -
         writer.execute("ROLLBACK")
         writer.close()
         await asyncio.gather(*writes)
-        record = await store.read_conversation("c")
-        assert record is not None and record.vendor_session_cursor == "retained-session"
         events = await store.read_events_after("c", 0)
         assert len(events) == 4
         assert [event.sequence for event in events] == [1, 2, 3, 4]

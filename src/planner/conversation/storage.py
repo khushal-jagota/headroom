@@ -56,7 +56,6 @@ from planner.conversation.events import (
     ConversationEventKind,
     ConversationEventPayload,
     ExplicitReplyMissingEventPayload,
-    MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     PromptDeliveryRefusedEventPayload,
     PromptDeliveryUncertainEventPayload,
@@ -501,8 +500,8 @@ class ConversationStore:
         self,
         conversation_id: str,
         facts: tuple[LifecycleFact, ...],
-    ) -> bool:
-        return await self._write(
+    ) -> None:
+        await self._write(
             self._transition_lifecycle_sync,
             conversation_id,
             facts,
@@ -512,7 +511,7 @@ class ConversationStore:
         self,
         conversation_id: str,
         facts: tuple[LifecycleFact, ...],
-    ) -> bool:
+    ) -> None:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
             self._apply_signal_mutation(conn, admission)
@@ -533,8 +532,6 @@ class ConversationStore:
                     claim_revisions != self._recovery_ticket_claim_revisions(conn, conversation_id)
                 ),
             )
-
-        return True
 
     def recording_failures(self, conversation_id: str) -> tuple[Exception, ...]:
         """Actual recording errors retained for explicit persistence reconciliation."""
@@ -888,12 +885,6 @@ class ConversationStore:
             conn.commit()
             return changed
 
-    async def append_message_to_owner(
-        self, conversation_id: str, payload: MessageToOwnerEventPayload
-    ) -> StoredConversationEvent:
-        """Write one owner-bound message without a backend call."""
-        return await self.append_event(conversation_id, payload)
-
     async def append_turn_ending(
         self,
         conversation_id: str,
@@ -1066,15 +1057,6 @@ class ConversationStore:
         """Return owner-message and last-turn facts for a list of conversations."""
         return await asyncio.to_thread(self._attention_facts_sync, conversation_ids)
 
-    async def conversation_ids_holding_unread_owner_message(self) -> frozenset[str]:
-        """Every conversation whose newest message to the owner is past his read mark.
-
-        This asks the whole record rather than a list, because the caller is looking for
-        conversations it does not already hold. A caller that has the list wants
-        ``attention_facts``, which answers more about each one.
-        """
-        return await asyncio.to_thread(self._conversation_ids_holding_unread_owner_message_sync)
-
     async def has_delivered_prompt(self, conversation_id: str) -> bool:
         """Whether any prompt has ever reached this conversation's backend.
 
@@ -1083,23 +1065,6 @@ class ConversationStore:
         that was refused leaves a row behind without any prompt having been delivered.
         """
         return await asyncio.to_thread(self._has_delivered_prompt_sync, conversation_id)
-
-    async def update_vendor_session_cursor(
-        self, conversation_id: str, vendor_session_cursor: str
-    ) -> None:
-        await self._write(
-            self._update_vendor_session_cursor_sync, conversation_id, vendor_session_cursor
-        )
-
-    async def replace_composer_catalog(
-        self, conversation_id: str, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        """Put the whole composer catalog where the old one was.
-
-        A backend reports the catalog it has now, not what moved in it. The prior catalog
-        is out of date rather than partly right, so this does not merge entries.
-        """
-        await self._write(self._replace_composer_catalog_sync, conversation_id, composer_catalog)
 
     # --- inside the worker thread ---
 
@@ -1793,20 +1758,6 @@ class ConversationStore:
             for row in rows
         }
 
-    def _conversation_ids_holding_unread_owner_message_sync(self) -> frozenset[str]:
-        conn = self._connect()
-        try:
-            rows = conn.execute(
-                "SELECT c.conversation_id FROM conversations c "
-                "JOIN conversation_events e ON e.conversation_id = c.conversation_id "
-                "WHERE e.kind = 'message_to_owner' "
-                "GROUP BY c.conversation_id "
-                "HAVING MAX(e.sequence) > c.owner_read_through_sequence"
-            ).fetchall()
-        finally:
-            conn.close()
-        return frozenset(str(row["conversation_id"]) for row in rows)
-
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:
         conn = self._connect()
         try:
@@ -1817,37 +1768,6 @@ class ConversationStore:
         finally:
             conn.close()
         return row is not None
-
-    def _update_vendor_session_cursor_sync(
-        self, conversation_id: str, vendor_session_cursor: str
-    ) -> None:
-        with self._publication_connection() as (conn, admission):
-            if self.signal_coordinator is not None:
-                conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "UPDATE conversations SET vendor_session_cursor = ? WHERE conversation_id = ?",
-                (vendor_session_cursor, conversation_id),
-            )
-            if self.signal_coordinator is not None:
-                self._record_signal_result(conn, None)
-                conn.commit()
-
-    def _replace_composer_catalog_sync(
-        self, conversation_id: str, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        serialized_catalog = _composer_catalog_to_json(composer_catalog)
-        with self._publication_connection() as (conn, admission):
-            if self.signal_coordinator is not None:
-                conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "UPDATE conversations SET composer_catalog = ? "
-                "WHERE conversation_id = ? AND composer_catalog IS NOT ?",
-                (serialized_catalog, conversation_id, serialized_catalog),
-            )
-
-            if self.signal_coordinator is not None:
-                self._record_signal_result(conn, None)
-                conn.commit()
 
     def _record_signal_result(self, conn: sqlite3.Connection, result: object) -> None:
         if self.signal_coordinator is not None:
