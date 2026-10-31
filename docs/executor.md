@@ -105,7 +105,8 @@ without a known outcome returns uncertainty and sends nothing. There is no separ
 message ledger.
 
 Code paths: `src/planner/conversation/`, `src/planner/executor/link.py`, `link_files.py`,
-`protocol.py`, `mac_runner.py`, `mac_outbox.py`, `mac_agent_gateway.py`, `mac_connection.py`, `mac_service.py`,
+`protocol.py`, `mac_runner.py`, `mac_event_sink.py`, `mac_outbox.py`,
+`mac_agent_gateway.py`, `mac_connection.py`, `mac_service.py`,
 `vps_runs.py`, `vps_remote_child.py`, `vps_inbox.py`, `vps_agent_writes.py`,
 `vps_transport.py`, `app_transport.py`, `catalog_relay.py`, `src/planner/core/server.py`.
 
@@ -269,7 +270,9 @@ A known delivery outcome commits with the recipient's conversation event, preser
 the original target and reply credit even if the caller loses the result.
 
 Code paths: `src/planner/executor/mac_outbox.py`, `store.py`, `refusals.py`,
-`vps_agent_writes.py`, `mutations.py`, `ipc_client.py`, `src/planner/cli/http.py`.
+`vps_agent_writes.py`, `ipc_client.py`, `src/planner/cli/http.py`.
+The Mac client translates CLI routes into named operations in `ipc_client.py`.
+The VPS applies those operations through canonical writers in `vps_agent_writes.py`.
 
 SQLite work for remote acceptance runs on worker threads. Each operation opens,
 commits or rolls back, and closes its own connection on that thread. A busy
