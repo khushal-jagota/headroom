@@ -50,8 +50,8 @@ def _create_executor_storage() -> None:
 def _add_workspace_policy() -> None:
     op.get_bind().exec_driver_sql(
         "ALTER TABLE conversations ADD COLUMN workspace_path_policy TEXT NOT NULL "
-        "DEFAULT 'legacy_home_mapping' "
-        "CHECK (workspace_path_policy IN ('legacy_home_mapping', 'native_absolute'))"
+        "DEFAULT 'home_relative' "
+        "CHECK (workspace_path_policy IN ('home_relative', 'absolute'))"
     )
 
 

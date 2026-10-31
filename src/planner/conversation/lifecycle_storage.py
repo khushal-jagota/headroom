@@ -147,7 +147,7 @@ def _invoke_participant(
         raise TypeError("conversation transaction participants must be synchronous")
 
 
-def native_execution_is_unresolved(conn: sqlite3.Connection, conversation_id: str) -> bool:
+def retained_run_is_unresolved(conn: sqlite3.Connection, conversation_id: str) -> bool:
     """A VPS restart does not prove that an independently hosted child stopped."""
     return (
         conn.execute(

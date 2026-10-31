@@ -91,9 +91,9 @@ def reconcile(conn: sqlite3.Connection, manifests: tuple[CaptureManifest, ...], 
                 ).fetchone()
                 is not None
             )
-            from planner.conversation.lifecycle_storage import native_execution_is_unresolved
+            from planner.conversation.lifecycle_storage import retained_run_is_unresolved
 
-            native_unresolved = native_execution_is_unresolved(conn, turn.conversation_id)
+            native_unresolved = retained_run_is_unresolved(conn, turn.conversation_id)
             matched = not native_unresolved and matches_occurrence(
                 turn.occurrence_id,
                 None if occurrence is None else str(occurrence[0]),
@@ -444,9 +444,9 @@ def recovery_blocker(
     *,
     allow_restored: bool = False,
 ) -> str | None:
-    from planner.conversation.lifecycle_storage import native_execution_is_unresolved
+    from planner.conversation.lifecycle_storage import retained_run_is_unresolved
 
-    if native_execution_is_unresolved(conn, conversation_id):
+    if retained_run_is_unresolved(conn, conversation_id):
         return "native executor reconciliation owns this turn"
     row = conn.execute(
         "SELECT * FROM deploy_interruptions WHERE interruption_id=?", (reference.interruption_id,)

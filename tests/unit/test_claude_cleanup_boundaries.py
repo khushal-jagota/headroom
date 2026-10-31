@@ -154,7 +154,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             )
             await system.send("c_cleanup", text_message_content("hello"), sender_label="Owner")
             state = system._conversations["c_cleanup"]
-            reference = state.executor_child_reference
+            reference = state.retained_child_reference
             assert reference is not None
             child = registry._children[reference.child_id]
             native = cast(ClaudeAgentSdkBackendChild, child.native)
@@ -163,8 +163,8 @@ def test_claude_stop_result_controls_canonical_retirement(
             if fails:
                 monkeypatch.setattr(client, "disconnect", disconnect_failure)
             await system.kill("c_cleanup")
-            assert state.initial_shutdown_task is not None
-            assert await state.initial_shutdown_task is (not fails)
+            assert state.retirement_task is not None
+            assert await state.retirement_task is (not fails)
             stop = next(command for command in commands if command.operation is ChildOperation.stop)
             first = registry._commands[stop.command_id].outcome
             assert first is not None
@@ -176,7 +176,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             if fails:
                 assert registry._children[reference.child_id] is child
                 assert child.native is native and native._client is client
-                assert state.child_is_quarantined and state.executor_child_reference == reference
+                assert state.child_is_quarantined and state.retained_child_reference == reference
                 assert remote.runs.store.child_assignment(reference) == ("ticket", ticket.id)
                 with pytest.raises(PermissionError):
                     registry.authenticate(reference.child_id, child.capability)
@@ -196,7 +196,7 @@ def test_claude_stop_result_controls_canonical_retirement(
                 assert client.disconnected and native._client is None
                 assert reference.child_id not in registry._children
                 assert remote.runs.store.child_assignment(reference) is None
-                assert not state.child_is_quarantined and state.executor_child_reference is None
+                assert not state.child_is_quarantined and state.retained_child_reference is None
         finally:
             if clients and original_disconnect is not None:
                 monkeypatch.setattr(clients[0], "disconnect", original_disconnect)

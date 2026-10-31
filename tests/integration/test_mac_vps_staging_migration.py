@@ -112,7 +112,7 @@ def test_retained_source_heads_join_without_losing_authority(
             _assert_sentinels(conn, seeded)
             assert conn.execute(
                 "SELECT DISTINCT workspace_path_policy FROM conversations"
-            ).fetchall() == [("legacy_home_mapping",)]
+            ).fetchall() == [("home_relative",)]
             # Exercise newly introduced tables too, without replacing retained rows.
             for table in set(SENTINELS) - seeded:
                 values = SENTINELS[table]

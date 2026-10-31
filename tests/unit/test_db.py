@@ -1256,7 +1256,7 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
             "SELECT workspace_path_policy FROM conversations "
             "WHERE conversation_id='kept-conversation'"
         ).fetchone()[0]
-        == "legacy_home_mapping"
+        == "home_relative"
     )
     assert tuple(
         conn.execute("SELECT manager_id,manager_kind FROM tickets WHERE id='t_item'").fetchone()
@@ -1427,7 +1427,7 @@ def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(
         "SELECT workspace_folder, workspace_path_policy FROM conversations "
         "WHERE conversation_id = 'legacy'"
     ).fetchone()
-    assert tuple(row) == ("/home/vps/projects", "legacy_home_mapping")
+    assert tuple(row) == ("/home/vps/projects", "home_relative")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE conversations SET workspace_path_policy = 'guess'")
     conn.close()

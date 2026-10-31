@@ -165,7 +165,7 @@ class ConversationRecord:
     automatic_compaction_attempted_through_sequence: int
     owner_read_through_sequence: int
     created_at: int
-    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
 
     def resolved_start(self) -> ResolvedConversationStart:
         """The start this conversation was created from, rebuilt from its row.
@@ -729,7 +729,7 @@ class ConversationStore:
         automatic_compaction_confirmed: bool = False,
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
         native_message_admission: NativeMessageAdmission | None = None,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
@@ -740,7 +740,7 @@ class ConversationStore:
             automatic_compaction_confirmed=automatic_compaction_confirmed,
             owner_read_through_sequence=owner_read_through_sequence,
             lifecycle=lifecycle,
-            native_message_operation=native_message_operation,
+            recording_receipt=recording_receipt,
             native_message_admission=native_message_admission,
         )
         return written[0]
@@ -756,7 +756,7 @@ class ConversationStore:
         create_failure_notice: bool = False,
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
         native_message_admission: NativeMessageAdmission | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Commit one complete row batch and its related conversation facts."""
@@ -770,7 +770,7 @@ class ConversationStore:
             create_failure_notice=create_failure_notice,
             owner_read_through_sequence=owner_read_through_sequence,
             lifecycle=lifecycle,
-            native_message_operation=native_message_operation,
+            recording_receipt=recording_receipt,
             native_message_admission=native_message_admission,
         )
 
@@ -981,8 +981,8 @@ class ConversationStore:
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
         composed_content_delivered: bool = True,
-        native_message_operation: NativeMessageOperation | None = None,
-        extra_native_message_operations: tuple[NativeMessageOperation, ...] = (),
+        recording_receipt: NativeMessageOperation | None = None,
+        extra_recording_receipts: tuple[NativeMessageOperation, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -1013,8 +1013,8 @@ class ConversationStore:
             owner_read_through_sequence,
             lifecycle,
             composed_content_delivered,
-            native_message_operation=native_message_operation,
-            extra_native_message_operations=extra_native_message_operations,
+            recording_receipt=recording_receipt,
+            extra_recording_receipts=extra_recording_receipts,
         )
 
     async def read_events_after(
@@ -1273,8 +1273,8 @@ class ConversationStore:
         lifecycle: tuple[LifecycleFact, ...] = (),
         composed_content_delivered: bool = True,
         *,
-        native_message_operation: NativeMessageOperation | None = None,
-        extra_native_message_operations: tuple[NativeMessageOperation, ...] = (),
+        recording_receipt: NativeMessageOperation | None = None,
+        extra_recording_receipts: tuple[NativeMessageOperation, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -1289,8 +1289,8 @@ class ConversationStore:
                     conversation_id,
                     payloads,
                     lifecycle,
-                    native_message_operation=native_message_operation,
-                    extra_native_message_operations=extra_native_message_operations,
+                    recording_receipt=recording_receipt,
+                    extra_recording_receipts=extra_recording_receipts,
                     native_message_admission=NativeMessageAdmission(
                         PromptDeliveryStarted(), composed_content_delivered
                     ),
@@ -1360,7 +1360,7 @@ class ConversationStore:
         create_failure_notice: bool,
         owner_read_through_sequence: int | None,
         lifecycle: tuple[LifecycleFact, ...],
-        native_message_operation: NativeMessageOperation | None,
+        recording_receipt: NativeMessageOperation | None,
         native_message_admission: NativeMessageAdmission | None,
     ) -> tuple[StoredConversationEvent, ...]:
         with self._publication_connection() as (conn, admission):
@@ -1377,7 +1377,7 @@ class ConversationStore:
                     create_failure_notice=create_failure_notice,
                     owner_read_through_sequence=owner_read_through_sequence,
                     lifecycle=lifecycle,
-                    native_message_operation=native_message_operation,
+                    recording_receipt=recording_receipt,
                     native_message_admission=native_message_admission,
                 )
                 self._record_signal_result(conn, written)
@@ -1445,8 +1445,8 @@ class ConversationStore:
         payloads: tuple[ConversationEventPayload, ...],
         lifecycle: tuple[LifecycleFact, ...] = (),
         *,
-        native_message_operation: NativeMessageOperation | None = None,
-        extra_native_message_operations: tuple[NativeMessageOperation, ...] = (),
+        recording_receipt: NativeMessageOperation | None = None,
+        extra_recording_receipts: tuple[NativeMessageOperation, ...] = (),
         native_message_admission: NativeMessageAdmission | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Add rows to the end of a conversation's record. A transaction must be open.
@@ -1500,8 +1500,8 @@ class ConversationStore:
                 ),
             )
             for operation in (
-                *((native_message_operation,) if native_message_operation else ()),
-                *extra_native_message_operations,
+                *((recording_receipt,) if recording_receipt else ()),
+                *extra_recording_receipts,
             ):
                 if (
                     getattr(payload, "sender_message_id", None) == operation.submission_id
@@ -1926,16 +1926,16 @@ class ConversationStore:
         finally:
             conn.close()
 
-    async def accept_executor_effect(
+    async def commit_backend_event(
         self,
         writer: Callable[
             [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
         ],
         in_commit: CommitParticipant | None,
     ) -> AcceptedEvent:
-        return await self._write(self._accept_executor_effect_sync, writer, in_commit)
+        return await self._write(self._commit_backend_event_sync, writer, in_commit)
 
-    def _accept_executor_effect_sync(
+    def _commit_backend_event_sync(
         self,
         writer: Callable[
             [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
@@ -1982,7 +1982,7 @@ class ConversationStore:
         create_failure_notice: bool = False,
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
         native_message_admission: NativeMessageAdmission | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Canonical append under the caller's existing write transaction.
@@ -1999,7 +1999,7 @@ class ConversationStore:
             conversation_id,
             payloads,
             lifecycle,
-            native_message_operation=native_message_operation,
+            recording_receipt=recording_receipt,
             native_message_admission=native_message_admission,
         )
         if not written:
@@ -2055,7 +2055,7 @@ class ConversationStore:
         self._participate_in_append(conn, conversation_id, written)
         return written
 
-    def update_remote_identity_in_transaction(
+    def update_session_in_transaction(
         self,
         conn: sqlite3.Connection,
         conversation_id: str,

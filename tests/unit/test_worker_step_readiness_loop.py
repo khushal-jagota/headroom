@@ -657,7 +657,7 @@ class _UncertainConversationSystem(_RetirementDelegate):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         return PromptDeliveryUncertain()
 
@@ -795,14 +795,14 @@ class _QueueingConversationSystem(_RetirementDelegate):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         if not await self._system.is_running(self._conversation_id):
             await self._system.send(
                 self._conversation_id,
                 text_message_content("collision"),
                 sender_label="browser",
-                native_message_operation=native_message_operation,
+                recording_receipt=recording_receipt,
             )
         return await self._system.send(
             conversation_id,
@@ -815,7 +815,7 @@ class _QueueingConversationSystem(_RetirementDelegate):
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             owner_read_through_sequence=owner_read_through_sequence,
-            native_message_operation=native_message_operation,
+            recording_receipt=recording_receipt,
         )
 
     async def interrupt(self, conversation_id: str) -> None:

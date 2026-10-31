@@ -370,10 +370,10 @@ class ConversationRoleMaterials:
 
 
 class WorkspacePathPolicy(StrEnum):
-    """How a remote executor interprets the stored absolute workspace path."""
+    """Map a path below the server home to the agent home, or use it as stored."""
 
-    legacy_home_mapping = "legacy_home_mapping"
-    native_absolute = "native_absolute"
+    home_relative = "home_relative"
+    absolute = "absolute"
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,7 +402,7 @@ class ConversationStartRequest:
     role_materials: ConversationRoleMaterials | None = None
     workspace_folder: Path | None = None
     access: ConversationAccess | None = None
-    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,7 +424,7 @@ class ResolvedConversationStart:
     role_materials: ConversationRoleMaterials | None
     workspace_folder: Path
     access: ConversationAccess
-    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
 
 
 class AnswerFate(StrEnum):
@@ -787,7 +787,7 @@ class ConversationSystem(Protocol):
         recipient: Principal | None = None,
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -846,7 +846,7 @@ class ConversationSystem(Protocol):
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> AddressedPromptDeliveryReceipt:
         """Run the canonical send and expose replay freshness to addressed-send wiring.
 
@@ -869,7 +869,7 @@ class ConversationSystem(Protocol):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         credit_explicit_reply: bool = True,
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
         """Record one addressed message that no backend receives.
 

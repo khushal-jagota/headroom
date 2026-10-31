@@ -107,7 +107,7 @@ class ConversationStartValues:
     role_materials: ConversationRoleMaterials
     workspace_folder: Path
     access: ConversationAccess
-    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
 
 
 def worker_conversation_role_materials(ticket_id: str) -> ConversationRoleMaterials:
@@ -197,7 +197,7 @@ def resolve_worker_conversation_start(
     ticket_last_chosen: ConversationStartConfiguration | None,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     workspace_folder: Path,
-    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping,
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative,
 ) -> ConversationStartValues:
     """Resolve what a Ticket's worker conversation starts on.
 

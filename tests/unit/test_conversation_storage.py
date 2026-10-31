@@ -344,8 +344,8 @@ def test_grouped_messages_keep_their_own_commit_participants(store: Conversation
                 prompt=replace(A_PROMPT, sender_message_id="first"),
                 extra_prompts=(replace(A_PROMPT, sender_message_id="second"),),
                 model_change=ModelChangedEventPayload("new-model", None),
-                native_message_operation=first,
-                extra_native_message_operations=(second,),
+                recording_receipt=first,
+                extra_recording_receipts=(second,),
             )
 
         with pytest.raises(RuntimeError, match="second sender failed"):
