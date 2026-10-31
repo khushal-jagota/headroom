@@ -21,6 +21,13 @@ class ManagerFile:
 
 
 @dataclass(frozen=True)
+class GoalFile:
+    goal_id: str
+    relative_path: str
+    absolute_path: Path
+
+
+@dataclass(frozen=True)
 class ArtifactEntry:
     """One thing a reader would open in a folder of managed files.
 

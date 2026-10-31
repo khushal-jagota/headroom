@@ -445,9 +445,11 @@ def test_connected_header_timeout_still_logs_and_returns_500_at_uvicorn_boundary
                 assert transport.writes == []
                 assert not cycle.response_started
             else:
-                assert [record.getMessage() for record in caplog.records] == [
-                    "ASGI callable returned without starting response."
-                ]
+                assert len(caplog.records) == 1
+                record = caplog.records[0]
+                assert record.getMessage() == "Exception in ASGI application\n"
+                assert record.exc_info is not None
+                assert isinstance(record.exc_info[1], TimeoutError)
                 assert cycle.response_complete
                 assert b"500 Internal Server Error" in b"".join(transport.writes)
 

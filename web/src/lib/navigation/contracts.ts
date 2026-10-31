@@ -4,10 +4,10 @@ export const VIEW_WIRE_VERSION = 3;
 export const VIEW_PROJECTION_VERSION = 7;
 export const SCHEMA_VERSION = 9;
 export const SUPPORTED_SEMANTICS = "attention-knowledge-v9-review-messages";
-export type RecordKind = "ticket" | "manager" | "chief" | "conversation" | "address" | "totals" | "project";
+export type RecordKind = "ticket" | "manager" | "chief" | "goal" | "conversation" | "address" | "totals" | "project";
 
 export interface RecordKey {
-  kind: "ticket" | "manager" | "chief" | "conversation" | "address" | "totals" | "project";
+  kind: "ticket" | "manager" | "chief" | "goal" | "conversation" | "address" | "totals" | "project";
   id: string;
 }
 
@@ -53,6 +53,21 @@ export interface ManagerValue {
   project_id: string;
   settled: boolean;
   conversation_id: string | null;
+}
+
+export interface GoalValue {
+  title: string;
+  conversation_id: string | null;
+  active: boolean;
+  completed: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface GoalRecord {
+  kind: "goal";
+  id: string;
+  value: GoalValue;
 }
 
 export interface ChiefValue {
@@ -128,7 +143,7 @@ export interface ConversationValue {
 }
 
 export interface AddressValue {
-  owner_kind: "ticket" | "manager" | "chief";
+  owner_kind: "ticket" | "manager" | "chief" | "goal";
   owner_id: string;
   conversation_id: string;
   current: boolean;
@@ -187,7 +202,7 @@ export interface ProjectRecord {
   value: ProjectValue;
 }
 
-export type NavigationRecord = TicketRecord | ManagerRecord | ChiefRecord | ConversationRecord | AddressRecord | TotalsRecord | ProjectRecord;
+export type NavigationRecord = TicketRecord | ManagerRecord | ChiefRecord | GoalRecord | ConversationRecord | AddressRecord | TotalsRecord | ProjectRecord;
 
 export interface Continuity {
   scope: string;
@@ -323,17 +338,17 @@ export interface ReplayPage {
   has_more: boolean;
 }
 
-export type ViewSection = "rail_parents" | "rail_tickets" | "children" | "settled" | "unread" | "review";
+export type ViewSection = "rail_parents" | "rail_tickets" | "children" | "settled" | "unread" | "review" | "goals";
 
 export type ViewGroup = "all" | "awaiting_approval" | "awaiting_answer" | "assigned" | "awaiting_reply" | "errored" | "backlog" | "agent" | "waiting_to_closeout" | "status_awaiting_approval" | "empty" | "blocked" | "done";
 
 export interface ViewOwner {
-  kind: "chief" | "manager" | "ticket";
+  kind: "chief" | "manager" | "ticket" | "goal";
   id: string;
 }
 
 export interface ViewWindowRequest {
-  section: "rail_parents" | "rail_tickets" | "children" | "settled" | "unread" | "review";
+  section: "rail_parents" | "rail_tickets" | "children" | "settled" | "unread" | "review" | "goals";
   owner: ViewOwner | null;
   group: "all" | "awaiting_approval" | "awaiting_answer" | "assigned" | "awaiting_reply" | "errored" | "backlog" | "agent" | "waiting_to_closeout" | "status_awaiting_approval" | "empty" | "blocked" | "done";
   child_filter: "all" | "active" | "backlogged" | "done";
@@ -450,7 +465,7 @@ export interface ViewConversationRecord {
   value: ViewConversationValue;
 }
 
-export type ViewRecord = ViewTicketRecord | ViewManagerRecord | ViewSettledManagerRecord | ViewConversationRecord | ChiefRecord | AddressRecord | ProjectRecord;
+export type ViewRecord = ViewTicketRecord | ViewManagerRecord | ViewSettledManagerRecord | ViewConversationRecord | ChiefRecord | GoalRecord | AddressRecord | ProjectRecord;
 
 export interface ViewWindow {
   window_id: string;
@@ -591,7 +606,7 @@ export interface ReviewMessageItem {
   review_item_type: "message";
   conversation_id: string;
   address_id: string;
-  owner_kind: "ticket" | "manager" | "chief";
+  owner_kind: "ticket" | "manager" | "chief" | "goal";
   owner_id: string;
   title: string;
   waiting_since: number;
@@ -627,6 +642,7 @@ export const wireDescriptors: Record<string, unknown> = {
       "ticket",
       "manager",
       "chief",
+      "goal",
       "conversation",
       "address",
       "totals",
@@ -640,6 +656,7 @@ export const wireDescriptors: Record<string, unknown> = {
           "ticket",
           "manager",
           "chief",
+          "goal",
           "conversation",
           "address",
           "totals",
@@ -828,6 +845,50 @@ export const wireDescriptors: Record<string, unknown> = {
             "primitive": "null"
           }
         ]
+      }
+    }
+  },
+  "GoalValue": {
+    "object": {
+      "title": {
+        "primitive": "string"
+      },
+      "conversation_id": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "active": {
+        "primitive": "boolean"
+      },
+      "completed": {
+        "primitive": "boolean"
+      },
+      "created_at": {
+        "primitive": "integer"
+      },
+      "updated_at": {
+        "primitive": "integer"
+      }
+    }
+  },
+  "GoalRecord": {
+    "object": {
+      "kind": {
+        "literal": [
+          "goal"
+        ]
+      },
+      "id": {
+        "primitive": "string"
+      },
+      "value": {
+        "ref": "GoalValue"
       }
     }
   },
@@ -1025,7 +1086,8 @@ export const wireDescriptors: Record<string, unknown> = {
         "literal": [
           "ticket",
           "manager",
-          "chief"
+          "chief",
+          "goal"
         ]
       },
       "owner_id": {
@@ -1194,6 +1256,9 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       {
         "ref": "ChiefRecord"
+      },
+      {
+        "ref": "GoalRecord"
       },
       {
         "ref": "ConversationRecord"
@@ -1619,7 +1684,8 @@ export const wireDescriptors: Record<string, unknown> = {
       "children",
       "settled",
       "unread",
-      "review"
+      "review",
+      "goals"
     ]
   },
   "ViewGroup": {
@@ -1645,7 +1711,8 @@ export const wireDescriptors: Record<string, unknown> = {
         "literal": [
           "chief",
           "manager",
-          "ticket"
+          "ticket",
+          "goal"
         ]
       },
       "id": {
@@ -1662,7 +1729,8 @@ export const wireDescriptors: Record<string, unknown> = {
           "children",
           "settled",
           "unread",
-          "review"
+          "review",
+          "goals"
         ]
       },
       "owner": {
@@ -2129,6 +2197,9 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       {
         "ref": "ChiefRecord"
+      },
+      {
+        "ref": "GoalRecord"
       },
       {
         "ref": "AddressRecord"
@@ -2624,7 +2695,8 @@ export const wireDescriptors: Record<string, unknown> = {
         "literal": [
           "ticket",
           "manager",
-          "chief"
+          "chief",
+          "goal"
         ]
       },
       "owner_id": {

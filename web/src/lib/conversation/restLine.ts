@@ -244,6 +244,8 @@ function whateverHappenedLast(
  */
 export function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened | null {
   switch (row.kind) {
+    case 'credential_request':
+      return { who: null, text: row.request.state === 'pending' ? `${row.request.provider} API key requested` : `${row.request.name} · ${row.request.state === 'reused' ? 'saved' : row.request.state}` };
     case "prompt":
       return { who: senderOf(row.senderLabel, ownSenderLabel), text: oneLine(messageContentText(row.content)) };
     case "prompt_refused":

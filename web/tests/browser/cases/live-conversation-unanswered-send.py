@@ -559,7 +559,167 @@ def run_retirement(browser, urls, *, control=""):
         (output / 'reply-space-retirement-proof.json').write_text(json.dumps(data, indent=2))
 
 
+def run_credentials(browser, urls):
+    """Private inline forms preserve keyboard behavior and the existing chat surface."""
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    from playwright.sync_api import expect
+
+    started = time.perf_counter()
+    output = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp"))
+    output.mkdir(parents=True, exist_ok=True)
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.set_default_timeout(6_000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    card = page.locator('[data-conversation-row="credential_request"]')
+    composer = page.locator('[data-conversation-input]')
+    secret = page.get_by_label("API key", exact=True)
+
+    def open_case(scenario, extra=""):
+        page.goto(urls[0] + "?credential=" + scenario + extra, wait_until="domcontentloaded")
+        card.wait_for()
+
+    open_case("new")
+    name = page.get_by_role("textbox", name="Key name", exact=True)
+    name.fill("")
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(name).to_be_focused()
+    expect(name).to_have_attribute("aria-invalid", "true")
+    assert name.get_attribute("aria-describedby") == card.locator('[role="alert"]').get_attribute("id")
+    name.fill("Panels_posthog_owner_edited")
+    expect(name).not_to_have_attribute("aria-invalid", "true")
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(secret).to_be_focused()
+    expect(secret).to_have_attribute("aria-invalid", "true")
+    secret.fill("synthetic-browser-private-value")
+    expect(secret).not_to_have_attribute("aria-invalid", "true")
+    assert secret.get_attribute("type") == "password"
+    page.get_by_role("button", name="Show API key", exact=True).click()
+    assert secret.get_attribute("type") == "text"
+    page.get_by_role("button", name="Hide API key", exact=True).click()
+    page.get_by_role("button", name="API key help", exact=True).click()
+    expect(page.get_by_role("link", name="PostHog guide")).to_be_visible()
+    secret.press("Escape")
+    expect(page.get_by_role("link", name="PostHog guide")).to_have_count(0)
+    secret.dispatch_event("keydown", {"key": "Enter", "isComposing": True})
+    assert page.evaluate("window.__credentialActions.length") == 0
+    composer.fill("Keep this unfinished chat draft")
+    secret.focus()
+    secret.press("Enter")
+    expect(card).to_have_attribute("data-credential-state", "saved")
+    expect(card).to_contain_text("Panels_posthog_owner_edited")
+    expect(card.locator('[role="status"]')).to_be_focused()
+    expect(composer).to_have_value("Keep this unfinished chat draft")
+    assert page.evaluate("window.__credentialActions[0].body.value") == "synthetic-browser-private-value"
+    assert page.evaluate("window.__credentialActions[0].body.name") == "Panels_posthog_owner_edited"
+    assert "synthetic-browser-private-value" not in page.locator('[data-conversation-transcript]').inner_text()
+    assert "synthetic-browser-private-value" not in page.evaluate("JSON.stringify({...localStorage,...sessionStorage})")
+    page.reload(wait_until="domcontentloaded")
+    expect(card).to_have_attribute("data-credential-state", "saved")
+    expect(card.locator("input")).to_have_count(0)
+
+    for status in ["pending", "queued", "uncertain", "canceled", "refused"]:
+        page.evaluate("status => window.__credentialDelivery(status)", status)
+        retry = card.get_by_role("button", name="Retry delivery", exact=True)
+        expect(retry).to_have_count(1 if status == "refused" else 0)
+        if status == "queued":
+            expect(card).to_contain_text("Result queued for the agent.")
+        if status == "uncertain":
+            expect(card).to_contain_text("Delivery is uncertain.")
+    card.get_by_role("button", name="Retry delivery", exact=True).click()
+    expect(card.get_by_role("button", name="Retry delivery", exact=True)).to_have_count(0)
+    assert page.evaluate("window.__credentialActions") == [{"action": "retry-delivery", "body": None}]
+
+    open_case("fail")
+    secret.fill("retained-after-save-failure")
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(card.get_by_role("button", name="Retry", exact=True)).to_be_visible()
+    expect(secret).to_have_value("retained-after-save-failure")
+    secret.fill("corrected-private-value")
+    expect(card.get_by_role("button", name="Save", exact=True)).to_be_visible()
+    expect(card.locator('[role="alert"]')).to_have_count(0)
+    page.evaluate("window.__credentialHold=true")
+    card.get_by_role("button", name="Save", exact=True).click()
+    page.get_by_role("button", name="Full", exact=True).click()
+    expect(card).to_be_visible()
+    expect(card.get_by_role("button", name="Saving…", exact=True)).to_be_disabled()
+    composer.fill("An active draft during the save")
+    composer.focus()
+    page.evaluate("window.__credentialRelease()")
+    expect(card).to_have_attribute("data-credential-state", "saved")
+    expect(composer).to_be_focused()
+    expect(composer).to_have_value("An active draft during the save")
+
+    open_case("stale")
+    expect(card.get_by_role("textbox", name="Key name", exact=True)).to_have_count(0)
+    fresh = page.get_by_label("New API key", exact=True)
+    fresh.fill("stale-secret")
+    card.get_by_role("button", name="Replace", exact=True).click()
+    review = card.get_by_role("button", name="Review current key", exact=True)
+    expect(review).to_be_focused()
+    expect(fresh).to_have_count(0)
+    page.get_by_role("button", name="Focus", exact=True).click()
+    expect(review).to_be_visible()
+    review.click()
+    expect(fresh).to_be_focused()
+    expect(fresh).to_have_value("")
+    fresh.fill("fresh-secret")
+    fresh.press("Enter")
+    expect(card).to_have_attribute("data-credential-state", "replaced")
+    assert page.evaluate("window.__credentialActions.filter(action=>action.action==='save').map(action=>action.body.expected_revision)") == [3, 4]
+
+    open_case("reject")
+    secret.fill("must-clear-after-rejection")
+    card.get_by_role("button", name="Reject", exact=True).click()
+    expect(card).to_have_attribute("data-credential-state", "rejected")
+    expect(card.locator("input")).to_have_count(0)
+    assert page.evaluate("window.__credentialActions") == [{"action": "reject", "body": None}]
+
+    open_case("reused")
+    expect(card.locator("input,button")).to_have_count(0)
+    expect(card).to_contain_text("Saved")
+    open_case("readonly", "&readOnly")
+    expect(card.locator("input,button")).to_have_count(0)
+    expect(card).to_contain_text("Requested")
+    open_case("saved", "&readOnly")
+    page.evaluate("window.__credentialDelivery('refused')")
+    expect(card).to_contain_text("Result did not reach the agent.")
+    expect(card.locator("input,button")).to_have_count(0)
+    open_case("refresh")
+    secret.fill("must-not-survive-page-reload")
+    page.reload(wait_until="domcontentloaded")
+    expect(secret).to_have_value("")
+
+    for width, height in [(1280, 900), (390, 844), (320, 568)]:
+        page.set_viewport_size({"width": width, "height": height})
+        open_case("layout" + str(width))
+        name.fill("Panels_very_long_production_account_" + "x" * 160)
+        composer.fill("Draft stays with this conversation")
+        secret.fill("draft-key")
+        for label in ["Full", "Focus"]:
+            page.get_by_role("button", name=label, exact=True).click()
+            expect(secret).to_have_value("draft-key")
+            expect(composer).to_have_value("Draft stays with this conversation")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), (width, height)
+        assert card.evaluate("node=>node.scrollWidth<=node.clientWidth"), (width, height)
+        page.screenshot(path=str(output / ("credential-card-" + str(width) + ".png")))
+        card.get_by_role("button", name="Reject", exact=True).click()
+        expect(card).to_have_attribute("data-credential-state", "rejected")
+        expect(card).to_contain_text("x" * 160)
+        assert card.evaluate("node=>node.scrollWidth<=node.clientWidth"), (width, height)
+    assert errors == [], errors
+    page.close()
+    receipt = {"seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "viewports": [1280, 390, 320]}
+    (output / "credential-card-proof.json").write_text(json.dumps(receipt, indent=2))
+    print("CREDENTIAL_CARD_PROOF " + json.dumps(receipt), flush=True)
+
+
 def run(browser, urls):
+    run_credentials(browser, urls)
     run_retirement(browser, urls)
 
     INPUT = "[data-conversation-input]"

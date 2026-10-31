@@ -11,6 +11,7 @@ function pieces(content: ViewMessagePiece[]): MessagePiece[] { return content.ma
 function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequence' | 'created_at'> & Partial<Pick<ConversationViewRow, 'sender_message_id'>>, body: ViewRowBody): TranscriptRow {
     const base = { key: item.key, sequence: item.source_sequence, createdAt: item.created_at };
     switch (body.kind) {
+        case 'credential_request': return { ...base, kind: body.kind, request: body };
         case 'prompt': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, mode: body.mode, sentAtUnixMilliseconds: body.sent_at_unix_milliseconds };
         case 'prompt_refused': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, reason: body.reason, sentence: refusalSentence(body.reason, body.refusal_detail) };
         case 'prompt_uncertain':

@@ -62,6 +62,7 @@ from planner.runtime.logic.conversation_start_resolution import (
     resolve_manager_conversation_start,
     resolve_worker_conversation_start,
 )
+from planner.runtime.workspaces import workspace_root_for_connection
 from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
 from planner.tickets.contracts import Ticket
@@ -96,8 +97,8 @@ async def _message_content_for(
     return await content(conversation_id) if callable(content) else content
 
 
-def _default_workspace_folder() -> Path:
-    """The folder an agent runs in, from the server module that owns application paths.
+def _default_workspace_folder(conn: sqlite3.Connection) -> Path:
+    """The application's registered workspace, or the unchanged host default.
 
     Imported at call time rather than at module level: the server module reaches this
     package through the Ticket routes, so a top-level import here would run while the
@@ -105,7 +106,8 @@ def _default_workspace_folder() -> Path:
     """
     from planner.core.server import resolve_worker_workspace_root
 
-    return resolve_worker_workspace_root()
+    configured = workspace_root_for_connection(conn)
+    return configured if configured is not None else resolve_worker_workspace_root()
 
 
 def new_conversation_id() -> str:
@@ -170,7 +172,7 @@ def _worker_workspace_folder(
         project_folder = projects_data.read_project(conn, ticket.project_id).folder_path
         if project_folder is not None and project_folder.is_dir():
             return project_folder.resolve(strict=False)
-    return _default_workspace_folder()
+    return _default_workspace_folder(conn)
 
 
 def agent_resolve(
@@ -193,7 +195,7 @@ def agent_resolve(
         ),
         overrides=overrides,
         workspace_folder=(
-            _default_workspace_folder() if workspace_folder is None else workspace_folder
+            _default_workspace_folder(conn) if workspace_folder is None else workspace_folder
         ),
     )
     require_enabled_model(conn, values.backend_key, values.model)
@@ -201,6 +203,7 @@ def agent_resolve(
 
 
 def manager_resolve(
+    conn: sqlite3.Connection,
     item: Manager,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     *,
@@ -216,7 +219,7 @@ def manager_resolve(
         ),
         overrides=overrides,
         workspace_folder=(
-            _default_workspace_folder() if workspace_folder is None else workspace_folder
+            _default_workspace_folder(conn) if workspace_folder is None else workspace_folder
         ),
     )
 
@@ -768,6 +771,7 @@ async def start_agent_conversation(
     *,
     conversation_id: str,
     required_manager_id: str | None = None,
+    required_goal_id: str | None = None,
 ) -> LinkedConversation:
     """Start a conversation for an agent that is not a Ticket, under a minted name.
 
@@ -790,7 +794,18 @@ async def start_agent_conversation(
     )
     missing_supervisor = False
     with conn:
-        if required_manager_id is None:
+        if required_goal_id is not None:
+            linked = conn.execute(
+                "INSERT INTO agents (agent_key, conversation_id) "
+                "SELECT ?, ? WHERE EXISTS (SELECT 1 FROM goals WHERE id=? AND ? = 'goal_' || id) "
+                "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id "
+                "WHERE agents.conversation_id IS NULL",
+                (agent_key, conversation_id, required_goal_id, agent_key),
+            )
+            missing_supervisor = (
+                linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None
+            )
+        elif required_manager_id is None:
             conn.execute(
                 "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
                 "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
@@ -813,8 +828,10 @@ async def start_agent_conversation(
         await system.kill(conversation_id)
         raise PlannerError(
             ErrorCode.not_found,
-            "Manager no longer exists",
-            {"manager_id": required_manager_id},
+            "goal no longer exists" if required_goal_id is not None else "Manager no longer exists",
+            {"goal_id": required_goal_id}
+            if required_goal_id is not None
+            else {"manager_id": required_manager_id},
         )
     now_in = read_agent_conversation(conn, agent_key) or conversation_id
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
@@ -839,6 +856,7 @@ async def send_to_agent_conversation(
     recipient: Principal | None = None,
     reply_requested: bool = True,
     required_manager_id: str | None = None,
+    required_goal_id: str | None = None,
     retain_created_conversation: bool = False,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
@@ -869,6 +887,7 @@ async def send_to_agent_conversation(
             values,
             conversation_id=making,
             required_manager_id=required_manager_id,
+            required_goal_id=required_goal_id,
         )
         if linked.made_here:
             # Made here, on the values this message says it runs under, so the message has

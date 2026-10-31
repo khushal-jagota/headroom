@@ -56,6 +56,27 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
 
 
+@pytest.mark.parametrize(
+    "source_kind",
+    (WakeSourceKind.proposal, WakeSourceKind.worker_error, WakeSourceKind.turn_failure),
+)
+def test_ticket_notice_requires_ticket_before_insert(
+    tmp_db: Connection, source_kind: WakeSourceKind
+) -> None:
+    with pytest.raises(ValueError, match="ticket notice requires a Ticket"):
+        wake_data.create_wake(
+            tmp_db,
+            manager_id=None,
+            ticket_id=None,
+            source_kind=source_kind,
+            source_revision=1,
+            summary="Invalid ticket notice",
+            now=1,
+            target=CHIEF_PRINCIPAL,
+        )
+    assert tmp_db.execute("SELECT COUNT(*) FROM manager_wakes").fetchone()[0] == 0
+
+
 def _item_and_ticket(conn: Connection, clock: FakeClock) -> tuple[str, str]:
     item = managers_data.create_manager(
         conn, title="Managed manager", project_id="project_vylo", clock=clock
@@ -594,7 +615,9 @@ def test_batches_group_wakes_and_close_only_for_the_exact_prompt(
         now=11,
     )
     tmp_db.execute("UPDATE manager_wakes SET summary='Event 1' WHERE ticket_id=?", (ticket_id,))
-    for revision, kind in enumerate(list(WakeSourceKind)[1:], start=2):
+    for revision, kind in enumerate(
+        (WakeSourceKind.worker_error, WakeSourceKind.turn_failure), start=2
+    ):
         wake_data.create_wake(
             tmp_db,
             manager_id=item_id,

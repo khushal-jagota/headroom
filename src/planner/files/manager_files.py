@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
-from pathlib import Path, PurePosixPath
-from uuid import uuid4
+from pathlib import Path
 
 from planner.core import authority
 from planner.core.authority import require_above_or_self
 from planner.core.contracts import Principal
-from planner.core.errors import ErrorCode, PlannerError
+from planner.files import managed_files
 from planner.files.logic.listing import entries_as_json, fold_directory
 from planner.files.logic.paths import manager_files_root
 
@@ -62,15 +60,7 @@ def write_file(
     _require_manager(conn, principal, manager_id)
     root = _item_root(db_path, manager_id, create=True)
     assert root is not None
-    target = _safe_target(root, relative_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    _reject_symlink_ancestors(root, target)
-    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
-    try:
-        temporary.write_text(content, encoding="utf-8")
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
+    managed_files.write_text(root, relative_path, content, "Manager")
     return {
         "manager_id": manager_id,
         "path": relative_path,
@@ -87,13 +77,7 @@ def delete_file(
 ) -> dict[str, object]:
     _require_manager(conn, principal, manager_id)
     root = _item_root(db_path, manager_id, create=False)
-    if root is None:
-        raise PlannerError(ErrorCode.not_found, "Manager file not found", {})
-    target = _safe_target(root, relative_path)
-    _reject_symlink_ancestors(root, target)
-    if not target.is_file() or target.is_symlink():
-        raise PlannerError(ErrorCode.not_found, "Manager file not found", {})
-    target.unlink()
+    managed_files.delete(root, relative_path, "Manager")
     return {"ok": True, "manager_id": manager_id, "path": relative_path}
 
 
@@ -102,39 +86,6 @@ def _require_manager(conn: sqlite3.Connection, principal: Principal, manager_id:
 
 
 def _item_root(db_path: str, manager_id: str, *, create: bool) -> Path | None:
-    files_root = manager_files_root(db_path)
-    if files_root.is_symlink():
-        raise PlannerError(ErrorCode.validation, "unsafe Manager file path", {})
-    item_root = files_root / manager_id
-    if create:
-        item_root.mkdir(parents=True, exist_ok=True)
-        if item_root.is_symlink():
-            raise PlannerError(ErrorCode.validation, "unsafe Manager file path", {})
-    elif not item_root.is_dir() or item_root.is_symlink():
-        return None
-    return item_root.resolve()
-
-
-def _safe_target(root: Path, relative_path: str) -> Path:
-    parsed = PurePosixPath(relative_path)
-    if (
-        not relative_path
-        or parsed.is_absolute()
-        or "\\" in relative_path
-        or any(part in {"", ".", ".."} for part in parsed.parts)
-    ):
-        raise PlannerError(ErrorCode.validation, "unsafe Manager file path", {})
-    target = root.joinpath(*parsed.parts)
-    try:
-        target.parent.resolve().relative_to(root)
-    except (OSError, ValueError) as exc:
-        raise PlannerError(ErrorCode.validation, "unsafe Manager file path", {}) from exc
-    return target
-
-
-def _reject_symlink_ancestors(root: Path, target: Path) -> None:
-    current = target.parent
-    while current != root:
-        if current.is_symlink():
-            raise PlannerError(ErrorCode.validation, "unsafe Manager file path", {})
-        current = current.parent
+    return managed_files.owner_root(
+        manager_files_root(db_path), manager_id, create=create, label="Manager"
+    )

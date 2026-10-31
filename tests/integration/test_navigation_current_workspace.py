@@ -25,6 +25,7 @@ from tests.support.navigation_historical_source import (
     run_historical,
     source_facts,
 )
+from tests.unit.test_db import _migration_tree_through
 
 from planner.core.db import _alembic_config, _migration_engine
 from planner.navigation import data, journal, snapshot
@@ -138,27 +139,28 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
 )
 def test_review_projection_upgrade_resets_old_cursors_without_granting_authority(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     revision: str,
     schema_version: int,
     projection_version: int,
 ) -> None:
     """Installed older Review memberships must reset without granting current authority."""
     path = tmp_path / "review-upgrade.db"
-    with current_navigation_database(path) as conn:
-        before = snapshot(conn)
-        conn.execute("BEGIN")
-        # Remove both empty synthetic tables before rewinding their migration marker.
-        assert conn.execute("SELECT COUNT(*) FROM ticket_application_previews").fetchone()[0] == 0
-        conn.execute("DROP TABLE ticket_application_previews")
-        assert conn.execute("SELECT COUNT(*) FROM conversation_video_uploads").fetchone()[0] == 0
-        conn.execute("DROP TABLE conversation_video_uploads")
-        conn.execute("UPDATE alembic_version SET version_num=?", (revision,))
-        conn.execute("UPDATE navigation_meta SET schema_version=?", (schema_version,))
-        conn.execute(
-            "UPDATE navigation_view_meta SET projection_version=?,ordering_generation='review-v2'",
-            (projection_version,),
-        )
-        conn.commit()
+    # Build the physical ancestor schema and retain the usual seeded runtime
+    # publication. Restamping HEAD would replay table-creating migrations twice.
+    with monkeypatch.context() as patch:
+        _migration_tree_through(tmp_path, patch, revision)
+        with current_navigation_database(path) as conn:
+            before = snapshot(conn)
+            assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == revision
+            conn.execute("BEGIN")
+            conn.execute("UPDATE navigation_meta SET schema_version=?", (schema_version,))
+            conn.execute(
+                "UPDATE navigation_view_meta SET projection_version=?,"
+                "ordering_generation='review-v2'",
+                (projection_version,),
+            )
+            conn.commit()
     engine = _migration_engine(str(path), 1000)
     try:
         with engine.begin() as connection:

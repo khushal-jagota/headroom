@@ -199,6 +199,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         app_sha: str | None = None,
         trusted_ingress_env: Mapping[str, str] | Callable[[str], Mapping[str, str]] | None = None,
         seed_db: Callable[[Path], None] | None = None,
+        server_module: str | None = None,
     ) -> ServerHandle:
         nonlocal counter
         srvdir = tmp_path / f"srv{counter}"
@@ -209,6 +210,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
             app_sha=app_sha,
             trusted_ingress_env=trusted_ingress_env,
             seed_db=seed_db,
+            server_module=server_module,
         )
         handles.append(handle)
         return handle
