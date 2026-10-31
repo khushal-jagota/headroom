@@ -1954,6 +1954,7 @@ def authored_goal_presentation(browser, url):
                 # The shared native checklist renderer also owns the rail preview.
                 # Existing tests exercise its writes and dismissal lifecycle.
                 page.evaluate("location.hash='#/workspace'")
+                expect(page.locator('[data-goal-page="goal_wrenfixture"]')).to_have_count(0)
                 panel = open_preview(page, "goal_wrenfixture")
                 expect(panel.locator("[data-block=checklist]")).to_have_attribute(
                     "data-presentation", "small"
