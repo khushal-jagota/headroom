@@ -85,7 +85,10 @@ route takes only the Ticket ID, authorizes access, and selects that Ticket's mac
 The remote child implements the same backend contract as local children. It holds
 saved answer commands in memory and checks admission before emission. Detaching
 releases the VPS handle and leaves its Mac agent running; stopping requires the
-final ordered stop receipt. Local children stop when detached.
+final ordered stop receipt. A stop proves that the run stopped. A permanently
+refused earlier event may be missing from the transcript; its receipt still records
+the refusal, and it does not prevent retirement or a later Ticket restart.
+Local children stop when detached.
 
 Every queued item enters the same inbox admission path. It checks the saved receipt,
 content hash and required files before choosing the event, stop, answer or agent-write
@@ -413,10 +416,11 @@ Cancellation preserves the original native outcome and command identity. It does
 An ordinary stop uses its own recorded command identity against the original child reference.
 The Mac fences that exact child before cleanup and waits for admitted native work and its final publications.
 The Mac puts a final `child_stopped` item after the exact child's admitted output.
-Accepting that item resolves the stop waiter and proves that earlier output arrived.
+Accepting that item resolves the stop waiter and proves that earlier queued output
+received a receipt, whether accepted or permanently refused.
 A direct stop result or reconnect answer cannot replace that receipt.
-A refused required native publication keeps cleanup uncertain for that exact child across retries and restarts.
-Ordinary domain refusals do not affect cleanup evidence.
+A refused native publication keeps its refusal receipt and lets the queue advance.
+A later valid stop receipt can retire the child even if its transcript lacks that publication.
 
 Confirmed retirement closes the exact assignment and preserves its retirement fact in one transaction.
 Late command preparation and delayed inventory cannot revive that identity.
@@ -587,6 +591,8 @@ Domain writes still require the original assigned child's authority. Native auth
 Mac and VPS packages must use the current protocol before replay.
 The Mac retains its native children during app restarts and short link outages,
 and reconnects through one command-and-child ask, readiness, and outbox draining.
+Pending commands keep their result and emission state together. Prompt emission
+history and cancellation marks are released when their child is retired.
 After a VPS restart, that ask causes every saved old run to be stopped before fresh work,
 including a child absent from the Mac's inventory.
 There is no fallback transport. Lost replies leave native effects unconfirmed rather than repeating them.
@@ -606,6 +612,13 @@ dependent work. `protocol.py` holds the shared message shapes and codecs; execut
 identity types, turn tokens, and Ticket locales live in `execution_identity.py`,
 which imports neither conversation nor Ticket code. The Link does not own children,
 commands, the outbox, or database writes.
+
+Mac and VPS executor timestamps use the same wall-clock millisecond helper in
+`executor/clock.py`. Shared payload helpers in `protocol.py` encode objects and
+read a queued item's child. They preserve the existing child lookup rules at each
+boundary. `worker_identity.py` reads the Worker Ticket identity used by routing,
+run assignment, and canonical skill loading. Inbox persistence reuses the store's
+JSON encoding and validation errors.
 
 Connection diagnostics omit credentials, addresses, paths, exception messages, and remote payloads.
 Active transfers prevent quiescence. The Manager coordinates compatible peers through the existing identity-bound application procedure.

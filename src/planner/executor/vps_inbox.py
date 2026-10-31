@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import os
 import re
 import sqlite3
-from dataclasses import asdict
 from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
+from planner.executor.clock import now_ms
 from planner.executor.files import (
     contained_path,
     directory_descriptor,
@@ -41,24 +40,13 @@ from planner.executor.protocol import (
     TransactionalWriter,
     as_object,
     decode_event_arguments,
+    envelope_payload_digest,
     payload_child,
     type_adapter,
 )
-from planner.executor.store import ExecutorStore, VpsDatabase
+from planner.executor.store import ExecutorStore, VpsDatabase, _invalid, _record
 from planner.executor.vps_agent_writes import AgentWrites
-from planner.executor.vps_runs import MacRuns, now_ms
-
-
-def _json(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _record(value: Any) -> str:
-    return _json(asdict(value))
-
-
-def _invalid(message: str) -> PlannerError:
-    return PlannerError(ErrorCode.validation, message)
+from planner.executor.vps_runs import MacRuns
 
 
 class MissingFiles(Exception):
@@ -125,7 +113,6 @@ class InboxStore(VpsDatabase):
             disposition = ReceiptDisposition.refused
             refusal = error if isinstance(error, PlannerError) else _invalid(str(error))
             result = cast(JsonObject, refusal.to_payload())
-            self.runs._mark_refused_cleanup_evidence(connection, envelope, identity)
         if disposition is ReceiptDisposition.accepted and result.get("fate") == "uncertain":
             disposition = ReceiptDisposition.uncertain
         if disposition is ReceiptDisposition.refused and envelope.kind is EnvelopeKind.cli_write:
@@ -252,8 +239,6 @@ class InboxStore(VpsDatabase):
     def _validate_envelope(
         self, connection: sqlite3.Connection, envelope: QueuedEnvelope, *, check_files: bool = True
     ) -> None:
-        from planner.executor.protocol import envelope_payload_digest
-
         if envelope.payload_sha256 != envelope_payload_digest(
             envelope.payload,
             envelope.file_dependencies,
@@ -348,7 +333,7 @@ class MacInbox:
                     and previous.disposition is ReceiptDisposition.accepted
                     and previous.result.get("recorded") is True
                 ):
-                    await self.runs._resolve_command(
+                    self.runs._resolve_command(
                         type_adapter(CommandOutcome).validate_python(envelope.payload),
                         stop_proven=True,
                     )
@@ -434,7 +419,7 @@ class MacInbox:
         outcome = type_adapter(CommandOutcome).validate_python(envelope.payload)
         if outcome.child.conversation_id != envelope.conversation_id:
             raise ValueError("command outcome conversation conflicts with envelope")
-        await settled_io(self.runs.validate_stop, outcome, identity)
+        await settled_io(self.runs.validate_stop, outcome)
         receipt = await settled_io(
             partial(
                 self.store.accept,
@@ -445,7 +430,7 @@ class MacInbox:
             )
         )
         if receipt.disposition is ReceiptDisposition.accepted:
-            await self.runs._resolve_command(outcome, stop_proven=True)
+            self.runs._resolve_command(outcome, stop_proven=True)
         return receipt
 
     async def _apply_answer(

@@ -259,7 +259,12 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
         listener.listen()
         site = web.SockSite(runner, listener, ssl_context=context)
         await site.start()
-        ready.write_text(json.dumps({"origin": f"https://127.0.0.1:{listener.getsockname()[1]}"}))
+        # Publish readiness only after the complete JSON file has been closed.
+        temporary_ready = ready.with_suffix(".tmp")
+        temporary_ready.write_text(
+            json.dumps({"origin": f"https://127.0.0.1:{listener.getsockname()[1]}"})
+        )
+        temporary_ready.replace(ready)
         await asyncio.Event().wait()
     finally:
         await runner.cleanup()
