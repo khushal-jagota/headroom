@@ -5,8 +5,10 @@
  import {createGoalEditor} from '../../lib/goals/editing';
  import {createGoalRequestSessions} from '../../lib/goals/requestSessions';
  import {refreshAtBoundary} from '../../lib/goals/presentation';
- import {selectedChecklist,pageWithoutSelectedChecklistForRender} from '../../lib/goals/checklistCompletion';
- import type {GoalResponse,GoalEditBody,ChartBlock} from '../../lib/goals/contracts';
+ import {pageWithoutSelectedChecklistForRender} from '../../lib/goals/checklistCompletion';
+ import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
+ import {createGoalPageContext} from '../../lib/goals/pageContext';
+ import type {GoalResponse,GoalEditBody} from '../../lib/goals/contracts';
  import {PAGE_CONTEXT,type PageContext,type PageTextDraft} from '../../lib/pageKit/context';
  import {queryClient} from '../../lib/queryClient';
  import ConversationSignalMark from '../ConversationSignalMark.svelte';
@@ -62,13 +64,16 @@
    };
   }
  };
- setContext<PageContext>(PAGE_CONTEXT,{get goalId(){return id},get revision(){return goal?.revision??0},get narrow(){return narrow},get values(){return readings.data?.values??[]},get charts(){return readings.data?.charts},get completed(){return goal?.completed??false},get status(){return goal?.status??'neutral'},get statusDate(){return goal?.status_date},checklistDeadlineSession:(blockId,itemId)=>sessions.checklistDeadline(id,blockId,itemId),checklistSession:(blockId,itemId)=>sessions.checklist(id,blockId,itemId),manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText});
+ setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
+  goalId:()=>id,goal:()=>goal,readings:()=>readings.data,narrow:()=>narrow,sessions:()=>sessions,
+ },{manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText}));
  async function change(patch:Omit<GoalEditBody,'expected_revision'>){try{await save(patch);error=null;}catch(e){error=e;}}
  async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson<DeliveredMessage>(`/api/goals/${encodeURIComponent(id)}/conversation/send`,{method:'POST',body,responseMetadata});const view=navigation?.state.effective;const delivered=navigation?await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'send goal message'):await operation();await detail.refetch();return delivered;}
  async function reset(){const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson(`/api/goals/${encodeURIComponent(id)}/conversation/reset`,{method:'POST',responseMetadata});const view=navigation?.state.effective;if(navigation)await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'reset goal conversation');else await operation();selectedPastConversationId=null;await detail.refetch();}
- let checklist=$derived(goal?.kind==='binary'?selectedChecklist(goal.page,goal.primary_checklist_block_id):null);
+ let display=$derived(resolveGoalPrimaryDisplay(goal));
+ let checklist=$derived(display.checklist);
  let renderedPage=$derived(goal?pageWithoutSelectedChecklistForRender(goal.page,checklist?.id??null):null);
- let primary=$derived<ChartBlock|null>(checklist?null:goal?.kind==='binary'?{type:'chart',id:'completion',kind:'binary',placement:'primary'}:goal?.primary_chart??null);
+ let primary=$derived(display.chart);
 </script>
 <ManagerFrame class="goal-workspace" bind:conversationState {openedFile} {onOpenFile}>
  <div class="goal-content" bind:this={content} data-goal-page={id}>

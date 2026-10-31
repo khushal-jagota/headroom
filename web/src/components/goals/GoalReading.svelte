@@ -5,14 +5,15 @@
  import {goalStatusText} from '../../lib/goals/presentation';
  import {chartData,chartHeadline,chartTone,formatReading} from '../../lib/charts/presentation';
  import type {GoalResponse} from '../../lib/goals/contracts';
- import {selectedChecklist,checklistCounts} from '../../lib/goals/checklistCompletion';
+ import {checklistCounts} from '../../lib/goals/checklistCompletion';
+ import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
  let {goal,reading=false}:{goal:GoalResponse;reading?:boolean}=$props();
  const readings=createQuery(()=>({...goalQueries.readings(goal.id),enabled:goal.kind==='quantitative'}));
  $effect(()=>{if(readings.data)return refreshAtBoundary(readings.data.next_refresh_at,()=>void readings.refetch());});
  let current=$derived(goal.primary_chart?chartHeadline(goal.primary_chart,chartData(goal.primary_chart,readings.data?.values??[],'all',readings.data?.charts?.[goal.primary_chart.id]),null,readings.data?.charts?.[goal.primary_chart.id]):undefined);
  let value=$derived(current?.value),target=$derived(current?.target);
  let category=$derived(goal.primary_chart?.binding?current?.categorySummary:undefined);
- let checklist=$derived(goal.kind==='binary'?selectedChecklist(goal.page,goal.primary_checklist_block_id):null);
+ let checklist=$derived(resolveGoalPrimaryDisplay(goal).checklist);
  let counts=$derived(checklist?checklistCounts(checklist):null);
  let good=$derived(goal.primary_chart?.binding?category?.meets_expectation===true:goal.primary_chart?.expectation?current?.point?.meets_expectation===true:value!==undefined&&target!==undefined&&((goal.primary_chart?.direction??(goal.primary_chart?.kind==='time-budget'?'atmost':'atleast'))==='atmost'?value<=target:value>=target));
  let tone=$derived(goal.kind==='binary'?goal.status:goal.primary_chart?chartTone(goal.primary_chart,value,target,current?.point,category,current?.coverage_status):'neutral');

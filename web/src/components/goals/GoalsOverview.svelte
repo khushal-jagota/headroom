@@ -3,7 +3,8 @@
  import type {GoalResponse} from '../../lib/goals/contracts';
  import GoalFilter from './GoalFilter.svelte';
  import {columns,emptyFilters,goalMatches} from '../../lib/goals/filters';
- import {selectedChecklist,checklistCounts} from '../../lib/goals/checklistCompletion';
+ import {checklistCounts} from '../../lib/goals/checklistCompletion';
+ import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
  import {queries} from '../../lib/queryCatalogue';
  import {chartData,chartHeadline,selectedTarget} from '../../lib/charts/presentation';
  import {goalQueries} from '../../lib/goals/queries';
@@ -25,7 +26,7 @@
  /** Live targets use the same supplied summary as the current reading. */
  function target(goal:GoalResponse){const index=goals.data?.goals.findIndex(item=>item.id===goal.id)??-1;return goal.primary_chart?.binding||goal.primary_chart?.expectation?summaries[index]?.target:goal.primary_chart?selectedTarget(goal.primary_chart,'all'):undefined;}
  function targetText(goal:GoalResponse){
-  const checklist=goal.kind==='binary'?selectedChecklist(goal.page,goal.primary_checklist_block_id):null;
+  const checklist=resolveGoalPrimaryDisplay(goal).checklist;
   if(checklist)return `${checklistCounts(checklist).total} items`;
   const value=goal.primary_chart?target(goal):undefined;
   if(value===undefined)return goal.kind==='binary'?'Done':'—';

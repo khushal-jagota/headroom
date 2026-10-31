@@ -4,12 +4,12 @@
  import {queries} from '../../lib/queryCatalogue';
  import {goalQueries} from '../../lib/goals/queries';
  import {goalDateText,refreshAtBoundary,deadlineTone,deadlineColor} from '../../lib/goals/presentation';
- import {selectedChecklist} from '../../lib/goals/checklistCompletion';
+ import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
+ import {createGoalPageContext} from '../../lib/goals/pageContext';
  import {createGoalEditor} from '../../lib/goals/editing';
  import type {createGoalRequestSessions} from '../../lib/goals/requestSessions';
  import {goalPreviewPosition,GOAL_PREVIEW_WIDTH,GOAL_PREVIEW_GUTTER} from '../../lib/goals/railPreview';
  import {PAGE_CONTEXT,type PageContext} from '../../lib/pageKit/context';
- import type {ChartBlock} from '../../lib/goals/contracts';
  import PageChart from '../pageKit/PageChart.svelte';
  import PageChecklist from '../pageKit/PageChecklist.svelte';
  import ErrorLine from '../ErrorLine.svelte';
@@ -25,21 +25,19 @@
  const projects=createQuery(()=>queries.projects());
  let goal=$derived(detail.data);
  let project=$derived(projects.data?.projects.find(project=>project.id===goal?.project_id));
- let checklist=$derived(goal?.kind==='binary'?selectedChecklist(goal.page,goal.primary_checklist_block_id):null);
+ let display=$derived(resolveGoalPrimaryDisplay(goal));
+ let checklist=$derived(display.checklist);
  let binarySession=$derived(goal?.kind==='binary'&&!checklist?sessions.binary(goalId):null);
  let receiptVersion=$state(0);
  $effect(()=>binarySession?.subscribe(()=>receiptVersion++));
  let binaryReceipt=$derived.by(()=>{receiptVersion;return binarySession?.current;});
- let chart=$derived<ChartBlock|null>(checklist?null:goal?.kind==='binary'?{type:'chart',id:'completion',kind:'binary',placement:'primary'}:goal?.primary_chart??null);
- setContext<PageContext>(PAGE_CONTEXT,{
-  get goalId(){return goalId;},get revision(){return goal?.revision??0;},get narrow(){return true;},
-  get values(){return readings.data?.values??[];},get charts(){return readings.data?.charts;},
-  get completed(){return goal?.completed??false;},get status(){return goal?.status??'neutral';},get statusDate(){return goal?.status_date;},
+ let chart=$derived(display.chart);
+ setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
+  goalId:()=>goalId,goal:()=>goal,readings:()=>readings.data,narrow:()=>true,sessions:()=>sessions,
+ },{
   updateBlock:editor.updateBlock,
-  checklistSession:(blockId,itemId)=>sessions.checklist(goalId,blockId,itemId),
-  checklistDeadlineSession:(blockId,itemId)=>sessions.checklistDeadline(goalId,blockId,itemId),
   manualSession:(measureId)=>sessions.manual(goalId,measureId)
- });
+ }));
  $effect(()=>{if(goal)return refreshAtBoundary(Math.min(goal.next_refresh_at,readings.data?.next_refresh_at??Infinity),()=>{void detail.refetch();void readings.refetch();});});
  let binarySubmissionError=$state<unknown>(null);
  async function complete(completed:boolean){
