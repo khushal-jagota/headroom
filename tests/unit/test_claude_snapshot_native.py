@@ -1,14 +1,15 @@
 """Native command composition reaches the actual SDK frame guard and durable replay."""
 
 import asyncio
+import json
+from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
-from tests.unit.test_claude_settings_snapshot import ScriptedTransport
 from tests.unit.test_destination_catalog_observer import launch_fixture
 from tests.unit.test_executor_native_runtime import (
     _fixture_admission,
@@ -18,6 +19,7 @@ from tests.unit.test_executor_native_runtime import (
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkBackendChildFactory,
+    _ClaudeCleanupTransport,
     _ClaudeProtocolTransport,
     _ObservedClaudeSdkClient,
 )
@@ -43,6 +45,57 @@ from planner.executor.protocol import (
     decode_command_arguments,
     encode_value,
 )
+
+
+class ScriptedTransport(_ClaudeCleanupTransport):
+    def __init__(self, options: ClaudeAgentOptions) -> None:
+        super().__init__("", options)
+        self.frames: list[dict[str, Any]] = []
+        self.replies: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._stdin_stream = self  # type: ignore[assignment]
+        self._ready = True
+
+    async def connect(self) -> None:
+        self._ready = True
+
+    async def send(self, data: str) -> None:
+        frame = json.loads(data)
+        self.frames.append(frame)
+        if frame.get("type") == "user":
+            self.replies.put_nowait(
+                {"type": "command_lifecycle", "command_uuid": frame["uuid"], "state": "queued"}
+            )
+            return
+        if frame.get("type") != "control_request":
+            return
+        assert frame["request"]["subtype"] == "initialize"
+        response = {
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": frame["request_id"],
+                "response": {
+                    "commands": [],
+                    "models": [],
+                    "agents": [],
+                    "account": {},
+                    "output_style": "default",
+                    "available_output_styles": [],
+                },
+            },
+        }
+        self.replies.put_nowait(response)
+
+    async def read_messages(self) -> AsyncIterator[dict[str, Any]]:
+        while (message := await self.replies.get()) is not None:
+            yield message
+
+    async def close(self) -> None:
+        self._ready = False
+        self.replies.put_nowait(None)
+
+    async def end_input(self) -> None:
+        return
 
 
 @pytest.mark.parametrize("failure", ["ended", "cancel"])

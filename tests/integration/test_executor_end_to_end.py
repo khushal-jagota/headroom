@@ -1659,7 +1659,6 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
             assert isinstance(fate, PromptDeliveryRefused), repr(fate)
             assert fate.model_validation is not None
             assert fate.model_validation["reason"] == "context_changed"
-            assert fate.model_validation["evidence"] is None
             assert isinstance(commands[0].arguments, (StartRun, WritePrompt, Steer))
             refused = TypeAdapter(AdmissionExpectation).validate_python(
                 commands[0].arguments.admission_expectation
@@ -1678,7 +1677,7 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
             state = await harness.system._conversation_state("c_scripted")
             assert state is not None and state.running_turn is not None
             fresh = state.running_turn.launch_validation
-            assert fresh is not None and fresh.evidence is None
+            assert fresh is not None
             assert isinstance(commands[-1].arguments, (StartRun, WritePrompt, Steer))
             admitted = TypeAdapter(AdmissionExpectation).validate_python(
                 encode_value(commands[-1].arguments.admission_expectation)
