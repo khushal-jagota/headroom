@@ -204,10 +204,6 @@ def _interrupted_server(
                 "('t','Worker','coding','claude','needs_implementation',"
                 "'needs_implementation','{}',0,0,'interrupted','out',7,'manager','m','p','opus')"
             )
-            conn.execute(
-                "UPDATE ticket_launch_validation SET selection_kind='provider_alias' "
-                "WHERE ticket_id='t'"
-            )
         conn.commit()
     write_manifest(
         path,

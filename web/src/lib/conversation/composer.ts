@@ -136,7 +136,6 @@ export function askPlaceholder(
 // --- what a picker changes ---------------------------------------------------------------
 
 export type RunValues = {
-  selectionKind?: import("./modelResolutionWire").SelectionKind;
   /** Absent is untouched; true with null explicitly requests provider default. */
   effortIsSet?: boolean;
   model: string | null;
@@ -157,13 +156,11 @@ export function armedChangeFor(
   current: RunValues,
   picked: RunValues,
   _mode: PromptDeliveryMode
-): { model_change?: string; reasoning_effort_change?: string | null; selection_kind?: RunValues["selectionKind"] } {
-  const change: { model_change?: string; reasoning_effort_change?: string | null; selection_kind?: RunValues["selectionKind"] } = {};
-  const explicitKind = picked.selectionKind !== undefined && picked.selectionKind !== "legacy_unclassified";
-  if (picked.model !== null && (picked.model !== current.model || explicitKind)) {
+): { model_change?: string; reasoning_effort_change?: string | null } {
+  const change: { model_change?: string; reasoning_effort_change?: string | null } = {};
+  if (picked.model !== null && picked.model !== current.model) {
     change.model_change = picked.model;
   }
-  if (change.model_change !== undefined && explicitKind) change.selection_kind = picked.selectionKind;
   if (picked.effortIsSet === true || (picked.effortIsSet === undefined && picked.reasoningEffort !== null && picked.reasoningEffort !== current.reasoningEffort)) {
     change.reasoning_effort_change = picked.reasoningEffort;
   }
@@ -218,11 +215,10 @@ export function whatThisMessageRunsUnder(
   current: RunValues,
   picked: RunValues,
   mode: PromptDeliveryMode
-): { model?: string; reasoning_effort?: string | null; selection_kind?: RunValues["selectionKind"] } {
+): { model?: string; reasoning_effort?: string | null } {
   const armed = armedChangeFor(current, picked, mode);
-  const runsUnder: { model?: string; reasoning_effort?: string | null; selection_kind?: RunValues["selectionKind"] } = {};
+  const runsUnder: { model?: string; reasoning_effort?: string | null } = {};
   if (armed.model_change !== undefined) runsUnder.model = armed.model_change;
-  if (armed.selection_kind !== undefined) runsUnder.selection_kind = armed.selection_kind;
   if (armed.reasoning_effort_change !== undefined) {
     runsUnder.reasoning_effort = armed.reasoning_effort_change;
   }

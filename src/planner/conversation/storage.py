@@ -26,7 +26,7 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, cast
+from typing import IO, Any, cast
 from uuid import uuid4
 
 from pydantic import JsonValue
@@ -128,13 +128,6 @@ class ConversationRecordNamesNoModel(BackendSpawnFailed):
     spawn failure because that is exactly what it is — a conversation that cannot be
     started refuses the message rather than breaking the page that lists it.
     """
-
-
-if TYPE_CHECKING:
-    from planner.conversation.model_resolution.contracts import (
-        CanonicalModelValidation,
-        ModelSelection,
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -954,8 +947,6 @@ class ConversationStore:
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
         composed_content_delivered: bool = True,
-        original_ticket_selection: ModelSelection | None = None,
-        requested_ticket_validation: CanonicalModelValidation | None = None,
         native_message_operation: NativeMessageOperation | None = None,
         extra_native_message_operations: tuple[NativeMessageOperation, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
@@ -988,8 +979,6 @@ class ConversationStore:
             owner_read_through_sequence,
             lifecycle,
             composed_content_delivered,
-            original_ticket_selection,
-            requested_ticket_validation,
             native_message_operation=native_message_operation,
             extra_native_message_operations=extra_native_message_operations,
         )
@@ -1341,8 +1330,6 @@ class ConversationStore:
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
         composed_content_delivered: bool = True,
-        original_ticket_selection: ModelSelection | None = None,
-        requested_ticket_validation: CanonicalModelValidation | None = None,
         *,
         native_message_operation: NativeMessageOperation | None = None,
         extra_native_message_operations: tuple[NativeMessageOperation, ...] = (),
@@ -1410,36 +1397,6 @@ class ConversationStore:
                 capture_conversation_attention(
                     conn, conversation_id, written[-1].created_at, result
                 )
-                if (
-                    original_ticket_selection is not None
-                    and requested_ticket_validation is not None
-                ):
-                    from planner.tickets import data as ticket_data
-                    from planner.tickets.contracts import EmployeeLaunchConfiguration
-
-                    row = conn.execute(
-                        "SELECT id FROM tickets WHERE conversation_id=?",
-                        (conversation_id,),
-                    ).fetchone()
-                    if row is not None:
-                        ticket_data.write_explicit_ticket_launch_intent_in_transaction(
-                            conn,
-                            row[0],
-                            expected_conversation_id=conversation_id,
-                            expected_selection_revision=original_ticket_selection.selection_revision,
-                            expected_configuration=EmployeeLaunchConfiguration(
-                                employee_backend=original_ticket_selection.backend_key.value,
-                                employee_launch_model=original_ticket_selection.submitted_token,
-                                employee_launch_reasoning_effort=original_ticket_selection.reasoning_effort,
-                            ),
-                            model=requested_ticket_validation.selection.submitted_token,
-                            reasoning_effort=requested_ticket_validation.selection.reasoning_effort,
-                            selection_kind=requested_ticket_validation.selection.selection_kind,
-                            employee_backend=requested_ticket_validation.selection.backend_key.value,
-                            source_type="sender_override",
-                            now=self._integer_now(),
-                            validation=requested_ticket_validation,
-                        )
                 self._participate_in_append(conn, conversation_id, written)
                 self._record_signal_result(conn, written)
                 self._commit_rows(conn, payloads)

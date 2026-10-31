@@ -422,7 +422,6 @@
     || runSelection.pickedBackend !== null
     || runSelection.pickedModel !== null
     || runSelection.pickedReasoningEffort !== null
-    || runSelection.selectionKind !== undefined
     || runSelection.effortIsSet === true
     || deliveryMode !== "steer"
   );
@@ -505,7 +504,6 @@
       one.pickedBackend === other.pickedBackend
       && one.pickedModel === other.pickedModel
       && one.pickedReasoningEffort === other.pickedReasoningEffort
-      && one.selectionKind === other.selectionKind
       && one.effortIsSet === other.effortIsSet
     );
   }
@@ -529,7 +527,6 @@
       pickedModel: runSelection.pickedModel,
       pickedReasoningEffort: runSelection.pickedReasoningEffort,
       pickedBackend: runSelection.pickedBackend,
-      selectionKind: runSelection.selectionKind,
       effortIsSet: runSelection.effortIsSet,
       compositionRevision
     };
@@ -547,7 +544,6 @@
       pickedModel: draft.pickedModel,
       pickedBackend: draft.pickedBackend ?? null,
       pickedReasoningEffort: draft.pickedReasoningEffort,
-      selectionKind: draft.selectionKind,
       effortIsSet: draft.effortIsSet
     };
     compositionRevision = draft.compositionRevision;

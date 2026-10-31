@@ -24,7 +24,7 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from time import monotonic as _monotonic
 from typing import Any, Final, Literal
 
@@ -40,7 +40,6 @@ from planner.conversation.contracts import (
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
-from planner.conversation.model_resolution.contracts import CanonicalModelValidation
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
@@ -56,9 +55,7 @@ from planner.skill_versions import (
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
-from planner.tickets.contracts import Ticket
 from planner.worker_types.configuration import configured_worker_type_registry
-from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
 
 _log = logging.getLogger(__name__)
@@ -87,8 +84,6 @@ class WorkerStepStartResult:
 
     started: bool
     delivery_fate: WorkerStepDeliveryFate | None = None
-    launch_validation: CanonicalModelValidation | None = None
-    verification_failure: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         successful_fates = {"started", "queued", "injected"}
@@ -149,28 +144,10 @@ async def _admitted_start_ready_worker_step(
     given back only when the send was refused, or when a failure occurred before a fate.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
     """
-    from planner.tickets.validation.data import read_launch_selection
-
     conn = connect_database()
     link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
     link_acquired = False
     try:
-        # Observe busy state after any restart/reset that already owns the link.
-        async with link_lock:
-            initial_ticket = tickets_data.read_ticket(conn, ticket_id)
-            if initial_ticket.conversation_id is not None and await conversation_system.is_running(
-                initial_ticket.conversation_id,
-            ):
-                return WorkerStepStartResult(started=False)
-        if initial_ticket.employee_launch_model is None:
-            return WorkerStepStartResult(
-                started=False,
-                verification_failure={
-                    "state": "unresolved",
-                    "reason": "legacy_unscoped",
-                    "corrective_action": "classify_selection",
-                },
-            )
         await link_lock.acquire()
         link_acquired = True
         ticket = tickets_data.read_ticket(conn, ticket_id)
@@ -187,53 +164,10 @@ async def _admitted_start_ready_worker_step(
             worker_type_definition=worker_type_definition,
         ):
             return WorkerStepStartResult(started=False)
-        validation = None
-        if ticket.employee_backend != "hermes":
-            validation = await conversation_start.verify_ticket_launch(
-                conversation_system,
-                conn,
-                ticket,
-                notify=True,
-                now=now(),
-            )
-            if validation.launch_token is None:
-                return WorkerStepStartResult(started=False, launch_validation=validation)
-        captured_selection = read_launch_selection(conn, ticket_id)
-        captured_workspace = conversation_start.workspace_binding_from_start(
-            conversation_start.worker_resolve(
-                conn, ticket, worker_type_registry=worker_type_registry
-            ),
-            ticket.locale,
-        )
-
-        def still_ready(
-            conn: sqlite3.Connection,
-            ticket: Ticket,
-            *,
-            worker_type_definition: WorkerTypeDefinition,
-        ) -> bool:
-            return (
-                read_launch_selection(conn, ticket_id) == captured_selection
-                and conversation_start.workspace_binding_from_start(
-                    conversation_start.worker_resolve(
-                        conn,
-                        ticket,
-                        worker_type_registry=worker_type_registry,
-                    ),
-                    ticket.locale,
-                )
-                == captured_workspace
-                and worker_step_readiness.is_ready_for_worker_step(
-                    conn,
-                    ticket,
-                    worker_type_definition=worker_type_definition,
-                )
-            )
-
         claimed = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
-            readiness_check=still_ready,
+            readiness_check=worker_step_readiness.is_ready_for_worker_step,
             now=now(),
         )
         if claimed is None:
@@ -325,17 +259,7 @@ async def _admitted_start_ready_worker_step(
             )
             remove_tentative_bindings()
             give_the_claim_back()
-            from planner.tickets.validation.data import read_launch_validation
-
-            stored = read_launch_validation(conn, ticket_id)
-            return replace(
-                WorkerStepStartResult.from_delivery_fate(fate),
-                launch_validation=(
-                    None
-                    if stored is None or stored.validation.launch_token is not None
-                    else stored.validation
-                ),
-            )
+            return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliverySuppressed):
             remove_tentative_bindings()
@@ -512,8 +436,6 @@ class WorkerStepReadinessLoop:
         self._thread: threading.Thread | None = None
         self._in_flight_lock = threading.Lock()
         self._in_flight: dict[concurrent.futures.Future[Any], str] = {}
-        self._verification_waits: dict[str, str] = {}
-        self._verification_inputs: dict[concurrent.futures.Future[Any], str] = {}
 
     def wake(self) -> None:
         """Ask the loop to poll now; the periodic timer remains the backstop."""
@@ -592,36 +514,8 @@ class WorkerStepReadinessLoop:
         future.add_done_callback(self._step_ended)
         return True
 
-    def _verification_input_key(self, ticket_id: str) -> str:
-        from planner.conversation.backend_state import disabled_models
-        from planner.tickets.validation.data import read_launch_selection
-
-        conn = connect(self._db_path, self._busy_timeout_ms)
-        try:
-            ticket = tickets_data.read_ticket(conn, ticket_id)
-            if ticket.employee_launch_model is None:
-                return repr(("legacy_unscoped", ticket.id, ticket.employee_backend, ticket.locale))
-            selection = read_launch_selection(conn, ticket_id)
-            values = conversation_start.worker_resolve(conn, ticket)
-            from planner.executor.vps_runs import MacRuns
-
-            native = MacRuns.status(conn)
-            return repr(
-                (
-                    selection,
-                    conversation_start.workspace_binding_from_start(values, ticket.locale),
-                    sorted(disabled_models(conn, selection.backend_key)),
-                    native,
-                )
-            )
-        finally:
-            conn.close()
-
     def _schedule(self, ticket_id: str) -> bool:
-        input_key = self._verification_input_key(ticket_id)
         with self._in_flight_lock:
-            if self._verification_waits.get(ticket_id) == input_key:
-                return False
             if self._stop.is_set():
                 return False
             if ticket_id in self._in_flight.values():
@@ -638,7 +532,6 @@ class WorkerStepReadinessLoop:
         )
         with self._in_flight_lock:
             self._in_flight[future] = ticket_id
-            self._verification_inputs[future] = input_key
         future.add_done_callback(self._step_ended)
         return True
 
@@ -652,17 +545,6 @@ class WorkerStepReadinessLoop:
         """
         with self._in_flight_lock:
             ticket_id = self._in_flight.pop(future, None)
-            input_key = self._verification_inputs.pop(future, None)
-            if ticket_id is not None and input_key is not None and not future.cancelled():
-                if future.exception() is None:
-                    result = future.result()
-                    if (
-                        isinstance(result, WorkerStepStartResult)
-                        and result.launch_validation is not None
-                    ):
-                        self._verification_waits[ticket_id] = input_key
-                    else:
-                        self._verification_waits.pop(ticket_id, None)
         if future.cancelled():
             # Stopping cancels what it could not wait out. That is a decision, not a fault.
             return
@@ -713,17 +595,12 @@ class WorkerStepReadinessLoop:
                 future.cancel()
 
     def _run_loop(self, interval: int) -> None:
-        retry_at = _monotonic() + interval
         while not self._stop.is_set():
-            if _monotonic() >= retry_at:
-                with self._in_flight_lock:
-                    self._verification_waits.clear()
-                retry_at = _monotonic() + interval
             try:
                 self.poll_once()
             except Exception:
                 _log.exception("worker-step readiness poll failed")
-            self._wake.wait(max(0.0, retry_at - _monotonic()))
+            self._wake.wait(interval)
             self._wake.clear()
 
 

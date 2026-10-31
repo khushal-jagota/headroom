@@ -22,7 +22,6 @@ from planner.conversation.events import (
     PromptDiscardedEventPayload,
     PromptEventPayload,
 )
-from planner.conversation.model_resolution.contracts import CanonicalModelValidation
 from planner.conversation.storage import ConversationStore
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
@@ -94,25 +93,12 @@ class AgentWrites:
                 principal.id,
             ):
                 raise PlannerError(ErrorCode.agent_forbidden, "child assignment changed", {})
-            creation_validation: CanonicalModelValidation | None = None
-            if write.operation == "ticket.create":
-                from planner.runtime.conversation_start import refuse_known_incompatibility
-                from planner.tickets.api import resolve_ticket_creation_validation
-
-                body = write.arguments.get("body")
-                if not isinstance(body, dict):
-                    raise PlannerError(ErrorCode.validation, "ticket mutation needs a body", {})
-                creation_validation = resolve_ticket_creation_validation(
-                    body, connection, principal=principal
-                )
-                refuse_known_incompatibility(creation_validation)
             return write_ticket_mutation(
                 connection,
                 write,
                 principal,
                 self.clock,
                 review_transfer_notices=notices,
-                creation_validation=creation_validation,
             )
 
         receipt = await settled_io(

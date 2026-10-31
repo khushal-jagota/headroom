@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Iterable
 from uuid import uuid4
 
-from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal
 from planner.manager_wakes.contracts import (
     ProposalNoticeState,
@@ -283,22 +283,6 @@ def admit_notice_batch(
         raise RuntimeError("historical notice attempt cannot receive dispatch admission")
     if batch["status"] == "discarded":
         return True, "notice_batch_discarded"
-    validation_rows = conn.execute(
-        "SELECT w.* FROM manager_wakes w JOIN manager_wake_batch_members m ON m.wake_id=w.id "
-        "WHERE m.batch_id=? AND w.source_kind='launch_validation'",
-        (batch["id"],),
-    ).fetchall()
-    obsolete_validation = [row for row in validation_rows if _validation_notice_obsolete(conn, row)]
-    if obsolete_validation:
-        conn.executemany(
-            "UPDATE manager_wakes SET closed_at=? WHERE id=? AND closed_at IS NULL",
-            ((now, row["id"]) for row in obsolete_validation),
-        )
-        conn.execute(
-            "UPDATE manager_wake_batches SET status='discarded',updated_at=? WHERE id=?",
-            (now, batch["id"]),
-        )
-        return True, "launch_validation_changed"
     rows = conn.execute(
         "SELECT w.* FROM manager_wakes w JOIN manager_wake_batch_members m ON m.wake_id=w.id "
         "WHERE m.batch_id=? AND w.source_kind='proposal'",
@@ -322,37 +306,6 @@ def admit_notice_batch(
     return True, None
 
 
-def _validation_notice_obsolete(conn: sqlite3.Connection, wake: sqlite3.Row) -> bool:
-    row = conn.execute(
-        "SELECT v.launch_revision,v.transition_revision,v.validation_json,t.manager_id "
-        "FROM ticket_launch_validation v JOIN tickets t ON t.id=v.ticket_id WHERE v.ticket_id=?",
-        (wake["ticket_id"],),
-    ).fetchone()
-    if row is None or row["validation_json"] is None:
-        return True
-    validation = json.loads(row["validation_json"])
-    return (
-        int(row["transition_revision"]) != int(wake["source_revision"])
-        or validation["selection"]["selection_revision"] != str(row["launch_revision"])
-        or validation["state"] == "compatible"
-        or (wake["target_kind"], wake["target_id"])
-        != (("manager", row["manager_id"]) if row["manager_id"] else ("chief", CHIEF_PRINCIPAL.id))
-    )
-
-
-def _retire_obsolete_unsent_validations(conn: sqlite3.Connection, *, now: int) -> None:
-    rows = conn.execute(
-        "SELECT w.* FROM manager_wakes w WHERE w.source_kind='launch_validation' "
-        "AND w.closed_at IS NULL AND NOT EXISTS (SELECT 1 FROM manager_wake_batch_members m "
-        "JOIN manager_wake_batches b ON b.id=m.batch_id WHERE m.wake_id=w.id "
-        "AND b.status IN ('offering','dispatching','accepted','uncertain'))"
-    ).fetchall()
-    conn.executemany(
-        "UPDATE manager_wakes SET closed_at=? WHERE id=?",
-        ((now, row["id"]) for row in rows if _validation_notice_obsolete(conn, row)),
-    )
-
-
 def _retire_obsolete_unsent_proposals(conn: sqlite3.Connection, *, now: int) -> None:
     rows = conn.execute(
         "SELECT w.* FROM manager_wakes w WHERE w.source_kind='proposal' AND w.closed_at IS NULL "
@@ -371,7 +324,6 @@ def claim_next_batch(conn: sqlite3.Connection, *, process_token: str, now: int) 
     conn.execute("BEGIN IMMEDIATE")
     try:
         _retire_obsolete_unsent_proposals(conn, now=now)
-        _retire_obsolete_unsent_validations(conn, now=now)
         target = conn.execute(
             "SELECT w.target_kind,w.target_id FROM manager_wakes w "
             "WHERE w.closed_at IS NULL AND NOT EXISTS ("

@@ -53,7 +53,11 @@ prompt or turn. Picking a Claude model saves the resolved, pinned ID, such as
 family and numeric version, including Fable and Terra. Older models remain in the
 list.
 
-A saved model choice keeps its exact name and effort. Panels checks explicit model disables before sending. The provider can still refuse the prompt. Launch validation stores the choice, result, reason, action and launch token; it carries no catalog evidence or alias history. The composer shows the refusal without a separate validation panel. The disabled-model check happens at dispatch. Adapters send the chosen model and effort directly, and the provider decides whether to accept them. Disabling a model after dispatch can still allow that turn.
+A Ticket saves its backend, exact model name and effort. Newer models do not change a saved choice. A Ticket with no saved model starts from its Worker type's defaults. New shipped defaults use `gpt-6.1-sol`, `gpt-6-astra` or `claude-opus-5-5`; existing saved Tickets keep their models.
+
+Panels refuses disabled models when creating a Ticket, saving its configuration or dispatching a message. A disabled model blocks the next automatic Worker step before a claim is taken. It does not send a Manager wake. A dispatched refusal remains a row in the notebook with its reason. Adapters send the exact model and effort directly, and the provider can still refuse them. Disabling a model after dispatch can still allow that turn.
+
+A held message with no explicit change uses the conversation's model and effort when it is sent. An explicit change rides that message. After delivery, Panels remembers the choice for the Ticket's next start. That save follows the prompt's commit, so a crash between them can leave the old choice saved.
 
 | Fate | Meaning |
 | --- | --- |

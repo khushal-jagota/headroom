@@ -26,7 +26,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from planner.conversation.backend_state import (
     BackendStateStore,
@@ -96,7 +96,6 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
-from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.conversation.runtime_composition import (
     ConversationRuntime as ConversationRuntime,
 )
@@ -320,20 +319,11 @@ class OwnerSendBody(BaseModel):
     backend_key: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
-    selection_kind: SelectionKind | None = None
     content: list[SentPiece]
     sender_label: str
     mode: PromptDeliveryMode = PromptDeliveryMode.queue
     sender_message_id: str | None = None
     sent_at_unix_milliseconds: int | None = None
-
-    @model_validator(mode="after")
-    def explicit_kind_needs_model(self) -> OwnerSendBody:
-        if self.selection_kind is not None and (
-            self.model is None or self.selection_kind is SelectionKind.legacy_unclassified
-        ):
-            raise ValueError("selection_kind requires an explicit model and explicit kind")
-        return self
 
 
 # The audio a voice note may arrive as. WebM/Opus is what a recording browser produces;
@@ -1177,7 +1167,6 @@ class VideoSendAdmission:
             elif hasattr(payload, "refusal_reason"):
                 fate = PromptDeliveryRefused(
                     payload.refusal_reason,
-                    getattr(payload, "model_validation", None),
                 )
         self.finish(fate)
         assert self.recipient is not None
@@ -1440,11 +1429,8 @@ def delivery_fate_json(fate: object) -> dict[str, Any]:
             return {"fate": "queued", "queue_position": position}
         case PromptDeliveryInjected():
             return {"fate": "injected"}
-        case PromptDeliveryRefused(refusal_reason=reason, model_validation=validation):
-            result: dict[str, Any] = {"fate": "refused", "refusal_reason": str(reason)}
-            if validation is not None:
-                result["model_validation"] = validation
-            return result
+        case PromptDeliveryRefused(refusal_reason=reason):
+            return {"fate": "refused", "refusal_reason": str(reason)}
         case PromptDeliverySuppressed(reason=reason):
             return {"fate": "suppressed", "reason": reason}
         case PromptDeliveryUncertain():

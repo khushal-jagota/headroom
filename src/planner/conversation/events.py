@@ -38,7 +38,7 @@ from planner.conversation.message_content import (
     message_content_from_stored,
     message_content_json_entries,
 )
-from planner.core.contracts import JsonDict, Principal, PrincipalKind
+from planner.core.contracts import Principal, PrincipalKind
 
 
 class ConversationEventKind(StrEnum):
@@ -249,7 +249,6 @@ class PromptDeliveryRefusedEventPayload:
     mode: PromptDeliveryMode
     refusal_reason: PromptDeliveryRefusalReason
     refusal_detail: str | None = None
-    model_validation: JsonDict | None = None
     sender_message_id: str | None = None
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
@@ -610,21 +609,6 @@ def conversation_event_payload_from_canonical_json(
     return _payload_from_json_object(kind, stored)
 
 
-def _optional_model_validation(stored: JsonDict) -> JsonDict | None:
-    value = stored.get("model_validation")
-    if value is None:
-        return None
-    from pydantic import TypeAdapter
-
-    from planner.conversation.model_resolution.contracts import CanonicalModelValidation
-
-    adapter = TypeAdapter(CanonicalModelValidation)
-    parsed = adapter.validate_json(json.dumps(value))
-    result = adapter.dump_python(parsed, mode="json")
-    assert isinstance(result, dict)
-    return result
-
-
 def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
     match payload:
         case PromptEventPayload():
@@ -655,11 +639,6 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
-                **(
-                    {"model_validation": payload.model_validation}
-                    if payload.model_validation is not None
-                    else {}
-                ),
                 "refusal_reason": str(payload.refusal_reason),
                 "refusal_detail": payload.refusal_detail,
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
@@ -877,7 +856,6 @@ def _payload_from_json_object(
                 mode=_prompt_delivery_mode_from_stored(stored),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
                 refusal_detail=_optional_text(stored, "refusal_detail"),
-                model_validation=_optional_model_validation(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
                 recovery_references=tuple(
                     DeploymentRecoveryReference(**r) for r in stored.get("recovery_references", [])

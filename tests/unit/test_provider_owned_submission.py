@@ -20,7 +20,6 @@ from planner.conversation.events import (
     PromptEventPayload,
 )
 from planner.conversation.message_content import text_message_content
-from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect
 from planner.runtime import conversation_start
@@ -71,7 +70,6 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
                 worker_type="coding",
                 employee_backend="codex",
                 employee_launch_model="gpt-6-sol",
-                selection_kind=SelectionKind.concrete,
             )
 
             async def send() -> Any:
@@ -108,7 +106,8 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
                 if case == "rejected":
                     assert result.fate.refusal_reason.value == "backend_rejected_prompt"
                     refusals = [
-                        e.payload for e in await harness.events(conversation_id)
+                        e.payload
+                        for e in await harness.events(conversation_id)
                         if isinstance(e.payload, PromptDeliveryRefusedEventPayload)
                     ]
                     assert len(refusals) == 1
@@ -189,7 +188,6 @@ def test_provider_events_and_held_messages_keep_their_original_turn(
                 worker_type="coding",
                 employee_backend="claude",
                 employee_launch_model="claude-exact",
-                selection_kind=SelectionKind.concrete,
             )
             async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
                 first = await conversation_start.send_to_ticket_conversation(

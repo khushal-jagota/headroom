@@ -113,18 +113,15 @@ async def restart_worker(
     *,
     start_worker_step: Callable[[], Awaitable[WorkerStepStartResult]],
     now: Callable[[], int],
-    prepare_employee_configuration: Callable[
-        [], Awaitable[Callable[[sqlite3.Connection, int], None]]
-    ]
-    | None = None,
+    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None = None,
 ) -> dict[str, object]:
     """Kill this Ticket's dead conversation, give the claim back, and start again.
 
     A reset on its own would leave the claim out, with no conversation and nothing that
     ever picks the Ticket up. Both halves happen here, and the caller sees one action.
 
-    The prepared configuration is already validated when it arrives: the caller
-    resolved it against the backend registry and catalog before anything was killed, so a
+    The configuration is already validated when it arrives: the caller checked
+    the backend name and disabled-model policy before anything was killed, so a
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
     """
@@ -136,8 +133,7 @@ async def restart_worker(
         conn,
         principal,
         ticket_id,
-        write_employee_configuration=None,
-        prepare_employee_configuration=prepare_employee_configuration,
+        write_employee_configuration=write_employee_configuration,
         now=now,
     )
     # Start obtains fresh read ownership, after mutation ownership ends.
@@ -161,10 +157,6 @@ async def _prepare_worker_restart(
     *,
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     now: Callable[[], int],
-    prepare_employee_configuration: Callable[
-        [], Awaitable[Callable[[sqlite3.Connection, int], None]]
-    ]
-    | None,
 ) -> tuple[str | None, bool]:
     ticket = require_restartable(conn, principal, ticket_id)
     rearming_idle_revision = (
@@ -180,38 +172,6 @@ async def _prepare_worker_restart(
     killed_conversation_looked_running = False
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
         _require_same_restart_target(conn, principal, ticket)
-        captured_workspace = conversation_start.workspace_binding_from_start(
-            conversation_start.worker_resolve(conn, ticket),
-            ticket.locale,
-        )
-        if prepare_employee_configuration is not None:
-            write_employee_configuration = await prepare_employee_configuration()
-        if (
-            write_employee_configuration is None
-            and ticket.employee_backend != "hermes"
-            and ticket.employee_launch_model is not None
-        ):
-            validation = await conversation_start.verify_ticket_launch(
-                conversations,
-                conn,
-                ticket,
-                persist=True,
-                now=now(),
-            )
-            conversation_start.refuse_known_incompatibility(validation)
-        _require_same_restart_target(conn, principal, ticket)
-        if (
-            conversation_start.workspace_binding_from_start(
-                conversation_start.worker_resolve(conn, ticket),
-                ticket.locale,
-            )
-            != captured_workspace
-        ):
-            raise PlannerError(
-                ErrorCode.validation,
-                "workspace changed before source retirement",
-                {},
-            )
         if killed_conversation_id is not None:
             killed_conversation_looked_running = await conversations.is_running(
                 killed_conversation_id
@@ -300,18 +260,7 @@ def _restart_result(
     killed_conversation_id: str | None,
     killed_conversation_looked_running: bool,
 ) -> dict[str, object]:
-    from pydantic import TypeAdapter
-
-    from planner.conversation.model_resolution.contracts import CanonicalModelValidation
-
-    validation = start_result.launch_validation
     return {
-        "verification_failure": start_result.verification_failure,
-        "launch_validation": (
-            None
-            if validation is None
-            else TypeAdapter(CanonicalModelValidation).dump_python(validation, mode="json")
-        ),
         "ticket_id": ticket_id,
         "killed_conversation_id": killed_conversation_id,
         "killed_conversation_looked_running": killed_conversation_looked_running,
@@ -327,13 +276,6 @@ def _restart_result(
         "not_started_because": (
             None
             if start_result.started or start_result.delivery_fate is not None
-            else (
-                f"{start_result.verification_failure['reason']}: "
-                f"{start_result.verification_failure['corrective_action']}"
-            )
-            if start_result.verification_failure is not None
-            else f"{validation.reason.value}: {validation.corrective_action.value}"
-            if validation is not None
             else worker_step_readiness.worker_step_blocker(
                 conn,
                 restarted,

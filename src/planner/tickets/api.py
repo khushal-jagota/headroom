@@ -16,7 +16,7 @@ validation envelope rather than FastAPI's 422, so the CLI and UI see one error s
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -38,11 +38,6 @@ from planner.conversation.contracts import (
     require_conversation_backend_key,
 )
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.contracts import (
-    CanonicalModelValidation,
-    ModelSelection,
-    SelectionKind,
-)
 from planner.conversation.storage import ConversationStore
 from planner.conversation.video_uploads.contracts import UploadDestination
 from planner.core import authority
@@ -362,11 +357,6 @@ def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicke
         ceiling=body_opt_str(raw, "ceiling"),
         ceiling_holder=raw.get("ceiling_holder"),
     )
-    if "selection_kind" in raw:
-        try:
-            body["selection_kind"] = SelectionKind(body_str(raw, "selection_kind")).value
-        except ValueError as error:
-            raise PlannerError(ErrorCode.validation, "unknown selection_kind", {}) from error
     if "locale" in raw:
         from planner.tickets.logic.locale import require_ticket_locale
 
@@ -481,82 +471,11 @@ def _parse_next_ceiling(
 # --- ticket routes -------------------------------------------------------------
 
 
-def resolve_ticket_creation_selection(
-    raw: JsonDict,
-    conn: sqlite3.Connection,
-    *,
-    principal: Principal | None = None,
-) -> tuple[ModelSelection, str | None]:
-    """Resolve authored draft intent and workspace authority without observation."""
-    body = _marshal_create_ticket(raw, draft=True)
-    manager = (
-        _parse_manager(body["manager"])
-        if "manager" in raw or "orchestrator" in raw
-        else CHIEF_PRINCIPAL
-    )
-    if principal is not None:
-        manager_id = manager.id if manager.kind is PrincipalKind.manager else None
-        if manager_id is not None:
-            authority.require_in_chain(conn, principal, authority.manager(manager_id))
-        if body["ceiling"] is not None or body["ceiling_holder"] is not None:
-            authority.require_above_a_ticket_being_created(
-                conn,
-                principal,
-                ticket_id="uncreated-validation-target",
-                parent_manager_id=manager_id,
-            )
-    project = projects_data.resolve_project(
-        conn,
-        project_id=body["project_id"],
-        project_name=body["project"],
-    )
-    context = tickets_data.resolve_ticket_draft_context(
-        conn,
-        worker_type=body["worker_type"],
-        locale=body.get("locale"),
-        employee_backend=body.get("employee_backend"),
-        employee_launch_model=body.get("employee_launch_model"),
-        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
-        reasoning_effort_is_set="employee_launch_reasoning_effort" in body,
-        project_id=project.id if project is not None else None,
-        manager_id=manager.id if manager.kind is PrincipalKind.manager else None,
-        deadline=body["deadline"],
-        blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
-    )
-    launch = context.launch_configuration
-    assert launch.employee_launch_model is not None
-    selection = ModelSelection(
-        context.locale,
-        require_conversation_backend_key(launch.employee_backend),
-        launch.employee_launch_model,
-        SelectionKind(body.get("selection_kind", SelectionKind.legacy_unclassified)),
-        launch.employee_launch_reasoning_effort,
-        "draft",
-    )
-    return selection, context.project_id
-
-
-def resolve_ticket_creation_validation(
-    raw: JsonDict, conn: sqlite3.Connection, *, principal: Principal | None = None
-) -> CanonicalModelValidation:
-    """Resolve creation policy using only the caller's database transaction."""
-    from planner.conversation.launch_intent import bind_model_intent
-
-    selection, _ = resolve_ticket_creation_selection(raw, conn, principal=principal)
-    require_enabled_model(conn, selection.backend_key, selection.submitted_token)
-    validation = bind_model_intent(selection)
-    if validation.launch_token is not None:
-        require_enabled_model(conn, selection.backend_key, validation.launch_token)
-    return validation
-
-
 def write_create_ticket(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    *,
-    validation: CanonicalModelValidation | None = None,
 ) -> JsonDict:
     """Apply creation through the same writer inside HTTP or executor transactions."""
     body = _marshal_create_ticket(raw)
@@ -588,12 +507,6 @@ def write_create_ticket(
         employee_launch_model=body.get("employee_launch_model"),
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
         reasoning_effort_is_set="employee_launch_reasoning_effort" in body,
-        selection_kind=(
-            body.get("selection_kind")
-            if validation is None
-            else validation.selection.selection_kind.value
-        ),
-        validation=validation,
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
         stated_ceiling=body["ceiling"],
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
@@ -610,11 +523,7 @@ async def create_ticket(
     clk: Clk,
     request: Request,
 ) -> JsonDict:
-    validation = resolve_ticket_creation_validation(
-        raw, conn, principal=ctx.principal
-    )
-    conversation_start.refuse_known_incompatibility(validation)
-    return write_create_ticket(raw, conn, ctx, clk, validation=validation)
+    return write_create_ticket(raw, conn, ctx, clk)
 
 
 @router.get("/tickets")
@@ -787,8 +696,6 @@ class ResolvedEmployeeConfiguration:
     employee_backend: str
     employee_launch_model: str
     employee_launch_reasoning_effort: str | None
-    validation: CanonicalModelValidation | None
-    selection_kind: SelectionKind
 
 
 async def resolve_employee_configuration(
@@ -799,48 +706,17 @@ async def resolve_employee_configuration(
     employee_backend: str,
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
-    selection_kind: SelectionKind | None = None,
 ) -> ResolvedEmployeeConfiguration:
-    """Keep submitted intent and distinguish a known mismatch from absent evidence."""
+    """Keep exact submitted values and refuse disabled models."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
     expected = tickets_data.employee_launch_configuration(ticket)
     registered_backend = require_conversation_backend_key(employee_backend)
     require_enabled_model(conn, registered_backend, employee_launch_model)
-    from planner.tickets.validation.data import read_launch_selection
-
-    prior = None if ticket.employee_launch_model is None else read_launch_selection(conn, ticket_id)
-    if selection_kind is None:
-        if (
-            prior is not None
-            and registered_backend == prior.backend_key
-            and employee_launch_model == prior.submitted_token
-        ):
-            selection_kind = prior.selection_kind
-        else:
-            selection_kind = SelectionKind.legacy_unclassified
-    validation = None
-    if registered_backend.value != "hermes":
-        validation = await conversation_start.verify_ticket_launch(
-            get_conversation_system(request),
-            conn,
-            ticket,
-            employee_backend=registered_backend.value,
-            employee_launch_model=employee_launch_model,
-            employee_launch_reasoning_effort=employee_launch_reasoning_effort,
-            selection_kind=selection_kind,
-            persist=False,
-            now=get_clock(request).now_unix(),
-        )
-        conversation_start.refuse_known_incompatibility(validation)
     return ResolvedEmployeeConfiguration(
         expected=expected,
         employee_backend=registered_backend.value,
         employee_launch_model=employee_launch_model,
         employee_launch_reasoning_effort=employee_launch_reasoning_effort,
-        validation=validation,
-        selection_kind=(
-            selection_kind if validation is None else validation.selection.selection_kind
-        ),
     )
 
 
@@ -859,8 +735,6 @@ def write_resolved_employee_configuration(
         employee_backend=resolved.employee_backend,
         employee_launch_model=resolved.employee_launch_model,
         employee_launch_reasoning_effort=resolved.employee_launch_reasoning_effort,
-        selection_kind=resolved.selection_kind.value,
-        validation=resolved.validation,
         now=now,
     )
 
@@ -910,32 +784,12 @@ async def put_ticket_employee_configuration(
     clk: Clk,
 ) -> JsonDict:
     require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
-    if link_lock.locked():
-        raise PlannerError(
-            ErrorCode.already_running,
-            "the Ticket configuration cannot change during a conversation operation",
-            {"ticket_id": ticket_id},
-        )
-    async with link_lock:
-        return await _put_ticket_employee_configuration(ticket_id, raw, request, conn, ctx, clk)
-
-
-async def _put_ticket_employee_configuration(
-    ticket_id: str,
-    raw: dict[str, Any],
-    request: Request,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     required_keys = {
         "employee_backend",
         "employee_launch_model",
         "employee_launch_reasoning_effort",
     }
-    if set(raw) - {"selection_kind"} != required_keys:
+    if set(raw) != required_keys:
         raise PlannerError(
             ErrorCode.validation,
             "Employee configuration update requires the exact complete body",
@@ -955,9 +809,6 @@ async def _put_ticket_employee_configuration(
         employee_backend=body["employee_backend"],
         employee_launch_model=body["employee_launch_model"],
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
-        selection_kind=(
-            SelectionKind(body_str(raw, "selection_kind")) if "selection_kind" in raw else None
-        ),
     )
     ticket = write_resolved_employee_configuration(conn, ticket_id, resolved, now=clk.now_unix())
     return _ticket_detail(conn, ticket.id, clk.now_unix())
@@ -982,8 +833,8 @@ async def restart_ticket_worker(
 
     The configuration is resolved before the restart, so a backend or model this Ticket
     cannot launch on is a plain refusal rather than a killed conversation. Position is
-    proved before even that: resolving asks the backends what they offer, and no caller
-    reaches a question about a Ticket it does not stand above.
+    proved before even that: no caller can configure or restart a Ticket it does
+    not stand above.
     """
     require_above(conn, ctx.principal, authority.ticket(ticket_id))
     backend = body_opt_str(raw, "employee_backend")
@@ -994,35 +845,19 @@ async def restart_ticket_worker(
             "a launch configuration needs both a backend and a model",
             {},
         )
-    prepare_configuration: (
-        Callable[[], Awaitable[Callable[[sqlite3.Connection, int], None]]] | None
-    ) = None
+    write_configuration: Callable[[sqlite3.Connection, int], None] | None = None
     if backend is not None and model is not None:
-        selected_backend, selected_model = backend, model
+        resolved = await resolve_employee_configuration(
+            request,
+            conn,
+            ticket_id,
+            employee_backend=backend,
+            employee_launch_model=model,
+            employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
+        )
 
-        async def prepare() -> Callable[[sqlite3.Connection, int], None]:
-            resolved = await resolve_employee_configuration(
-                request,
-                conn,
-                ticket_id,
-                employee_backend=selected_backend,
-                employee_launch_model=selected_model,
-                employee_launch_reasoning_effort=body_opt_str(
-                    raw, "employee_launch_reasoning_effort"
-                ),
-                selection_kind=(
-                    SelectionKind(body_str(raw, "selection_kind"))
-                    if "selection_kind" in raw
-                    else None
-                ),
-            )
-
-            def write(open_conn: sqlite3.Connection, now: int) -> None:
-                write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
-
-            return write
-
-        prepare_configuration = prepare
+        def write_configuration(open_conn: sqlite3.Connection, now: int) -> None:
+            write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
 
     async def start_worker_step() -> WorkerStepStartResult:
         return await start_ready_worker_step(
@@ -1038,7 +873,7 @@ async def restart_ticket_worker(
         conn,
         ctx.principal,
         ticket_id,
-        prepare_employee_configuration=prepare_configuration,
+        write_employee_configuration=write_configuration,
         start_worker_step=start_worker_step,
         now=clk.now_unix,
     )
@@ -1250,7 +1085,6 @@ def _what_this_message_runs_under(body: OwnerSendBody) -> ConversationStartOverr
         model=body.model,
         reasoning_effort=body.reasoning_effort,
         reasoning_effort_is_set="reasoning_effort" in body.model_fields_set,
-        selection_kind=body.selection_kind,
     )
 
 
@@ -1318,12 +1152,6 @@ async def send_to_chief_conversation(
     does not pass it on leaves that browser drawing a message the record already has.
     """
     require_above(conn, ctx.principal, authority.owner_only("chief conversation"))
-    if body.selection_kind is not None:
-        raise PlannerError(
-            ErrorCode.validation,
-            "explicit selection_kind requires a Ticket launch context",
-            {},
-        )
     created_conversation_id = conversation_start.new_conversation_id()
     runs_under = _what_this_message_runs_under(body)
     admission = video_send_admission(

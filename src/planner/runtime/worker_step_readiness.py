@@ -54,6 +54,21 @@ def worker_step_blocker(
             return "the user-owned Stage opener already ran for this Stage entry"
     if worker_type_definition.gating_field(ticket.stage) is None:
         return f"the Stage {ticket.stage} has no field for a worker to fill"
+    from planner.conversation.backend_state import model_is_enabled
+    from planner.conversation.contracts import require_conversation_backend_key
+
+    defaults = worker_type_definition.worker_profile
+    model = ticket.employee_launch_model or defaults.default_model
+    if model is not None and not model_is_enabled(
+        conn,
+        require_conversation_backend_key(
+            defaults.default_backend
+            if ticket.employee_launch_model is None
+            else ticket.employee_backend
+        ),
+        model,
+    ):
+        return f"the model {model} is disabled"
     return None
 
 

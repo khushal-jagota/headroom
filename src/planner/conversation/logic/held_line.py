@@ -50,11 +50,7 @@ def leading_run_that_can_share_a_turn[MessageT: WaitingMessage](
             or message.reasoning_effort_change is not None
             or bool(getattr(message, "reasoning_effort_is_set", False))
         )
-        if run and (
-            carries_a_change
-            or getattr(message, "original_selection", None)
-            != getattr(run[0], "original_selection", None)
-        ):
+        if run and (carries_a_change):
             break
         run.append(message)
     return tuple(run)

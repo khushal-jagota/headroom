@@ -568,13 +568,7 @@ def send_message(
         as_json=as_json,
         json_body={"target": recipient, "message": text, "mode": mode},
     )
-    validation = data.get("model_validation")
-    detail = (
-        f": {validation['reason']}: {validation['corrective_action']}"
-        if isinstance(validation, dict)
-        else ""
-    )
-    http.emit(data, as_json, f"message {data['fate']}{detail}")
+    http.emit(data, as_json, f"message {data['fate']}")
 
 
 @main.command("serve", hidden=True)
@@ -1818,8 +1812,6 @@ def ticket_history(
     http.emit(data, as_json, f"{tid} {len(data['events'])} history events")
 
 
-
-
 @ticket.command("restart-worker")
 @click.argument("ticket_id")
 @click.option("--backend", default=None, help="Registered employee backend to restart on.")
@@ -1868,13 +1860,7 @@ def ticket_restart_worker(
     elif data["delivery_fate"] == "uncertain":
         human_result = f"{ticket_id} start delivery is uncertain. The Worker claim remains held."
     elif data["delivery_fate"] == "refused":
-        validation = data.get("launch_validation")
-        detail = (
-            f": {validation['reason']}: {validation['corrective_action']}"
-            if isinstance(validation, dict)
-            else ""
-        )
-        human_result = f"{ticket_id} start delivery was refused{detail}"
+        human_result = f"{ticket_id} start delivery was refused"
     else:
         human_result = f"{ticket_id} did not start: {data['not_started_because']}"
     http.emit(

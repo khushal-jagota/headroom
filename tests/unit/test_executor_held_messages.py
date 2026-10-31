@@ -20,9 +20,6 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.contracts import (
-    SelectionKind,
-)
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
@@ -223,7 +220,6 @@ async def boot(connection: Connection, root: Path) -> HeldFixture:
         title_max_chars=200,
         employee_backend="codex",
         employee_launch_model="scripted",
-        selection_kind=SelectionKind.concrete,
     )
     fixture = HeldFixture(
         connection,

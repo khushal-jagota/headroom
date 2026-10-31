@@ -106,7 +106,6 @@ export function resolveComposerRunControls(
       backendKey: input.conversationExists
         ? null
         : input.selection.pickedBackend,
-      ...(input.selection.selectionKind === undefined ? {} : {selectionKind: input.selection.selectionKind}),
       ...(input.selection.effortIsSet === undefined ? {} : {effortIsSet: input.selection.effortIsSet})
     },
     disabled: input.inputDisabled,
@@ -156,7 +155,6 @@ export function applyComposerRunSelectionIntent(
         ...input.selection,
         pickedModel: intent.model,
         pickedReasoningEffort: intent.reasoningEffort,
-        selectionKind: "legacy_unclassified",
         effortIsSet: true,
 
       };

@@ -31,9 +31,6 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.contracts import (
-    SelectionKind,
-)
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -110,7 +107,6 @@ def test_claude_stop_result_controls_canonical_retirement(
             worker_type="coding",
             employee_backend="claude",
             employee_launch_model="test",
-            selection_kind=SelectionKind.concrete,
             locale=TicketLocale.macos,
         )
 

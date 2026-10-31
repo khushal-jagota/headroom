@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pydantic import TypeAdapter, ValidationError
-
 from planner.conversation import events as event
 from planner.conversation.contracts import AnswerFate, ConversationBackendKey
 from planner.conversation.message_content import (
@@ -12,7 +10,6 @@ from planner.conversation.message_content import (
     MessageImage,
     MessageText,
 )
-from planner.conversation.model_resolution.contracts import CanonicalModelValidation
 from planner.conversation.tool_detail import readable_tool_call_detail
 from planner.conversation.views.configuration import (
     SENT_AFTER_ROW_LIMIT_MILLISECONDS,
@@ -27,16 +24,6 @@ from planner.conversation.views.contracts import (
     ViewRowBody,
 )
 from planner.core.contracts import PrincipalKind
-
-
-def refusal_validation(value: object) -> CanonicalModelValidation | None:
-    """Project only a complete canonical validation; malformed history grants nothing."""
-    if value is None:
-        return None
-    try:
-        return TypeAdapter(CanonicalModelValidation).validate_python(value)
-    except ValidationError:
-        return None
 
 
 def content_pieces(content: MessageContent) -> list[ViewMessagePiece]:
@@ -135,7 +122,6 @@ def row_body(
             "sender_label": source.sender_label,
             "reason": source.refusal_reason,
             "refusal_detail": source.refusal_detail,
-            "model_validation": refusal_validation(source.model_validation),
         }
     if isinstance(
         source, (event.PromptDeliveryUncertainEventPayload, event.PromptDiscardedEventPayload)
