@@ -104,8 +104,10 @@ The VPS readiness loop claims a ready Ticket and starts or reuses its conversati
 The selected destination supplies the Mac backend factory; Chief and Manager
 conversations keep local children. The VPS saves the exact Mac child assignment
 and run before emitting its start command, and requires a reconciled, ready link.
-The Mac runner localizes the workspace, downloads and verifies the command's inputs,
-installs the current canonical skills, and starts the selected provider.
+The Mac runner downloads and verifies the command's inputs and requires a Ticket
+identity for every start. It installs the current canonical skills, then localizes
+the workspace and builds the native environment once before starting the selected provider.
+Provider locations are resolved afresh for each start.
 Before native invocation, it checks that the retained child can take work.
 The direct command result reports admission;
 recorded agent output takes the ordered outbox path independently.
