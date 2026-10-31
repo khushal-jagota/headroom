@@ -9,9 +9,14 @@ import re
 import sqlite3
 from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
-from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
+from planner.conversation.backend_event_contracts import (
+    AcceptedEvent,
+    CommitParticipant,
+    EventTaken,
+)
+from planner.conversation.backends.contracts import BackendEventValue, TurnToken
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
@@ -35,10 +40,8 @@ from planner.executor.protocol import (
     FileScope,
     FileUploadRequest,
     JsonObject,
-    MacInboxConversations,
     QueuedEnvelope,
     ReceiptDisposition,
-    TransactionalWriter,
     as_object,
     decode_event_arguments,
     envelope_child,
@@ -49,6 +52,38 @@ from planner.executor.protocol import (
 from planner.executor.store import ExecutorStore, VpsDatabase, _invalid, _record
 from planner.executor.vps_agent_writes import AgentWrites
 from planner.executor.vps_runs import MacRuns
+
+
+class MacInboxConversations(Protocol):
+    async def take_backend_event(
+        self,
+        turn: TurnToken | None,
+        arguments: BackendEventValue,
+        *,
+        in_commit: CommitParticipant,
+        conversation_id: str | None = None,
+    ) -> AcceptedEvent: ...
+
+    async def take_answer_application(
+        self,
+        turn: TurnToken,
+        answer_id: str,
+        provider_id: str,
+        kind: str,
+        in_commit: CommitParticipant,
+    ) -> AcceptedEvent: ...
+
+
+class TransactionalWriter(Protocol):
+    def __call__(self, connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
+        """Validate original authority and apply effect; never commit or do native I/O.
+
+        Acceptor checks a matching receipt first, verifies order/files, then invokes
+        this writer and inserts the first receipt in this same transaction. A
+        permanent PlannerError is recorded under a savepoint; transient errors roll
+        back without receipt. Async/native effects use their separate command fate.
+        """
+        ...
 
 
 class MissingFiles(Exception):

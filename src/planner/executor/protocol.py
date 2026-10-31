@@ -4,31 +4,23 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 import struct
-from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import cache
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Annotated,
     Any,
     ClassVar,
     Literal,
     Protocol,
-    TypedDict,
     cast,
     overload,
 )
 
-if TYPE_CHECKING:
-    from planner.executor.vps_remote_child import MacRemoteChild
-
 from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
-from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
     AgentMessageDelta,
@@ -127,14 +119,6 @@ class ExecutorHealth:
     reconciliation_ready: bool
     observed_at_ms: int
     lost_at_ms: int | None
-
-
-class ExecutorHealthRead(TypedDict):
-    """VPS API projection; receipt time is not activity or answer delivery evidence."""
-
-    identity: JsonObject | None
-    connection_state: str
-    last_contact_at_ms: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,24 +255,6 @@ class UnconfirmedCliResult:
     acceptance: Literal["unconfirmed"] = "unconfirmed"
 
 
-@dataclass(frozen=True, slots=True)
-class OutboxRecord:
-    envelope: QueuedEnvelope
-    receipt: AcceptanceReceipt | None = None
-
-    @property
-    def pending(self) -> bool:
-        return self.receipt is None
-
-
-@dataclass(frozen=True, slots=True)
-class OutboxEntry:
-    conversation_id: str
-    kind: EnvelopeKind
-    payload: JsonObject
-    submission_id: str | None = None
-
-
 def envelope_child(payload: JsonObject, *, ask_only: bool = False) -> JsonValue:
     """Read a raw child; refused answers take it only from their ask."""
     child = payload.get("child")
@@ -417,19 +383,9 @@ type ChildCommandArguments = Annotated[
 
 
 def decode_command_arguments(operation: ChildOperation, raw: object) -> ChildCommandArguments:
-    """Decode the JSON command at ingress, including the previous untagged wire form."""
+    """Decode a command at ingress; callers may omit the operation tag."""
     if isinstance(raw, dict):
         raw = {"kind": operation.value, **raw}
-        # Saved answers have one stable identity and their complete chosen value.
-        if "answer" in raw and raw["answer"] is not None:
-            answer = type_adapter(DurableAnswer).validate_python(raw["answer"])
-            raw = {**raw, "answer": answer}
-            if operation is ChildOperation.answer_permission_ask:
-                raw.setdefault("ask_id", answer.ask.ask_id)
-                raw.setdefault("option_id", answer.option_id)
-            elif operation is ChildOperation.answer_user_input:
-                raw.setdefault("request_id", answer.ask.ask_id)
-                raw.setdefault("answers", answer.user_input_answers)
     result: ChildCommandArguments = type_adapter(ChildCommandArguments).validate_python(raw)
     if result.kind != operation.value:
         raise ValueError("command operation conflicts with arguments")
@@ -554,18 +510,6 @@ class Quiescence:
         )
 
 
-class TransactionalWriter(Protocol):
-    def __call__(self, connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-        """Validate original authority and apply effect; never commit or do native I/O.
-
-        Acceptor checks a matching receipt first, verifies order/files, then invokes
-        this writer and inserts the first receipt in this same transaction. A
-        permanent PlannerError is recorded under a savepoint; transient errors roll
-        back without receipt. Async/native effects use their separate command fate.
-        """
-        ...
-
-
 class WireMessageKind(StrEnum):
     hello = "hello"
     hello_accepted = "hello_accepted"
@@ -662,14 +606,6 @@ class LiveReadRequest:
     params: JsonObject
 
 
-class MacOutboxWriter(Protocol):
-    """The runner produces durable output and counts items awaiting a receipt."""
-
-    def add(self, entry: OutboxEntry, *, ticket_id: str | None = None) -> QueuedEnvelope: ...
-
-    def pending_count(self) -> int: ...
-
-
 @dataclass(frozen=True, slots=True)
 class QuiesceRequest:
     """Stop admission and optionally exit once all work has settled."""
@@ -693,27 +629,6 @@ class QuiescenceReceipt:
 
 class FrameReader(Protocol):
     async def readexactly(self, n: int) -> bytes: ...
-
-
-class WebSocketPeer(Protocol):
-    """One bounded executor control WebSocket, without HTTP credentials."""
-
-    @property
-    def closed(self) -> bool: ...
-    async def receive_bytes(self, max_bytes: int) -> bytes: ...
-    async def send_bytes(self, data: bytes) -> None: ...
-    async def aclose(self) -> None: ...
-
-
-class ControlMessageReader(Protocol):
-    async def receive(self) -> WireMessage: ...
-
-
-class ControlMessageWriter(Protocol):
-    async def send(self, message: WireMessage) -> None: ...
-    def close(self) -> None: ...
-    async def wait_closed(self) -> None: ...
-    def is_closing(self) -> bool: ...
 
 
 def payload_child(payload: JsonObject) -> JsonObject | None:
@@ -823,35 +738,3 @@ def as_object(value: object) -> JsonObject:
     if not isinstance(encoded, dict):
         raise ValueError("expected object")
     return encoded
-
-
-class MacRunConversations(Protocol):
-    async def emit_answer(
-        self, turn: TurnToken, emit: Callable[[], Coroutine[Any, Any, None]]
-    ) -> None: ...
-
-    async def interrupt_replaced_executor_runs(self, current_incarnation: str) -> None: ...
-
-    async def stop_interrupted_remote_child(
-        self, reference: ChildReference, child: MacRemoteChild
-    ) -> None: ...
-
-
-class MacInboxConversations(Protocol):
-    async def take_backend_event(
-        self,
-        turn: TurnToken | None,
-        arguments: BackendEventValue,
-        *,
-        in_commit: CommitParticipant,
-        conversation_id: str | None = None,
-    ) -> AcceptedEvent: ...
-
-    async def take_answer_application(
-        self,
-        turn: TurnToken,
-        answer_id: str,
-        provider_id: str,
-        kind: str,
-        in_commit: CommitParticipant,
-    ) -> AcceptedEvent: ...

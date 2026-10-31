@@ -6,12 +6,12 @@ import asyncio
 import struct
 from dataclasses import replace
 from sqlite3 import Connection
-from typing import Any, cast
+from typing import cast
 from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI, Request
-from tests.support.executor_control import MessageReader, message_link
+from tests.support.executor_control import MessageStream, message_link
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import TestClock as ClockForTest
@@ -36,9 +36,9 @@ def _draft_request() -> Request:
     return Request({"type": "http", "app": app})
 
 
-class Writer:
+class Writer(MessageStream):
     def __init__(self) -> None:
-        self.closed = False
+        super().__init__()
         self.writes: list[WireMessage] = []
 
     def is_closing(self) -> bool:
@@ -46,12 +46,6 @@ class Writer:
 
     async def send(self, data: WireMessage) -> None:
         self.writes.append(data)
-
-    async def wait_closed(self) -> None:
-        return None
-
-    def close(self) -> None:
-        self.closed = True
 
 
 def _endpoint(tmp_db: Connection, clock: ClockForTest) -> vps.VpsExecutor:
@@ -73,16 +67,15 @@ def test_refused_valid_frames_advance_contact_and_history_survives_loss(
     monkeypatch.setattr(link_module, "now_ms", lambda: tick[0])
 
     async def run() -> None:
-        reader = MessageReader()
-        reader.feed_data(encode_message(_hello()))
         writer = Writer()
-        task = asyncio.create_task(endpoint.session(reader, cast(Any, writer)))
+        writer.feed_data(encode_message(_hello()))
+        task = asyncio.create_task(endpoint.session(writer))
         while endpoint.runs.link is None:
             await asyncio.sleep(0)
         assert endpoint.health()["last_contact_at_ms"] == 100
         tick[0] = 200
         # A strictly decoded frame counts as contact even when its payload is refused.
-        reader.feed_data(
+        writer.feed_data(
             encode_message(WireMessage(WireMessageKind.refuse_envelope, "refusal", {}))
         )
         async with asyncio.timeout(1):
@@ -90,7 +83,7 @@ def test_refused_valid_frames_advance_contact_and_history_survives_loss(
                 await asyncio.sleep(0)
         assert endpoint.health()["last_contact_at_ms"] == 200
         tick[0] = 300
-        reader.feed_eof()
+        writer.feed_eof()
         await task
         assert endpoint.health()["connection_state"] == "disconnected"
         assert endpoint.health()["last_contact_at_ms"] == 200
@@ -114,10 +107,9 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
 
             tick = [100]
             monkeypatch.setattr(link_module, "now_ms", lambda tick=tick: tick[0])
-            reader = MessageReader()
-            reader.feed_data(encode_message(_hello()))
             writer = Writer()
-            task = asyncio.create_task(endpoint.session(reader, cast(Any, writer)))
+            writer.feed_data(encode_message(_hello()))
+            task = asyncio.create_task(endpoint.session(writer))
             while endpoint.runs.link is None:
                 await asyncio.sleep(0)
             tick[0] = 200
@@ -130,11 +122,11 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
                 endpoint.runs.identity = replace(
                     cast(ExecutorIdentity, endpoint.runs.identity), connection_generation=2
                 )
-                reader.feed_data(encode_message(WireMessage(WireMessageKind.error, "old", {})))
+                writer.feed_data(encode_message(WireMessage(WireMessageKind.error, "old", {})))
                 tick[0] = 300
             else:
                 malformed = b'{"kind":"invented","request_id":"bad","payload":{}}'
-                reader.feed_data(struct.pack("!I", len(malformed)) + malformed)
+                writer.feed_data(struct.pack("!I", len(malformed)) + malformed)
             await task
             assert endpoint.health()["last_contact_at_ms"] == (200 if superseded else 100)
             assert writer.closed

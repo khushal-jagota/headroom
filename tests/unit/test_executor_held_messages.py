@@ -27,7 +27,7 @@ from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
-from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.protocol import (
     AcceptanceReceipt,
     ChildCommand,
@@ -37,7 +37,6 @@ from planner.executor.protocol import (
     CommandOutcome,
     EnvelopeKind,
     JsonObject,
-    OutboxEntry,
     QueuedEnvelope,
     encode_value,
 )

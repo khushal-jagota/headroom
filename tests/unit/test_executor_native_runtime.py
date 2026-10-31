@@ -47,7 +47,7 @@ from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.mac_agent_gateway import AgentGateway
 from planner.executor.mac_connection import MacConnection
-from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.mac_runner import MacRunner
 from planner.executor.mac_service import MacService
 from planner.executor.protocol import (
@@ -63,7 +63,6 @@ from planner.executor.protocol import (
     EnvelopeKind,
     IpcOperation,
     IpcRequest,
-    OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
     StartRun,
@@ -737,7 +736,8 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             ChildOperation.answer_permission_ask,
             turn,
             decode_command_arguments(
-                ChildOperation.answer_permission_ask, {"answer": encode_value(answer)}
+                ChildOperation.answer_permission_ask,
+                {"ask_id": "ask", "option_id": "allow", "answer": encode_value(answer)},
             ),
         )
         with pytest.raises(OSError, match="after callback"):

@@ -14,7 +14,7 @@ import aiohttp
 
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ExecutorIdentity, ProtocolRefused
+from planner.execution_identity import ExecutorIdentity, ProtocolRefused, parse_identity
 from planner.executor.catalog_relay import MacCatalogRelay
 from planner.executor.configuration import (
     RECONNECT_INTERVAL_SECONDS,
@@ -142,7 +142,13 @@ class MacService:
 
     async def _handshake(self, link: Link) -> None:
         self.phase = ConnectionPhase.hello
-        await link.request(WireMessageKind.hello, as_object(self.connection.health()))
+        response = await link.request(WireMessageKind.hello, as_object(self.connection.health()))
+        if (
+            response.kind is not WireMessageKind.hello_accepted
+            or parse_identity(response.payload) != self.identity
+        ):
+            link.close()
+            raise ProtocolRefused("handshake identity changed")
         self.connection.link = link
         self.phase = ConnectionPhase.reconnect_ask
         response = await link.request(

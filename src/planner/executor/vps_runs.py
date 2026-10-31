@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
+from typing import Any, Protocol
 from uuid import uuid4
 
 from planner.conversation.backends.contracts import (
@@ -11,6 +13,7 @@ from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
     DeliveryCancelled,
     RetainedBackendRun,
+    TurnToken,
 )
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
@@ -31,7 +34,6 @@ from planner.executor.protocol import (
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
-    MacRunConversations,
     ReconnectAsk,
     ReconnectResult,
     WireMessageKind,
@@ -44,6 +46,18 @@ from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
 from planner.executor.vps_remote_child import MacRemoteChild
 from planner.executor.worker_identity import ticket_id_of
+
+
+class MacRunConversations(Protocol):
+    async def emit_answer(
+        self, turn: TurnToken, emit: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None: ...
+
+    async def interrupt_replaced_executor_runs(self, current_incarnation: str) -> None: ...
+
+    async def stop_interrupted_remote_child(
+        self, reference: ChildReference, child: MacRemoteChild
+    ) -> None: ...
 
 
 @dataclass
