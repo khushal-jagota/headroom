@@ -1,0 +1,455 @@
+"use client";
+
+import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type PointerEvent, type Ref } from "react";
+import { AnimatePresence, animate, motion, useInView, useMotionValue, useMotionValueEvent, useReducedMotion, useSpring, useTransform, type MotionValue } from "motion/react";
+import { motionTokens } from "../lib/chart-motion";
+import { segmentedCurve, valueAt, morphShape, comparisonAt, type Point } from "../lib/line-geometry";
+import type { MeasureValue } from "../../goals/contracts";
+import styles from "./line-chart.module.css";
+import { ChartInspectionContent } from "./chart-inspection-content";
+
+export interface LineChartSeries {
+  /** Stable identity. A series keeps its line across data changes, so switching ranges morphs the path instead of redrawing it. */
+  key: string;
+  /** Name in the tooltip and the data table. */
+  label: string;
+  /** Any CSS color. Defaults to the accent for the first series, then quieter neutral steps. */
+  color?: string;
+  /** Draws a dashed stroke, useful for a previous period or a target. */
+  dashed?: boolean;
+  compareTo?: string;
+  /** Formula samples supply their server comparison, including neutral unavailable values. */
+  datedComparisons?: boolean;
+  neutralColor?: string;
+  curve?: "smooth" | "linear";
+  higherIsBetter?: boolean;
+  goodColor?: string;
+  badColor?: string;
+  /** Fills the area under the line with a faint tint of its color. Defaults to true for the first series. */
+  area?: boolean;
+}
+
+export interface LineChartDatum {
+  /** Stable identity, such as an ISO date. */
+  key: string;
+  position?: number;
+  /** Full label for the tooltip and screen readers, such as "Tue, Sep 15". */
+  label: string;
+  /** Short label on the x axis, such as "Sep 15". Leave it out to keep the axis quiet at that point. */
+  axisLabel?: string;
+  /** One value per series key. A missing value leaves a gap. */
+  values: Record<string, number | undefined>;
+  breakBefore?: Record<string, boolean>;
+  comparisons?: Record<string, boolean | null>;
+  observation?: MeasureValue;
+  coverage_status?: MeasureValue["coverage_status"];
+  coverage_reasons?: MeasureValue["coverage_reasons"];
+}
+
+/** Use a line chart for one or more measures over time, when the shape of the trend matters more than any single value. */
+export interface LineChartProps {
+  data: LineChartDatum[];
+  series: LineChartSeries[];
+  /** What is measured, such as "Signups". Names the chart for assistive technology. */
+  label: string;
+  /** Unit after each value in the tooltip, such as "ms". */
+  unit?: string;
+  /** Plot height in pixels. The width follows the container. */
+  height?: number;
+  domain?: [number, number];
+  /** Formats values in the tooltip and data table. */
+  formatValue?: (value: number, series: LineChartSeries) => string;
+  /** Formats the value axis. Defaults to a compact number, such as 1.2K. */
+  formatTick?: (value: number) => string;
+  /** Count measures label only whole-number positions. */
+  integerTicks?: boolean;
+  /** Controlled hidden series keys. The chart draws no control of its own for them. */
+  hiddenSeries?: string[];
+  /** Called as the crosshair moves, and with null when it leaves. Use it to drive a headline readout. */
+  /** Commits a selected observation for an editable measurement. */
+  onSelect?: (index: number) => void;
+  onActiveChange?: (index: number | null, datum: LineChartDatum | null) => void;
+  /** Keeps the current lines on screen, dimmed, while the next range loads. */
+  loading?: boolean;
+  /** Shown when there are no points. */
+  emptyLabel?: string;
+  /** Header of the first column in the data table read by screen readers. */
+  categoryLabel?: string;
+  /** Smooth monotone curves that never swing past the data, or straight segments. */
+  curve?: "smooth" | "linear";
+  ref?: Ref<HTMLElement>;
+  className?: string;
+}
+
+type Track = { shape: Point[]; presence: number; fade: { stop: () => void } | null };
+
+const { spring, duration, ease } = motionTokens;
+/** Motion drops inherited velocity on time-defined springs, so values that retarget mid-flight run the same springs written as stiffness and damping. */
+const physical = ({ visualDuration, bounce }: { visualDuration: number; bounce: number }, restDelta = .001) => { const root = (2 * Math.PI) / (visualDuration * 1.2); return { type: "spring" as const, stiffness: root * root, damping: 2 * (1 - bounce) * root, restDelta, restSpeed: restDelta * 2 }; };
+const settle = physical(spring.smooth);
+const glide = physical(spring.snappy, .0001);
+const follow = { stiffness: glide.stiffness, damping: glide.damping, restDelta: .01 };
+const draw = { duration: duration.lineReveal, ease: [...ease.inOut] } as const;
+const fadeFast = { duration: duration.instant, ease: [...ease.standard] } as const;
+
+/** Room above the top gridline, and the gap between the crosshair and its tooltip. */
+const TOP = 12, GAP = 14;
+const PALETTE = ["var(--accent)", "color-mix(in oklab, var(--foreground) 46%, var(--surface))", "color-mix(in oklab, var(--foreground) 26%, var(--surface))"];
+const grouped = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
+const colorOf = (series: LineChartSeries, index: number) => series.color ?? PALETTE[Math.min(index, PALETTE.length - 1)];
+const clean = (value: number) => Number(value.toPrecision(12));
+
+/** Clean gridlines: the smallest step of 1, 2, 2.5, or 5 that covers the data in four rows or fewer, from zero unless the data dips below it. */
+function niceScale(low: number, high: number) {
+  const lo = Math.min(0, low), hi = Math.max(high, lo + 1);
+  const span = hi - lo, magnitude = 10 ** Math.floor(Math.log10(span / 4));
+  for (const factor of [1, 2, 2.5, 5, 10]) {
+    const step = factor * magnitude, bottom = Math.floor(lo / step) * step, top = Math.ceil(hi / step) * step;
+    if ((top - bottom) / step <= 4 + 1e-9) {
+      const ticks: number[] = [];
+      for (let value = bottom; value <= top + step / 2; value += step) ticks.push(clean(value));
+      return { min: clean(bottom), max: clean(top), ticks };
+    }
+  }
+  return { min: lo, max: hi, ticks: [lo, hi] };
+}
+
+/** Tracks are mutable animation state read by the painter, never by render. */
+const update = (track: Track, patch: Partial<Track>) => Object.assign(track, patch);
+
+const grid = Array.from({ length: 241 }, (_, index) => index / 240);
+
+const subscribeNothing = () => () => {};
+/** Reduced motion is only known in the browser, so the first client render matches the server before it takes effect. */
+function useReducedMotionSafe() {
+  const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
+  return !!useReducedMotion() && hydrated;
+}
+
+type Scale = { min: MotionValue<number>; max: MotionValue<number> };
+function useRowY(value: number, scale: Scale, height: number) {
+  return useTransform(() => { const span = scale.max.get() - scale.min.get() || 1; return Math.round(TOP + (1 - (value - scale.min.get()) / span) * (height - TOP)) + .5; });
+}
+
+/** A gridline rides the scale, so a taller range slides it down while new rows fade in above. */
+function Gridline({ value, scale, height }: { value: number; scale: Scale; height: number }) {
+  const y = useRowY(value, scale, height);
+  return <motion.line className={styles.grid} x1={0} x2="100%" y1={y} y2={y} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: fadeFast }} transition={{ duration: duration.standard, ease: [...ease.standard] }} />;
+}
+
+function TickLabel({ value, scale, height, format }: { value: number; scale: Scale; height: number; format: (value: number) => string }) {
+  const y = useRowY(value, scale, height);
+  return <motion.span className={styles.tick} style={{ y }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: fadeFast }} transition={{ duration: duration.standard, ease: [...ease.standard] }}>
+    <span className={styles.tickText}>{format(value)}</span>
+  </motion.span>;
+}
+
+/** Axis labels that fit: at most one per 76 pixels, counted back from the latest so the newest date always shows. */
+function axisPicks(data: LineChartDatum[], width: number) {
+  const labeled = data.flatMap((item, index) => item.axisLabel ? [index] : []);
+  if (!width || !labeled.length) return [];
+  const room = Math.max(2, Math.floor(width / 76));
+  const stride = Math.ceil(labeled.length / room);
+  return labeled.reverse().filter((_, rank) => rank % stride === 0).reverse();
+}
+
+export function LineChart({ data, series, label, unit = "", height = 220, domain, formatValue, formatTick = value => compact.format(value), integerTicks = false, hiddenSeries, onActiveChange, onSelect, loading = false, emptyLabel = "No data for this range", categoryLabel = "Date", curve = "smooth", ref, className }: LineChartProps) {
+  const reduced = useReducedMotionSafe();
+  const figure = useRef<HTMLElement>(null);
+  const plot = useRef<HTMLDivElement>(null);
+  const tip = useRef<HTMLDivElement>(null);
+  const clip = useRef<SVGRectElement>(null);
+  const crosshair = useRef<SVGLineElement>(null);
+  const lines = useRef(new Map<string, SVGPathElement>());
+  const areas = useRef(new Map<string, SVGPathElement>());
+  const dots = useRef(new Map<string, SVGCircleElement>());
+  const groups = useRef(new Map<string, SVGGElement>());
+  useImperativeHandle(ref, () => figure.current as HTMLElement);
+  const inView = useInView(figure, { once: true, amount: .3 });
+  const uid = `line${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const last = data.length - 1;
+  const positions = data.map((item,i)=>item.position ?? (last>0?i/last:.5));
+  const empty = data.length === 0;
+
+  // Hidden series stay a caller's decision. The chart carries no series key of its own.
+  const hidden = hiddenSeries ?? [];
+  const visible = series.filter(item => !hidden.includes(item.key));
+
+  // Each series becomes a dense curve in data units; the scale fits only the series on show.
+  const signature = `${curve}|${series.map(item => `${item.key}:${item.curve}`).join(",")}|${data.map(item => `${item.key}:${item.position??""}:${series.map(line => `${item.values[line.key] ?? NaN}:${!!item.breakBefore?.[line.key]}:${item.comparisons?.[line.key]}`).join(",")}`).join(";")}`;
+  const targets = useMemo(() => new Map(series.map(line => [line.key, segmentedCurve(data.map(item => item.values[line.key] ?? NaN), positions, data.map(item => !!item.breakBefore?.[line.key]), (line.curve ?? curve) === "smooth")])), [signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  let low = Infinity, high = -Infinity;
+  for (const line of visible) for (const item of data) { const value = item.values[line.key] ?? NaN; if (!Number.isFinite(value)) continue; low = Math.min(low, value); high = Math.max(high, value); }
+  const range = domain ? {min:domain[0],max:domain[1],ticks:Array.from({length:5},(_,i)=>clean(domain[0]+(domain[1]-domain[0])*i/4))} : Number.isFinite(low) ? niceScale(low, high) : null;
+  const [steady, setSteady] = useState(() => range ?? niceScale(0, 100));
+  if (range && (range.min !== steady.min || range.max !== steady.max)) setSteady(range);
+  const scale = { min: useMotionValue(steady.min), max: useMotionValue(steady.max) };
+  const ticks = integerTicks ? steady.ticks.filter(Number.isInteger) : steady.ticks;
+
+  // Scrubbing: a new range lets go of the crosshair.
+  // Native edit focus can blur the plot while the mouse still owns inspection.
+  const [inspection, setInspection] = useState<{ source: "mouse" | "keyboard" | "touch"; index: number } | null>(null);
+  const pointerOrigin = useRef<string | null>(null);
+  const active = inspection?.index ?? null;
+  const identities = data.map(item => item.key).join("\u0000");
+  const [seenSignature, setSeenSignature] = useState(identities);
+  if (seenSignature !== identities) { setSeenSignature(identities); setInspection(null); }
+  const index = active === null || empty ? null : Math.min(active, last);
+  const scrubbing = index !== null;
+
+  const width = useRef(0);
+  const [plotWidth, setPlotWidth] = useState(0);
+  const tipSize = useRef({ w: 0, h: 0 });
+  const tracks = useRef(new Map<string, Track>());
+  const drawn = useMotionValue(0);
+  const cursor = useMotionValue(1);
+  const tipTargetX = useMotionValue(0), tipTargetY = useMotionValue(0);
+  const tipSpringX = useSpring(tipTargetX, follow), tipSpringY = useSpring(tipTargetY, follow);
+  const live = useRef({ series, hidden, data, positions, single:data.length===1 });
+  useLayoutEffect(() => { live.current = { series, hidden, data, positions, single:data.length===1 }; });
+
+  // One writer for every drawn attribute: morphs, toggles, the scale, the crosshair, and the measured size all repaint through here.
+  const paint = useCallback(() => {
+    const w = width.current;
+    if (!w) return;
+    const lo = scale.min.get(), span = scale.max.get() - lo || 1;
+    const toY = (value: number) => TOP + (1 - (value - lo) / span) * (height - TOP);
+    const at = cursor.get();
+    const dotYs: number[] = [];
+    for (const line of live.current.series) {
+      const track = tracks.current.get(line.key);
+      if (!track) continue;
+      const p = track.presence;
+      const y = (value: number) => toY(lo + (value - lo) * p);
+      const runs: Point[][] = []; let run: Point[] = [];
+      for (const point of track.shape) { if (Number.isFinite(point[1])) run.push(point); else if (run.length) {runs.push(run);run=[];} }
+      if (run.length) runs.push(run);
+      const runPath = (points: Point[]) => `M${points.map(([x,value])=>`${(x*w).toFixed(1)},${y(value).toFixed(1)}`).join('L')}${points.length===1?`l.01,0`:''}`;
+      const path = runs.map(runPath).join('');
+      const element = lines.current.get(line.key);
+      element?.setAttribute("d",live.current.single&&!line.dashed?"":path);
+      areas.current.get(line.key)?.setAttribute("d", live.current.single?"":runs.map(points=>`${runPath(points)}L${points.at(-1)![0]*w},${height}L${points[0]![0]*w},${height}Z`).join(''));
+      const comparisonSamples: Array<[number, boolean | null]> = line.datedComparisons ? live.current.data.map((item, index) => [live.current.positions[index], item.comparisons?.[line.key] ?? null]) : [];
+      const datedColor = (x: number) => {
+        const comparison = comparisonAt(comparisonSamples, x);
+        return comparison === null ? line.neutralColor ?? line.color ?? PALETTE[0] : comparison ? line.goodColor ?? '#7fa564' : line.badColor ?? '#d85d5d';
+      };
+      if (line.datedComparisons) {
+        const gradient = figure.current?.querySelector(`[id="${uid}-${line.key}-tone"]`);
+        if (gradient) {
+          gradient.innerHTML = live.current.data.map((_, index) => `<stop offset="${live.current.positions[index] * 100}%" stop-color="${datedColor(live.current.positions[index])}"/>`).join('');
+          if (element) element.style.stroke = `url(#${uid}-${line.key}-tone)`;
+        }
+      } else if (line.compareTo) {
+        const comparison = tracks.current.get(line.compareTo);
+        const gradient = figure.current?.querySelector(`[id="${uid}-${line.key}-tone"]`);
+        if (comparison && gradient) {
+          const stops = track.shape.filter(([,v])=>Number.isFinite(v)).map(([x,v])=>{const ref=valueAt(comparison.shape,x);const good=line.higherIsBetter===false?v<=ref:v>=ref;return `<stop offset="${x*100}%" stop-color="${good?line.goodColor??'#7fa564':line.badColor??'#d85d5d'}"/>`}).join('');
+          gradient.innerHTML=stops;
+          if(element)element.style.stroke=`url(#${uid}-${line.key}-tone)`;
+        }
+      }
+      const group = groups.current.get(line.key);
+      if (group) group.style.opacity = String(p);
+      const dot = dots.current.get(line.key);
+      if (dot && track.shape.length) {
+        const cy = y(valueAt(track.shape, at));
+        dot.style.display = Number.isFinite(cy) ? '' : 'none';
+        if (!Number.isFinite(cy)) continue;
+        if (line.datedComparisons) dot.style.fill = datedColor(at);
+        else if (line.compareTo) {
+          const other=tracks.current.get(line.compareTo);const value=valueAt(track.shape,at),target=other?valueAt(other.shape,at):NaN;
+          const good=line.higherIsBetter===false?value<=target:value>=target;
+          dot.style.fill=good?line.goodColor??'#7fa564':line.badColor??'#d85d5d';
+        }
+        dot.style.opacity=live.current.single&&!line.dashed?"1":"";
+        dot.setAttribute("cx", ((live.current.single?.5:at) * w).toFixed(1));
+        dot.setAttribute("cy", cy.toFixed(1));
+        if (p > .5) dotYs.push(cy);
+      }
+    }
+    clip.current?.setAttribute("width", String(drawn.get() * (w + 16)));
+    const cx = Math.round(at * w) + .5;
+    crosshair.current?.setAttribute("x1", String(cx));
+    crosshair.current?.setAttribute("x2", String(cx));
+    // The tooltip sits beside the crosshair, flips sides before it would leave the plot, and centres on the points it describes.
+    const { w: tw, h: th } = tipSize.current;
+    let x = cx + GAP;
+    if (x + tw > w) x = cx - GAP - tw;
+    tipTargetX.set(clamp(x, 0, Math.max(0, w - tw)));
+    const middle = dotYs.length ? dotYs.reduce((sum, value) => sum + value, 0) / dotYs.length : height / 2;
+    tipTargetY.set(clamp(middle - th / 2, 0, Math.max(0, height - th)));
+  }, [cursor, drawn, height, scale.max, scale.min, tipTargetX, tipTargetY]);
+  useMotionValueEvent(cursor, "change", paint);
+  useMotionValueEvent(drawn, "change", paint);
+  useMotionValueEvent(scale.min, "change", paint);
+  useMotionValueEvent(scale.max, "change", paint);
+  useLayoutEffect(paint);
+
+  // The plot draws in its own pixels: measure the width, follow resizes, and size the tooltip for its flip.
+  useLayoutEffect(() => {
+    const node = plot.current, bubble = tip.current;
+    if (!node) return;
+    const read = () => { width.current = node.clientWidth; setPlotWidth(node.clientWidth); if (bubble) tipSize.current = { w: bubble.offsetWidth, h: bubble.offsetHeight }; paint(); };
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(read);
+    observer.observe(node);
+    if (bubble) observer.observe(bubble);
+    return () => observer.disconnect();
+  }, [paint]);
+
+  // New data morphs every line from the shape on screen, sampled on shared x positions so a range that gains or loses points still flows.
+  const morph = useRef<{ stop: () => void } | null>(null);
+  useEffect(() => {
+    const moves: { track: Track; xs: number[]; from: Point[]; target: Point[] }[] = [];
+    for (const [key, target] of targets) {
+      const track = tracks.current.get(key);
+      if (!track) { tracks.current.set(key, { shape: target, presence: live.current.hidden.includes(key) ? 0 : 1, fade: null }); continue; }
+      if (!track.shape.length || !target.length || reduced) { update(track, { shape: target }); continue; }
+      const xs = [...new Set([...grid, ...target.map(([x]) => x)])].sort((a, b) => a - b);
+      moves.push({ track, xs, from: track.shape, target });
+    }
+    morph.current?.stop();
+    if (!moves.length) { paint(); return; }
+    morph.current = animate(0, 1, { ...settle, restDelta: .0005, onUpdate: progress => { for (const move of moves) update(move.track, { shape: morphShape(move.from, move.target, move.xs, progress) }); paint(); }, onComplete: () => { for (const move of moves) update(move.track, { shape: move.target }); paint(); } });
+    return () => morph.current?.stop();
+  }, [paint, reduced, targets]);
+
+  // A hidden series flattens into the baseline as it fades; the ones that stay rescale around it.
+  const hiddenKey = hidden.join("|");
+  useEffect(() => {
+    for (const [key, track] of tracks.current) {
+      const to = hidden.includes(key) ? 0 : 1;
+      if (track.presence === to) continue;
+      track.fade?.stop();
+      if (reduced) { update(track, { presence: to }); continue; }
+      update(track, { fade: animate(track.presence, to, { ...settle, onUpdate: value => { update(track, { presence: value }); paint(); } }) });
+    }
+    paint();
+  }, [hiddenKey, paint, reduced]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (reduced) { scale.min.jump(steady.min); scale.max.jump(steady.max); return; }
+    const controls = [animate(scale.min, steady.min, settle), animate(scale.max, steady.max, settle)];
+    return () => controls.forEach(control => control.stop());
+  }, [reduced, scale.max, scale.min, steady]);
+
+  // The lines draw left to right the first time the chart is seen with data.
+  useEffect(() => {
+    if (empty) return;
+    if (reduced) { drawn.jump(1); return; }
+    if (!inView || drawn.get() >= 1) return;
+    const controls = animate(drawn, 1, draw);
+    return () => controls.stop();
+  }, [drawn, empty, inView, reduced]);
+
+  // The crosshair appears on the first scrubbed point and glides between the ones after it; the tooltip follows on its own spring.
+  const wasScrubbing = useRef(false);
+  useEffect(() => {
+    if (index === null) { wasScrubbing.current = false; return; }
+    const to = positions[index] ?? .5;
+    if (reduced || !wasScrubbing.current) { cursor.jump(to); tipSpringX.jump(tipTargetX.get()); tipSpringY.jump(tipTargetY.get()); }
+    wasScrubbing.current = true;
+    if (reduced) return;
+    const controls = animate(cursor, to, glide);
+    return () => controls.stop();
+  }, [cursor, index, last, reduced, tipSpringX, tipSpringY, tipTargetX, tipTargetY]);
+
+  const onActive = useRef(onActiveChange);
+  useLayoutEffect(() => { onActive.current = onActiveChange; });
+  useEffect(() => { onActive.current?.(index, index === null ? null : data[index] ?? null); }, [index]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pointAt = (clientX: number) => {
+    const rect = plot.current?.getBoundingClientRect();
+    if (!rect?.width || last < 1) return Math.max(0, last);
+    const at=clamp((clientX-rect.left)/rect.width,0,1);return positions.reduce((best,x,i)=>Math.abs(x-at)<Math.abs(positions[best]-at)?i:best,0);
+  };
+  const inspect = (source: "mouse" | "keyboard" | "touch", index: number) => {
+    setInspection(current => current?.source === source && current.index === index ? current : { source, index });
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    pointerOrigin.current = null;
+    if ((event.key === "Enter" || event.key === " ") && onSelect && !empty) { event.preventDefault(); onSelect(index ?? last); return; }
+    if (event.key === "Escape" && scrubbing) { event.preventDefault(); setInspection(null); return; }
+    const from = index ?? last + 1, page = Math.max(1, Math.round(data.length / 6));
+    const next = ({ ArrowLeft: from - 1, ArrowDown: from - 1, ArrowRight: index === null ? last : from + 1, ArrowUp: index === null ? last : from + 1, PageDown: from - page, PageUp: from + page, Home: 0, End: last } as Record<string, number>)[event.key];
+    if (next === undefined || empty) return;
+    event.preventDefault();
+    inspect("keyboard", clamp(next, 0, last));
+  };
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    pointerOrigin.current = event.pointerType;
+    if (empty || event.pointerType === "mouse") return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    inspect("touch", pointAt(event.clientX));
+  };
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!empty && (event.pointerType === "mouse" || event.buttons)) {
+      inspect(event.pointerType === "mouse" ? "mouse" : "touch", pointAt(event.clientX));
+    }
+  };
+
+  const format = (value: number, line: LineChartSeries) => !Number.isFinite(value) ? "No reading" : `${formatValue ? formatValue(value, line) : grouped.format(value)}${unit ? ` ${unit}` : ""}`;
+  const reading = index === null ? null : data[index];
+  const valueText = reading ? `${reading.label}: ${visible.map(line => `${line.label} ${format(reading.values[line.key] ?? NaN, line)}`).join(", ")}` : empty ? emptyLabel : `${visible.length} of ${series.length} series shown`;
+  const summary = empty ? `${label}. ${emptyLabel}.` : `${label}, ${data[0]!.label} to ${data[last]!.label}. ${visible.map(line => `${line.label}, latest ${format(data[last]!.values[line.key] ?? NaN, line)}`).join(". ")}.`;
+  const picks = axisPicks(data, plotWidth);
+  const allHidden = !empty && visible.length === 0;
+  const tipX = reduced ? tipTargetX : tipSpringX, tipY = reduced ? tipTargetY : tipSpringY;
+
+  return <figure ref={figure} className={[styles.figure, className].filter(Boolean).join(" ")} aria-label={label} aria-busy={loading || undefined}>
+    <div className={styles.chart} data-scrubbing={scrubbing || undefined} data-loading={loading || undefined}>
+      <div ref={plot} className={styles.plot} style={{ height }} role="slider" tabIndex={empty ? -1 : 0} aria-label={`${label}, explore by ${categoryLabel.toLowerCase()}`} aria-orientation="horizontal" aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={(index ?? last) + 1} aria-valuetext={valueText}
+        onClick={event => { if (!empty) onSelect?.(pointAt(event.clientX)); }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={event => { if (event.pointerType !== "mouse") setInspection(current => current?.source === "touch" ? null : current); }} onPointerCancel={event => { if (event.pointerType !== "mouse") setInspection(current => current?.source === "touch" ? null : current); }} onPointerLeave={event => { if (event.pointerType === "mouse") setInspection(current => current?.source === "mouse" ? null : current); }} onKeyDown={onKeyDown}
+        onBlur={() => { pointerOrigin.current = null; setInspection(current => current?.source === "mouse" ? current : null); }}
+        onFocus={event => { if (pointerOrigin.current === null && event.currentTarget.matches(":focus-visible") && !empty) setInspection(current => current ?? { source: "keyboard", index: last }); }}>
+        <svg className={styles.svg} width="100%" height={height} aria-hidden="true" focusable="false">
+          <defs>{series.filter(line=>line.compareTo || line.datedComparisons).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} gradientUnits="userSpaceOnUse" x1="0%" x2="100%" y1="0%" y2="0%"/>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>
+          <AnimatePresence initial={false}>{ticks.slice(1).map(value => <Gridline key={value} value={value} scale={scale} height={height} />)}</AnimatePresence>
+          <line className={styles.baseline} x1={0} x2="100%" y1={height - .5} y2={height - .5} />
+          <line ref={crosshair} className={styles.crosshair} y1={TOP - 4} y2={height} />
+          <g className={styles.series} clipPath={`url(#${uid}-draw)`}>
+            {series.map((line, at) => <g key={line.key} ref={node => { if (node) groups.current.set(line.key, node); else groups.current.delete(line.key); }} style={{ "--series": colorOf(line, at) } as CSSProperties}>
+              {(line.area ?? at === 0) && <path ref={node => { if (node) areas.current.set(line.key, node); else areas.current.delete(line.key); }} className={styles.area} />}
+              <path ref={node => { if (node) lines.current.set(line.key, node); else lines.current.delete(line.key); }} data-line={line.key} className={styles.line} data-dashed={line.dashed || undefined} />
+            </g>)}
+          </g>
+          {series.map((line, at) => <circle key={line.key} ref={node => { if (node) dots.current.set(line.key, node); else dots.current.delete(line.key); }} data-dot={line.key} className={styles.dot} r={4} data-hidden={hidden.includes(line.key) || undefined} style={{ "--series": colorOf(line, at) } as CSSProperties} />)}
+        </svg>
+        <motion.div ref={tip} data-chart-tooltip className={styles.tooltip} style={{ x: tipX, y: tipY }} aria-hidden="true">
+          <ChartInspectionContent label={(reading ?? data[last])?.label ?? ""} rows={visible.map(line => ({
+            key: line.key, label: line.label, color: colorOf(line, series.indexOf(line)), dashed: line.dashed,
+            value: format((reading ?? data[last])?.values[line.key] ?? NaN, line),
+          }))} />
+        </motion.div>
+        <AnimatePresence initial={false}>
+          {(empty || allHidden) && !loading && <motion.p key={empty ? "empty" : "hidden"} className={styles.message} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: fadeFast }}>{empty ? emptyLabel : "Choose a series to show"}</motion.p>}
+          {loading && empty && <motion.span key="skeleton" className={styles.skeleton} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: fadeFast }} aria-hidden="true" />}
+        </AnimatePresence>
+      </div>
+      <div className={styles.gutter} aria-hidden="true">
+        {/* The widest tick, in flow and invisible, gives the column its width. The labels
+            themselves are placed against the scale, so none of them can measure it. */}
+        <span className={styles.gutterWidth}>{ticks.map(value => <b key={value}>{formatTick(value)}</b>)}</span>
+        <AnimatePresence initial={false}>{ticks.map(value => <TickLabel key={value} value={value} scale={scale} height={height} format={formatTick} />)}</AnimatePresence>
+      </div>
+      <div className={styles.axis} aria-hidden="true">
+        <AnimatePresence initial={false}>
+          {picks.map(at => { const share = positions[at] ?? .5; return <motion.span key={`${data[at]!.key}:${data[at]!.axisLabel}`} className={styles.axisLabel} style={{ left: `${share * 100}%`, translateX: `${-share * 100}%` }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: fadeFast }} transition={{ duration: duration.standard, ease: [...ease.standard] }}>{data[at]!.axisLabel}</motion.span>; })}
+        </AnimatePresence>
+      </div>
+    </div>
+    <p className={styles.srOnly}>{summary}</p>
+    {!empty && <div className={styles.srOnly}><table>
+      <caption>{label}</caption>
+      <thead><tr><th scope="col">{categoryLabel}</th>{series.map(line => <th key={line.key} scope="col">{line.label}</th>)}</tr></thead>
+      <tbody>{data.map(item => <tr key={item.key}><th scope="row">{item.label}</th>{series.map(line => <td key={line.key}>{format(item.values[line.key] ?? NaN, line)}</td>)}</tr>)}</tbody>
+    </table></div>}
+    <p className={styles.srOnly} aria-live="polite" aria-atomic="true">{loading ? "Loading" : ""}</p>
+  </figure>;
+}
+
+export default LineChart;

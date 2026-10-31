@@ -40,7 +40,7 @@ def test_actual_local_send_retains_exact_ownership_after_possible_write(
 ) -> None:
     service, _, path = setup(tmp_path)
     harness = _Harness(path)
-    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda conn: tmp_path)
     original = _FakeBackendChild.write_prompt
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -148,7 +148,7 @@ def test_provider_events_and_held_messages_keep_their_original_turn(
 
     _, _, path = setup(tmp_path)
     harness = _Harness(path)
-    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda conn: tmp_path)
     original = _FakeBackendChild.write_prompt
     attempted_tokens: list[str | None] = []
 

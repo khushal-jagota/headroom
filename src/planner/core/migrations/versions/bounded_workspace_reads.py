@@ -7,7 +7,7 @@ from alembic import op
 
 from planner.navigation.views.schema import prepare as prepare_navigation
 from planner.resource_versions.data import install_source_triggers
-from planner.resource_versions.registry import SOURCE_TRIGGERS
+from planner.resource_versions.registry import BOUNDED_WORKSPACE_SOURCES
 from planner.tickets.workspace.schema import prepare as prepare_ticket_fields
 
 revision = "bounded_workspace_reads"
@@ -22,7 +22,7 @@ def upgrade() -> None:
         source_kind TEXT NOT NULL, source_id TEXT NOT NULL, revision INTEGER NOT NULL,
         PRIMARY KEY(source_kind,source_id)
     )""")
-    install_source_triggers(conn, SOURCE_TRIGGERS)
+    install_source_triggers(conn, BOUNDED_WORKSPACE_SOURCES)
     prepare_ticket_fields(conn)
     prepare_navigation(conn)
     conn.execute("""CREATE INDEX conversation_owner_message_latest

@@ -210,6 +210,7 @@ def _require_unassociated_send_conversation(
         "chief",
         "manager",
         "sprint_item_supervisor",
+        "goal",
     }:
         raise HTTPException(
             status_code=409,

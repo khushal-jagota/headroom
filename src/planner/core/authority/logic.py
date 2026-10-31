@@ -62,6 +62,8 @@ def is_self(caller: Principal, target: Target, facts: ChainFacts) -> bool:
         return False
     if caller.kind is PrincipalKind.ticket:
         return target.kind is TargetKind.ticket and caller.id == target.id
+    if caller.kind is PrincipalKind.goal:
+        return target.kind is TargetKind.goal and caller.id == target.id
     if caller.kind is PrincipalKind.manager:
         return target.kind is TargetKind.manager and caller.id == target.id
     return False

@@ -212,9 +212,14 @@ def test_hosted_owner_strips_both_manager_identity_generations(tmp_path: Path) -
     app, _db_path = _make_app(tmp_path)
 
     @app.get("/identity-boundary-proof")
-    def identity_boundary(request: Request) -> dict[str, str]:
-        principal = request_context(request).principal
-        return {"kind": principal.kind.value, "id": principal.id}
+    def identity_boundary(request: Request) -> dict[str, str | None]:
+        context = request_context(request)
+        principal = context.principal
+        return {
+            "kind": principal.kind.value,
+            "id": principal.id,
+            "conversation_id": context.conversation_id,
+        }
 
     with TestClient(app) as client:
         response = client.get(
@@ -222,11 +227,12 @@ def test_hosted_owner_strips_both_manager_identity_generations(tmp_path: Path) -
             headers={
                 **REMOTE,
                 "X-Plan-Actor": "manager",
+                "X-Plan-Conversation-ID": "spoofed_employee_origin",
                 "X-Plan-Manager-ID": "si_one",
                 "X-Plan-Sprint-Item-ID": "si_other",
             },
         )
-    assert response.json() == {"kind": "owner", "id": "owner"}
+    assert response.json() == {"kind": "owner", "id": "owner", "conversation_id": None}
 
 
 def test_native_routes_require_hosted_identity_and_reject_browser_origin() -> None:

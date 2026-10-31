@@ -96,7 +96,7 @@ def test_claude_stop_result_controls_canonical_retirement(
         remote.runs.store.begin_connection(IDENTITY)
         remote.runs.store.mark_ready(IDENTITY)
         registry, clients = claude_registry(tmp_path, monkeypatch)
-        monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+        monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda conn: tmp_path)
         ticket = tickets.create_ticket(
             tmp_db,
             title="Claude cleanup",

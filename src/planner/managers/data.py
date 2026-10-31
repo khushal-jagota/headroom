@@ -250,6 +250,17 @@ def update_manager(
 
 def _require_manager_can_delete(conn: sqlite3.Connection, item_id: str) -> Manager:
     item = _load_manager(conn, item_id)
+    if (
+        conn.execute(
+            "SELECT 1 FROM measure_sources WHERE responsible_kind='manager' "
+            "AND responsible_manager_id=? LIMIT 1",
+            (item_id,),
+        ).fetchone()
+        is not None
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "Manager is responsible for measure sources; reassign them first"
+        )
     ticket_ids = [
         str(row["id"])
         for row in conn.execute(

@@ -12,6 +12,9 @@ Ordinary help shows the roots a person or a Manager uses:
 - `project` reads and edits the catalog.
 - `ticket` reads and edits Tickets, including backlog, resume, assignment, locale moves, proposal accept and revise, delete, and restart-worker.
 - `manager` reads and edits Managers, including goal, recap, and, for the owner, settlement.
+- `goal` reads and edits saved goal pages through revision-checked writes. See [Goals](goals.md).
+- `measure`, `dataset`, and `measure-source` read and maintain project measurements and their sources. See [Project measures](measures.md).
+- `credential` lists descriptive names and requests reusable keys without secret values.
 
 Workers use a separate `worker` group that ordinary help hides: show my Ticket, file a proposal, set a recap, request help. Those commands read the Worker identity from the environment. Proposal bodies come from stdin. A Worker can file. A Worker cannot accept. Acceptance is `ticket proposal` for a principal who stands above the Ticket.
 
@@ -32,6 +35,28 @@ A Worker’s `propose` feeds the proposal resolver. `send-message` feeds a conve
 ## Where it shows up
 
 Workers see the CLI as the tool inside their skill. Khushal sees it for creation, repair, and host operations the browser does not offer, including delete and the maintenance commands. The browser remains the place Review, the rail, and the conversation pane live.
+
+## API key requests
+
+`panels credential list` returns reusable descriptive names and metadata without secret values. Credential lookup does not require source Project/account. A unique saved name can serve another source directly.
+
+An employee requests a bearer or named-header key beside its work:
+
+```sh
+panels credential request --request-id REQUEST_UUID \
+  --name Panels_posthog_production --provider PostHog \
+  --use 'Read production usage' --auth-kind bearer \
+  --help-text 'Use a personal API key with access to this project.' \
+  --help-url https://posthog.com/docs/api --json
+```
+
+Reuse the same UUID and metadata after a lost command response. A conflicting replay fails. For header authentication, use `--auth-kind header --header-name X-Api-Key`. For replacement, add both `--replace-id CREDENTIAL_ID` and `--expected-revision REVISION`, with the existing name. `--help` shows command usage.
+
+The server derives the exact destination from the employee principal and its reserved conversation identity. There is no destination option. A retired conversation cannot redirect a request into its replacement. An older live child without the identity needs its ordinary restart or resume.
+
+The command carries no secret. The owner enters the value in the inline card. Save or Reject resolves the request separately from result delivery. A queued result remains held. Only proven refusal offers a metadata-only delivery retry. Unknown backend writes and lost queues remain uncertain.
+
+Multiple legacy matches report ambiguity with metadata candidates. The owner can correct a selected name through `panels credential rename CREDENTIAL_ID --name UNIQUE_NAME --expected-revision REVISION`. This preserves its saved value and increments its revision. Update affected source references before the next run.
 
 ## Pointers
 

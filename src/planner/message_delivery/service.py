@@ -59,6 +59,8 @@ def sender_label(ctx: RequestContext) -> str:
         return "owner"
     if ctx.principal.kind is PrincipalKind.chief:
         return "Chief"
+    if ctx.principal.kind is PrincipalKind.goal:
+        return f"Goal {ctx.principal.id}"
     if ctx.principal.kind is PrincipalKind.ticket:
         return f"Ticket {ctx.principal.id}"
     return f"Manager {ctx.principal.id}"
@@ -75,6 +77,11 @@ def _prompt_mode(mode: MessageDeliveryMode | PromptDeliveryMode) -> PromptDelive
 
 
 def _sender_conversation_id(conn: sqlite3.Connection, sender: Principal) -> str | None:
+    if sender.kind is PrincipalKind.goal:
+        from planner.goals.data import read_goal
+
+        read_goal(conn, sender.id)
+        return conversation_start.read_agent_conversation(conn, "goal_" + sender.id)
     if sender.kind is PrincipalKind.ticket:
         return tickets_data.read_ticket(conn, sender.id).conversation_id
     if sender.kind is PrincipalKind.chief:
@@ -86,6 +93,8 @@ def _sender_conversation_id(conn: sqlite3.Connection, sender: Principal) -> str 
 
 
 def _sender_conversation_link_key(conn: sqlite3.Connection, sender: Principal) -> str:
+    if sender.kind is PrincipalKind.goal:
+        return f"agent:goal_{sender.id}"
     if sender.kind is PrincipalKind.ticket:
         return f"ticket:{sender.id}"
     if sender.kind is PrincipalKind.chief:
@@ -102,6 +111,8 @@ def _as_target(principal: Principal) -> authority.Target | None:
     Khushal and the Chief are above everything, so nothing is above them and they are no
     target. A message addressed to either asks no authority question.
     """
+    if principal.kind is PrincipalKind.goal:
+        return authority.goal(principal.id)
     if principal.kind is PrincipalKind.ticket:
         return authority.ticket(principal.id)
     if principal.kind is PrincipalKind.manager:
@@ -301,6 +312,27 @@ async def send_message(
                     reply_requested=not system_message and expects_reply and not is_reply,
                     native_message_operation=native_message_operation,
                 )
+        elif recipient.kind is PrincipalKind.goal:
+            from planner.goals.conversation import deliver_goal_message
+
+            delivered = await deliver_goal_message(
+                conversations,
+                conn,
+                clock,
+                ctx,
+                recipient,
+                content,
+                prompt_mode,
+                conversation_id=conversation_id,
+                created_conversation_id=created_conversation_id,
+                runs_under=runs_under,
+                sender_label=label,
+                sender=sender,
+                owner_read_through_sequence=owner_read_through_sequence,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                reply_requested=not system_message and expects_reply and not is_reply,
+            )
         elif recipient.kind is PrincipalKind.manager:
             item_id = recipient.id
             async with managers_service.manager_lifecycle_lock(item_id):
@@ -316,9 +348,9 @@ async def send_message(
                         if prior is not None:
                             return prior
                     resolved = (
-                        conversation_start.manager_resolve(item)
+                        conversation_start.manager_resolve(conn, item)
                         if runs_under is NO_CONVERSATION_START_OVERRIDES
-                        else conversation_start.manager_resolve(item, runs_under)
+                        else conversation_start.manager_resolve(conn, item, runs_under)
                     )
                     delivered = await conversation_start.send_to_agent_conversation(
                         conversations,

@@ -4,7 +4,7 @@ export const VIEW_PROJECTION_VERSION = 4;
 
 export type ConversationViewLens = "focus" | "full";
 
-export type ViewRowKind = "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "explicit_reply_missing" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "turn_ended" | "turn_stopped";
+export type ViewRowKind = "credential_request" | "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "explicit_reply_missing" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "turn_ended" | "turn_stopped";
 
 export type AskDeadReason = "turn_ended" | "no_ending_recorded";
 
@@ -62,7 +62,7 @@ export interface AgentMessageRowBody {
   to_owner: boolean;
 }
 
-export type PrincipalKind = "owner" | "chief" | "manager" | "ticket";
+export type PrincipalKind = "owner" | "chief" | "manager" | "goal" | "ticket";
 
 export interface Principal {
   kind: PrincipalKind;
@@ -162,7 +162,51 @@ export interface MarkerRowBody {
   kind: "context_compacted" | "turn_stopped";
 }
 
-export type ViewRowBody = PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | MissingReplyRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody;
+export interface RequestReplacement {
+  credential_id: string;
+  name: string;
+  revision: number;
+}
+
+export type CredentialScheme = "local";
+
+export interface CredentialReferenceBody {
+  scheme: CredentialScheme;
+  name: string;
+}
+
+export interface RequestCredential {
+  id: string;
+  reference: CredentialReferenceBody;
+  auth_kind: "bearer" | "header";
+  revision: number;
+}
+
+export type RequestDeliveryStatus = "pending" | "started" | "queued" | "injected" | "refused" | "uncertain" | "canceled";
+
+export interface RequestDelivery {
+  attempt_id: string;
+  status: RequestDeliveryStatus;
+  refusal_reason: string | null;
+}
+
+export interface CredentialRequestRowBody {
+  kind: "credential_request";
+  request_id: string;
+  name: string;
+  provider: string;
+  use: string;
+  auth_kind: "bearer" | "header";
+  header_name: string | null;
+  help: string | null;
+  help_url: string | null;
+  replacement: RequestReplacement | null;
+  state: "pending" | "saved" | "replaced" | "rejected" | "reused";
+  credential: RequestCredential | null;
+  delivery: RequestDelivery | null;
+}
+
+export type ViewRowBody = CredentialRequestRowBody | PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | MissingReplyRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody;
 
 export interface ViewBodyReference {
   body_id: string;

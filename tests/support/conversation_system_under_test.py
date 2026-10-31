@@ -671,7 +671,7 @@ def _recorded_fact(event: StoredConversationEvent) -> RecordedFact | None:
 
 @asynccontextmanager
 async def open_conversation_system_under_test(
-    *, clock: Callable[[], float] | None = None
+    *, clock: Callable[[], float] | None = None, database_path: Path | None = None
 ) -> AsyncIterator[ConversationSystemUnderTest]:
     """A real system on a temporary database, with every backend key on a scripted agent.
 
@@ -682,7 +682,7 @@ async def open_conversation_system_under_test(
     """
     working_directory = Path(tempfile.mkdtemp(prefix="panels-conv2-"))
     socket_directory = Path(tempfile.mkdtemp(prefix="pc2-"))
-    database_path = working_directory / "conversations.db"
+    database_path = database_path or working_directory / "conversations.db"
     connection = connect(str(database_path), 5000)
     try:
         create_schema(connection)

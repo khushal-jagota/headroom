@@ -6,7 +6,7 @@ The standing principle list is [`DESIGN.md`](../DESIGN.md). The values those pri
 
 ## One accent, one meaning
 
-The accent is the soft steel `--accent-bright`. It means a person is needed: a pending approval, a required action, the selected row. It is not a brand decoration, and it stays out of ordinary agent prose. If it is everywhere, it says nothing. The one strongly raised surface is the approval control, with a top highlight and a long shadow. Nothing else on a page is elevated that way. A pure white dot is reserved for a Worker waiting on a permission ask, so “only you can answer this” reads before any label does.
+The accent is the soft steel `--accent-bright`. It means a person is needed: a pending approval, a required action, and the enabled Send control in the composer. It is not a brand decoration, and it stays out of ordinary agent prose. If it is everywhere, it says nothing. A selected row is a sunken `--surface-2`, not the accent. The one strongly raised surface is the approval control, with a top highlight and a long shadow. Nothing else on a page is elevated that way. A pure white dot is reserved for a Worker waiting on a permission ask, so “only you can answer this” reads before any label does.
 
 Settled state is quiet. An errored stage can use the error color. Done can use the small green mark. Those are status, not the accent.
 
@@ -36,6 +36,14 @@ Fade replaces dividers. A scrolling thread dissolves into the bars above and bel
 Token edits retune the whole app. Component edits in the kit retune every screen that uses them. The Ticket stage spine, Review’s approval card, the Workspace rail’s selected row, and the conversation pane are the places the rules are easiest to see and easiest to break. A new screen that introduces a second accent, a border around every card, or an explanation of an obvious control has left the system.
 
 Copy uses employee, ceiling, and holder. The Worker is an employee taking the task. The ceiling is the grant. The holder is who a parked proposal is addressed to.
+
+## Goal pages and managed files
+
+Goal pages use the shared page kit for checklists, charts, tables, layouts, and text. They are dashboards for the user. Explicit display choices control what the page shows. See [Goals](goals.md).
+
+Manager and goal artifacts use sibling roots. Manager files retain `files/sprint-items/<manager_id>/` and `/files/managers/` links. Goal files use `files/goals/<goal_id>/` and `/files/goals/` links. Their routes support reads, text writes, and deletion through the existing owner, Chief, or own-agent authority. Both use safe paths, symlink checks, media types, and `nosniff`.
+
+Goal workspaces use the shared Artifacts catalog and preview frame. Completion, deactivation, and conversation reset preserve the files. Managed file previews retain authored context and artifact links.
 
 ## Pointers
 

@@ -606,6 +606,45 @@ class SqliteProcessConversationSystem:
             require_idle=require_idle,
         )
 
+    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            operation()
+            return True
+        if state.lock.locked():
+            return False
+        async with state.lock:
+            if (
+                state.phase is not _ConversationPhase.idle
+                or state.reserved_turn is not None
+                or state.running_turn is not None
+                or state.held_prompts
+                or state.admitted_sender_messages
+                or state.sender_messages_being_delivered
+                or state.steer_settlements
+                or any(not task.done() for task in state.settlement_tasks)
+            ):
+                return False
+            operation()
+            return True
+
+    async def record_events_transaction[T](
+        self,
+        conversation_id: str,
+        operation: Callable[[sqlite3.Connection], tuple[T, tuple[ConversationEventPayload, ...]]],
+    ) -> T:
+        """Serialize a domain write with the canonical event transaction and publication."""
+        with self.workspace_admission.operation() as admitted:
+            if not admitted:
+                raise RuntimeError("Workspace admission is closed for an owner update.")
+            state = await self._conversation_state(conversation_id)
+            if state is None:
+                raise ValueError("conversation is absent")
+            async with state.lock:
+                result, written = await self._store.transact_events(conversation_id, operation)
+                self._take_in_written_rows(state, written)
+                return result
+
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation. Writing its row is the first thing that happens.
 
@@ -4578,12 +4617,12 @@ class SqliteProcessConversationSystem:
                 recipient=payload.recipient,
                 recovery_references=payload.recovery_references,
             )
-        stored = await self._persist(
+        written = await self._persist(
             state,
             partial(
-                self._store.append_event,
+                self._store.append_events,
                 state.record.conversation_id,
-                payload,
+                (payload,),
                 native_message_operation=native_message_operation,
                 native_message_admission=native_message_admission,
                 lifecycle=lifecycle,
@@ -4595,12 +4634,12 @@ class SqliteProcessConversationSystem:
         )
         self._note_written(
             state,
-            (stored,),
+            written,
             agent_activity=agent_activity,
             compaction_confirmed=automatic_compaction_confirmed,
             owner_read_through_sequence=owner_read_through_sequence,
         )
-        return stored
+        return written[0]
 
     def _note_written(
         self,

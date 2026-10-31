@@ -41,8 +41,9 @@ def main() -> None:
         PLAN_SERVER_CONTROL_SOCKET=str(storage / "control.sock"),
         PLAN_BACKUP_DIR=str(storage / "backups"),
     )
-    from planner.conversation.contracts import ConversationBackendKey
     from planner.conversation.usage.localUsageLimits import LocalUsageLimits
+
+    from planner.conversation.contracts import ConversationBackendKey
     from planner.conversation.usage.UsageService import UsageService
     from planner.core.clock import RealClock
     from planner.core.config import load_config

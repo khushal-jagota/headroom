@@ -15,10 +15,14 @@ from urllib.parse import urlsplit
 
 from planner.core.authctx import (
     PLAN_ACTOR_SCOPE_KEY,
+    PLAN_CONVERSATION_ID_SCOPE_KEY,
+    PLAN_GOAL_ID_SCOPE_KEY,
     PLAN_MANAGER_ID_SCOPE_KEY,
     PLAN_SPRINT_ITEM_ID_SCOPE_KEY,
     PLAN_TICKET_ID_SCOPE_KEY,
     X_PLAN_ACTOR,
+    X_PLAN_CONVERSATION_ID,
+    X_PLAN_GOAL_ID,
     X_PLAN_MANAGER_ID,
     X_PLAN_SPRINT_ITEM_ID,
     X_PLAN_TICKET_ID,
@@ -103,7 +107,11 @@ class TrustedIngressMiddleware:
                 if str(scope.get("path", "")).startswith("/api/updates"):
                     await self.app(scope, receive, send)
                     return
+                scope = _without_header(scope, X_PLAN_CONVERSATION_ID)
+                scope[PLAN_CONVERSATION_ID_SCOPE_KEY] = None
                 scope = _without_header(scope, X_PLAN_ACTOR)
+                scope = _without_header(scope, X_PLAN_GOAL_ID)
+                scope[PLAN_GOAL_ID_SCOPE_KEY] = None
                 scope = _without_header(scope, X_PLAN_TICKET_ID)
                 scope = _without_header(scope, X_PLAN_MANAGER_ID)
                 scope = _without_header(scope, X_PLAN_SPRINT_ITEM_ID)

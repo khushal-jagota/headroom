@@ -100,6 +100,7 @@ def run(browser, urls):
             # Versioned reads arrive wrapped. The screen only needs the body.
             key = parse_qs(parts.query).get("key", [""])[0]
             inner = {
+                "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
                 "/api/feedback/count": {"open_count": 0},
@@ -114,7 +115,9 @@ def run(browser, urls):
         if path == "/api/updates":
             route.fulfill(json={"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None})
             return
-        if path == "/api/workers":
+        if path == "/api/goals":
+            result = {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400}
+        elif path == "/api/workers":
             result = {"workers": workers, "chief_of_staff": {"employee_id": "chief", "label": "Chief", "skill": skill, "launch_defaults": launch}}
         elif path == "/api/skills":
             result = {"skills": [skill]}
@@ -1105,6 +1108,7 @@ def verify_conversation_overlay(browser, url):
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
+            "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "The document keeps its full height beneath the conversation.", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
             "/api/tickets/t_overlay0/workspace": detail,
@@ -1541,6 +1545,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
+            "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "Owner updates", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
             "/api/worker-types?supported=true": {"worker_types": []},

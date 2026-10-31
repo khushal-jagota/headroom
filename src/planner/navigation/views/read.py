@@ -53,7 +53,7 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
             item is None
             or isinstance(item, dict)
             and set(item) == {"kind", "id"}
-            and item["kind"] in ("chief", "manager", "ticket")
+            and item["kind"] in ("chief", "manager", "ticket", "goal")
             and isinstance(item["id"], str)
             and 0 < len(item["id"]) <= 256
             and (item["kind"] != "chief" or item["id"] == "chief")
@@ -127,7 +127,10 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
             window["owner"] is None or window["owner"]["kind"] not in ("chief", "manager")
         ):
             raise ValueError("window requires a parent")
-        if section in ("rail_parents", "settled", "review") and window["owner"] is not None:
+        if (
+            section in ("rail_parents", "settled", "review", "goals")
+            and window["owner"] is not None
+        ):
             raise ValueError("global window has no parent")
         if (
             section not in ("children", "rail_tickets")
@@ -276,7 +279,7 @@ def read_content(
                     "durable": raw["attention"]["durable"],
                 }
             found[item] = row
-            if item[0] in ("ticket", "manager", "chief"):
+            if item[0] in ("ticket", "manager", "chief", "goal"):
                 if raw["conversation_id"]:
                     pending.append((("conversation", raw["conversation_id"]), True))
                 if raw.get("project_id") and (item[0] != "manager" or full):

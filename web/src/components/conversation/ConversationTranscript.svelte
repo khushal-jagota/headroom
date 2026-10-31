@@ -6,6 +6,7 @@
    * end and disappears the moment its finished row lands.
    */
   import MarkdownBlock from "../MarkdownBlock.svelte";
+  import ConversationCredentialRequestCard from './ConversationCredentialRequestCard.svelte';
   import { MessageExits } from "../../lib/conversation/messageExits";
   import ViewItem from "./view/ViewItem.svelte";
   import UserMessage from "./UserMessage.svelte";
@@ -200,6 +201,8 @@
       <article class="chat-a c2-streaming" data-conversation-row="streaming">
         <MarkdownBlock text={item.row.text} />
       </article>
+    {:else if item.row.kind === 'credential_request'}
+      <ConversationCredentialRequestCard request={item.row.request} />
     {:else if item.row.kind === "permission_ask"}
       {@const detail = readableConversationDetail(item.row.detail)}
       <div

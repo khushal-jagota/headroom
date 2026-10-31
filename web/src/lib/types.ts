@@ -180,7 +180,7 @@ export type PendingTicketProposal = {
 };
 
 export type Principal = {
-  kind: "owner" | "chief" | "manager" | "ticket";
+  kind: "owner" | "chief" | "manager" | "ticket" | "goal";
   id: string;
 };
 
@@ -484,7 +484,7 @@ export type NotificationSettingsResponse = {
 export type WorkspaceMessageConversation = {
   locale?: import("./ticketMachines").TicketLocale;
   conversationSignal?: Partial<ConversationSignal>;
-  kind: "chief" | "manager" | "ticket";
+  kind: "chief" | "manager" | "ticket" | "goal";
   id: string;
   title: string;
   conversationId: string;

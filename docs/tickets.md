@@ -8,7 +8,7 @@ Each non-terminal stage has exactly one blank. Filling that blank, and having th
 
 Brief holds intake: the original wording, the boundaries, and the advice that should stay readable beside the later stages. The title is ordinary metadata, not part of the Brief proposal. After Brief is settled, editing the title stays a metadata edit. Editing Brief text uses the ordinary field path.
 
-The Ticket also stores the backend, model, and reasoning its conversation should start with. Creation copies the Worker type’s three starting values. The Brief section shows those controls only while Brief is still pristine and no conversation exists yet. Hermes has a model and no reasoning control. Codex and Claude Code show the reasoning values their selected model supports.
+The Ticket also stores the backend, model, and reasoning its next conversation should start with. Creation copies the Worker type’s three starting values. Those controls stay editable while the Ticket has no conversation and the worker-step claim is not out. That covers a new Ticket, and it covers a Ticket whose conversation was reset, on whatever stage it is in. Naming a conversation, or taking the claim, freezes them. Hermes has a model and no reasoning control. Codex and Claude Code show the reasoning values their selected model supports.
 
 There is no retirement state. Done is the end. Historical text for a field the Worker type no longer declares stays in storage. Reads and search show declared fields. New proposals must use declared fields.
 

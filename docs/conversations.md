@@ -121,7 +121,7 @@ One video, MP4, MOV, or WebM, up to 250 MiB, can be attached. The upload can fin
 
 A deploy can kill a running session. After the new runtime is admitted, eligible conversations receive one recovery prompt through the ordinary send path. Nothing is replayed. A queued recovery does not count as resumed. Only a started turn whose prompt actually contains the notice does. If its write may have crossed the wire but the acknowledgment is lost, the notebook records one uncertain row with the recovery reference. Recovery becomes unable to resume; the reservation and child remain fenced, and Panels does not retry. See [Deployment](deployment.md).
 
-## Three conversations, one contract
+## Conversations share one contract
 
 | | Ticket | Chief | Manager |
 | --- | --- | --- | --- |
@@ -129,6 +129,8 @@ A deploy can kill a running session. After the new runtime is admitted, eligible
 | What starts it | The Ticket’s launch setup | Chief’s managed settings | The Manager’s launch defaults, plus a saved goal when one was set |
 | What automation sends | The readiness opener, in queue mode | Recovery, and a recap when requested | Goal on create, wakes, recovery |
 | What is unique | The worker-step claim is tied to the send fate | Always live for Review’s closing reply | Wakes are batched into this conversation |
+
+Each goal also keeps its own agent and conversation under the same contract. The goal page and its managed files remain separate from the conversation record. See [Goals](goals.md).
 
 Unread dots and working marks are per conversation. A child Ticket’s dot is not the Manager’s dot.
 
@@ -152,9 +154,47 @@ A failed turn on a Ticket, when the ceiling holder is an agent, records a wake f
 
 ## Where it shows up
 
-The conversation dock on a Ticket, Chief, and a Manager is the same pane. Focus shows the human-relevant thread: owner prompts, messages to the owner, asks, answers, failures, stops. Full shows the notebook, including tools and live agent text. The composer carries the model and effort in force, Steer, Queue, Send now, Stop, and New. `f` toggles Focus and Full when focus is not in a text control.
+The conversation dock on a Ticket, Chief, a Manager, and a goal is the same pane. Focus shows the human-relevant thread: owner prompts, messages to the owner, asks, answers, failures, stops. Full shows the notebook, including tools and live agent text. The composer carries the model and effort in force, Steer, Queue, Send now, Stop, and New. `f` toggles Focus and Full when focus is not in a text control.
 
 The human’s message is a contained pill. The agent’s message is bare prose. That split is deliberate. See [Design](design.md).
+
+## The workspace for an agent
+
+Each server can select a default workspace through `workspace_root` in its configuration
+or `PLAN_WORKSPACE_ROOT`. The environment value takes precedence. The path must name an
+existing absolute directory after `~` expansion. An absent value or YAML null keeps the
+usual default: `~/projects` when that directory exists, otherwise the application root.
+Invalid explicit values stop startup.
+
+An explicit conversation workspace takes precedence. A Worker's usable Project directory
+also takes precedence over the server default. Chief, goals, Managers, and Workers without
+a usable Project directory share the default for their server's database.
+
+A conversation keeps its original workspace through resume and server restart. A new
+configuration affects new conversations. Reset the agent's conversation to use the new
+workspace on its next message. The retained history and artifacts remain available.
+
+For an explicit workspace, startup exposes this database's managed skills through
+`.agents/skills`. Codex discovers those skills from its workspace. Existing backend skill
+homes keep their current behavior. See [deployment](running-locally.md#an-isolated-server-with-an-explicit-workspace)
+for setup and path conflicts.
+
+Code paths: `core/config.py`, `runtime/workspaces.py`, `runtime/conversation_start.py`,
+`goals/conversation.py`, `skill_sources.py`, `core/server.py`.
+
+## API key requests
+
+An employee can create a typed credential request in its exact current conversation. Its reserved `PLAN_CONVERSATION_ID` value travels through the existing CLI identity headers. The server checks the principal, stored conversation identity, and current association. Hosted owner ingress clears this agent claim. A retired process cannot route a request into a new conversation.
+
+The request and its outcomes are metadata-only conversation events. One inline card remains visible in Focus and Full through turn completion and refresh. Provider help is optional. The owner submits the secret through the private credential path. Ordinary question answers, chat content, browser storage, and delivery prompts never contain the value.
+
+Save or replacement, the terminal request outcome, and initial delivery intent share one transaction. Reject resolves the request without a credential change. Repeated or concurrent submission returns the one resolved result. A stale replacement requires review of the current revision and fresh input.
+
+Result delivery then uses the ordinary conversation send path without a reply obligation. Its prompt names the request, outcome, and actual credential reference. The card shows queued, refused, or uncertain delivery independently of Saved, Replaced, or Rejected. Later queue receipts update the original card. A provider receipt does not itself prove that the model read the result.
+
+Only proven non-admission permits explicit metadata-only retry. The public compatibility refusal for `write_to_backend_failed` remains uncertain for credential results. Lost intent or a lost held item also remains uncertain unless an exact receipt proves a later outcome. These results receive no automatic resend. Retry never repeats the credential write.
+
+New starts and lazy resumes add the reserved conversation identity to their existing role environment. Historical role text and principal identities remain intact. Retention accepts historical identities and checks that a new embedded identity matches its containing conversation. Credential requests add no provider callback or new working flag.
 
 ## Pointers
 

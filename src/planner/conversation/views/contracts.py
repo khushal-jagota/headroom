@@ -22,12 +22,14 @@ from planner.conversation.events import (
     UserInputQuestion,
 )
 from planner.core.contracts import Principal
+from planner.credentials.requests.contracts import CredentialRequestRowBody
 
 VIEW_PROTOCOL_VERSION = 1
 VIEW_PROJECTION_VERSION = 4
 
 type ConversationViewLens = Literal["focus", "full"]
 type ViewRowKind = Literal[
+    "credential_request",
     "prompt",
     "prompt_refused",
     "prompt_uncertain",
@@ -163,7 +165,8 @@ class MarkerRowBody(TypedDict):
 
 
 type ViewRowBody = (
-    PromptRowBody
+    CredentialRequestRowBody
+    | PromptRowBody
     | RefusedPromptRowBody
     | UndeliveredPromptRowBody
     | AgentMessageRowBody

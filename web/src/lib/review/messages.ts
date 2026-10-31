@@ -15,7 +15,7 @@ export function reviewMessageHref(item: ReviewMessageItem): string {
 }
 export function reviewReplyEndpoint(item: ReviewMessageItem): string {
   return item.owner_kind === 'chief' ? '/api/chief/conversation/send'
-    : `/api/${item.owner_kind === 'ticket' ? 'tickets' : 'managers'}/${encodeURIComponent(item.owner_id)}/conversation/send`;
+    : `/api/${item.owner_kind === 'ticket' ? 'tickets' : item.owner_kind === 'goal' ? 'goals' : 'managers'}/${encodeURIComponent(item.owner_id)}/conversation/send`;
 }
 export async function reviewReplyReceipt(conversationId: string, id: string) {
   const query = new URLSearchParams({lens:'full',message_ids:JSON.stringify([id])});

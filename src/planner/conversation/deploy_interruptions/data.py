@@ -409,12 +409,18 @@ def _owner_blocker(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
         ).fetchone()
         if ticket is None or ticket[0] != conversation_id:
             return "the Ticket conversation link changed"
-    elif kind in ("chief", "manager"):
+    elif kind in ("chief", "manager", "goal"):
         from planner.core.errors import PlannerError
         from planner.managers.data import manager_agent_key
 
         try:
-            key = "chief_of_staff" if kind == "chief" else manager_agent_key(str(owner_id), conn)
+            key = (
+                "chief_of_staff"
+                if kind == "chief"
+                else "goal_" + str(owner_id)
+                if kind == "goal"
+                else manager_agent_key(str(owner_id), conn)
+            )
         except PlannerError:
             return "the Manager conversation identity conflicts"
         agent = conn.execute(
