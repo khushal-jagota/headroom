@@ -2193,21 +2193,7 @@ class SqliteProcessConversationSystem:
     async def _send_now(
         self,
         state: _ConversationState,
-        content: MessageContent,
-        sender_label: str,
-        model_change: str | None,
-        reasoning_effort_change: str | None,
-        sender_message_id: str | None,
-        sent_at_unix_milliseconds: int | None,
-        sender: Principal | None,
-        recipient: Principal | None,
-        reply_requested: bool,
-        recovery_references: tuple[DeploymentRecoveryReference, ...],
-        owner_read_through_sequence: int | None,
-        acknowledge_owner_on_failure: bool = True,
-        *,
-        reasoning_effort_is_set: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
+        message: _Message,
     ) -> PromptDeliveryFate:
         automatic_reservation: _ReservedTurn | None = None
         held_fate: PromptDeliveryQueued | None = None
@@ -2218,41 +2204,9 @@ class SqliteProcessConversationSystem:
                 if state.child_is_quarantined or any(
                     held.delivery_uncertain for held in state.held_prompts
                 ):
-                    return self._hold_prompt(
-                        state,
-                        content=content,
-                        sender_label=sender_label,
-                        model_change=model_change,
-                        reasoning_effort_change=reasoning_effort_change,
-                        sender_message_id=sender_message_id,
-                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                        sender=sender,
-                        recipient=recipient,
-                        reply_requested=reply_requested,
-                        recovery_references=recovery_references,
-                        owner_read_through_sequence=owner_read_through_sequence,
-                        acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                        reasoning_effort_is_set=reasoning_effort_is_set,
-                        native_message_operation=native_message_operation,
-                    )
+                    return self._hold_prompt(state=state, message=message)
                 if running is not None and running.automatic_compaction:
-                    return self._hold_prompt(
-                        state,
-                        content=content,
-                        sender_label=sender_label,
-                        model_change=model_change,
-                        reasoning_effort_change=reasoning_effort_change,
-                        sender_message_id=sender_message_id,
-                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                        sender=sender,
-                        recipient=recipient,
-                        reply_requested=reply_requested,
-                        recovery_references=recovery_references,
-                        owner_read_through_sequence=owner_read_through_sequence,
-                        acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                        reasoning_effort_is_set=reasoning_effort_is_set,
-                        native_message_operation=native_message_operation,
-                    )
+                    return self._hold_prompt(state=state, message=message)
                 if running is not None:
                     try:
                         await self._cancel_and_end_running_turn(state, running)
@@ -2263,23 +2217,7 @@ class SqliteProcessConversationSystem:
                         self._settle_phase(state)
                         raise
                 if self._automatic_compaction_is_due(state):
-                    held_fate = self._hold_prompt(
-                        state,
-                        content=content,
-                        sender_label=sender_label,
-                        model_change=model_change,
-                        reasoning_effort_change=reasoning_effort_change,
-                        sender_message_id=sender_message_id,
-                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                        sender=sender,
-                        recipient=recipient,
-                        reply_requested=reply_requested,
-                        recovery_references=recovery_references,
-                        owner_read_through_sequence=owner_read_through_sequence,
-                        acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                        reasoning_effort_is_set=reasoning_effort_is_set,
-                        native_message_operation=native_message_operation,
-                    )
+                    held_fate = self._hold_prompt(state=state, message=message)
                     automatic_reservation = await self._reserve_turn(
                         state, automatic_compaction=True
                     )
@@ -2302,23 +2240,7 @@ class SqliteProcessConversationSystem:
             return held_fate
 
         return await self._deliver_and_finalize(
-            state,
-            reservation,
-            content=content,
-            sender_label=sender_label,
-            mode=PromptDeliveryMode.send_now,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
-            recovery_references=recovery_references,
-            owner_read_through_sequence=owner_read_through_sequence,
-            acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-            reasoning_effort_is_set=reasoning_effort_is_set,
-            native_message_operation=native_message_operation,
+            state=state, reservation=reservation, mode=PromptDeliveryMode.send_now, message=message
         )
 
     async def _steer(
