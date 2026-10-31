@@ -16,9 +16,11 @@ lives in ``tests/support/conversation_claude_agent_sdk_bench.py``.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from uuid import UUID
 
 import pytest
 from anyio.abc import Process
@@ -46,7 +48,7 @@ from planner.conversation.backends.contracts import (
     SessionLoadFailed,
     TurnToken,
 )
-from planner.conversation.contracts import PromptDeliveryMode
+from planner.conversation.contracts import ConversationRoleMaterials, PromptDeliveryMode
 from planner.conversation.events import ConversationTurnEnding
 from planner.conversation.message_content import text_message_content
 
@@ -59,10 +61,26 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
     """
 
     async def exercise() -> None:
-        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(
-            _start_request(workspace_folder=tmp_path), vendor_session_cursor=SESSION_ID
+        start = _start_request(
+            workspace_folder=tmp_path,
+            reasoning_effort="medium",
+            role_materials=ConversationRoleMaterials("Worker", (("PLAN_ACTOR", "worker"),)),
         )
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        options = clients[0].options
+        assert options.settings is not None
+        assert json.loads(options.settings) == {"disableAllHooks": True}
+        assert options.setting_sources is None
+        assert options.cwd == str(tmp_path)
+        assert options.cli_path == Path("/usr/bin/claude")
+        assert options.model == start.model
+        assert options.effort == "medium"
+        assert options.env == {"PLAN_ACTOR": "worker"}
+        assert options.permission_mode == "bypassPermissions"
+        assert options.can_use_tool is not None
+        assert options.resume == SESSION_ID
+        assert options.session_id is None
         await _write(child)
         clients[0].say(_assistant(TextBlock(text="hi"), session_id=ANOTHER_SESSION_ID))
         await clients[0].until_taken_in()
@@ -85,9 +103,27 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
-        start = _start_request(workspace_folder=tmp_path)
+        start = _start_request(
+            workspace_folder=tmp_path,
+            reasoning_effort="medium",
+            role_materials=ConversationRoleMaterials("Worker", (("PLAN_ACTOR", "worker"),)),
+        )
         child, _sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=None)
+        options = clients[0].options
+        assert options.settings is not None
+        assert json.loads(options.settings) == {"disableAllHooks": True}
+        assert options.setting_sources is None
+        assert options.cwd == str(tmp_path)
+        assert options.cli_path == Path("/usr/bin/claude")
+        assert options.model == start.model
+        assert options.effort == "medium"
+        assert options.env == {"PLAN_ACTOR": "worker"}
+        assert options.permission_mode == "bypassPermissions"
+        assert options.can_use_tool is not None
+        assert options.resume is None
+        assert options.session_id is not None
+        assert UUID(options.session_id).version == 4
         content = text_message_content("Review the manager wake.")
         await child.write_prompt(
             TurnToken(conversation_id="c-claude-1", turn_number=1),

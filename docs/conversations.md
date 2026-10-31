@@ -4,6 +4,13 @@ A conversation is one agent, working in one folder, and the permanent notebook o
 
 The conversation id belongs to its caller. A Ticket stores its own. Chief stores its own. A Manager stores its own. The backend process’s session id is internal. It can be rebound without anything outside the conversation system noticing, and it is never the identity a screen or a command uses.
 
+Panels supplies `disableAllHooks: true` for fresh and resumed Claude conversation starts.
+Ordinary configured hooks do not run, so these sessions lose their injected context and
+side effects, including events beyond SessionStart and applicable statusLine behavior.
+Managed-policy hooks remain protected. Internal callbacks can remain.
+Ordinary settings, credentials, permissions, and configuration sources retain their existing behavior.
+Claude use outside Panels retains its normal configuration. This option carries no universal speed guarantee.
+
 ## Why the notebook exists
 
 Only text that was sent into the agent is context the model can use on a later turn. The notebook is the append-only record of finished facts: a delivered prompt, a completed agent message, a tool call, a permission ask and its answer, a model change, a turn ending, an addressed message to the owner, a refusal, a discard. A row is written once.
