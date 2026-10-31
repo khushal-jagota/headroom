@@ -23,13 +23,14 @@ from planner.executor.files import (
     install_verified,
     safe_component,
 )
-from planner.executor.link_files import settled_io
+from planner.executor.link_files import GenerationTransfers, settled_io
 from planner.executor.protocol import (
     AcceptanceReceipt,
     AnswerApplication,
     BackendEvent,
     CommandOutcome,
     EnvelopeKind,
+    EnvelopeRefusal,
     FileManifest,
     FileScope,
     FileUploadRequest,
@@ -40,6 +41,7 @@ from planner.executor.protocol import (
     TransactionalWriter,
     as_object,
     decode_event_arguments,
+    envelope_child,
     envelope_payload_digest,
     payload_child,
     type_adapter,
@@ -321,6 +323,41 @@ class MacInbox:
                 identity,
             )
             return receipt
+
+    async def refuse_item(
+        self,
+        rejected: EnvelopeRefusal,
+        identity: ExecutorIdentity,
+        request_id: str,
+        transfers: GenerationTransfers,
+    ) -> AcceptanceReceipt:
+        envelope = rejected.envelope
+        child = type_adapter(ChildReference).validate_python(envelope_child(envelope.payload))
+        if child.executor_incarnation != identity.executor_incarnation or (
+            child.conversation_id != envelope.conversation_id
+        ):
+            raise ValueError("upload refusal belongs to another child")
+
+        def authorize() -> None:
+            principal = self.runs.authority(child)
+            for manifest in envelope.file_dependencies:
+                self.store.file_target(manifest)
+                if principal.kind is not PrincipalKind.ticket or principal.id != manifest.owner_id:
+                    raise ValueError("upload refusal belongs to another Ticket")
+
+        await settled_io(authorize)
+        # The request identifies this reservation, not another conversation's bytes.
+        for transfer_id, (reserved_request_id, upload) in tuple(transfers.uploads.items()):
+            if reserved_request_id == request_id:
+                if upload.child != child or upload.manifest not in envelope.file_dependencies:
+                    raise ValueError("upload refusal does not belong to this item")
+                transfers.uploads.pop(transfer_id)
+                transfers.release(transfer_id)
+        lock = self._conversation_locks.setdefault(envelope.conversation_id, asyncio.Lock())
+        async with lock:
+            return await self._record_refusal(
+                envelope, identity, PlannerError(ErrorCode.validation, rejected.error_message)
+            )
 
     async def _accept_envelope(
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity

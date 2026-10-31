@@ -64,48 +64,36 @@ def _hello() -> WireMessage:
     return WireMessage(WireMessageKind.hello, "hello", cast(JsonObject, encode_value(health)))
 
 
-def test_contact_is_receipt_not_handshake_and_retains_history_after_loss(
+def test_refused_valid_frames_advance_contact_and_history_survives_loss(
     tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint = _endpoint(tmp_db, fake_clock)
     assert endpoint.health()["last_contact_at_ms"] is None
-    assert endpoint.health()["last_contact_source"] == "vps_received_valid_executor_frame"
     tick = [100]
-    monkeypatch.setattr(vps, "now_ms", lambda tick=tick: tick[0])
     monkeypatch.setattr(link_module, "now_ms", lambda: tick[0])
-    handled = asyncio.Event()
-
-    async def send(message: WireMessage) -> None:
-        del message
-
-    async def probe() -> None:
-        return None
-
-    async def handle(message: WireMessage, identity: ExecutorIdentity, writer: object) -> None:
-        assert endpoint.last_contact_at_ms == 200
-        await vps.VpsExecutor._handle(endpoint, message, identity, cast(Any, writer))
-        handled.set()
-
-    monkeypatch.setattr(endpoint, "_handle", handle)
 
     async def run() -> None:
         reader = MessageReader()
         reader.feed_data(encode_message(_hello()))
-        task = asyncio.create_task(endpoint.session(reader, cast(Any, Writer())))
+        writer = Writer()
+        task = asyncio.create_task(endpoint.session(reader, cast(Any, writer)))
         while endpoint.runs.link is None:
             await asyncio.sleep(0)
-        assert endpoint.observed_at_ms == endpoint.last_contact_at_ms == 100
+        assert endpoint.health()["last_contact_at_ms"] == 100
         tick[0] = 200
-        # A valid frame establishes contact before its domain handler executes.
-        reader.feed_data(encode_message(WireMessage(WireMessageKind.error, "refusal", {})))
-        await asyncio.wait_for(handled.wait(), 1)
-        assert endpoint.observed_at_ms == 100
+        # A strictly decoded frame counts as contact even when its payload is refused.
+        reader.feed_data(
+            encode_message(WireMessage(WireMessageKind.refuse_envelope, "refusal", {}))
+        )
+        async with asyncio.timeout(1):
+            while not any(message.kind is WireMessageKind.error for message in writer.writes):
+                await asyncio.sleep(0)
+        assert endpoint.health()["last_contact_at_ms"] == 200
         tick[0] = 300
         reader.feed_eof()
         await task
         assert endpoint.health()["connection_state"] == "disconnected"
         assert endpoint.health()["last_contact_at_ms"] == 200
-        assert endpoint.lost_at_ms == 300
         assert _endpoint(tmp_db, fake_clock).health()["last_contact_at_ms"] is None
 
     asyncio.run(run())
@@ -125,7 +113,6 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
             endpoint = _endpoint(tmp_db, fake_clock)
 
             tick = [100]
-            monkeypatch.setattr(vps, "now_ms", lambda tick=tick: tick[0])
             monkeypatch.setattr(link_module, "now_ms", lambda tick=tick: tick[0])
             reader = MessageReader()
             reader.feed_data(encode_message(_hello()))

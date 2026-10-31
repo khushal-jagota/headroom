@@ -39,4 +39,4 @@ def test_executor_health_uses_configured_id_without_a_mode_flag(
         assert health.status_code == 200
         assert health.json()["mode"] == ("local" if executor_id is None else "remote")
         assert health.json()["connection_state"] == "disconnected"
-        assert health.json()["reconciliation_ready"] is False
+        assert health.json()["last_contact_at_ms"] is None
