@@ -242,7 +242,13 @@ are hashed again at the next check, catching same-size changes within one clock
 tick. Changed files are read once, hashed while copied, and flushed into immutable
 content-addressed blobs. Captures of one Ticket take turns. The queued item, its
 file references and the updated index commit together after the bytes are durable.
-Deleted files are not sent.
+Deleted files are not sent. Entries that are not ordinary files, have unsafe
+names, cannot be read, or change during the read are skipped with a warning.
+They are tried again at the next capture. An unreadable directory is skipped
+the same way. A file reaches the VPS only after a stable, readable capture;
+one skipped entry does not prevent the worker's messages or Panels writes.
+Failures to save captured bytes or queued output still block stop proof.
+Tool details are limited to 65,536 characters before they are saved or sent.
 
 The sender asks the VPS to accept the original item. The VPS replies with any
 missing files; the Mac uploads those blobs with `put_file` and sends the same

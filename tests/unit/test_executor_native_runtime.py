@@ -36,6 +36,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
     WorkspacePathPolicy,
 )
+from planner.conversation.events import ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
@@ -47,6 +48,7 @@ from planner.conversation.model_resolution.contracts import (
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import ExecutorPaths
+from planner.executor.mac_agent_gateway import AgentGateway
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
 from planner.executor.mac_service import MacService
@@ -69,6 +71,7 @@ from planner.executor.protocol import (
     QuiesceRequest,
     ReceiptDisposition,
     StartRun,
+    StopRun,
     as_object,
     decode_command_arguments,
     encode_value,
@@ -264,6 +267,144 @@ def acknowledge_pending(spool: MacOutbox) -> None:
                 1,
             )
         )
+
+
+@pytest.mark.parametrize(
+    "trigger",
+    [
+        "symlink",
+        "fifo",
+        "percent_name",
+        "backslash_name",
+        "vanished",
+        "permission",
+        "changing",
+        "detail",
+    ],
+)
+def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    trigger: str,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        assert isinstance(start.arguments, StartRun)
+        resolved = replace(
+            start.arguments.resolved_start,
+            role_materials=ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "t_one"),)),
+        )
+        start = replace(
+            start,
+            arguments=replace(
+                start.arguments,
+                resolved_start=resolved,
+                admission_expectation=_fixture_admission(registry, start.child, resolved),
+            ),
+        )
+        assert (await registry.run(start)).disposition is CommandDisposition.succeeded
+        assert native.sink is not None
+        folder = ExecutorPaths(spool.root.parent).artifacts / "t_one"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "good.txt").write_text("good")
+        bad = folder / "bad"
+        if trigger == "symlink":
+            bad.symlink_to(folder / "good.txt")
+        elif trigger == "fifo":
+            os.mkfifo(bad)
+        elif trigger in ("percent_name", "backslash_name"):
+            bad = folder / ("a%2Eb" if trigger == "percent_name" else "a\\b")
+            bad.write_text("skip")
+        elif trigger in ("vanished", "permission"):
+            bad.write_text("vanish")
+            original_open = os.open
+
+            def vanish(
+                path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                if path == "bad":
+                    if trigger == "permission":
+                        raise PermissionError("source unreadable")
+                    bad.unlink(missing_ok=True)
+                return original_open(path, flags, mode, dir_fd=dir_fd)
+
+            monkeypatch.setattr(os, "open", vanish)
+        elif trigger == "changing":
+            bad.write_text("changing")
+            inode = bad.stat().st_ino
+            original_read = os.read
+
+            def append(descriptor: int, count: int) -> bytes:
+                block = original_read(descriptor, count)
+                if block and os.fstat(descriptor).st_ino == inode:
+                    with bad.open("ab") as file:
+                        file.write(b"more")
+                    # Change once per capture, so the read still reaches EOF.
+                    monkeypatch.setattr(os, "read", original_read)
+                return block
+
+            monkeypatch.setattr(os, "read", append)
+        detail = "x" * (1024 * 1024 + 1) if trigger == "detail" else "ordinary detail"
+        await native.sink.tool_call_finished(
+            TurnToken("turn", 1),
+            tool_call_id="tool",
+            tool_call_status=ToolCallStatus.completed,
+            detail=detail,
+        )
+        events = [row for row in spool.pending() if row.kind is EnvelopeKind.backend_event]
+        assert len(events) == 1
+        assert as_object(events[0].payload["arguments"])["detail"] == (
+            "x" * 65536 if trigger == "detail" else detail
+        )
+        assert [file.relative_path for file in events[0].file_dependencies] == ["good.txt"]
+        if trigger != "detail":
+            assert "Skipping" in caplog.text and bad.name in caplog.text
+
+        async def settle_catalogs() -> None:
+            pass
+
+        gateway = AgentGateway(
+            runner=registry,
+            outbox=spool,
+            identity=lambda: ExecutorIdentity(
+                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, registry.incarnation, 1
+            ),
+            settle_catalogs=settle_catalogs,
+        )
+        child = registry._children[start.child.child_id]
+        response = await gateway.handle(
+            IpcRequest(
+                "write",
+                IpcOperation.write,
+                child.reference.child_id,
+                child.capability,
+                {
+                    "operation": "ticket.edit",
+                    "arguments": {"ticket_id": "t_one", "body": {"recap": "ok"}},
+                },
+                time.monotonic() + 0.1,
+            )
+        )
+        assert response.queued is not None and response.queued.disposition == "queued"
+        published = spool.lookup("write")
+        assert published is not None
+        if trigger == "changing":
+            assert [file.relative_path for file in published.envelope.file_dependencies] == [
+                "bad",
+                "good.txt",
+            ]
+        stopped = await registry.run(
+            ChildCommand("stop", start.child, ChildOperation.stop, None, StopRun())
+        )
+        assert stopped.disposition is CommandDisposition.succeeded
+        assert any(row.kind is EnvelopeKind.child_stopped for row in spool.pending())
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("boundary", ["incarnation", "quiescence"])

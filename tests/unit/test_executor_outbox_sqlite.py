@@ -8,7 +8,9 @@ provider, browser or extra connected host is needed to prove these boundaries.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -54,6 +56,37 @@ def receipt(
         {"original": True},
         1,
     )
+
+
+@pytest.mark.parametrize("error", [errno.ENOSPC, errno.EACCES])
+def test_capture_storage_errors_still_refuse_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: int
+) -> None:
+    box = MacOutbox(tmp_path / "spool")
+    folder = tmp_path / "artifacts" / "tickets" / "t_one"
+    folder.mkdir(parents=True)
+    (folder / "file.txt").write_text("authored bytes")
+    original_open = os.open
+
+    def fail_blob(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if isinstance(path, Path) and path.name.startswith(".tmp-"):
+            raise OSError(error, "cannot save captured bytes")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", fail_blob)
+    try:
+        with pytest.raises(OSError) as failure:
+            box.add(entry(), ticket_id="t_one")
+        assert failure.value.errno == error
+        assert box.lookup("write") is None
+    finally:
+        box.close()
 
 
 def test_stable_payload_global_sequence_and_confirmed_cleanup(tmp_path: Path) -> None:
