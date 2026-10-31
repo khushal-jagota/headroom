@@ -116,4 +116,8 @@ The human’s message is a contained pill. The agent’s message is bare prose. 
 
 The contract is `src/planner/conversation/contracts.py`. The system and the three adapters live under `src/planner/conversation/`. Send Message is `src/planner/message_delivery/`. The pane is `web/src/components/conversation/`.
 
+Shared turn tokens and Ticket locales are defined in `src/planner/execution_identity.py`.
+The backend and Ticket contracts still export those same types. The conversation
+package exports its in-memory stand-in directly, without a lazy import.
+
 _Last verified: 2026-10-31._
