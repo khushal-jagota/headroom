@@ -1,6 +1,7 @@
 """Upgrade existing wake identities, delivery members, indices, and sequence intact."""
 
 import shutil
+import sqlite3
 from contextlib import closing
 from pathlib import Path
 
@@ -9,6 +10,77 @@ from tests.unit.test_db import _migration_tree_through
 
 from planner.core import db
 from planner.measure_sources.resource_versions import SOURCE_TRIGGERS
+
+
+def _assert_upgrade_to_current(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, shipped: Path
+) -> None:
+    """Carry each occupied local upgrade through the remaining shipped DAG."""
+    retained_tables = (
+        "goals",
+        "measure_sources",
+        "measures",
+        "measure_observations",
+        "measure_source_runs",
+        "measure_dependencies",
+        "measure_history_gaps",
+        "credentials",
+        "manager_wakes",
+        "manager_wake_batches",
+        "manager_wake_batch_members",
+    )
+    existing = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    before = {
+        table: [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+        for table in retained_tables
+        if table in existing
+    }
+    # Custom objects must survive the later table rebuilds, not just their rows.
+    objects = {
+        (row[0], row[1], row[2], str(row[3]).replace('"', ""))
+        for row in conn.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_master "
+            "WHERE name LIKE 'fixture_%' AND type IN ('index','trigger')"
+        )
+    }
+    sequences = {
+        row[0]: row[1]
+        for row in conn.execute(
+            "SELECT name,seq FROM sqlite_sequence "
+            "WHERE name IN ('manager_wakes','manager_wake_batches')"
+        )
+    }
+    conn.commit()
+    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
+    db.create_schema(conn)
+    assert [row[0] for row in conn.execute("SELECT version_num FROM alembic_version")] == [
+        "goals_staging_reconciliation"
+    ]
+    for table, rows in before.items():
+        current = [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+        assert len(current) == len(rows), table
+        for old, new in zip(rows, current, strict=True):
+            # Later migrations add nullable/default columns. Existing values stay exact.
+            assert old == {key: new[key] for key in old}, table
+    assert objects <= {
+        (row[0], row[1], row[2], str(row[3]).replace('"', ""))
+        for row in conn.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_master "
+            "WHERE name LIKE 'fixture_%' AND type IN ('index','trigger')"
+        )
+    }
+    assert {
+        row[0]: row[1]
+        for row in conn.execute(
+            "SELECT name,seq FROM sqlite_sequence "
+            "WHERE name IN ('manager_wakes','manager_wake_batches')"
+        )
+    } == sequences
+    assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    upgraded = tuple(conn.iterdump())
+    db.create_schema(conn)
+    assert tuple(conn.iterdump()) == upgraded
 
 
 def test_scalar_coverage_upgrade_adds_no_invented_facts_to_legacy_observations(
@@ -47,6 +119,7 @@ def test_scalar_coverage_upgrade_adds_no_invented_facts_to_legacy_observations(
         observed = read_observations(conn, "count", "2026-10-27", "2026-10-27")[0]
         assert observed.value == -2.5 and observed.coverage_status is ScalarCoverageStatus.unknown
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        _assert_upgrade_to_current(conn, monkeypatch, shipped)
 
 
 @pytest.mark.parametrize("retain_notice", [True, False])
@@ -125,6 +198,7 @@ def test_automatic_measures_upgrade_preserves_existing_notice_rows(
         }
         assert {item.name for item in SOURCE_TRIGGERS} <= triggers
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        _assert_upgrade_to_current(conn, monkeypatch, shipped)
 
 
 def test_manual_measure_upgrade_preserves_sources_values_gaps_and_references(
@@ -203,6 +277,7 @@ def test_manual_measure_upgrade_preserves_sources_values_gaps_and_references(
             ).fetchone()[0]
             > before_version
         )
+        _assert_upgrade_to_current(conn, monkeypatch, shipped)
 
 
 def test_reusable_credentials_preserve_legacy_ciphertext_and_explicit_collisions(
@@ -322,6 +397,8 @@ def test_reusable_credentials_preserve_legacy_ciphertext_and_explicit_collisions
             ).fetchone()
             is not None
         )
+        # The continuation baseline includes both deliberate credential mutations.
+        _assert_upgrade_to_current(conn, monkeypatch, shipped)
 
 
 @pytest.mark.parametrize("retain_notice", [True, False])
@@ -408,3 +485,4 @@ def test_dataset_and_goal_source_upgrade_preserves_runtime_rows_and_notice_seque
             VALUES('goal','goal','pending',1,1,'goal','goal')""")
         assert inserted.lastrowid == 201
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        _assert_upgrade_to_current(conn, monkeypatch, shipped)
