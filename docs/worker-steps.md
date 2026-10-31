@@ -21,6 +21,12 @@ If the Ticket is ready and idle, one guarded write takes the worker-step claim. 
 
 The loop then starts or reuses the Ticket’s conversation, composes the opener from the current Ticket, the Worker type, any revision guidance, and a memory-loss note when one is owed, and sends it in queue mode. Queue mode waits for a free turn instead of injecting into whatever is running.
 
+## When a Worker loses its memory mid-step
+
+A Worker whose step is already in flight gets a short memory-loss notice after automatic compaction. The loop checks that the Ticket’s locale can execute, then queues the notice in the existing conversation. A worker-step prompt sent after the boundary, or one already held in the queue, prevents another notice. The scan also counts an uncertain notice after the boundary as sent, so it does not repeat a message that may have reached the Worker.
+
+A definite refusal or a send exception leaves the notice available for a later poll. There is no separate reservation or hold table. A crash between sending and recording the prompt can therefore repeat the note. An uncertain notice is still not a delivered prompt: if another wake is needed, that wake keeps its existing rule for including the memory-loss note.
+
 ## What the send does to the claim
 
 | Delivery fate | What the claim does |
@@ -49,4 +55,4 @@ Restarting the Worker is the explicit repair for an errored claim. It is not som
 
 The read-only decision is `src/planner/runtime/worker_step_readiness.py`. The poll and `start_ready_worker_step` are `src/planner/runtime/worker_step_readiness_loop.py`. The claim writers are in `src/planner/tickets/data.py`. Opening and sending against the conversation contract is `src/planner/runtime/conversation_start.py`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-10-31._

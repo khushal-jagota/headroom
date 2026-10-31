@@ -1,11 +1,8 @@
-"""Caller authorization follows current executor admission without replay on reconnect."""
+"""Automatic memory notices follow current executor admission."""
 
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
-from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -13,12 +10,10 @@ import pytest
 from tests.unit.test_worker_memory import _add_prompt, _add_ticket, _make_conversation
 from tests.unit.test_worker_step_readiness_loop import _World
 
-from planner.core.db import connect
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.vps_inbox import InboxStore
-from planner.runtime import conversation_start, worker_memory
-from planner.runtime.worker_memory_contracts import MemoryNoticeEligibility
+from planner.runtime import worker_memory
 from planner.runtime.worker_step_readiness_loop import tell_a_worker_it_lost_its_memory
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -40,7 +35,7 @@ def _store(conn: Connection) -> InboxStore:
 @pytest.mark.parametrize(
     ("locale", "state"), [("vps", "absent"), ("macos", "absent"), ("macos", "ready")]
 )
-def test_notice_scan_and_authorization_use_current_locale_admission(
+def test_notice_scan_uses_current_locale_admission(
     tmp_db: Connection, memory_ticket: str, locale: str, state: str
 ) -> None:
     tmp_db.execute("UPDATE tickets SET locale=? WHERE id=?", (locale, memory_ticket))
@@ -50,45 +45,12 @@ def test_notice_scan_and_authorization_use_current_locale_admission(
     if state == "ready":
         store.runs.mark_ready(IDENTITY, 2)
     eligible = locale == "vps" or state == "ready"
-    key = worker_memory.current_memory_notice_key(tmp_db, memory_ticket)
-    assert (key is not None) is eligible
     assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(tmp_db) == (
         (memory_ticket,) if eligible else ()
     )
 
 
-def test_mac_racing_polls_consume_once_and_reconnect_does_not_rearm(
-    tmp_db: Connection, memory_ticket: str
-) -> None:
-    tmp_db.execute("UPDATE tickets SET locale='macos' WHERE id=?", (memory_ticket,))
-    store = _store(tmp_db)
-    store.runs.begin_connection(IDENTITY, 1)
-    store.runs.mark_ready(IDENTITY, 2)
-    key = worker_memory.current_memory_notice_key(tmp_db, memory_ticket)
-    assert key is not None
-    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-
-    def acquire(_: int) -> bool:
-        with closing(connect(db_path)) as conn:
-            return (
-                worker_memory.consume_memory_notice_authorization(conn, key, now=3).reservation
-                is not None
-            )
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        assert sorted(pool.map(acquire, range(2))) == [False, True]
-    store.runs.mark_lost(IDENTITY, 4)
-    assert worker_memory.current_memory_notice_key(tmp_db, memory_ticket) is None
-    replacement = replace(IDENTITY, connection_generation=2)
-    store.runs.begin_connection(replacement, 5)
-    assert worker_memory.current_memory_notice_key(tmp_db, memory_ticket) is None
-    store.runs.mark_ready(replacement, 6)
-    assert worker_memory.current_memory_notice_key(tmp_db, memory_ticket) == key
-    assert worker_memory.memory_notice_eligibility(tmp_db, key) is MemoryNoticeEligibility.consumed
-    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(tmp_db) == ()
-
-
-def test_mac_loss_during_held_prompt_await_prevents_reservation(
+def test_mac_loss_during_held_prompt_await_prevents_send(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world = _World(tmp_path)
@@ -125,7 +87,7 @@ def test_mac_loss_during_held_prompt_await_prevents_reservation(
         raise AssertionError("send after admission was lost during held-prompt read")
 
     monkeypatch.setattr(world.conversations, "held_prompts", held_prompts)
-    monkeypatch.setattr(conversation_start, "send_to_ticket_conversation", send)
+    monkeypatch.setattr(world.conversations, "send", send)
     assert not asyncio.run(
         tell_a_worker_it_lost_its_memory(
             ticket_id,
@@ -136,10 +98,4 @@ def test_mac_loss_during_held_prompt_await_prevents_reservation(
         )
     )
     assert held_reads == ["memory"]
-    with world.connect() as conn:
-        assert (
-            conn.execute(
-                "SELECT worker_step_claim FROM tickets WHERE id=?", (ticket_id,)
-            ).fetchone()[0]
-            == "out"
-        )
+    assert world.ticket(ticket_id).worker_step_claim.value == "out"
