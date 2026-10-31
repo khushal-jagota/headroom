@@ -297,6 +297,8 @@ Generation loss closes admission before cleanup waits. Filesystem work can outli
 The transfer retains its files, descriptors, and capacity until that work settles. Cleanup never deletes a resource that admitted work still uses.
 Ordinary account access stays intact. Accepted bytes remain protected by receiver verification and atomic publication.
 
+File manifests name the scope, owner, relative path, byte count and SHA-256 hash.
+Transfers do not use a media type or report download progress.
 Snapshots and hashes use bounded streams. One submission per conversation can
 proceed at a time. Separate conversations can progress while a large transfer
 waits. The outbox retains blobs until its item has a confirmed receipt.

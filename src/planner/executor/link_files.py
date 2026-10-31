@@ -7,7 +7,7 @@ import hashlib
 import os
 import re
 import stat
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,7 +38,6 @@ class _Transfer:
     completed: bool = False
     consumed: bool = False
     readers: int = 0
-    release_requested: bool = False
 
 
 class GenerationTransfers:
@@ -190,7 +189,6 @@ class GenerationTransfers:
     def release(self, transfer_id: str) -> None:
         transfer = self.transfers.get(transfer_id)
         if transfer is not None and transfer.readers:
-            transfer.release_requested = True
             return
         if self.transfers.pop(transfer_id, None) is not None:
             with directory_descriptor(self.root) as parent:
@@ -276,12 +274,7 @@ async def put_file(link: Link, slot: FileTransfer, path: Path) -> None:
             raise ConnectionError("executor upload refused")
 
 
-async def get_file(
-    link: Link,
-    slot: FileTransfer,
-    path: Path,
-    progress: Callable[[str, int], Awaitable[None]] | None = None,
-) -> None:
+async def get_file(link: Link, slot: FileTransfer, path: Path) -> None:
     client = link.file_client()
     if slot.direction != "download" or not re.fullmatch(r"[a-f0-9]{32}", slot.transfer_id):
         raise ValueError("invalid download slot")
@@ -301,15 +294,11 @@ async def get_file(
                     raise ValueError("download exceeds manifest")
                 digest.update(chunk)
                 await settled_io(_write_all, descriptor, chunk)
-                if progress is not None and chunk:
-                    await progress("download", count)
             if count != slot.manifest.byte_count:
                 raise ValueError("download shorter than manifest")
             if digest.hexdigest() != slot.manifest.sha256:
                 raise ValueError("download digest differs from manifest")
             link.file_client()
-            if progress is not None:
-                await progress("finalization", count)
             await settled_io(os.fsync, descriptor)
     finally:
         os.close(descriptor)
