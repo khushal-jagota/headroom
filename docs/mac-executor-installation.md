@@ -299,7 +299,7 @@ The renderer prints XML to stdout. It does not install packages, write files, or
 Render with the explicit app origin and logical executor ID:
 
 ```sh
-"$VENV/bin/python" -m planner.environments.mac_executor.cli \
+"$VENV/bin/python" -m planner.environments.mac_executor \
   --home "$HOME" --user-id "$(id -u)" \
   --executor-root "$EXECUTOR_ROOT" \
   --application-revision "$CANDIDATE_SHA" \
@@ -379,7 +379,7 @@ scripted tests cannot prove that host behavior. Mac application previews remain
 unavailable. Retain evidence separately from production and preserve pending bytes.
 This runbook does not authorize changing application routes or account policy.
 
-Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/cli.py`,
+Code paths: `src/planner/environments/mac_executor.py`, `src/planner/executor/cli.py`,
 `src/planner/executor/mac_outbox.py`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
 

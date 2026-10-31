@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+from urllib.parse import urlsplit
 
 OUTBOX_BUSY_TIMEOUT_MS: Final = 5000
 OUTBOX_RETRY_SECONDS: Final = 0.1
@@ -91,3 +93,38 @@ EXECUTOR_INCARNATION_HEADER: Final = "X-Panels-Executor-Incarnation"
 EXECUTOR_GENERATION_HEADER: Final = "X-Panels-Executor-Generation"
 
 TRANSFER_CHUNK_BYTES: Final = 64 * 1024
+
+
+LAUNCH_AGENT_RESTART_THROTTLE_SECONDS: Final = 10
+
+
+def validate_server_url(value: str) -> str:
+    if any(character.isspace() or ord(character) < 32 for character in value):
+        raise ValueError("executor server URL contains whitespace or control characters")
+    parsed = urlsplit(value)
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("executor server URL has invalid port") from error
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or (port is not None and port < 1)
+    ):
+        raise ValueError("executor server URL must be an HTTPS origin")
+    return value.rstrip("/")
+
+
+def validate_executor_launch(executor_id: str, application_revision: str, server_url: str) -> None:
+    """Validate explicit launch inputs without opening a connection or journal."""
+    if (
+        re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", executor_id) is None
+        or not application_revision.strip()
+    ):
+        raise ValueError("invalid explicit executor HTTPS launch configuration")
+    validate_server_url(server_url)

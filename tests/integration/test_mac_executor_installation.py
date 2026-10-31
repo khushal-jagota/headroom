@@ -12,9 +12,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from planner.environments.mac_executor.contracts import ExecutorLaunchOptions, ServiceConfiguration
-from planner.environments.mac_executor.launch_agent import render_launch_agent
-from planner.environments.mac_executor.paths import mac_executor_paths
+from planner.environments.mac_executor import ServiceConfiguration
 
 
 def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
@@ -22,7 +20,13 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
 ) -> None:
     """Protect the gap between checkout imports and installed executable contents."""
     repository = Path(__file__).resolve().parents[2]
-    paths = mac_executor_paths(tmp_path / "Account With Spaces")
+    paths = ServiceConfiguration(
+        tmp_path / "Account With Spaces",
+        os.getuid(),
+        "owner-mac",
+        "a" * 40,
+        "https://panels.example",
+    )
     source = paths.source
     source.mkdir(parents=True)
     shutil.copytree(
@@ -87,7 +91,6 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
     shutil.rmtree(source / "build")
     pip("install", "--force-reinstall", "--no-deps", "--no-build-isolation", str(source))
     assert not (installed / "installation_fixture.py").exists()
-    sha = "a" * 40
     outside_source = tmp_path / "outside_source"
     outside_source.mkdir()
     environment = {
@@ -245,9 +248,31 @@ assert 'planner.core.db' not in sys.modules
         capture_output=True,
         check=True,
     )
-    launch = ExecutorLaunchOptions("owner-mac", sha, "https://panels.example")
+    # Exercise the installed renderer, outside the source checkout.
     plist = plistlib.loads(
-        render_launch_agent(ServiceConfiguration(paths, os.getuid(), launch=launch))
+        subprocess.check_output(
+            [
+                python,
+                "-I",
+                "-B",
+                "-m",
+                "planner.environments.mac_executor",
+                "--home",
+                str(paths.home),
+                "--user-id",
+                str(paths.user_id),
+                "--application-revision",
+                paths.application_revision,
+                "--executor-id",
+                paths.executor_id,
+                "--panels-server-url",
+                paths.panels_server_url,
+                "--backend-path",
+                "/usr/bin:/bin",
+            ],
+            cwd=outside_source,
+            env=environment,
+        )
     )
     # The rendered service argv uses the ordinary installed console.
     # Eager help stops before transport, credentials, services, or providers execute.
