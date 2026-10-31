@@ -59,8 +59,7 @@ from planner.executor.configuration import (
 )
 from planner.executor.files import (
     contained_path,
-    copy_verified,
-    directory_descriptor,
+    install_verified,
     safe_component,
 )
 from planner.executor.link import Link
@@ -83,7 +82,6 @@ from planner.executor.protocol import (
     EnvelopeKind,
     FileDownloadRequest,
     FileScope,
-    FileSnapshot,
     FileTransfer,
     JsonObject,
     MacOutboxWriter,
@@ -99,7 +97,7 @@ from planner.executor.protocol import (
     encode_value,
     type_adapter,
 )
-from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
+from planner.executor.skills import install_native_skill_snapshot
 from planner.workspace_localization import localize_workspace
 
 
@@ -508,19 +506,8 @@ class MacRunner:
                 if link is not self.connection():
                     raise ConnectionError("input generation changed")
 
-                def install() -> None:
-                    with directory_descriptor(target.parent, create=True) as parent:
-                        staged = target.parent / (".tmp-" + uuid4().hex)
-                        try:
-                            copy_verified(temporary, staged, manifest)
-                            os.replace(
-                                staged.name, target.name, src_dir_fd=parent, dst_dir_fd=parent
-                            )
-                            os.fsync(parent)
-                        finally:
-                            staged.unlink(missing_ok=True)
+                await settled_io(install_verified, temporary, target, manifest)
 
-                await settled_io(install)
         finally:
             temporary.unlink(missing_ok=True)
             self._transfers -= 1
@@ -772,7 +759,6 @@ class MacRunner:
             resolved, command.child, capability, args.workspace_home_relative
         )
         try:
-            validate_skill_snapshot(args.canonical_skill_snapshot)
             if self.paths is None:
                 raise ValueError("executor paths are required for canonical skills")
             if resolved.backend_key is ConversationBackendKey.codex:
@@ -1192,13 +1178,12 @@ class MacRunner:
         conversation_id: str,
         kind: EnvelopeKind,
         value: object,
-        snapshots: tuple[FileSnapshot, ...] = (),
         submission_id: str | None = None,
     ) -> None:
         payload = cast(JsonObject, encode_value(value))
         await asyncio.to_thread(
             self.spool.add,
-            OutboxEntry(conversation_id, kind, payload, submission_id, snapshots),
+            OutboxEntry(conversation_id, kind, payload, submission_id),
         )
 
     async def report_event(
@@ -1247,28 +1232,21 @@ class MacRunner:
                 child.asks.clear()
                 child.user_inputs.clear()
         event = BackendEvent(reference, method, turn, encode_backend_event(method, turn, arguments))
-        snapshots: tuple[FileSnapshot, ...] = ()
-        if (
-            self.paths is not None
-            and child.ticket_id is not None
-            and method
-            in (
+        await asyncio.to_thread(
+            self.spool.add,
+            OutboxEntry(
+                reference.conversation_id,
+                EnvelopeKind.backend_event,
+                cast(JsonObject, encode_value(event)),
+            ),
+            ticket_id=child.ticket_id
+            if method in (
                 BackendEventMethod.agent_message_completed,
                 BackendEventMethod.tool_call_finished,
                 BackendEventMethod.turn_ended,
             )
-        ):
-            await asyncio.to_thread(
-                self.spool.add,
-                OutboxEntry(
-                    reference.conversation_id,
-                    EnvelopeKind.backend_event,
-                    cast(JsonObject, encode_value(event)),
-                ),
-                ticket_id=child.ticket_id,
-            )
-            return
-        await self._emit(reference.conversation_id, EnvelopeKind.backend_event, event, snapshots)
+            else None,
+        )
 
     async def _publish_application(self, application: AnswerApplication) -> None:
         if application.answer_id in self._applications_published:

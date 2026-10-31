@@ -20,12 +20,10 @@ import pytest
 from pydantic import TypeAdapter
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
-from planner.executor.files import snapshot_file
 from planner.executor.mac_outbox import DATABASE_NAME, MacOutbox
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
-    FileScope,
     FileSnapshot,
     JsonObject,
     OutboxEntry,
@@ -138,14 +136,13 @@ os._exit(0)
 
 
 def test_lost_receipt_retains_same_item_and_blob_until_confirmed(tmp_path: Path) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
+    source = tmp_path / "artifacts" / "tickets" / "t_one"
+    source.mkdir(parents=True)
     (source / "file").write_bytes(b"first bytes")
-    snap = snapshot_file(
-        root=source, relative_path="file", scope=FileScope.ticket, owner_id="t_one"
-    )
     outbox = MacOutbox(tmp_path / "outbox")
-    first = outbox.add(OutboxEntry("c_one", EnvelopeKind.backend_event, {}, "event", (snap,)))
+    first = outbox.add(
+        OutboxEntry("c_one", EnvelopeKind.backend_event, {}, "event"), ticket_id="t_one"
+    )
     blob = outbox.snapshots("event")[0].local_path
     assert blob.read_bytes() == b"first bytes"
     outbox.close()  # Received confirmation was lost before the Mac persisted it.
@@ -292,53 +289,6 @@ def test_refused_confirmation_is_available_to_later_retry_without_requeue(tmp_pa
         assert outbox.add(entry()) == row
         assert outbox.pending_count() == 0
         outbox.close()
-
-    asyncio.run(run())
-
-
-def test_busy_confirmation_retries_same_sequence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from planner.executor import mac_outbox as module
-
-    monkeypatch.setattr(module, "OUTBOX_BUSY_TIMEOUT_MS", 10)
-
-    async def run() -> None:
-        outbox = MacOutbox(tmp_path / "outbox")
-        envelope = outbox.add(entry())
-        busy = sqlite3.connect(outbox.root / DATABASE_NAME)
-        busy.execute("BEGIN IMMEDIATE")
-        attempts = 0
-        retried = asyncio.Event()
-
-        class Link:
-            async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-                nonlocal attempts
-                assert TypeAdapter(QueuedEnvelope).validate_python(payload) == envelope
-                attempts += 1
-                if attempts > 1:
-                    retried.set()
-                return WireMessage(
-                    WireMessageKind.receipt,
-                    "reply",
-                    json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
-                )
-
-            async def put_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
-                raise AssertionError("no files")
-
-        sender = asyncio.create_task(outbox.send_pending(Link()))
-        try:
-            await asyncio.wait_for(retried.wait(), 2)
-            assert outbox.pending_count() == 1
-            busy.rollback()
-            assert await outbox.wait_confirmed("write", 2) == receipt(envelope)
-            assert outbox.pending_count() == 0
-        finally:
-            busy.close()
-            sender.cancel()
-            await asyncio.gather(sender, return_exceptions=True)
-            outbox.close()
 
     asyncio.run(run())
 

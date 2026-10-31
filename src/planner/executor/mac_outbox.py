@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-import hashlib
 import json
 import logging
 import os
@@ -14,23 +13,19 @@ import threading
 import time
 from collections import defaultdict
 from contextlib import ExitStack
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
 from planner.executor.configuration import (
-    FILE_CHUNK_BYTES,
     FILE_MODIFIED_WINDOW_NS,
     MAX_TRANSFERS,
-    OUTBOX_BUSY_TIMEOUT_MS,
-    OUTBOX_RETRY_SECONDS,
     ExecutorPaths,
 )
 from planner.executor.files import (
     contained_path,
-    copy_verified,
+    copy_hashed,
     directory_descriptor,
     fsync_directory,
     fsync_file,
@@ -110,21 +105,12 @@ class MacOutbox:
                     raise ValueError("unsupported outbox format; rebuild the unshipped spool")
         elif root.exists() and any(p.name != "lock" for p in root.iterdir()):
             raise ValueError("unsupported outbox format; rebuild the unshipped spool")
-        missing: list[Path] = []
-        ancestor = root
-        while not ancestor.exists():
-            missing.append(ancestor)
-            ancestor = ancestor.parent
-        for directory in reversed(missing):
-            directory.mkdir(mode=0o700)
-            fsync_directory(directory.parent)
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._process_lock = (root / "lock").open("a+b")
         try:
             fcntl.flock(self._process_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             existed = path.exists()
-            db = sqlite3.connect(
-                path, timeout=OUTBOX_BUSY_TIMEOUT_MS / 1000, check_same_thread=False
-            )
+            db = sqlite3.connect(path, check_same_thread=False)
             self._database = db
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
@@ -172,7 +158,7 @@ class MacOutbox:
                 self._capturing += 1
             try:
                 snapshots, updates = self._capture(ticket_id)
-                return self._add(replace(entry, snapshots=snapshots), updates=updates)
+                return self._add(entry, snapshots=snapshots, updates=updates)
             finally:
                 with self._lock:
                     self._capturing -= 1
@@ -240,25 +226,15 @@ class MacOutbox:
                         )
                         continue
                     temporary = self._blobs / (".tmp-" + uuid4().hex)
-                    digest = hashlib.sha256()
-                    count = 0
                     try:
                         with os.fdopen(
                             os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
                             "wb",
                         ) as outgoing:
                             before = os.fstat(incoming)
-                            while True:
-                                try:
-                                    block = os.read(incoming, FILE_CHUNK_BYTES)
-                                except (FileNotFoundError, NotADirectoryError, PermissionError):
-                                    count = -1
-                                    break
-                                if not block:
-                                    break
-                                outgoing.write(block)
-                                digest.update(block)
-                                count += len(block)
+                            sha256, count = copy_hashed(
+                                incoming, outgoing.fileno(), skip_unreadable_source=True
+                            )
                             after = os.fstat(incoming)
                             if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
                                 after.st_size,
@@ -271,7 +247,6 @@ class MacOutbox:
                                 continue
                             outgoing.flush()
                             fsync_file(outgoing.fileno())
-                        sha256 = digest.hexdigest()
                         target = self._blobs / sha256
                         if not target.exists():
                             os.replace(temporary, target)
@@ -295,7 +270,11 @@ class MacOutbox:
         return tuple(snapshots), updates
 
     def _add(
-        self, entry: OutboxEntry, *, updates: list[tuple[object, ...]] | tuple[()] = ()
+        self,
+        entry: OutboxEntry,
+        *,
+        snapshots: tuple[FileSnapshot, ...] = (),
+        updates: list[tuple[object, ...]] | tuple[()] = (),
     ) -> QueuedEnvelope:
         with self._lock:
             safe_component(entry.conversation_id)
@@ -308,86 +287,67 @@ class MacOutbox:
                     entry.kind,
                     entry.payload,
                 ) or (
-                    entry.snapshots
-                    and old.file_dependencies != tuple(s.manifest for s in entry.snapshots)
+                    snapshots
+                    and old.file_dependencies != tuple(s.manifest for s in snapshots)
                 ):
                     raise ValueError("submission id reused with different content")
                 return old
-            snapshots = entry.snapshots
-            try:
-                for snapshot in snapshots:
-                    target = self._blobs / snapshot.manifest.sha256
-                    if not target.exists():
-                        temporary = self._blobs / (".tmp-" + uuid4().hex)
-                        copy_verified(snapshot.local_path, temporary, snapshot.manifest)
-                        os.replace(temporary, target)
-                fsync_directory(self._blobs)
-                payload = {
-                    "payload": entry.payload,
-                    "files": encode_value(tuple(s.manifest for s in snapshots)),
-                }
-                encoded = json.dumps(
-                    payload, sort_keys=True, separators=(",", ":"), allow_nan=False
-                ).encode()
-                child = entry.payload.get("child")
-                if not isinstance(child, dict):
-                    ask = entry.payload.get("ask")
-                    child = ask.get("child") if isinstance(ask, dict) else None
-                child_id = str(child.get("child_id", "")) if isinstance(child, dict) else ""
-                with self._db:
-                    cursor = self._db.execute(
-                        "INSERT INTO items"
-                        "(submission_id,conversation_id,child_id,kind,payload_json) "
-                        "VALUES(?,?,?,?,?)",
-                        (submission, entry.conversation_id, child_id, entry.kind.value, encoded),
-                    )
-                    assert cursor.lastrowid is not None
-                    self._db.executemany(
-                        "INSERT INTO item_files VALUES(?,?,?,?)",
-                        [
-                            (
-                                cursor.lastrowid,
-                                m.manifest.relative_path,
-                                m.manifest.sha256,
-                                m.manifest.byte_count,
-                            )
-                            for m in snapshots
-                        ],
-                    )
-                    self._db.executemany(
-                        "INSERT INTO ticket_files VALUES(?,?,?,?,?) "
-                        "ON CONFLICT(ticket_id,relative_path) DO UPDATE SET "
-                        "byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,"
-                        "sha256=excluded.sha256",
-                        updates,
-                    )
-                    if entry.kind is EnvelopeKind.child_stopped:
-                        self._db.execute(
-                            "DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL",
-                            (child_id,),
-                        )
-                    assert cursor.lastrowid is not None
-                    envelope = self._envelope(
+            payload = {
+                "payload": entry.payload,
+                "files": encode_value(tuple(s.manifest for s in snapshots)),
+            }
+            encoded = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode()
+            child = entry.payload.get("child")
+            if not isinstance(child, dict):
+                ask = entry.payload.get("ask")
+                child = ask.get("child") if isinstance(ask, dict) else None
+            child_id = str(child.get("child_id", "")) if isinstance(child, dict) else ""
+            with self._db:
+                cursor = self._db.execute(
+                    "INSERT INTO items"
+                    "(submission_id,conversation_id,child_id,kind,payload_json) "
+                    "VALUES(?,?,?,?,?)",
+                    (submission, entry.conversation_id, child_id, entry.kind.value, encoded),
+                )
+                assert cursor.lastrowid is not None
+                self._db.executemany(
+                    "INSERT INTO item_files VALUES(?,?,?,?)",
+                    [
                         (
                             cursor.lastrowid,
-                            submission,
-                            entry.conversation_id,
-                            child_id,
-                            entry.kind.value,
-                            encoded,
-                            None,
+                            m.manifest.relative_path,
+                            m.manifest.sha256,
+                            m.manifest.byte_count,
                         )
+                        for m in snapshots
+                    ],
+                )
+                self._db.executemany(
+                    "INSERT INTO ticket_files VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(ticket_id,relative_path) DO UPDATE SET "
+                    "byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,"
+                    "sha256=excluded.sha256",
+                    updates,
+                )
+                envelope = self._envelope(
+                    (
+                        cursor.lastrowid,
+                        submission,
+                        entry.conversation_id,
+                        child_id,
+                        entry.kind.value,
+                        encoded,
+                        None,
                     )
-                    # Reject an unsendable item before acknowledging its durable addition.
-                    encode_message(
-                        WireMessage(WireMessageKind.envelope, "0" * 32, self._object(envelope))
-                    )
-                self._notify()  # Only a committed item may wake sending.
-                return envelope
-            finally:
-                for snapshot in snapshots:
-                    if snapshot.local_path.parent.name == ".executor-snapshots":
-                        snapshot.local_path.unlink(missing_ok=True)
+                )
+                # Reject an unsendable item before acknowledging its durable addition.
+                encode_message(
+                    WireMessage(WireMessageKind.envelope, "0" * 32, self._object(envelope))
+                )
+            self._notify()  # Only a committed item may wake sending.
+            return envelope
 
     @staticmethod
     def _object(value: object) -> JsonObject:
@@ -556,38 +516,28 @@ class MacOutbox:
 
     async def _send_one(self, link: OutboxLink, envelope: QueuedEnvelope) -> None:
         while True:
-            try:
-                response = await link.request(WireMessageKind.envelope, self._object(envelope))
-                if response.kind is WireMessageKind.missing_files:
-                    from planner.executor.protocol import FileManifest
-
-                    missing = type_adapter(tuple[FileManifest, ...]).validate_python(
-                        response.payload.get("files")
-                    )
-                    snapshots = {
-                        s.manifest: s
-                        for s in await asyncio.to_thread(self.snapshots, envelope.submission_id)
-                    }
-                    for manifest in missing:
-                        if manifest not in snapshots:
-                            raise ValueError("VPS requested a file outside this item")
-                        refusal = await link.put_file(envelope, snapshots[manifest])
-                        if refusal is not None:
-                            await asyncio.to_thread(self.acknowledge, refusal)
-                            return
-                    continue
-                if response.kind is not WireMessageKind.receipt:
-                    raise ValueError("expected outbox receipt")
-                receipt = type_adapter(AcceptanceReceipt).validate_python(response.payload)
-                await asyncio.to_thread(self.acknowledge, receipt)
-                return
-            except sqlite3.OperationalError as error:
-                if error.sqlite_errorcode not in (
-                    sqlite3.SQLITE_BUSY,
-                    sqlite3.SQLITE_LOCKED,
-                ):
-                    raise
-                await asyncio.sleep(OUTBOX_RETRY_SECONDS)
+            response = await link.request(WireMessageKind.envelope, self._object(envelope))
+            if response.kind is WireMessageKind.missing_files:
+                missing = type_adapter(tuple[FileManifest, ...]).validate_python(
+                    response.payload.get("files")
+                )
+                snapshots = {
+                    s.manifest: s
+                    for s in await asyncio.to_thread(self.snapshots, envelope.submission_id)
+                }
+                for manifest in missing:
+                    if manifest not in snapshots:
+                        raise ValueError("VPS requested a file outside this item")
+                    refusal = await link.put_file(envelope, snapshots[manifest])
+                    if refusal is not None:
+                        await asyncio.to_thread(self.acknowledge, refusal)
+                        return
+                continue
+            if response.kind is not WireMessageKind.receipt:
+                raise ValueError("expected outbox receipt")
+            receipt = type_adapter(AcceptanceReceipt).validate_python(response.payload)
+            await asyncio.to_thread(self.acknowledge, receipt)
+            return
 
     async def send_pending(self, link: OutboxLink | Link) -> None:
         if isinstance(link, Link):

@@ -321,7 +321,6 @@ class OutboxEntry:
     kind: EnvelopeKind
     payload: JsonObject
     submission_id: str | None = None
-    snapshots: tuple[FileSnapshot, ...] = ()
 
 
 class ChildOperation(StrEnum):
