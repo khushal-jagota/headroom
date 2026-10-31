@@ -84,6 +84,23 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
             "UPDATE tickets SET stage = 'needs_plan', pending_proposal = NULL WHERE id = ?",
             (ticket.id,),
         )
+        finished = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title="Historical Plan ceiling",
+            brief="Kickoff",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        conn.execute(
+            "UPDATE tickets SET stage='done', ceiling='needs_plan', "
+            "pending_proposal=NULL WHERE id=?",
+            (finished.id,),
+        )
+        finished_before = tuple(
+            conn.execute("SELECT * FROM tickets WHERE id=?", (finished.id,)).fetchone()
+        )
     finally:
         conn.close()
 
@@ -114,6 +131,18 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
     with closing(connect(str(db_path))) as conn:
         assert conn.execute("SELECT stage FROM tickets WHERE id=?", (ticket.id,)).fetchone()[0] == (
             "needs_what_changes"
+        )
+    historical = test_client.get(f"/api/tickets?detail=full&id={finished.id}")
+    assert historical.status_code == 200, historical.text
+    assert historical.json()["stage"] == "done"
+    assert historical.json()["ceiling"] == "needs_plan"
+    listing = test_client.get("/api/tickets?detail=full")
+    assert listing.status_code == 200, listing.text
+    assert finished.id in {row["id"] for row in listing.json()["tickets"]}
+    with closing(connect(str(db_path))) as conn:
+        assert (
+            tuple(conn.execute("SELECT * FROM tickets WHERE id=?", (finished.id,)).fetchone())
+            == finished_before
         )
 
 

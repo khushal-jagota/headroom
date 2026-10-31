@@ -356,7 +356,9 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     worker_type = str(row["worker_type"])
     worker_type_definition = configured_worker_type_registry().require(worker_type)
     stage = str(row["stage"])
-    worker_type_definition.validate_ticket_position(stage, str(row["ceiling"]))
+    worker_type_definition.validate_ticket_position(
+        stage, str(row["ceiling"]), allow_historical_terminal_ceiling=True
+    )
     values = fields_codec.values_from_json(row["field_values"], worker_type_definition.field_ids())
     return Ticket(
         field_approvals=fields_codec.approvals_from_json(row["field_approvals"], values),

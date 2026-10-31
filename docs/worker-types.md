@@ -18,7 +18,7 @@ Launch defaults below are what a fresh database copies onto a new Ticket. The ow
 
 A Worker type save can remove stages and fields even when unfinished Tickets use them. A Ticket on a removed stage moves to the nearest earlier stage that survives, using the old order. A ceiling on a removed stage follows the same rule. Its holder stays the same. For example, a Ticket at What Changes with a Plan ceiling gets a What Changes ceiling when Plan disappears. The save never grants Implementation by accident.
 
-The save preserves stored text in removed fields. It does not invent field values or accept proposals. Finished Tickets remain unchanged. A Ticket whose current stage survives stays there.
+The save preserves stored text in removed fields. It does not invent field values or accept proposals. Finished Tickets remain unchanged, including historical ceilings that name removed stages. Those ceilings remain readable but cannot authorize a new write. A Ticket whose current stage survives stays there.
 
 The definition and all Ticket migrations save in one transaction. If a Ticket has no earlier destination, an incompatible proposal, or dispatched work whose step or authority changes, the save refuses and names it. Unsafe changes to stage order also refuse. Any failure leaves the definition and Tickets unchanged.
 

@@ -229,7 +229,6 @@ def _plan_migrations(
             if previous.is_terminal(stage):
                 if not replacement.is_known_stage(stage) or not replacement.is_terminal(stage):
                     raise _fail("finished Ticket Stage must remain terminal", {})
-                replacement.validate_ticket_position(stage, ceiling)
                 continue
             new_stage = map_reference(stage, previous, replacement)
             new_ceiling = map_reference(ceiling, previous, replacement)

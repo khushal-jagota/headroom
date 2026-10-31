@@ -165,17 +165,29 @@ def test_removed_stage_and_ceiling_move_back_and_discard_only_stage_feedback(
     ] == [("needs_beta", "needs_alpha", "needs_beta", "needs_alpha")]
 
 
-def test_finished_ticket_is_not_changed_by_field_removal(database: sqlite3.Connection) -> None:
+def test_finished_ticket_retains_removed_ceiling_and_text_as_readable_history(
+    database: sqlite3.Connection,
+) -> None:
     _probe_database(database)
     ticket_id = _probe_ticket(database, "done")
     database.execute(
-        "UPDATE tickets SET ceiling = 'done', field_values = ? WHERE id = ?",
+        "UPDATE tickets SET ceiling = 'needs_alpha', field_values = ? WHERE id = ?",
         (json.dumps({"brief": "Kickoff", "alpha": "Historical text"}), ticket_id),
     )
     before = _row(database, ticket_id)
     result = write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha"), now=2)
     assert _row(database, ticket_id) == before
     assert result == ()
+    load_worker_runtime_definitions(database)
+    historical = tickets_data.read_ticket(database, ticket_id)
+    assert historical.stage == "done"
+    assert historical.ceiling == "needs_alpha"
+    # Read tolerance cannot grant a new unfinished position or bypass canonical writes.
+    definition = read_definition(database, "probe")
+    with pytest.raises(PlannerError):
+        definition.validate_ticket_position("needs_beta", "needs_alpha")
+    with pytest.raises(PlannerError):
+        definition.validate_ticket_position("done", "needs_alpha")
 
 
 def test_no_earlier_destination_refuses_without_advancing(database: sqlite3.Connection) -> None:
