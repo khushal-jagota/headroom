@@ -1143,8 +1143,7 @@ def gauge_visual_equivalence(browser, url):
               pointerEvents:getComputedStyle(readout).pointerEvents} : null};
         }""")
 
-    def capture_geometry(chart):
-        return chart.evaluate("""node => {
+    capture_geometry_script = """node => {
           const rect = element => {
             if (!element) return null;
             const box = element.getBoundingClientRect();
@@ -1161,8 +1160,51 @@ def gauge_visual_equivalence(browser, url):
             meter:rect(meter),readout:rect(meter?.nextElementSibling),
             input:rect(node.querySelector('input')),svgCTM:matrix(meter),
             fillCTM:matrix(fill),transform:getComputedStyle(node).transform,
+            paths:meter ? [...meter.querySelectorAll('path')].map(path => {
+              const css = getComputedStyle(path);
+              return {d:path.getAttribute('d'),pathLength:path.getAttribute('pathLength'),
+                dashAttribute:path.getAttribute('stroke-dasharray'),
+                rawStyle:path.getAttribute('style'),dasharray:css.strokeDasharray,
+                stroke:css.stroke,strokeWidth:css.strokeWidth,opacity:css.opacity};
+            }) : [],
+            rangeSelections:[...node.querySelectorAll('.range-selection')].map(selection => {
+              const css = getComputedStyle(selection);
+              return {rect:rect(selection),rawStyle:selection.getAttribute('style'),
+                transform:css.transform,opacity:css.opacity,
+                selected:selection.closest('button')?.getAttribute('aria-pressed') ?? null};
+            }),
+            tooltips:[...node.querySelectorAll('[role=tooltip]')].map(tooltip => ({
+              hidden:tooltip.getAttribute('aria-hidden'),
+              opacity:getComputedStyle(tooltip).opacity,
+            })),
             devicePixelRatio,viewport:{width:innerWidth,height:innerHeight},
             windowScroll:{x:scrollX,y:scrollY}};
+        }"""
+
+    def capture_geometry(chart):
+        return chart.evaluate(capture_geometry_script)
+
+    def wait_for_capture_stability(chart):
+        # Four unchanged frames distinguish settled Motion DOM from compositor
+        # paint variation. Keep the exact signatures instead of masking pixels.
+        return chart.evaluate("async node => {const read = (" + capture_geometry_script + """ );
+          const start = performance.now();
+          let previous = null, consecutive = 0, frames = 0;
+          const signatures = [];
+          while (consecutive < 4) {
+            await new Promise(requestAnimationFrame);
+            const signature = JSON.stringify(read(node));
+            consecutive = signature === previous ? consecutive + 1 : 1;
+            previous = signature;
+            signatures.push(signature);
+            if (signatures.length > 4) signatures.shift();
+            frames++;
+            if (performance.now()-start > 5000) {
+              throw new Error('Gauge capture did not reach four stable frames: ' + signature);
+            }
+          }
+          return {frames,milliseconds:performance.now()-start,
+            consecutive,signatures:signatures.map(JSON.parse)};
         }""")
 
     def capture(page, chart, name):
@@ -1184,10 +1226,9 @@ def gauge_visual_equivalence(browser, url):
                 dismissal["escapeAndTab"] = True
             expect(tooltip).to_have_attribute("aria-hidden", "true")
             expect(tooltip).to_have_css("opacity", "0")
-        frames = ("() => new Promise(resolve => requestAnimationFrame("
-                  "() => requestAnimationFrame(resolve)))")
-        page.evaluate(frames)
-        record = {"dismissal": dismissal, "raw": {"before": capture_geometry(chart)}}
+        raw_stability = wait_for_capture_stability(chart)
+        record = {"dismissal": dismissal,
+                  "raw": {"stability": raw_stability, "before": capture_geometry(chart)}}
         chart.screenshot(path=str(output / f"{name}.png"))
         record["raw"]["after"] = capture_geometry(chart)
         original_style = chart.get_attribute("style")
@@ -1201,8 +1242,9 @@ def gauge_visual_equivalence(browser, url):
             chart.evaluate("""(node, delta) => {
               node.style.transform = `translate(${delta.x}px, ${delta.y}px)`;
             }""", {"x": dx, "y": dy})
-            page.evaluate(frames)
-            record["aligned"] = {"before": capture_geometry(chart)}
+            aligned_stability = wait_for_capture_stability(chart)
+            record["aligned"] = {"stability": aligned_stability,
+                                 "before": capture_geometry(chart)}
             chart.screenshot(path=str(output / f"{name}-aligned.png"))
             record["aligned"]["after"] = capture_geometry(chart)
         finally:
@@ -1210,9 +1252,10 @@ def gauge_visual_equivalence(browser, url):
               if (value === null) node.removeAttribute('style');
               else node.setAttribute('style', value);
             }""", original_style)
-            page.evaluate(frames)
+            restored_stability = wait_for_capture_stability(chart)
         assert chart.get_attribute("style") == original_style
         record["restored"] = capture_geometry(chart)
+        record["restoredStability"] = restored_stability
         return record
 
     for phone, reduced in ((False, False), (False, True), (True, False), (True, True)):
