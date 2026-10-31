@@ -75,6 +75,33 @@ import {chartData} from '../src/lib/charts/presentation';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {ManualMeasurement} from '../src/lib/charts/components/manual-measurements';
+
+it('keeps the cumulative gauge input accessible while its initial missing fill stays hidden',()=>{
+ const examples=createManualMeasurementExamples(),block=examples.definitions[1].block;
+ const markup=renderToStaticMarkup(createElement(ManualMeasurement,{
+  block,values:examples.values,adapter:examples.adapters.get(block.measure_id!),preferenceKey:'initial-cumulative',
+ }));
+ const meter=markup.match(/<svg[^>]*role="meter"[^>]*>/)?.[0];
+ expect(meter).toContain('aria-label="Customer interviews"');
+ expect(meter).toContain('aria-valuemin="0"');
+ expect(meter).toContain('aria-valuemax="12"');
+ expect(meter).toContain('aria-valuetext="No reading"');
+ expect(meter).not.toContain('aria-valuenow=');
+ const readout=markup.match(/<div[^>]*class="[^"]*radial-center[^"]*"[^>]*>/)?.[0];
+ expect(readout).toBeDefined();
+ expect(readout).not.toContain('aria-hidden=');
+ expect(markup).toMatch(/<input[^>]*aria-label="Customer interviews"/);
+ expect(markup).toContain('class="denominator">of 12</span>');
+ expect(markup).toContain('>+1</button>');
+ expect(markup).toContain('>+5</button>');
+ const fill=markup.match(/<path[^>]*class="[^"]*radial-fill[^"]*"[^>]*>/)?.[0];
+ expect(fill).toContain('pathLength="1"');
+ expect(fill).toContain('opacity="0"');
+ expect(markup).toContain('M 20.301515190165');
+ expect(markup).not.toContain('data-gauge-target=');
+ expect(markup).not.toContain('role="tooltip"');
+});
+
 it('compares manual daily records in both target directions while preserving unknown coverage and missing days', async () => {
  const examples = createManualMeasurementExamples();
  const daily = examples.definitions[0].block, reading = examples.definitions[2].block;

@@ -2,14 +2,13 @@
 .neutral { --gauge-color: var(--chart-muted); --gauge-text: var(--text-muted); }.accent { --gauge-color: var(--accent); --gauge-text: var(--accent-strong); }.success { --gauge-color: var(--success); --gauge-text: var(--success); }.warning { --gauge-color: var(--warning); --gauge-text: var(--warning); }.danger { --gauge-color: var(--danger); --gauge-text: var(--danger); }
 
 /* An activity style ring: a thick stroke with round caps over a faint tint of its own color. The stroke scales with the ring. */
-.visual { position: relative; width: min(100%, 176px); aspect-ratio: 100 / 90; }
-.visual svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.track, .arc { fill: none; stroke-width: 9; stroke-linecap: round; transition: stroke var(--duration-standard) var(--ease-standard); }
+.visual { width: min(100%, 176px); }
+.track, .arc { transition: stroke var(--duration-standard) var(--ease-standard); }
 .track { stroke: color-mix(in oklab, var(--gauge-color) 13%, transparent); }
 .arc { stroke: var(--gauge-color); }
 
 /* The readout sits on the ring's true centre, which is the middle of a square as wide as the ring. */
-.readout { position: absolute; top: 0; left: 0; display: grid; width: 100%; aspect-ratio: 1; place-content: center; justify-items: center; gap: 4px; pointer-events: none; }
+.readout { display: grid; place-content: center; justify-items: center; gap: 4px; }
 .number { position: relative; display: inline-flex; align-items: baseline; color: var(--foreground); font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 500; letter-spacing: var(--tracking-display); line-height: 1; font-variant-numeric: tabular-nums; }
 .digits { display: inline-flex; justify-content: flex-end; white-space: nowrap; }
 .unit { white-space: pre; margin-left: 1px; color: var(--text-secondary); font-family: var(--font-body); font-size: .5em; letter-spacing: 0; }

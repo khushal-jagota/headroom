@@ -1054,6 +1054,336 @@ def resolved_chart_color(page, token):
     }""", token)
 
 
+def gauge_visual_equivalence(browser, url):
+    """Measure the extraction boundary in the existing application/HTTP host.
+
+    Existing helpers own the full pointer matrix. These probes add the missing
+    gauge layout, native-input accessibility, and two distinct motion mechanisms.
+    The same file runs before and after extraction; receipts use semantic keys.
+    """
+    started = time.monotonic()
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root) / "gauge-equivalence" if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    receipts = []
+    recorder = """() => {
+      const records = [];
+      const watched = new WeakMap();
+      let phase = 'reveal';
+      function watch(meter) {
+        if (watched.has(meter)) return;
+        const token = {};
+        watched.set(meter, token);
+        const host = meter.closest('[data-chart-id]');
+        if (!host) return;
+        const manual = !!meter.closest('.manual-measurement');
+        const record = {chart:host.dataset.chartId, manual, phase, samples:[]};
+        records.push(record);
+        const start = performance.now();
+        function sample(now) {
+          if (!meter.isConnected || watched.get(meter) !== token) return;
+          const fill = meter.querySelectorAll('path')[1];
+          const readout = meter.nextElementSibling;
+          const style = getComputedStyle(fill);
+          const fraction = manual ? parseFloat(style.strokeDasharray) :
+            fill.getTotalLength() / (42 * Math.PI * 1.5);
+          const digits = readout?.querySelector('[class*="digits"]');
+          record.samples.push({ms:now-start, fraction,
+            opacity:Number(style.opacity), stroke:style.stroke,
+            count:digits ? Number(digits.textContent) : null});
+          if (now-start < 1800) requestAnimationFrame(sample);
+        }
+        requestAnimationFrame(sample);
+      }
+      window.__gaugeEvidence = records;
+      window.__gaugeArm = nextPhase => {
+        phase = nextPhase;
+        document.querySelectorAll('svg[role=meter]').forEach(meter => {
+          watched.delete(meter); watch(meter);
+        });
+      };
+      window.__gaugeReset = () => {
+        records.length = 0;
+        window.__gaugeArm('reveal');
+      };
+      new MutationObserver(() => document.querySelectorAll('svg[role=meter]')
+        .forEach(watch)).observe(document, {childList:true,subtree:true});
+    }"""
+
+    def snapshot(chart):
+        return chart.evaluate("""node => {
+          const origin = node.getBoundingClientRect();
+          const rect = element => {
+            if (!element) return null;
+            const box = element.getBoundingClientRect();
+            return {x:box.x-origin.x,y:box.y-origin.y,width:box.width,height:box.height};
+          };
+          const meter = node.querySelector('svg[role=meter]');
+          const readout = meter?.nextElementSibling;
+          const input = node.querySelector('input');
+          const summary = node.querySelector('.support-summary');
+          const paths = meter ? [...meter.querySelectorAll('path')].slice(0,2) : [];
+          return {host:{width:origin.width,height:origin.height},
+            meter:rect(meter),readout:rect(readout),input:rect(input),summary:rect(summary),
+            attributes:meter ? Object.fromEntries(['role','aria-label','aria-valuemin',
+              'aria-valuemax','aria-valuenow','aria-valuetext','focusable']
+              .map(name => [name,meter.getAttribute(name)])) : null,
+            summaryExpanded:summary?.getAttribute('aria-expanded') ?? null,
+            inputHidden:input ? !!input.closest('[aria-hidden=true],[inert]') : null,
+            inputLabel:input?.getAttribute('aria-label') ?? null,
+            inputValue:input?.value ?? null,
+            readoutHidden:readout?.getAttribute('aria-hidden') ?? null,
+            paths:paths.map(path => {const css=getComputedStyle(path);return {
+              d:path.getAttribute('d'),stroke:css.stroke,strokeWidth:css.strokeWidth,
+              strokeLinecap:css.strokeLinecap,opacity:css.opacity,
+              dasharray:css.strokeDasharray};}),
+            layout:readout ? {display:getComputedStyle(readout).display,
+              gap:getComputedStyle(readout).gap,
+              pointerEvents:getComputedStyle(readout).pointerEvents} : null};
+        }""")
+
+    capture_geometry_script = """node => {
+          const rect = element => {
+            if (!element) return null;
+            const box = element.getBoundingClientRect();
+            return {x:box.x,y:box.y,width:box.width,height:box.height};
+          };
+          const matrix = element => {
+            const value = element?.getScreenCTM();
+            return value ? Object.fromEntries(['a','b','c','d','e','f']
+              .map(key => [key,value[key]])) : null;
+          };
+          const meter = node.querySelector('svg[role=meter]');
+          const fill = meter?.querySelectorAll('path')[1];
+          return {chart:rect(node),visual:rect(meter?.parentElement),
+            meter:rect(meter),readout:rect(meter?.nextElementSibling),
+            input:rect(node.querySelector('input')),svgCTM:matrix(meter),
+            fillCTM:matrix(fill),transform:getComputedStyle(node).transform,
+            paths:meter ? [...meter.querySelectorAll('path')].map(path => {
+              const css = getComputedStyle(path);
+              return {d:path.getAttribute('d'),pathLength:path.getAttribute('pathLength'),
+                dashAttribute:path.getAttribute('stroke-dasharray'),
+                rawStyle:path.getAttribute('style'),dasharray:css.strokeDasharray,
+                stroke:css.stroke,strokeWidth:css.strokeWidth,opacity:css.opacity};
+            }) : [],
+            rangeSelections:[...node.querySelectorAll('.range-selection')].map(selection => {
+              const css = getComputedStyle(selection);
+              return {rect:rect(selection),rawStyle:selection.getAttribute('style'),
+                transform:css.transform,opacity:css.opacity,
+                selected:selection.closest('button')?.getAttribute('aria-pressed') ?? null};
+            }),
+            tooltips:[...node.querySelectorAll('[role=tooltip]')].map(tooltip => ({
+              hidden:tooltip.getAttribute('aria-hidden'),
+              opacity:getComputedStyle(tooltip).opacity,
+            })),
+            devicePixelRatio,viewport:{width:innerWidth,height:innerHeight},
+            windowScroll:{x:scrollX,y:scrollY}};
+        }"""
+
+    def capture_geometry(chart):
+        return chart.evaluate(capture_geometry_script)
+
+    def wait_for_capture_stability(chart):
+        # Four unchanged frames distinguish settled Motion DOM from compositor
+        # paint variation. Keep the exact signatures instead of masking pixels.
+        return chart.evaluate("async node => {const read = (" + capture_geometry_script + """ );
+          const start = performance.now();
+          let previous = null, consecutive = 0, frames = 0;
+          const signatures = [];
+          while (consecutive < 4) {
+            await new Promise(requestAnimationFrame);
+            const signature = JSON.stringify(read(node));
+            consecutive = signature === previous ? consecutive + 1 : 1;
+            previous = signature;
+            signatures.push(signature);
+            if (signatures.length > 4) signatures.shift();
+            frames++;
+            if (performance.now()-start > 5000) {
+              throw new Error('Gauge capture did not reach four stable frames: ' + signature);
+            }
+          }
+          return {frames,milliseconds:performance.now()-start,
+            consecutive,signatures:signatures.map(JSON.parse)};
+        }""")
+
+    def capture(page, chart, name):
+        # Existing inspection helpers prove dismissal when the fade starts.
+        # Capture only after that fade finishes, so a tooltip cannot ghost into
+        # the paired image. Keep raw captures and their exact crop provenance.
+        chart.scroll_into_view_if_needed()
+        # Scrolling can put the figure under a stationary desktop pointer.
+        # Leave through the real pointer path before waiting for its fade.
+        page.mouse.move(0, 0)
+        tooltip = chart.locator('[role="tooltip"]')
+        dismissal = {"pointerExit": True, "escapeAndTab": False}
+        if tooltip.count():
+            # Mouse exit deliberately preserves keyboard and touch inspection.
+            # Use the figure's existing Escape path, then leave native focus.
+            if tooltip.get_attribute("aria-hidden") != "true":
+                chart.locator("figure[tabindex]").press("Escape")
+                page.keyboard.press("Tab")
+                dismissal["escapeAndTab"] = True
+            expect(tooltip).to_have_attribute("aria-hidden", "true")
+            expect(tooltip).to_have_css("opacity", "0")
+        raw_stability = wait_for_capture_stability(chart)
+        record = {"dismissal": dismissal,
+                  "raw": {"stability": raw_stability, "before": capture_geometry(chart)}}
+        chart.screenshot(path=str(output / f"{name}.png"))
+        record["raw"]["after"] = capture_geometry(chart)
+        original_style = chart.get_attribute("style")
+        before = record["raw"]["after"]
+        assert before["transform"] == "none", before
+        origin = before["chart"]
+        dx, dy = round(origin["x"]) - origin["x"], round(origin["y"]) - origin["y"]
+        assert abs(dx) <= .5 and abs(dy) <= .5, (dx, dy)
+        record["translation"] = {"x": dx, "y": dy}
+        try:
+            chart.evaluate("""(node, delta) => {
+              node.style.transform = `translate(${delta.x}px, ${delta.y}px)`;
+            }""", {"x": dx, "y": dy})
+            aligned_stability = wait_for_capture_stability(chart)
+            record["aligned"] = {"stability": aligned_stability,
+                                 "before": capture_geometry(chart)}
+            chart.screenshot(path=str(output / f"{name}-aligned.png"))
+            record["aligned"]["after"] = capture_geometry(chart)
+        finally:
+            chart.evaluate("""(node, value) => {
+              if (value === null) node.removeAttribute('style');
+              else node.setAttribute('style', value);
+            }""", original_style)
+            restored_stability = wait_for_capture_stability(chart)
+        assert chart.get_attribute("style") == original_style
+        record["restored"] = capture_geometry(chart)
+        record["restoredStability"] = restored_stability
+        return record
+
+    for phone, reduced in ((False, False), (False, True), (True, False), (True, True)):
+        mode = f"{'phone' if phone else 'desktop'}-{'reduced' if reduced else 'normal'}"
+        context = browser.new_context(
+            viewport={"width": 390 if phone else 1280, "height": 844 if phone else 900},
+            has_touch=phone, is_mobile=phone,
+            reduced_motion="reduce" if reduced else "no-preference",
+        )
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        page.add_init_script(f"({recorder})()")
+        settle_ms = 80 if reduced else 1900
+        fixture = GoalFixture()
+        fixture.observations["cumulative_target"] = {TODAY: 8}
+        manual = fixture.goals["cumulative_target"]
+        manual["page"]["blocks"] = [{**manual["primary_chart"],
+            "id": "support-manual-gauge", "placement": "supporting"}]
+        readonly = fixture.goal("readonly-gauge", "Read-only gauge", 6)
+        readonly["kind"] = "quantitative"
+        readonly["primary_chart"] = {
+            "type": "chart", "kind": "gauge", "id": "readonly-gauge",
+            "placement": "primary", "title": "Read-only gauge", "domain": [0, 20],
+            "target": 12, "unit": "events", "ranges": [
+                {"id": key, "label": label, "series": [{"name": "Current", "points": [
+                    {"label": TODAY, "value": value}]}]}
+                for key, label, value in (("week", "Week", 8), ("month", "Month", 16))
+            ],
+        }
+        readonly["page"]["blocks"] = [{**readonly["primary_chart"],
+            "id": "support-readonly-gauge", "placement": "supporting"}]
+        page.route("**/api/**", fixture.respond)
+        row = {"mode": mode, "surfaces": {}, "motion": {}, "focus": {}, "captures": {}}
+        receipts.append(row)
+        errors = []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        try:
+            for identity, support_id in (("cumulative_target", "support-manual-gauge"),
+                                         ("readonly-gauge", "support-readonly-gauge")):
+                # Hash navigation can retain the document and its recorder.
+                page.evaluate("window.__gaugeReset?.()")
+                page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
+                chart = page.locator(f'[data-chart-id="{identity}"]')
+                meter = chart.get_by_role("meter")
+                expect(meter).to_be_visible()
+                meter.scroll_into_view_if_needed()
+                # Keep initial reveal samples before a screenshot waits for stability.
+                page.wait_for_timeout(settle_ms)
+                row["surfaces"][identity + ":normal"] = snapshot(chart)
+                if identity == "cumulative_target":
+                    value = chart.get_by_role("textbox")
+                    expect(value).to_have_attribute("data-reading", "8")
+                    assert not row["surfaces"][identity + ":normal"]["inputHidden"]
+                    value.focus()
+                    assert value.evaluate("node => node === document.activeElement")
+                    row["focus"][identity] = value.get_attribute("aria-label")
+                else:
+                    figure = chart.locator("figure[tabindex]")
+                    if phone:
+                        touch_inspection(page, context.new_cdp_session(page), chart, figure)
+                    else:
+                        desktop_inspection(page, chart, figure)
+                    row["focus"][identity] = figure.get_attribute("aria-label")
+                if output:
+                    row["captures"][identity + ":normal"] = capture(
+                        page, chart, f"{mode}-{identity}-normal"
+                    )
+
+                support = page.locator(f'[data-chart-id="{support_id}"]')
+                if phone:
+                    summary = support.locator(".support-summary")
+                    expect(summary).to_have_attribute("aria-expanded", "false")
+                    row["surfaces"][identity + ":smallest"] = snapshot(support)
+                    summary.tap()
+                    expect(summary).to_have_attribute("aria-expanded", "true")
+                expect(support.get_by_role("meter")).to_be_visible()
+                support.get_by_role("meter").scroll_into_view_if_needed()
+                page.wait_for_timeout(settle_ms)
+                row["surfaces"][identity + ":support-expanded"] = snapshot(support)
+                if output:
+                    row["captures"][identity + ":support-expanded"] = capture(
+                        page, support, f"{mode}-{identity}-support"
+                    )
+                if phone:
+                    page.set_viewport_size({"width": 320, "height": 844})
+                    row["surfaces"][identity + ":narrow320"] = snapshot(support)
+                    page.set_viewport_size({"width": 390, "height": 844})
+
+                page.evaluate("window.__gaugeArm('update')")
+                if identity == "cumulative_target":
+                    chart.get_by_role("button", name="+1", exact=True).click()
+                    expect(chart.get_by_role("textbox")).to_have_attribute("data-reading", "9")
+                else:
+                    # The current preference starts at Month (16). Choose Week
+                    # (8) to exercise a real sweep and threshold change.
+                    chart.get_by_role("button", name="Week", exact=True).click()
+                    expect(meter).to_have_attribute("aria-valuenow", "8")
+                page.wait_for_timeout(settle_ms)
+                row["surfaces"][identity + ":updated"] = snapshot(chart)
+                row["motion"][identity] = page.evaluate(
+                    "keys => window.__gaugeEvidence.filter(record => keys.includes(record.chart))",
+                    [identity, support_id],
+                )
+
+            page.goto(url + "#/workspace/chief-of-staff", wait_until="domcontentloaded")
+            for identity in ("cumulative_target", "readonly-gauge"):
+                chart = page.locator(f'[data-goal-card="{identity}"] [data-chart-id="{identity}"]')
+                expect(chart.get_by_role("meter")).to_be_visible()
+                chart.scroll_into_view_if_needed()
+                page.wait_for_timeout(settle_ms)
+                row["surfaces"][identity + ":small"] = snapshot(chart)
+                if output:
+                    row["captures"][identity + ":small"] = capture(
+                        page, chart, f"{mode}-{identity}-small"
+                    )
+            assert errors == [], errors
+            row["errors"] = errors
+        finally:
+            if output:
+                (output / "measurement.json").write_text(json.dumps({
+                    "browser": browser.version, "seconds": time.monotonic() - started,
+                    "modes": receipts,
+                }, indent=2) + "\n")
+            context.close()
+    print(f"gauge extraction equivalence probes: passed (+{time.monotonic() - started:.2f}s)",
+          flush=True)
+
+
 def manual_unit_spacing(browser, url):
     # Shared formatting tests own the suffix matrix. This boundary proves that
     # manual controls, comparisons, and split flex counters use that contract.
@@ -1624,6 +1954,7 @@ def authored_goal_presentation(browser, url):
                 # The shared native checklist renderer also owns the rail preview.
                 # Existing tests exercise its writes and dismissal lifecycle.
                 page.evaluate("location.hash='#/workspace'")
+                expect(page.locator('[data-goal-page="goal_wrenfixture"]')).to_have_count(0)
                 panel = open_preview(page, "goal_wrenfixture")
                 expect(panel.locator("[data-block=checklist]")).to_have_attribute(
                     "data-presentation", "small"
@@ -1699,6 +2030,7 @@ def run(browser, urls):
     manual_unit_spacing(browser, urls[0])
     authored_goal_presentation(browser, urls[0])
     native_goal_edits(browser, urls[0])
+    gauge_visual_equivalence(browser, urls[0])
 
 
 class NativeGoalEditFixture(GoalFixture):
