@@ -1098,6 +1098,8 @@ def test_exact_model_and_effort_cross_authenticated_native_dispatch(
 def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from dataclasses import replace
+
     from planner.conversation.events import (
         AgentMessageDeltaFrame,
         ModelThinkingFrame,
@@ -1127,6 +1129,10 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                     0
                 ]
                 with tail.subscribe("c_scripted") as watcher:
+                    await sink.report(
+                        replace(turn, turn_number=turn.turn_number + 1),
+                        AgentMessageDelta(text_delta="Wrong turn"),
+                    )
                     await sink.report(turn, AgentMessageDelta(text_delta="Live text"))
                     await sink.report(turn, ModelThinkingHappened())
                     await sink.report(turn, ToolCallProgress(tool_call_id="tool", detail="Working"))
@@ -1172,6 +1178,20 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                         )
                         is not None
                     )
+            await harness.system.kill("c_scripted")
+            fate = await harness.system.send(
+                "c_scripted", text_message_content("Start again"), sender_label="Test"
+            )
+            assert isinstance(fate, PromptDeliveryStarted)
+            current_sink, current_turn = harness.native.sink, harness.native.turn
+            assert current_sink is not None and current_turn is not None
+            with tail.subscribe("c_scripted") as watcher:
+                # Even a current turn token cannot give a retired child a destination.
+                await sink.report(current_turn, AgentMessageDelta(text_delta="Retired child"))
+                await current_sink.report(current_turn, AgentMessageDelta(text_delta="New child"))
+                assert await asyncio.wait_for(watcher.next_item(), 2) == AgentMessageDeltaFrame(
+                    text_delta="New child"
+                )
         finally:
             if resume is not None:
                 resume.set()

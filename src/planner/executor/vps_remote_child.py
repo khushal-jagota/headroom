@@ -68,11 +68,13 @@ class MacRemoteChild:
         skill_snapshot_supplier: SkillSnapshotSupplier,
         cancel_initial_delivery: CancelInitialDelivery | None = None,
         *,
+        event_sink: backend.BackendEventSink | None = None,
         initial_history_complete: bool = True,
         retire_reference: Callable[[ChildReference], None] | None = None,
         send_answer: Callable[[ChildCommand], None] | None = None,
     ) -> None:
         self.reference = reference
+        self.event_sink = event_sink
         self._send_answer = send_answer
         self.saved_answers: dict[str, ChildCommand] = {}
         self._callbacks: set[AskReference] | None = None
