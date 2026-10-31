@@ -2,7 +2,7 @@
 
 A Worker type is a way of paying attention. Coding, research, debugging, and designing a flow do not want the same stages or the same moments of human judgment. The type is chosen when the Ticket is created and does not change afterward. It declares the ladder, which stages the Worker fills and which stages open a collaborative turn, the specialist skill, and the backend, model, and reasoning a new Ticket copies as its starting setup.
 
-The Ticket then owns that setup. Later edits on the Worker type change future Tickets. They do not rewrite a Ticket that already exists, and they do not move its locale.
+The Ticket then owns its launch setup. Later edits to launch defaults affect future Tickets. They do not rewrite an existing Ticket’s launch setup or locale. A change to the type’s ladder also applies to its unfinished Tickets, under the migration rules below.
 
 ## The ladder every type shares
 
@@ -13,6 +13,16 @@ A stage marked worker-owned is the Worker’s to draft. A stage marked user-owne
 Ten types ship. `probe` exists only in tests, with unfamiliar stage names, so a coding-shaped assumption fails loudly. `personal`, `planning-day`, `planning-midday-check`, and `planning-sprint` remain readable history. They cannot be created, and their schedules can only be disabled.
 
 Launch defaults below are what a fresh database copies onto a new Ticket. The owner can change prospective defaults and the specialist text in Settings. Hermes ignores reasoning. A Worker type can be marked as requiring macOS. That flag affects future creation only.
+
+## Amendments and existing Tickets
+
+A Worker type save can remove stages and fields even when unfinished Tickets use them. A Ticket on a removed stage moves to the nearest earlier stage that survives, using the old order. A ceiling on a removed stage follows the same rule. Its holder stays the same. For example, a Ticket at What Changes with a Plan ceiling gets a What Changes ceiling when Plan disappears. The save never grants Implementation by accident.
+
+The save preserves stored text in removed fields. It does not invent field values or accept proposals. Finished Tickets remain unchanged, including historical ceilings that name removed stages. Those ceilings remain readable but cannot authorize a new write. A Ticket whose current stage survives stays there.
+
+The definition and all Ticket migrations save in one transaction. If a Ticket has no earlier destination, an incompatible proposal, or dispatched work whose step or authority changes, the save refuses and names it. Unsafe changes to stage order also refuse. Any failure leaves the definition and Tickets unchanged.
+
+The save result contains each affected Ticket’s title, old and new stage, and old and new ceiling. Field-only effects also appear, even when both positions stay the same. The CLI prints the mapping, and JSON output preserves it. The caller must retain that result in the amendment’s evidence. Migration records do not enter Ticket guidance, which remains instructions for the Worker.
 
 ## Coding
 
@@ -64,4 +74,4 @@ Adding a type is a product decision: a new ladder, a specialist skill, and one r
 
 `src/planner/worker_types/shipped_worker_types.json` is the seed. `src/planner/worker_types/registry.py` is the registry the process serves. Settings UI is `web/src/routes/ConfigRoute.svelte`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-10-31._

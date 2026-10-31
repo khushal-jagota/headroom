@@ -18,6 +18,7 @@ from planner.tickets.derivation import AgentState, TicketFacts
 from planner.tickets.logic import machine
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 async def read_running_conversation_count(
@@ -126,9 +127,11 @@ def ticket_is_assigned(ownership: StageOwnershipMode | None) -> bool:
     return ownership is StageOwnershipMode.user
 
 
-def ticket_assignment_from_values(*, stage: str, worker_type: str) -> bool:
+def ticket_assignment_from_values(
+    *, stage: str, worker_type: str, worker_type_definition: WorkerTypeDefinition | None = None
+) -> bool:
     """Derive assignment from the Worker type's ownership declaration."""
-    definition = configured_worker_type_registry().require(worker_type)
+    definition = worker_type_definition or configured_worker_type_registry().require(worker_type)
     ownership = machine.stage_ownership_mode(
         stage,
         worker_type_definition=definition,
