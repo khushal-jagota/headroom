@@ -6,7 +6,7 @@ The standing principle list is [`DESIGN.md`](../DESIGN.md). The values those pri
 
 ## One accent, one meaning
 
-The accent is the soft steel `--accent-bright`. It means a person is needed: a pending approval, a required action, the selected row. It is not a brand decoration, and it stays out of ordinary agent prose. If it is everywhere, it says nothing. The one strongly raised surface is the approval control, with a top highlight and a long shadow. Nothing else on a page is elevated that way. A pure white dot is reserved for a Worker waiting on a permission ask, so “only you can answer this” reads before any label does.
+The accent is the soft steel `--accent-bright`. It means a person is needed: a pending approval, a required action, and the enabled Send control in the composer. It is not a brand decoration, and it stays out of ordinary agent prose. If it is everywhere, it says nothing. A selected row is a sunken `--surface-2`, not the accent. The one strongly raised surface is the approval control, with a top highlight and a long shadow. Nothing else on a page is elevated that way. A pure white dot is reserved for a Worker waiting on a permission ask, so “only you can answer this” reads before any label does.
 
 Settled state is quiet. An errored stage can use the error color. Done can use the small green mark. Those are status, not the accent.
 
