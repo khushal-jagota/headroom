@@ -25,7 +25,7 @@ from planner.execution_identity import (
     parse_identity,
 )
 from planner.executor.catalog_relay import VpsCatalogRelay
-from planner.executor.files import snapshot_file
+from planner.executor.files import file_digest
 from planner.executor.link import Link, accept_link
 from planner.executor.link_files import GenerationTransfers, settled_io
 from planner.executor.protocol import (
@@ -39,6 +39,8 @@ from planner.executor.protocol import (
     ExecutorHealth,
     ExecutorHealthRead,
     FileDownloadRequest,
+    FileManifest,
+    FileSnapshot,
     FileScope,
     FileUploadRequest,
     JsonObject,
@@ -407,26 +409,20 @@ class VpsExecutor:
             command.child.conversation_id,
             request.stored_file_id,
         )
-        preparation = asyncio.create_task(
-            asyncio.to_thread(
-                partial(
-                    snapshot_file,
-                    root=path.parent,
-                    relative_path=path.name,
-                    scope=FileScope.conversation,
-                    owner_id=command.child.conversation_id,
-                )
-            )
+        digest, byte_count = await settled_io(file_digest, path)
+        snapshot = FileSnapshot(
+            FileManifest(
+                FileScope.conversation,
+                command.child.conversation_id,
+                path.name,
+                digest,
+                byte_count,
+            ),
+            path,
         )
-        try:
-            snapshot = await asyncio.shield(preparation)
-            slot = await service.create_download_async(snapshot)
-            await settled_io(self.runs.store.verify_connection, identity)
-            return _object(slot), WireMessageKind.file_transfer
-        finally:
-            await wait_for_settlement(preparation)
-            if not preparation.cancelled() and preparation.exception() is None:
-                preparation.result().local_path.unlink(missing_ok=True)
+        slot = await service.create_download_async(snapshot)
+        await settled_io(self.runs.store.verify_connection, identity)
+        return _object(slot), WireMessageKind.file_transfer
 
     async def store_upload(self, identity: ExecutorIdentity, transfer_id: str) -> None:
         service = self._transports.get(identity)

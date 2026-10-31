@@ -11,10 +11,9 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from uuid import uuid4
 
 from planner.executor.configuration import FILE_CHUNK_BYTES
-from planner.executor.protocol import FileManifest, FileScope, FileSnapshot
+from planner.executor.protocol import FileManifest
 
 
 def fsync_file(descriptor: int) -> None:
@@ -125,47 +124,6 @@ def copy_verified(source: Path, destination: Path, manifest: FileManifest) -> No
             raise
         finally:
             os.close(outgoing)
-
-
-def snapshot_file(
-    *,
-    root: Path,
-    relative_path: str,
-    scope: FileScope,
-    owner_id: str,
-) -> FileSnapshot:
-    safe_component(owner_id)
-    path = contained_path(root, relative_path)
-    private = root.parent / ".executor-snapshots"
-    with directory_descriptor(private, create=True):
-        pass
-    temporary_path = private / uuid4().hex
-    digest = hashlib.sha256()
-    count = 0
-    with regular_descriptor(path) as incoming, directory_descriptor(private) as parent:
-        outgoing = os.open(
-            temporary_path.name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=parent,
-        )
-        try:
-            with os.fdopen(outgoing, "wb", closefd=False) as snapshot:
-                while block := os.read(incoming, FILE_CHUNK_BYTES):
-                    snapshot.write(block)
-                    digest.update(block)
-                    count += len(block)
-                snapshot.flush()
-                fsync_file(outgoing)
-        except BaseException:
-            os.unlink(temporary_path.name, dir_fd=parent)
-            raise
-        finally:
-            os.close(outgoing)
-    return FileSnapshot(
-        FileManifest(scope, owner_id, relative_path, digest.hexdigest(), count),
-        temporary_path,
-    )
 
 
 def file_digest(path: Path) -> tuple[str, int]:

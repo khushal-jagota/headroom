@@ -9,12 +9,10 @@ from pathlib import Path
 import pytest
 
 from planner.execution_identity import ProtocolRefused
-from planner.executor.files import snapshot_file
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
-    FileScope,
     IpcResponse,
     OutboxEntry,
     ReceiptDisposition,
@@ -57,15 +55,6 @@ def test_frame_roundtrip_and_oversize_before_body_read() -> None:
             await read_typed_frame(bad, IpcResponse)
 
     asyncio.run(run())
-
-
-def test_symlink_snapshot_refused(tmp_path: Path) -> None:
-    (tmp_path / "outside").write_text("secret")
-    root = tmp_path / "root"
-    root.mkdir()
-    (root / "link").symlink_to(tmp_path / "outside")
-    with pytest.raises(ValueError, match="symlink"):
-        snapshot_file(root=root, relative_path="link", scope=FileScope.ticket, owner_id="t_one")
 
 
 def test_oversized_envelope_never_becomes_a_queued_poison_entry(tmp_path: Path) -> None:
