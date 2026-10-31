@@ -523,8 +523,9 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     _run(exercise)
 
 
+@pytest.mark.parametrize("schema_revision", ["mac_vps_execution", "executor_default_workspace"])
 def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
-    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schema_revision: str,
 ) -> None:
     """A locally ended turn cannot release history while its Mac child may still run."""
     copied = tmp_path / "native-stop-proof.db"
@@ -532,8 +533,17 @@ def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
         source.backup(target)
     archive = copied
     monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", Path(db.__file__).parent / "migrations")
+    _migration_tree_through(tmp_path / "native-head", monkeypatch, schema_revision)
     with closing(connect(str(archive))) as upgraded:
         create_schema(upgraded)
+        assert {
+            row[0] for row in upgraded.execute("SELECT version_num FROM alembic_version")
+        } == {schema_revision}
+        if schema_revision == "executor_default_workspace":
+            upgraded.execute(
+                "UPDATE conversations SET workspace_path_policy='executor_default'"
+            )
+            upgraded.commit()
 
     def candidates() -> set[tuple[str, int]]:
         report = read_report(archive, as_of_unix=AS_OF)

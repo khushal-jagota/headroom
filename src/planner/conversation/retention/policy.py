@@ -17,6 +17,8 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "owner_message_preview",
         "video_upload_ledger",
         "mac_vps_execution",
+        # This workspace CHECK expansion leaves diagnostics and mac_runs unchanged.
+        "executor_default_workspace",
         "automatic_project_measures",
         # Goal storage/history adds no changes to diagnostic event or view schemas.
         # Goal identities remain ineligible under the existing owner classifier.

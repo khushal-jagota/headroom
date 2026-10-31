@@ -203,7 +203,7 @@ def build_report(
             linked_ticket_ids,
             read_facts(connection, conversation_id),
             retained_run_is_unresolved(connection, conversation_id)
-            if revisions == {"mac_vps_execution"}
+            if revisions <= {"mac_vps_execution", "executor_default_workspace"}
             else False,
         )
         decisions.append(classify_conversation(source, cutoff_unix=as_of_unix - RETENTION_SECONDS))
