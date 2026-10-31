@@ -59,8 +59,7 @@ from planner.executor.configuration import (
 )
 from planner.executor.files import (
     contained_path,
-    copy_verified,
-    directory_descriptor,
+    install_verified,
     safe_component,
 )
 from planner.executor.link import Link
@@ -507,19 +506,8 @@ class MacRunner:
                 if link is not self.connection():
                     raise ConnectionError("input generation changed")
 
-                def install() -> None:
-                    with directory_descriptor(target.parent, create=True) as parent:
-                        staged = target.parent / (".tmp-" + uuid4().hex)
-                        try:
-                            copy_verified(temporary, staged, manifest)
-                            os.replace(
-                                staged.name, target.name, src_dir_fd=parent, dst_dir_fd=parent
-                            )
-                            os.fsync(parent)
-                        finally:
-                            staged.unlink(missing_ok=True)
+                await settled_io(install_verified, temporary, target, manifest)
 
-                await settled_io(install)
         finally:
             temporary.unlink(missing_ok=True)
             self._transfers -= 1

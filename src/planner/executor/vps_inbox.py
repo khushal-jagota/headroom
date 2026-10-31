@@ -12,7 +12,6 @@ from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
-from uuid import uuid4
 
 from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
 from planner.core.clock import Clock
@@ -21,7 +20,7 @@ from planner.core.db import connect
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.files import (
     contained_path,
-    copy_verified,
+    install_verified,
     directory_descriptor,
     file_digest,
     safe_component,
@@ -192,14 +191,7 @@ class InboxStore(VpsDatabase):
     def store_upload(self, manifest: FileManifest, source: Path) -> None:
         """Verify and flush into private staging, never into the served file tree."""
         target = self._staged_file(manifest)
-        with directory_descriptor(target.parent, create=True) as parent:
-            temporary = target.parent / (".tmp-" + uuid4().hex)
-            try:
-                copy_verified(source, temporary, manifest)
-                os.replace(temporary.name, target.name, src_dir_fd=parent, dst_dir_fd=parent)
-                os.fsync(parent)
-            finally:
-                temporary.unlink(missing_ok=True)
+        install_verified(source, target, manifest)
 
     def install_files(self, manifests: tuple[FileManifest, ...]) -> None:
         """Called under the receipt transaction, before any referenced effect."""

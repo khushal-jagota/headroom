@@ -11,6 +11,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from uuid import uuid4
 
 from planner.executor.configuration import FILE_CHUNK_BYTES
 from planner.executor.protocol import FileManifest
@@ -124,6 +125,18 @@ def copy_verified(source: Path, destination: Path, manifest: FileManifest) -> No
             raise
         finally:
             os.close(outgoing)
+
+
+def install_verified(source: Path, target: Path, manifest: FileManifest) -> None:
+    """Publish a checked new inode atomically and flush its directory."""
+    with directory_descriptor(target.parent, create=True) as parent:
+        temporary = target.parent / (".tmp-" + uuid4().hex)
+        try:
+            copy_verified(source, temporary, manifest)
+            os.replace(temporary.name, target.name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def file_digest(path: Path) -> tuple[str, int]:
