@@ -83,6 +83,8 @@ Empty content is rejected before a fate exists.
 
 Permission asks are always shown and always wait. Headroom does not auto-approve and does not remember a grant. An answer lands only on an ask that is still pending on the live turn. Claude and Codex can also ask structured questions. Hermes stays on the permission flow. Production runs use full tool access. The asks still appear, because the agent decided to ask.
 
+Permission choices and structured question answers follow the same rules. Once an answer is on its way, a second answer cannot take its place. If the backend refuses it while the turn is still live, the request waits for another answer. A choice saved for an offline Mac stays in the notebook even if the turn ends before delivery finishes. Only a separate acknowledgment proves it reached the original callback. See [saved answers](executor.md#a-lost-connection-supplies-no-answer).
+
 Voice input never sends audio into the conversation. The mic captures a clip, Groq transcribes it when `PLAN_GROQ_API_KEY` is set, and the text drops into the draft. That key is separate from any agent subscription.
 
 One video, MP4, MOV, or WebM, up to 250 MiB, can be attached. The upload can finish before Send. Headroom validates it with ffprobe, holds it under a disk budget, and expires an unused upload after a day. The agent receives a link or a path. Headroom does not transcode it and does not promise the model understands it.
