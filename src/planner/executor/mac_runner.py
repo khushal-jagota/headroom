@@ -83,7 +83,6 @@ from planner.executor.protocol import (
     EnvelopeKind,
     FileDownloadRequest,
     FileScope,
-    FileSnapshot,
     FileTransfer,
     JsonObject,
     MacOutboxWriter,
@@ -1192,13 +1191,12 @@ class MacRunner:
         conversation_id: str,
         kind: EnvelopeKind,
         value: object,
-        snapshots: tuple[FileSnapshot, ...] = (),
         submission_id: str | None = None,
     ) -> None:
         payload = cast(JsonObject, encode_value(value))
         await asyncio.to_thread(
             self.spool.add,
-            OutboxEntry(conversation_id, kind, payload, submission_id, snapshots),
+            OutboxEntry(conversation_id, kind, payload, submission_id),
         )
 
     async def report_event(
@@ -1247,28 +1245,21 @@ class MacRunner:
                 child.asks.clear()
                 child.user_inputs.clear()
         event = BackendEvent(reference, method, turn, encode_backend_event(method, turn, arguments))
-        snapshots: tuple[FileSnapshot, ...] = ()
-        if (
-            self.paths is not None
-            and child.ticket_id is not None
-            and method
-            in (
+        await asyncio.to_thread(
+            self.spool.add,
+            OutboxEntry(
+                reference.conversation_id,
+                EnvelopeKind.backend_event,
+                cast(JsonObject, encode_value(event)),
+            ),
+            ticket_id=child.ticket_id
+            if method in (
                 BackendEventMethod.agent_message_completed,
                 BackendEventMethod.tool_call_finished,
                 BackendEventMethod.turn_ended,
             )
-        ):
-            await asyncio.to_thread(
-                self.spool.add,
-                OutboxEntry(
-                    reference.conversation_id,
-                    EnvelopeKind.backend_event,
-                    cast(JsonObject, encode_value(event)),
-                ),
-                ticket_id=child.ticket_id,
-            )
-            return
-        await self._emit(reference.conversation_id, EnvelopeKind.backend_event, event, snapshots)
+            else None,
+        )
 
     async def _publish_application(self, application: AnswerApplication) -> None:
         if application.answer_id in self._applications_published:
