@@ -40,10 +40,6 @@ STATEMENTS = (
         conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
         turn_number INTEGER NOT NULL, principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL,
         PRIMARY KEY(conversation_id,turn_number,principal_kind,principal_id))""",
-    """CREATE TABLE executor_command_outcomes (
-        executor_incarnation TEXT NOT NULL, command_id TEXT NOT NULL,
-        outcome_json TEXT NOT NULL, output_confirmed INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY(executor_incarnation,command_id))""",
 )
 
 

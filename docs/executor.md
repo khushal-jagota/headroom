@@ -168,6 +168,10 @@ conversations send at once; one slow upload does not block the others.
 Prompt and steer calls use the Mac's direct result. An event reported before the
 prompt returns can finish admission without waiting for any queued output.
 Stop and retirement require the final ordered stop receipt.
+Direct stop replies and reconnect reports cannot finish a successful stop. If the
+link drops before its queued `child_stopped` item arrives, the Mac sends that item
+after reconnect. If the VPS commits its receipt but acceptance is cancelled before
+settling the caller, replay of the stored `recorded: true` result settles it.
 
 A CLI write can outlast its connection. The client keeps its original request ID as
 the submission ID after any possible send, including partial-send failure, timeout,

@@ -125,21 +125,6 @@ class ExecutorStore(VpsDatabase):
                 ),
             )
 
-    def has_accepted_command_outcome(self, outcome: CommandOutcome) -> bool:
-        """A retained result alone does not prove its original FIFO publication."""
-        connection = connect(self.db_path)
-        try:
-            row = connection.execute(
-                "SELECT outcome_json,output_confirmed FROM executor_command_outcomes "
-                "WHERE executor_incarnation=? AND command_id=?",
-                (outcome.child.executor_incarnation, outcome.command_id),
-            ).fetchone()
-            if row is None or row[0] != _record(outcome):
-                return False
-            return bool(row[1])
-        finally:
-            connection.close()
-
     def begin_connection(self, identity: ExecutorIdentity, now_ms: int) -> None:
         if (
             identity.protocol_version != PROTOCOL_VERSION
@@ -344,35 +329,6 @@ class ExecutorStore(VpsDatabase):
             "UPDATE executor_child_assignments SET closed_at_ms=? "
             "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
             (now_ms, child.executor_incarnation, child.child_id, child.conversation_id),
-        )
-
-    @staticmethod
-    def record_command_outcome_in_transaction(
-        connection: sqlite3.Connection, outcome: CommandOutcome, *, output_confirmed: bool = False
-    ) -> None:
-        existing = connection.execute(
-            "SELECT outcome_json FROM executor_command_outcomes "
-            "WHERE executor_incarnation=? AND command_id=?",
-            (outcome.child.executor_incarnation, outcome.command_id),
-        ).fetchone()
-        if existing is not None:
-            if existing[0] != _record(outcome):
-                raise _invalid("Command outcome conflicts with first result")
-            if output_confirmed:
-                connection.execute(
-                    "UPDATE executor_command_outcomes SET output_confirmed=1 "
-                    "WHERE executor_incarnation=? AND command_id=?",
-                    (outcome.child.executor_incarnation, outcome.command_id),
-                )
-            return
-        connection.execute(
-            "INSERT INTO executor_command_outcomes VALUES (?,?,?,?)",
-            (
-                outcome.child.executor_incarnation,
-                outcome.command_id,
-                _record(outcome),
-                int(output_confirmed),
-            ),
         )
 
     def verify_connection(self, identity: ExecutorIdentity) -> None:
