@@ -3,19 +3,13 @@ import type { TicketLocale } from "../ticketMachines";
 import type { ConversationBackendKey } from "./wire";
 
 export type SelectionKind = "concrete" | "provider_alias" | "panels_alias" | "legacy_unclassified";
-export type EvidenceStatus = "fresh" | "stale" | "unverified" | "unavailable";
-export type CatalogPresence = "present" | "absent" | "unknown";
-export type ValidationState = "compatible" | "incompatible" | "unavailable" | "unresolved";
+export type ValidationState = "compatible" | "incompatible" | "unresolved";
 export type ValidationReason =
-  | "supported" | "model_incompatible" | "effort_incompatible"
-  | "installation_unavailable" | "credentials_unavailable" | "catalog_unavailable"
-  | "offline" | "timeout" | "context_changed" | "stale_evidence" | "partial_catalog"
-  | "visibility_limited" | "unknown_model" | "unknown_effort" | "legacy_unscoped"
-  | "conflicting_rows" | "identity_unproved" | "account_observation_required"
+  | "supported" | "model_incompatible" | "effort_incompatible" | "catalog_unavailable"
+  | "offline" | "timeout" | "context_changed" | "legacy_unscoped" | "identity_unproved"
   | "configuration_scope_unknown";
 export type CorrectiveAction =
-  | "none" | "refresh_catalog" | "reconnect_destination" | "update_executor"
-  | "install_provider" | "authenticate_provider" | "choose_model" | "choose_effort"
+  | "none" | "refresh_catalog" | "reconnect_destination" | "choose_model"
   | "verify_launch_context" | "classify_selection";
 
 export type ModelSelection = {
@@ -63,17 +57,6 @@ export type CatalogEvidenceReference = {
   clock_uncertainty_seconds: number | null;
 };
 
-export type CatalogRowReference = {
-  evidence: CatalogEvidenceReference;
-  row_ordinal: number;
-};
-
-export type AliasResolutionFact = {
-  submitted_token: string;
-  resolved_model_id: string;
-  evidence: CatalogEvidenceReference;
-};
-
 export type CatalogUnavailable = {
   kind: "unavailable";
   backend_key: ConversationBackendKey;
@@ -91,12 +74,7 @@ export type CanonicalModelValidation = {
   state: ValidationState;
   reason: ValidationReason;
   corrective_action: CorrectiveAction;
-  resolved_model_id: string | null;
   launch_token: string | null;
-  evidence: CatalogEvidenceReference | null;
-  current_alias_resolution: AliasResolutionFact | null;
-  previous_alias_resolution: AliasResolutionFact | null;
-  unavailable: CatalogUnavailable | null;
 };
 
 /** Advisory metadata read. Writes and admission independently revalidate. */

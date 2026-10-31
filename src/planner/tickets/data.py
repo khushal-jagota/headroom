@@ -799,32 +799,6 @@ def remove_ticket_conversation_start(
         capture_ticket_attention(conn, ticket_id, now)
 
 
-def write_ticket_last_chosen_configuration(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    expected_conversation_id: str,
-    model: str | None,
-    reasoning_effort: str | None,
-    now: int,
-    expected_configuration: EmployeeLaunchConfiguration | None = None,
-) -> bool:
-    """Retired effective-identity hook; it never changes canonical Ticket intent.
-
-    Genuine accepted sender overrides use write_explicit_ticket_launch_intent.
-    Provider resolution and conversation rebinding cannot author a new selection.
-    """
-    with _txn(conn):
-        _load_ticket_for_write(conn, ticket_id)
-        if expected_configuration is not None:
-            current = employee_launch_configuration(_load_ticket_for_write(conn, ticket_id))
-            if current != expected_configuration:
-                return False
-        # This compatibility hook records no model correction. The exact launch
-        # intent changes only through the explicit configuration writer.
-        return _load_ticket_for_write(conn, ticket_id).conversation_id == expected_conversation_id
-
-
 def _explicit_ticket_launch_intent_kind(
     *,
     model: str,
@@ -1025,9 +999,6 @@ def write_employee_configuration(
     employee_backend: str,
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
-    advertised_models: frozenset[str] | None,
-    reasoning_supported: bool | None,
-    advertised_reasoning_efforts: frozenset[str] | None,
     now: int,
     selection_kind: SelectionKind | str | None = None,
     validation: CanonicalModelValidation | None = None,
@@ -1041,9 +1012,7 @@ def write_employee_configuration(
     transactions — and that is the reason it is gone rather than something to add back.
     """
 
-    with (
-        _txn(conn),
-    ):
+    with _txn(conn):
         if (
             validation is not None
             and validation.launch_token is None
@@ -1071,9 +1040,6 @@ def write_employee_configuration(
         normalized = employee_configuration.normalize_employee_launch_configuration(
             current,
             candidate,
-            advertised_models=advertised_models,
-            reasoning_supported=reasoning_supported,
-            advertised_reasoning_efforts=advertised_reasoning_efforts,
         )
         if current == normalized and selection_kind is None and validation is None:
             return ticket
@@ -1309,11 +1275,6 @@ def create_ticket(
                     "WHERE ticket_id=?",
                     (ticket_id,),
                 )
-        if model_source_is_historical:
-            conn.execute(
-                "UPDATE ticket_launch_validation SET intent_origin='historical' WHERE ticket_id=?",
-                (ticket_id,),
-            )
         if validation is not None:
             launch_validation.store_written_configuration_validation(
                 conn, ticket_id, validation, now=now
@@ -2202,9 +2163,7 @@ def classify_ticket(
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:
-    with (
-        _txn(conn),
-    ):
+    with _txn(conn):
         if admit is not None:
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
@@ -2245,9 +2204,7 @@ def unclassify_ticket(
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:
-    with (
-        _txn(conn),
-    ):
+    with _txn(conn):
         if admit is not None:
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)

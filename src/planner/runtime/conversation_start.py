@@ -308,15 +308,11 @@ async def verify_ticket_launch(
     selection_kind: SelectionKind | None = None,
     persist: bool = True,
     notify: bool = False,
-    classify_new: bool = False,
     now: int,
 ) -> CanonicalModelValidation:
     """Bind exact intent locally, then compare the captured selection before persistence."""
     from planner.conversation.launch_intent import bind_model_intent
-    from planner.tickets.validation.data import (
-        record_launch_validation,
-        set_selection_kind,
-    )
+    from planner.tickets.validation.data import record_launch_validation
 
     proposed = employee_launch_model is not None or employee_backend is not None
     selection, workspace = resolve_ticket_launch_selection(
@@ -331,7 +327,7 @@ async def verify_ticket_launch(
     validator = getattr(system, "validate_launch_selection", None)
     if callable(validator):
         validation = await validator(
-            selection, workspace, attempt_id=uuid4().hex, classify_new=classify_new,
+            selection, workspace,
         )
     else:
         from planner.conversation.backend_state import require_enabled_model
@@ -340,14 +336,6 @@ async def verify_ticket_launch(
         if validation.launch_token is not None:
             require_enabled_model(conn, selection.backend_key, validation.launch_token)
     if persist and not proposed and locale is None:
-        if validation.selection.selection_kind != selection.selection_kind:
-            updated = set_selection_kind(
-                conn,
-                ticket.id,
-                validation.selection.selection_kind,
-                expected_selection_revision=selection.selection_revision,
-            )
-            validation = replace(validation, selection=updated)
         if not record_launch_validation(
             conn,
             ticket.id,

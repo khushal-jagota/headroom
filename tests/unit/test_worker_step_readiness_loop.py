@@ -36,7 +36,6 @@ from planner.conversation.contracts import (
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.model_resolution.contracts import (
-    AliasResolutionFact,
     CanonicalModelValidation,
     CatalogWorkspaceBinding,
     LaunchContext,
@@ -114,10 +113,6 @@ class _ScopedMetadataConversationSystem(InMemoryConversationSystem):
         self,
         selection: ModelSelection,
         workspace: CatalogWorkspaceBinding,
-        *,
-        attempt_id: str,
-        classify_new: bool = False,
-        previous_alias_resolution: AliasResolutionFact | None = None,
     ) -> CanonicalModelValidation:
         # Explicit fixture ingress supplies concrete intent; no resolver-selected
         # model or effort substitutes for the requested tuple.
@@ -141,17 +136,10 @@ class _MetadataDelegate:
         self,
         selection: ModelSelection,
         workspace: CatalogWorkspaceBinding,
-        *,
-        attempt_id: str,
-        classify_new: bool = False,
-        previous_alias_resolution: AliasResolutionFact | None = None,
     ) -> CanonicalModelValidation:
         return await self._validation_source.validate_launch_selection(
             selection,
             workspace,
-            attempt_id=attempt_id,
-            classify_new=classify_new,
-            previous_alias_resolution=previous_alias_resolution,
         )
 
 
@@ -443,7 +431,6 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                 conn,
                 OWNER_PRINCIPAL,
                 ticket_id,
-                write_employee_configuration=None,
                 start_worker_step=lambda: start_ready_worker_step(
                     ticket_id,
                     connect_database=world.connect,
@@ -468,7 +455,6 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                 conn,
                 OWNER_PRINCIPAL,
                 ticket_id,
-                write_employee_configuration=None,
                 start_worker_step=lambda: start_ready_worker_step(
                     ticket_id,
                     connect_database=world.connect,
@@ -519,7 +505,6 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
                     conn,
                     OWNER_PRINCIPAL,
                     ticket_id,
-                    write_employee_configuration=None,
                     start_worker_step=unexpected_start,
                     now=world.clock.now_unix,
                 )
@@ -580,7 +565,6 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
                     conn,
                     OWNER_PRINCIPAL,
                     ticket_id,
-                    write_employee_configuration=None,
                     start_worker_step=unexpected_start,
                     now=world.clock.now_unix,
                 )
@@ -615,7 +599,6 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
                     restart_conn,
                     OWNER_PRINCIPAL,
                     ticket_id,
-                    write_employee_configuration=None,
                     start_worker_step=unexpected_restart_start,
                     now=world.clock.now_unix,
                 )

@@ -157,50 +157,26 @@ def test_retained_source_heads_join_without_losing_authority(
         engine.dispose()
 
 
-def test_scoped_catalog_migration_keeps_legacy_evidence_unverified(tmp_path: Path) -> None:
-    """Legacy values survive byte-for-byte and grant neither positive nor negative proof."""
-    from tests.unit.test_current_model_resolution import selection
-
-    from planner.conversation.launch_intent import bind_model_intent
-
+def test_migration_drops_unused_model_catalog_tables(tmp_path: Path) -> None:
     path = tmp_path / "catalogs.db"
     _seed_pre_lifecycle(path).dispose()
     engine = _migration_engine(str(path), 1000)
-    legacy_resolution = ("codex", "sol", "gpt-5-sol", '["high"]', 123)
-    legacy_catalog = ("codex", "sol", "gpt-5-sol", '["high"]', 122, "gpt-5-sol")
     try:
         with engine.begin() as connection:
             config = _alembic_config(connection)
             command.upgrade(config, "video_upload_ledger")
             conn = _raw(connection)
-            conn.execute(
-                "INSERT INTO model_variant_resolutions VALUES (?,?,?,?,?)", legacy_resolution
-            )
-            conn.execute("INSERT INTO model_catalogue_models VALUES (?,?,?,?,?,?)", legacy_catalog)
+            conn.execute("INSERT INTO model_variant_resolutions VALUES (?,?,?,?,?)",
+                         ("codex", "sol", "gpt-5-sol", '["high"]', 123))
+            conn.execute("INSERT INTO model_catalogue_models VALUES (?,?,?,?,?,?)",
+                         ("codex", "sol", "gpt-5-sol", '["high"]', 122, "gpt-5-sol"))
             command.upgrade(config, "head")
-            assert [
-                tuple(value) for value in conn.execute("SELECT * FROM model_variant_resolutions")
-            ] == [legacy_resolution]
-            assert [
-                tuple(value) for value in conn.execute("SELECT * FROM model_catalogue_models")
-            ] == [legacy_catalog]
-            assert conn.execute("SELECT * FROM scoped_model_catalog_observations").fetchall() == []
-            exact = bind_model_intent(selection())
-            assert exact.launch_token == selection().submitted_token
-            assert exact.evidence is None
-        with engine.begin() as connection:
-            conn = _raw(connection)
-            assert [
-                tuple(value) for value in conn.execute("SELECT * FROM model_variant_resolutions")
-            ] == [legacy_resolution]
-            assert [
-                tuple(value) for value in conn.execute("SELECT * FROM model_catalogue_models")
-            ] == [legacy_catalog]
-            assert [
-                value[0]
-                for value in conn.execute(
-                    "SELECT row_ordinal FROM scoped_model_catalog_rows ORDER BY row_ordinal"
-                )
-            ] == []
+            tables = {
+                row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            assert not tables.intersection({
+                "model_variant_resolutions", "model_catalogue_models",
+                "scoped_model_catalog_observations", "scoped_model_catalog_rows",
+            })
     finally:
         engine.dispose()

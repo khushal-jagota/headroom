@@ -107,29 +107,6 @@ def _add_workspace_policy() -> None:
     )
 
 
-def _create_scoped_catalogs() -> None:
-    bind = op.get_bind()
-    bind.exec_driver_sql("""CREATE TABLE scoped_model_catalog_observations (
-        observation_id TEXT NOT NULL,
-        observation_revision TEXT NOT NULL,
-        context_ref TEXT NOT NULL,
-        observed_at INTEGER NOT NULL CHECK(observed_at >= 0),
-        metadata_json TEXT NOT NULL,
-        PRIMARY KEY(observation_id, observation_revision)
-    )""")
-    bind.exec_driver_sql("""CREATE INDEX scoped_model_catalog_context
-        ON scoped_model_catalog_observations(context_ref, observed_at DESC)""")
-    bind.exec_driver_sql("""CREATE TABLE scoped_model_catalog_rows (
-        observation_id TEXT NOT NULL,
-        observation_revision TEXT NOT NULL,
-        row_ordinal INTEGER NOT NULL CHECK(row_ordinal >= 0),
-        row_json TEXT NOT NULL,
-        PRIMARY KEY(observation_id, observation_revision, row_ordinal),
-        FOREIGN KEY(observation_id, observation_revision)
-            REFERENCES scoped_model_catalog_observations(observation_id, observation_revision)
-    )""")
-
-
 def _create_launch_validation() -> None:
     conn = op.get_bind()
     conn.exec_driver_sql("""CREATE TABLE ticket_launch_validation (
@@ -137,15 +114,14 @@ def _create_launch_validation() -> None:
         launch_revision INTEGER NOT NULL DEFAULT 1 CHECK(launch_revision > 0),
         selection_kind TEXT NOT NULL DEFAULT 'legacy_unclassified'
           CHECK(selection_kind IN ('concrete','provider_alias','panels_alias','legacy_unclassified')),
-        intent_origin TEXT NOT NULL DEFAULT 'historical' CHECK(intent_origin IN ('historical','new')),
         validation_json TEXT, workspace_json TEXT, checked_at INTEGER,
         transition_revision INTEGER NOT NULL DEFAULT 0 CHECK(transition_revision >= 0),
         notification_fingerprint TEXT
     )""")
     conn.exec_driver_sql("INSERT INTO ticket_launch_validation(ticket_id) SELECT id FROM tickets")
     conn.exec_driver_sql("""CREATE TRIGGER ticket_launch_created AFTER INSERT ON tickets
-        BEGIN INSERT INTO ticket_launch_validation(ticket_id,intent_origin)
-          VALUES(NEW.id,'new'); END""")
+        BEGIN INSERT INTO ticket_launch_validation(ticket_id)
+          VALUES(NEW.id); END""")
     conn.exec_driver_sql("""CREATE TRIGGER ticket_launch_changed AFTER UPDATE OF
         employee_backend,employee_launch_model,employee_launch_reasoning_effort,
         locale,project_id,manager_id,manager_kind ON tickets
@@ -240,7 +216,8 @@ def upgrade() -> None:
     _create_executor_storage()
     _hold_unresolved_memory_notices()
     _add_workspace_policy()
-    _create_scoped_catalogs()
+    op.get_bind().exec_driver_sql("DROP TABLE IF EXISTS model_variant_resolutions")
+    op.get_bind().exec_driver_sql("DROP TABLE IF EXISTS model_catalogue_models")
     _create_launch_validation()
 
 

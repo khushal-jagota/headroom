@@ -103,23 +103,9 @@ class LaunchContext:
     account_generation: CodexLoginGeneration | None
 
 
-class EvidenceStatus(StrEnum):
-    fresh = "fresh"
-    stale = "stale"
-    unverified = "unverified"
-    unavailable = "unavailable"
-
-
-class CatalogPresence(StrEnum):
-    present = "present"
-    absent = "absent"
-    unknown = "unknown"
-
-
 class ValidationState(StrEnum):
     compatible = "compatible"
     incompatible = "incompatible"
-    unavailable = "unavailable"
     unresolved = "unresolved"
 
 
@@ -127,22 +113,13 @@ class ValidationReason(StrEnum):
     supported = "supported"
     model_incompatible = "model_incompatible"
     effort_incompatible = "effort_incompatible"
-    installation_unavailable = "installation_unavailable"
-    credentials_unavailable = "credentials_unavailable"
     catalog_unavailable = "catalog_unavailable"
     offline = "offline"
     timeout = "timeout"
     context_changed = "context_changed"
-    stale_evidence = "stale_evidence"
-    partial_catalog = "partial_catalog"
-    visibility_limited = "visibility_limited"
-    unknown_model = "unknown_model"
-    unknown_effort = "unknown_effort"
     alias_mapping_unavailable = "alias_mapping_unavailable"
     legacy_unscoped = "legacy_unscoped"
-    conflicting_rows = "conflicting_rows"
     identity_unproved = "identity_unproved"
-    account_observation_required = "account_observation_required"
     configuration_scope_unknown = "configuration_scope_unknown"
 
 
@@ -150,11 +127,7 @@ class CorrectiveAction(StrEnum):
     none = "none"
     refresh_catalog = "refresh_catalog"
     reconnect_destination = "reconnect_destination"
-    update_executor = "update_executor"
-    install_provider = "install_provider"
-    authenticate_provider = "authenticate_provider"
     choose_model = "choose_model"
-    choose_effort = "choose_effort"
     verify_launch_context = "verify_launch_context"
     classify_selection = "classify_selection"
 
@@ -175,25 +148,6 @@ class CatalogEvidenceReference:
     observed_at: ObservationTime
     attempt_id: NonemptyText
     clock_uncertainty_seconds: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogRowReference:
-    """An exact source record, including duplicate rows in one observation."""
-
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-    evidence: CatalogEvidenceReference
-    row_ordinal: Annotated[int, Field(strict=True, ge=0)]
-
-
-@dataclass(frozen=True, slots=True)
-class AliasResolutionFact:
-    """An alias target with its own context and original evidence provenance."""
-
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-    submitted_token: NonemptyText
-    resolved_model_id: NonemptyText
-    evidence: CatalogEvidenceReference
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,9 +225,8 @@ type CatalogResult = Annotated[CatalogObservation | CatalogUnavailable, Field(di
 class CanonicalModelValidation:
     """One selection revision's metadata outcome, never an admission capability.
 
-    Admission must recheck this exact selection, launch context, freshness, and
-    attempt ownership. Compatible means metadata support, never entitlement.
-    Current and previous alias targets remain factual inputs for visible views.
+    Admission rechecks exact intent and current explicit model disables.
+    Compatible never proves provider entitlement.
     """
 
     __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
@@ -281,38 +234,7 @@ class CanonicalModelValidation:
     state: ValidationState
     reason: ValidationReason
     corrective_action: CorrectiveAction
-    resolved_model_id: NonemptyText | None
     launch_token: NonemptyText | None
-    evidence: CatalogEvidenceReference | None
-    current_alias_resolution: AliasResolutionFact | None
-    previous_alias_resolution: AliasResolutionFact | None
-    unavailable: CatalogUnavailable | None
-
-
-@dataclass(frozen=True, slots=True)
-class PickerRow:
-    """Destination offer or retained selection, with its own unmodified facts.
-
-    Coalesce only identical scoped intent, token, resolution, capabilities, and
-    applicable evidence. Keep provenance for every contributing source record.
-    Presentation must expose alias changes and structured unavailable validation.
-    """
-
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-    submitted_token: NonemptyText
-    selection_kind: SelectionKind
-    resolved_model_id: NonemptyText | None
-    display_name: NonemptyText | None
-    supported_reasoning_efforts: tuple[NonemptyText, ...] | None
-    context: LaunchContext | None
-    observed_at: ObservationTime | None
-    evidence_status: EvidenceStatus
-    catalog_presence: CatalogPresence
-    current_selection: bool
-    current_alias_resolution: AliasResolutionFact | None
-    previous_alias_resolution: AliasResolutionFact | None
-    provenance: tuple[CatalogRowReference, ...]
-    validation: CanonicalModelValidation
 
 
 @dataclass(frozen=True, slots=True)

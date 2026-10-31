@@ -25,7 +25,6 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
     CodexModelCatalogUnavailable,
     probe_codex_model_catalog,
 )
-from planner.conversation.backends.contracts import BackendEmissionInputs
 from planner.conversation.backends.probe_lifetime import owned_probe
 from planner.conversation.contracts import ConversationBackendKey, WorkspacePathPolicy
 from planner.conversation.model_resolution.config import (
@@ -135,30 +134,6 @@ class ProductionCatalogObserver:
             generation,
         )
 
-    def verify_context(self, expected: LaunchContext) -> bool:
-        """The owner and authorized directory are the observable admission boundary."""
-        try:
-            return (
-                expected.destination == self.destination
-                and expected.executor_identity == self.executor_identity
-                and self._workspace(expected.workspace) == expected.localized_workspace_folder
-            )
-        except (OSError, ValueError):
-            return False
-
-    def verify_prepared_launch(
-        self, expected: LaunchContext, prepared: BackendEmissionInputs
-    ) -> bool:
-        if not self.verify_context(expected):
-            return False
-        if prepared.executable is None:
-            return True
-        executable, environment = self._launch(expected.backend_key)
-        return _resolve_launch_executable(
-            executable, environment, prepared.workspace
-        ) == _resolve_launch_executable(
-            prepared.executable, prepared.environment or environment, prepared.workspace
-        )
 
     def _unavailable(
         self,
@@ -369,29 +344,3 @@ def _has_indirect_source(document: object) -> bool:
     elif isinstance(document, list):
         return any(_has_indirect_source(item) for item in document)
     return False
-
-
-def _resolve_launch_executable(
-    executable: str, environment: Mapping[str, str], workspace: Path
-) -> Path | None:
-    """Identify the launch lookup without changing its executable token or policy.
-
-    POSIX exec resolves slash-relative tokens and relative PATH entries against the
-    child cwd. The Panels process cwd cannot establish that binary's identity.
-    """
-    if not executable:
-        return None
-    if os.path.dirname(executable):
-        candidates = [Path(executable)]
-    else:
-        candidates = [Path(entry) / executable for entry in os.get_exec_path(environment)]
-    for candidate in candidates:
-        if not candidate.is_absolute():
-            candidate = workspace / candidate
-        try:
-            resolved = candidate.resolve(strict=True)
-            if resolved.is_file() and os.access(resolved, os.X_OK):
-                return resolved
-        except OSError:
-            continue
-    return None

@@ -15,7 +15,6 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -33,7 +32,7 @@ def client(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "worker-types.db"
     with closing(connect(str(db_path))) as boot:
         create_schema(boot)
-        seed_test_model_catalogue(boot)
+
     config = load_config(
         path=None,
         env={

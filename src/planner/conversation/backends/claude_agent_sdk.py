@@ -61,7 +61,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 import warnings
 from base64 import b64encode
@@ -100,10 +99,6 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
-
-from planner.conversation.backends.claude_settings import (
-    ClaudeControlTransport,
-)
 
 if TYPE_CHECKING:
     from planner.conversation.admission.contracts import AdmissionExpectation
@@ -422,8 +417,6 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
                     self._options.model,
                     self._options.effort,
                     Path(self._cwd or "."),
-                    str(self._cli_path),
-                    {**os.environ, **self._options.env},
                 )
             )
         return command
@@ -499,11 +492,11 @@ def _settle(observed: _ObservedUserMessage) -> None:
         observed.settled.set_result(None)
 
 
-class _ClaudeProtocolTransport(ClaudeControlTransport):
+class _ClaudeProtocolTransport(Transport):
     """Pass the SDK transport through and retain only Claude's correlation receipts."""
 
     def __init__(self, inner: Transport) -> None:
-        super().__init__(inner)
+        self._inner = inner
         self._user_messages: dict[str, _ObservedUserMessage] = {}
         self._result_user_message_uuids: dict[str, frozenset[str]] = {}
         self._control_responses: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
@@ -528,7 +521,6 @@ class _ClaudeProtocolTransport(ClaudeControlTransport):
                 self._observe(message)
                 yield message
         finally:
-            self.settle_control()
             for observed in self._user_messages.values():
                 if not observed.admission.done():
                     observed.admission.set_result(None)
@@ -539,7 +531,6 @@ class _ClaudeProtocolTransport(ClaudeControlTransport):
                     response.set_result(None)
 
     def _observe(self, message: dict[str, Any]) -> None:
-        self.observe_control(message)
         if message.get("type") == "command_lifecycle":
             command_uuid = message.get("command_uuid")
             state = message.get("state")
@@ -701,7 +692,6 @@ class _ClaudeProtocolTransport(ClaudeControlTransport):
         return cancelled, still_queued
 
     async def close(self) -> None:
-        self.settle_control()
         await self._inner.close()
         self._user_messages.clear()
         self._result_user_message_uuids.clear()

@@ -399,8 +399,6 @@ class CodexAppServerBackendChild:
                     resolved_start.model,
                     resolved_start.reasoning_effort,
                     resolved_start.workspace_folder,
-                    self._launch.argv[0],
-                    environment,
                 ),
             )
             if check is not None

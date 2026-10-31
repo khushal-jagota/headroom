@@ -24,21 +24,11 @@ describe("current model variants in the shared picker", () => {
     expect(view.face).toBe("GPT 6.1 Sol medium");
     expect(view.modelValue).toBe("gpt-6.1-sol");
     expect(view.models).toEqual([{ value: "gpt-6.1-sol", name: "GPT 6.1 Sol" }]);
-    expect(view.catalogueWarning).toBeNull();
   });
 
 
 
-  it("keeps the last known-good model selectable and reports the catalogue failure", () => {
-    const warning = "Model catalogue unavailable. Using the last known-good model for sol.";
-    const view = picker([{
-      model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,
-      selected_variant: "sol", resolved_model_id: "gpt-6.1-sol", catalogue_warning: warning
-    }]);
-    expect(view.models[0].value).toBe("gpt-6.1-sol");
-    expect(view.catalogueWarning).toBe(warning);
-    expect(view.staleModelReason).toBeNull();
-  });
+
 
   it("keeps a Claude alias as the selection while it shows the resolved version", () => {
     const view = picker([{

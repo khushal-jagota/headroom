@@ -157,7 +157,6 @@ def test_notice_actual_wire_receipt_and_fresh_worker_link(
                         conn,
                         OWNER_PRINCIPAL,
                         "t",
-                        write_employee_configuration=None,
                         start_worker_step=start_step,
                         now=lambda: 10,
                     )
@@ -775,7 +774,6 @@ def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
             await restarted.system.shutdown()
 
     _run(exercise)
-
 
 
 def test_grouped_deployments_restore_one_ticket_claim_and_send_one_prompt(tmp_path: Path) -> None:
