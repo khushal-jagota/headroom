@@ -290,10 +290,14 @@ matching target bytes allow the same item to finish without another upload.
 Sequence and receipt checks prevent an older retry from replacing newer bytes.
 A file linked by an accepted agent write is therefore durable on the VPS first,
 without separate link parsing. Pending items retain their exact original bytes.
+Uploads use the queued item's file references to find those bytes, without reading
+the outbox database again.
 If an upload descriptor is malformed or its upload is refused, the Mac replies
 with an error for that request. The VPS records a refused receipt for the item.
 The queue advances and the shared connection stays open for other conversations.
 
+A file still waiting for confirmation stays attached to later items that refer
+to the same unchanged file, so refusal of the first item cannot lose the bytes.
 Confirmation releases blobs no waiting item references. Temporary and unreferenced
 blobs are swept when the outbox opens. The size-and-time index does not retain
 file bytes after confirmation. Incompatible outbox formats require explicit

@@ -18,14 +18,14 @@ from pathlib import Path
 
 import pytest
 from pydantic import TypeAdapter
+from tests.support.executor_control import deliver, message_link
+from tests.unit.test_executor_request_deadlines import IDENTITY, peer
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
 from planner.executor.mac_outbox import DATABASE_NAME, MacOutbox
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
-    FileSnapshot,
-    JsonObject,
     OutboxEntry,
     QueuedEnvelope,
     ReceiptDisposition,
@@ -143,7 +143,7 @@ def test_lost_receipt_retains_same_item_and_blob_until_confirmed(tmp_path: Path)
     first = outbox.add(
         OutboxEntry("c_one", EnvelopeKind.backend_event, {}, "event"), ticket_id="t_one"
     )
-    blob = outbox.snapshots("event")[0].local_path
+    blob = outbox.snapshots(first)[0].local_path
     assert blob.read_bytes() == b"first bytes"
     outbox.close()  # Received confirmation was lost before the Mac persisted it.
     reopened = MacOutbox(tmp_path / "outbox")
@@ -226,33 +226,40 @@ def test_send_wakes_after_commit_four_conversations_and_one_each(tmp_path: Path)
         four_started = asyncio.Event()
         release = asyncio.Event()
 
-        class Link:
-            async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-                assert kind is WireMessageKind.envelope
-                envelope = TypeAdapter(QueuedEnvelope).validate_python(payload)
-                # The row is readable from another connection before sending starts.
-                with sqlite3.connect(outbox.root / DATABASE_NAME) as connection:
-                    assert connection.execute(
-                        "SELECT 1 FROM items WHERE submission_id=?", (envelope.submission_id,)
-                    ).fetchone()
-                assert envelope.conversation_id not in active
-                active.add(envelope.conversation_id)
-                assert len(active) <= 4
-                sent.append(envelope)
-                if len(active) == 4:
-                    four_started.set()
-                await release.wait()
-                active.remove(envelope.conversation_id)
-                return WireMessage(
+        writer = peer()
+        link = message_link(writer, IDENTITY)
+        replies: list[asyncio.Task[None]] = []
+
+        async def respond(message: WireMessage) -> None:
+            assert message.kind is WireMessageKind.envelope
+            envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
+            # The row is readable from another connection before sending starts.
+            with sqlite3.connect(outbox.root / DATABASE_NAME) as connection:
+                assert connection.execute(
+                    "SELECT 1 FROM items WHERE submission_id=?", (envelope.submission_id,)
+                ).fetchone()
+            assert envelope.conversation_id not in active
+            active.add(envelope.conversation_id)
+            assert len(active) <= 4
+            sent.append(envelope)
+            if len(active) == 4:
+                four_started.set()
+            await release.wait()
+            active.remove(envelope.conversation_id)
+            await deliver(
+                link,
+                WireMessage(
                     WireMessageKind.receipt,
-                    "reply",
+                    message.request_id,
                     json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
-                )
+                ),
+            )
 
-            async def put_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
-                raise AssertionError("no files")
+        async def send(message: WireMessage) -> None:
+            replies.append(asyncio.create_task(respond(message)))
 
-        sender = asyncio.create_task(outbox.send_pending(Link()))
+        writer.send.side_effect = send
+        sender = asyncio.create_task(outbox.send_pending(link))
         await asyncio.sleep(0)
         try:
             for conversation in ("c_a", "c_b", "c_c", "c_d", "c_e"):
@@ -272,8 +279,11 @@ def test_send_wakes_after_commit_four_conversations_and_one_each(tmp_path: Path)
                 ]
             assert outbox.pending_count() == 0
         finally:
+            release.set()
             sender.cancel()
             await asyncio.gather(sender, return_exceptions=True)
+            await asyncio.gather(*replies)
+            await link.wait_closed()
             outbox.close()
 
     asyncio.run(run())
@@ -339,12 +349,12 @@ def test_ticket_index_skips_unchanged_sources_and_rechecks_racy_same_size_change
     os.utime(source, ns=(recent, recent))
     third = outbox.add(entry("third"), ticket_id="t_one")
     assert len(opened) == 2 and set(opened) == {source}
-    assert outbox.snapshots(second.submission_id)[0].local_path.read_bytes() == b"one"
-    assert outbox.snapshots(third.submission_id)[0].local_path.read_bytes() == b"two"
+    assert outbox.snapshots(second)[0].local_path.read_bytes() == b"one"
+    assert outbox.snapshots(third)[0].local_path.read_bytes() == b"two"
     outbox.close()
     reopened = MacOutbox(tmp_path / "spool")
-    assert reopened.snapshots(second.submission_id)[0].local_path.read_bytes() == b"one"
-    assert reopened.snapshots(third.submission_id)[0].local_path.read_bytes() == b"two"
+    assert reopened.snapshots(second)[0].local_path.read_bytes() == b"one"
+    assert reopened.snapshots(third)[0].local_path.read_bytes() == b"two"
     reopened.close()
 
 
@@ -364,10 +374,10 @@ def test_later_write_retains_unchanged_bytes_when_earlier_capture_is_refused(
     first = box.add(entry("first"), ticket_id="t_one")
     later = box.add(entry("later"), ticket_id="t_one")
     assert later.file_dependencies == first.file_dependencies
-    blob = box.snapshots("later")[0].local_path
+    blob = box.snapshots(later)[0].local_path
     box.acknowledge(receipt(first, ReceiptDisposition.refused))
     assert blob.read_bytes() == b"shared bytes"
-    assert box._db.execute("SELECT COUNT(*) FROM ticket_files").fetchone() == (0,)
+    assert box._db.execute("SELECT COUNT(*) FROM ticket_files").fetchone()[0] == 0
     box.acknowledge(receipt(later))
     assert not blob.exists()
     # A future write captures again after the refused index was removed.
@@ -410,5 +420,5 @@ def test_refusal_during_recent_file_recheck_keeps_later_reference(
         box.acknowledge(receipt(first, ReceiptDisposition.refused))
         release.set()
         assert later.result().file_dependencies == first.file_dependencies
-    assert box.snapshots("later")[0].local_path.read_bytes() == b"same bytes"
+    assert box.snapshots(later.result())[0].local_path.read_bytes() == b"same bytes"
     box.close()
