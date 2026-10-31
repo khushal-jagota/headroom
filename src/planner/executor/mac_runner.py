@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import hashlib
 import secrets
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -43,6 +42,7 @@ from planner.execution_identity import (
     AskReference,
     ChildReference,
 )
+from planner.executor.clock import now_ms
 from planner.executor.configuration import (
     EXECUTOR_CAPABILITY_ENV,
     EXECUTOR_CHILD_ID_ENV,
@@ -94,10 +94,6 @@ from planner.executor.protocol import (
 )
 from planner.executor.skills import install_native_skill_snapshot, native_skill_home
 from planner.workspace_localization import localize_workspace
-
-
-def now_ms() -> int:
-    return time.time_ns() // 1_000_000
 
 
 class _CommandAdmissionRefused(Exception):

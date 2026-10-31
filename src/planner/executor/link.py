@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, cast
@@ -15,6 +14,7 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from planner.execution_identity import ExecutorIdentity, ProtocolRefused, parse_identity
+from planner.executor.clock import now_ms
 from planner.executor.configuration import (
     EXECUTOR_GENERATION_HEADER,
     EXECUTOR_ID_HEADER,
@@ -219,10 +219,6 @@ class ExecutorAppClient:
 
     async def close(self) -> None:
         await asyncio.wait_for(self.session.close(), HTTP_CLOSE_TIMEOUT_SECONDS)
-
-
-def now_ms() -> int:
-    return time.time_ns() // 1_000_000
 
 
 class Link:

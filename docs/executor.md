@@ -605,6 +605,13 @@ identity types, turn tokens, and Ticket locales live in `execution_identity.py`,
 which imports neither conversation nor Ticket code. The Link does not own children,
 commands, the outbox, or database writes.
 
+Mac and VPS executor timestamps use the same wall-clock millisecond helper in
+`executor/clock.py`. Shared payload helpers in `protocol.py` encode objects and
+read a queued item's child. They preserve the existing child lookup rules at each
+boundary. `worker_identity.py` reads the Worker Ticket identity used by routing,
+run assignment, and canonical skill loading. Inbox persistence reuses the store's
+JSON encoding and validation errors.
+
 Connection diagnostics omit credentials, addresses, paths, exception messages, and remote payloads.
 Active transfers prevent quiescence. The Manager coordinates compatible peers through the existing identity-bound application procedure.
 A coding candidate grants no permission for a live route or peer change.

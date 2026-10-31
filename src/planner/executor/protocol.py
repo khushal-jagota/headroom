@@ -19,7 +19,6 @@ from typing import (
     Literal,
     Protocol,
     TypedDict,
-    cast,
     overload,
 )
 
@@ -321,6 +320,15 @@ class OutboxEntry:
     kind: EnvelopeKind
     payload: JsonObject
     submission_id: str | None = None
+
+
+def envelope_child(payload: JsonObject, *, ask_only: bool = False) -> JsonValue:
+    """Read a raw child; refused answers take it only from their ask."""
+    child = payload.get("child")
+    if not ask_only and isinstance(child, dict):
+        return child
+    ask = payload.get("ask")
+    return ask.get("child") if isinstance(ask, dict) else None
 
 
 class ChildOperation(StrEnum):
@@ -746,10 +754,7 @@ class ControlMessageWriter(Protocol):
 
 
 def payload_child(payload: JsonObject) -> JsonObject | None:
-    child = payload.get("child")
-    if not isinstance(child, dict):
-        ask = payload.get("ask")
-        child = ask.get("child") if isinstance(ask, dict) else None
+    child = envelope_child(payload)
     return child if isinstance(child, dict) else None
 
 
@@ -867,7 +872,10 @@ def encode_frame(value: object) -> bytes:
 
 
 def as_object(value: object) -> JsonObject:
-    return cast(JsonObject, encode_value(value))
+    encoded = encode_value(value)
+    if not isinstance(encoded, dict):
+        raise ValueError("expected object")
+    return encoded
 
 
 class MacRunConversations(Protocol):

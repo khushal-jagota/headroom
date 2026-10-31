@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass, field
 from uuid import uuid4
 
@@ -22,6 +21,7 @@ from planner.execution_identity import (
     ChildReference,
     ExecutorIdentity,
 )
+from planner.executor.clock import now_ms
 from planner.executor.link import Link
 from planner.executor.link_files import settled_io
 from planner.executor.protocol import (
@@ -31,23 +31,19 @@ from planner.executor.protocol import (
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
-    JsonObject,
     MacRunConversations,
     ReconnectAsk,
     ReconnectResult,
     WireMessageKind,
     WithdrawCommands,
     WithdrawResult,
-    encode_value,
+    as_object,
     type_adapter,
 )
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
 from planner.executor.vps_remote_child import MacRemoteChild
-
-
-def now_ms() -> int:
-    return time.time_ns() // 1_000_000
+from planner.executor.worker_identity import ticket_id_of
 
 
 @dataclass
@@ -82,13 +78,7 @@ class MacRuns:
         message_files: ConversationMessageFiles,
     ) -> MacRemoteChild:
         del message_files
-        environment = dict(
-            resolved_start.role_materials.identity_environment_variables
-            if resolved_start.role_materials
-            else ()
-        )
-        ticket_id = environment.get("PLAN_TICKET_ID")
-        if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
+        if not ticket_id_of(resolved_start):
             raise BackendSpawnFailed("Mac runs require a Ticket Worker identity")
         reference = self.assign_child(resolved_start, event_sink)
         child = self._make_child(reference, initial_history_complete=True)
@@ -188,11 +178,8 @@ class MacRuns:
             await settled_io(self.store.mark_lost, link.identity)
 
     def _read_skill_snapshot(self, start: ResolvedConversationStart) -> CanonicalSkillSnapshot:
-        environment = dict(
-            start.role_materials.identity_environment_variables if start.role_materials else ()
-        )
-        ticket_id = environment.get("PLAN_TICKET_ID")
-        if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
+        ticket_id = ticket_id_of(start)
+        if not ticket_id:
             raise BackendSpawnFailed("Canonical skill bootstrap requires a Worker Ticket identity")
         conn = db.connect(self.db_path)
         try:
@@ -210,11 +197,8 @@ class MacRuns:
         child = ChildReference(
             self.identity.executor_incarnation, str(uuid4()), start.conversation_id
         )
-        environment = dict(
-            start.role_materials.identity_environment_variables if start.role_materials else ()
-        )
-        ticket_id = environment.get("PLAN_TICKET_ID")
-        if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
+        ticket_id = ticket_id_of(start)
+        if not ticket_id:
             raise BackendSpawnFailed("Mac runs require a Ticket Worker identity")
         self.store.register_child(child, "ticket", ticket_id, now_ms())
         return child
@@ -266,7 +250,7 @@ class MacRuns:
             identity = self.identity
             try:
                 response = await self.link.request(
-                    WireMessageKind.withdraw, _object(WithdrawCommands(child, command_ids))
+                    WireMessageKind.withdraw, as_object(WithdrawCommands(child, command_ids))
                 )
                 if (
                     response.kind is not WireMessageKind.withdraw_result
@@ -332,7 +316,7 @@ class MacRuns:
 
         return await writer.tell(
             WireMessageKind.command,
-            _object(command),
+            as_object(command),
             request_id=command.command_id,
             admit=admit,
         )
@@ -359,7 +343,7 @@ class MacRuns:
                 return
             emitted = await writer.tell(
                 WireMessageKind.command,
-                _object(command),
+                as_object(command),
                 request_id=command.command_id,
                 admit=admit_answer,
             )
@@ -503,7 +487,7 @@ class MacRuns:
             and item.command.child.executor_incarnation == identity.executor_incarnation
         }
         response = await writer.request(
-            WireMessageKind.reconnect_ask, _object(ReconnectAsk(tuple(pending)))
+            WireMessageKind.reconnect_ask, as_object(ReconnectAsk(tuple(pending)))
         )
         if not await self._reconciliation_current(identity, writer):
             raise ConnectionError("reconnect generation changed")
@@ -568,10 +552,3 @@ class MacRuns:
             raise ConnectionError("reconnect generation changed")
         for proxy in tuple(self.children.values()):
             proxy.observe_callbacks(children.get(proxy.reference))
-
-
-def _object(value: object) -> JsonObject:
-    encoded = encode_value(value)
-    if not isinstance(encoded, dict):
-        raise ValueError("expected object")
-    return encoded
