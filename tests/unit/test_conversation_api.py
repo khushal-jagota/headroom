@@ -53,10 +53,18 @@ from planner.conversation.backends.contracts import (
     BackendSteerAccepted,
     BackendSteerOutcome,
     BackendUserInputRequest,
+    ModelThinkingHappened,
     NeedsRebind,
+    PermissionAskRaised,
     PromptWriteRefused,
     SessionLoadFailed,
+    ToolCallFinished,
+    ToolCallProgress,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.contracts import (
     AnswerFate,
@@ -160,7 +168,9 @@ class _FakeBackendChild:
             raise SessionLoadFailed(self._backend.conversation_id)
         self._backend.sink = self._sink
         if vendor_session_cursor is None:
-            await self._sink.vendor_session_cursor_rebound(VENDOR_SESSION_CURSOR)
+            await self._sink.report(
+                None, VendorSessionCursorRebound(vendor_session_cursor=VENDOR_SESSION_CURSOR)
+            )
 
     async def write_prompt(
         self,
@@ -415,11 +425,13 @@ class _Harness:
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
         backend.live_turn_token = None
-        await backend.sink.turn_ended(
+        await backend.sink.report(
             token,
-            ending=ConversationTurnEnding.completed,
-            error_summary=None,
-            standard_error_tail=None,
+            TurnEnded(
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            ),
         )
         await self.settle()
 
@@ -428,11 +440,13 @@ class _Harness:
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
         backend.live_turn_token = None
-        await backend.sink.turn_ended(
+        await backend.sink.report(
             token,
-            ending=ConversationTurnEnding.failed,
-            error_summary="the terminal stream failed",
-            standard_error_tail=None,
+            TurnEnded(
+                ending=ConversationTurnEnding.failed,
+                error_summary="the terminal stream failed",
+                standard_error_tail=None,
+            ),
         )
         await self.settle()
 
@@ -442,20 +456,24 @@ class _Harness:
         assert token is not None and backend.sink is not None
         backend.asks_raised += 1
         ask_id = f"ask-{backend.asks_raised}"
-        await backend.sink.permission_ask_raised(
+        await backend.sink.report(
             token,
-            BackendPermissionAsk(
-                ask_id=ask_id,
-                title="Run a command?",
-                detail="ls -la",
-                options=(
-                    PermissionAskOption(
-                        option_id="allow-once",
-                        label="Approve once",
-                        option_kind="allow",
+            PermissionAskRaised(
+                ask=BackendPermissionAsk(
+                    ask_id=ask_id,
+                    title="Run a command?",
+                    detail="ls -la",
+                    options=(
+                        PermissionAskOption(
+                            option_id="allow-once",
+                            label="Approve once",
+                            option_kind="allow",
+                        ),
+                        PermissionAskOption(
+                            option_id="deny", label="Decline", option_kind="reject"
+                        ),
                     ),
-                    PermissionAskOption(option_id="deny", label="Decline", option_kind="reject"),
-                ),
+                )
             ),
         )
         await self.settle()
@@ -493,7 +511,7 @@ class _Harness:
                 ),
             ),
         )
-        await backend.sink.user_input_requested(token, request)
+        await backend.sink.report(token, UserInputRequested(request=request))
         await self.settle()
         public_id = next(
             event.payload.request_id
@@ -508,26 +526,25 @@ class _Harness:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.tool_call_progress(token, tool_call_id=tool_call_id, detail=detail)
+        await backend.sink.report(token, ToolCallProgress(tool_call_id=tool_call_id, detail=detail))
         await self.settle()
 
     async def model_is_thinking(self, conversation_id: str) -> None:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.model_thinking_happened(token)
+        await backend.sink.report(token, ModelThinkingHappened())
         await self.settle()
 
     async def start_tool_call(self, conversation_id: str, tool_call_id: str) -> None:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.tool_call_started(
+        await backend.sink.report(
             token,
-            tool_call_id=tool_call_id,
-            title="Run a command",
-            tool_kind="execute",
-            detail=None,
+            ToolCallStarted(
+                tool_call_id=tool_call_id, title="Run a command", tool_kind="execute", detail=None
+            ),
         )
         await self.settle()
 
@@ -535,11 +552,11 @@ class _Harness:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.tool_call_finished(
+        await backend.sink.report(
             token,
-            tool_call_id=tool_call_id,
-            tool_call_status=ToolCallStatus.completed,
-            detail=None,
+            ToolCallFinished(
+                tool_call_id=tool_call_id, tool_call_status=ToolCallStatus.completed, detail=None
+            ),
         )
         await self.settle()
 

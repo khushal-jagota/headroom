@@ -100,6 +100,8 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    AgentMessageDelta,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -110,12 +112,25 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    ComposerCatalogReported,
+    ContextCompacted,
+    ModelThinkingHappened,
     NeedsRebind,
     PermissionAnswerWriteFailed,
+    PermissionAskRaised,
+    PlanUpdated,
     PromptWriteFailed,
     SessionLoadFailed,
+    TokenUsageReported,
+    ToolCallFinished,
+    ToolCallProgress,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
     UserInputAnswerWriteFailed,
+    UserInputFailed,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
@@ -826,7 +841,9 @@ class ClaudeAgentSdkBackendChild:
             name=f"planner.conversation.claude.{resolved_start.conversation_id}",
         )
         if minted_session_id is not None:
-            await self._sink.vendor_session_cursor_rebound(minted_session_id)
+            await self._sink.report(
+                None, VendorSessionCursorRebound(vendor_session_cursor=minted_session_id)
+            )
         await self._report_the_available_commands(client)
 
     async def _report_the_available_commands(self, client: ClaudeSdkClient) -> None:
@@ -849,7 +866,7 @@ class ClaudeAgentSdkBackendChild:
         self._available_command_names = frozenset(
             entry.display_text.removeprefix("/") for entry in composer_catalog
         )
-        await self._sink.composer_catalog_reported(composer_catalog)
+        await self._sink.report(None, ComposerCatalogReported(composer_catalog=composer_catalog))
 
     async def write_prompt(
         self,
@@ -1363,14 +1380,14 @@ class ClaudeAgentSdkBackendChild:
         self._stop_waiting_for_steers(turn)
         self._settle_parked_asks(turn)
         try:
-            await self._sink.turn_ended(
+            await self._sink.report(
                 turn.token,
-                ending=ending,
-                error_summary=error_summary,
-                standard_error_tail=(
-                    self._standard_error_tail()
+                TurnEnded(
+                    ending=ending,
+                    error_summary=error_summary,
+                    standard_error_tail=self._standard_error_tail()
                     if ending is ConversationTurnEnding.failed
-                    else None
+                    else None,
                 ),
             )
         finally:
@@ -1458,7 +1475,7 @@ class ClaudeAgentSdkBackendChild:
                 # Claude summarised the conversation so far and dropped what it summarised.
                 # What it summarised is not kept and there is nothing to keep: that it
                 # happened, and where in the thread, is the whole of what a reader needs.
-                await self._sink.context_compacted(turn.token)
+                await self._sink.report(turn.token, ContextCompacted())
             case _:
                 LOGGER.debug(
                     "conversation %s: nothing to do with a %s",
@@ -1481,7 +1498,7 @@ class ClaudeAgentSdkBackendChild:
             await self._refuse_the_substituted_session(session_id)
             return
         self._session_id = session_id
-        await self._sink.vendor_session_cursor_rebound(session_id)
+        await self._sink.report(None, VendorSessionCursorRebound(vendor_session_cursor=session_id))
 
     async def _refuse_the_substituted_session(self, session_id: str) -> None:
         """Have nothing more to do with a child that is not the session that was asked for.
@@ -1514,7 +1531,7 @@ class ClaudeAgentSdkBackendChild:
         # What the model thought is dropped where it arrives, along with everything else
         # that is not the agent's own text. That it thought is forwarded on its own.
         if delta.get("type") == "thinking_delta":
-            await self._sink.model_thinking_happened(turn.token)
+            await self._sink.report(turn.token, ModelThinkingHappened())
             return
         if delta.get("type") != "text_delta":
             return
@@ -1523,15 +1540,13 @@ class ClaudeAgentSdkBackendChild:
             return
         inside_a_tool_call = message.parent_tool_use_id
         if inside_a_tool_call is not None:
-            await self._sink.tool_call_progress(
-                turn.token, tool_call_id=inside_a_tool_call, detail=text
+            await self._sink.report(
+                turn.token, ToolCallProgress(tool_call_id=inside_a_tool_call, detail=text)
             )
             return
-        await self._sink.agent_message_delta(turn.token, text)
+        await self._sink.report(turn.token, AgentMessageDelta(text_delta=text))
 
-    async def _on_assistant_message(
-        self, turn: _TurnInFlight, message: AssistantMessage
-    ) -> None:
+    async def _on_assistant_message(self, turn: _TurnInFlight, message: AssistantMessage) -> None:
         """A finished message from the agent, and the tool calls it made in it.
 
         The blocks are taken in the order they were written, and text is finished off
@@ -1554,21 +1569,20 @@ class ClaudeAgentSdkBackendChild:
                         continue
                     plan = _todo_write_plan(block)
                     if plan is not None:
-                        await self._sink.plan_updated(turn.token, plan)
-                    await self._sink.tool_call_started(
+                        await self._sink.report(turn.token, PlanUpdated(entries=plan))
+                    await self._sink.report(
                         turn.token,
-                        tool_call_id=block.id,
-                        title=block.name,
-                        # Claude classifies its calls by the tool they are made on: every
-                        # Bash call is the same kind of thing. There is no other kind on
-                        # the wire, and the tool's name is a truer one than "other".
-                        tool_kind=block.name,
-                        detail=_canonical_json(block.input),
+                        ToolCallStarted(
+                            tool_call_id=block.id,
+                            title=block.name,
+                            tool_kind=block.name,
+                            detail=_canonical_json(block.input),
+                        ),
                     )
                 case ThinkingBlock():
                     # What it thought is dropped where it arrives: never stored, never
                     # forwarded. That it thought is forwarded, and is all that is.
-                    await self._sink.model_thinking_happened(turn.token)
+                    await self._sink.report(turn.token, ModelThinkingHappened())
                     continue
                 case _:
                     continue
@@ -1595,14 +1609,14 @@ class ClaudeAgentSdkBackendChild:
                 return
         await self._complete_agent_message(turn, said)
 
-    async def _complete_agent_message(
-        self, turn: _TurnInFlight, said: list[str]
-    ) -> None:
+    async def _complete_agent_message(self, turn: _TurnInFlight, said: list[str]) -> None:
         if not said:
             return
         text = "".join(said)
         said.clear()
-        await self._sink.agent_message_completed(turn.token, text_message_content(text))
+        await self._sink.report(
+            turn.token, AgentMessageCompleted(content=text_message_content(text))
+        )
 
     async def _on_user_message(self, turn: _TurnInFlight, message: UserMessage) -> None:
         """What the tools gave back. Their results arrive as a message from the user side.
@@ -1622,15 +1636,15 @@ class ClaudeAgentSdkBackendChild:
                 continue
             if block.tool_use_id in turn.user_input_tool_use_ids:
                 continue
-            await self._sink.tool_call_finished(
+            await self._sink.report(
                 turn.token,
-                tool_call_id=block.tool_use_id,
-                tool_call_status=(
-                    ToolCallStatus.failed
+                ToolCallFinished(
+                    tool_call_id=block.tool_use_id,
+                    tool_call_status=ToolCallStatus.failed
                     if block.is_error
-                    else ToolCallStatus.completed
+                    else ToolCallStatus.completed,
+                    detail=_tool_result_detail(block.content),
                 ),
-                detail=_tool_result_detail(block.content),
             )
 
     async def _on_result_message(
@@ -1746,12 +1760,14 @@ class ClaudeAgentSdkBackendChild:
         nothing about cached tokens has not said the turn read none.
         """
         counted = message.usage or {}
-        await self._sink.token_usage_reported(
+        await self._sink.report(
             turn.token,
-            input_tokens=_token_count(counted.get("input_tokens")),
-            output_tokens=_token_count(counted.get("output_tokens")),
-            cached_input_tokens=_token_count(counted.get("cache_read_input_tokens")),
-            cost_usd=message.total_cost_usd,
+            TokenUsageReported(
+                input_tokens=_token_count(counted.get("input_tokens")),
+                output_tokens=_token_count(counted.get("output_tokens")),
+                cached_input_tokens=_token_count(counted.get("cache_read_input_tokens")),
+                cost_usd=message.total_cost_usd,
+            ),
         )
 
     # --- permission asks -------------------------------------------------------------------
@@ -1778,10 +1794,12 @@ class ClaudeAgentSdkBackendChild:
         if tool_name == ASK_USER_QUESTION_TOOL_NAME:
             questions = _user_questions(tool_input)
             if questions is None:
-                await self._sink.user_input_failed(
+                await self._sink.report(
                     turn.token,
-                    request_id=ask_id,
-                    detail="Claude sent a malformed question request, so Panels refused it.",
+                    UserInputFailed(
+                        request_id=ask_id,
+                        detail="Claude sent a malformed question request, so Panels refused it.",
+                    ),
                 )
                 return PermissionResultDeny(
                     message="The question request was malformed and could not be shown."
@@ -1796,26 +1814,28 @@ class ClaudeAgentSdkBackendChild:
             turn.parked_user_inputs[ask_id] = parked_user_input
             if context.tool_use_id is not None:
                 turn.user_input_tool_use_ids.add(context.tool_use_id)
-            await self._sink.user_input_requested(
+            await self._sink.report(
                 turn.token,
-                BackendUserInputRequest(
-                    request_id=ask_id,
-                    questions=tuple(
-                        UserInputQuestion(
-                            question_id=question.text,
-                            header=question.header,
-                            question=question.text,
-                            options=tuple(
-                                UserInputOption(
-                                    label=choice.label, description=choice.description
-                                )
-                                for choice in question.choices
-                            ),
-                            multi_select=question.multi_select,
-                            allow_other=True,
-                        )
-                        for question in questions
-                    ),
+                UserInputRequested(
+                    request=BackendUserInputRequest(
+                        request_id=ask_id,
+                        questions=tuple(
+                            UserInputQuestion(
+                                question_id=question.text,
+                                header=question.header,
+                                question=question.text,
+                                options=tuple(
+                                    UserInputOption(
+                                        label=choice.label, description=choice.description
+                                    )
+                                    for choice in question.choices
+                                ),
+                                multi_select=question.multi_select,
+                                allow_other=True,
+                            )
+                            for question in questions
+                        ),
+                    )
                 ),
             )
             try:
@@ -1841,13 +1861,15 @@ class ClaudeAgentSdkBackendChild:
             suggestions=tuple(context.suggestions),
         )
         turn.parked_asks[ask_id] = parked
-        await self._sink.permission_ask_raised(
+        await self._sink.report(
             turn.token,
-            BackendPermissionAsk(
-                ask_id=ask_id,
-                title=tool_name,
-                detail=_canonical_json(tool_input),
-                options=PERMISSION_ASK_OPTIONS,
+            PermissionAskRaised(
+                ask=BackendPermissionAsk(
+                    ask_id=ask_id,
+                    title=tool_name,
+                    detail=_canonical_json(tool_input),
+                    options=PERMISSION_ASK_OPTIONS,
+                )
             ),
         )
         try:

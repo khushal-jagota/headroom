@@ -215,23 +215,22 @@ def test_ambiguous_commit_recovers_typed_result_for_every_receipt(
 
 def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: Path) -> None:
     """Compare the real callback queue and inbox, including request reuse and closure."""
-    from dataclasses import fields
     from typing import cast
 
     from planner.conversation.backends.contracts import (
-        AgentMessageCompletedArguments,
+        AgentMessageCompleted,
+        BackendEventValue,
         BackendPermissionAsk,
         BackendUserInputRequest,
-        ContextCompactedArguments,
-        DecodedBackendEventArguments,
-        PermissionAskRaisedArguments,
-        PlanUpdatedArguments,
-        TokenUsageReportedArguments,
-        ToolCallFinishedArguments,
-        ToolCallStartedArguments,
-        TurnEndedArguments,
-        UserInputFailedArguments,
-        UserInputRequestedArguments,
+        ContextCompacted,
+        PermissionAskRaised,
+        PlanUpdated,
+        TokenUsageReported,
+        ToolCallFinished,
+        ToolCallStarted,
+        TurnEnded,
+        UserInputFailed,
+        UserInputRequested,
     )
     from planner.conversation.events import (
         ConversationTurnEnding,
@@ -257,30 +256,30 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
                 endpoint = VpsExecutor(str(harness.db_path), RealClock())
                 endpoint.bind_conversations(harness.system)
                 endpoint.runs.identity = identity
-                permission = PermissionAskRaisedArguments(
+                permission = PermissionAskRaised(
                     ask=BackendPermissionAsk(
                         "ask", "Run?", None, (PermissionAskOption("allow", "Allow", "allow_once"),)
                     )
                 )
-                sequence: tuple[tuple[BackendEventMethod, DecodedBackendEventArguments], ...] = (
+                sequence: tuple[tuple[BackendEventMethod, BackendEventValue], ...] = (
                     (
                         BackendEventMethod.tool_call_started,
-                        ToolCallStartedArguments(
+                        ToolCallStarted(
                             tool_call_id="tool",
                             title="Work",
                             tool_kind="other",
                         ),
                     ),
-                    (BackendEventMethod.plan_updated, PlanUpdatedArguments(entries=())),
+                    (BackendEventMethod.plan_updated, PlanUpdated(entries=())),
                     (
                         BackendEventMethod.token_usage_reported,
-                        TokenUsageReportedArguments(input_tokens=42),
+                        TokenUsageReported(input_tokens=42),
                     ),
                     (BackendEventMethod.permission_ask_raised, permission),
                     (BackendEventMethod.permission_ask_raised, permission),
                     (
                         BackendEventMethod.user_input_requested,
-                        UserInputRequestedArguments(
+                        UserInputRequested(
                             request=BackendUserInputRequest(
                                 "question",
                                 (UserInputQuestion("q", "Scope", "Choose", (), False, True),),
@@ -289,35 +288,27 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
                     ),
                     (
                         BackendEventMethod.user_input_failed,
-                        UserInputFailedArguments(request_id="question", detail="withdrawn"),
+                        UserInputFailed(request_id="question", detail="withdrawn"),
                     ),
                     (
                         BackendEventMethod.tool_call_finished,
-                        ToolCallFinishedArguments(
+                        ToolCallFinished(
                             tool_call_id="tool", tool_call_status=ToolCallStatus.completed
                         ),
                     ),
                     (
                         BackendEventMethod.agent_message_completed,
-                        AgentMessageCompletedArguments(
-                            content=text_message_content("backend prose")
-                        ),
+                        AgentMessageCompleted(content=text_message_content("backend prose")),
                     ),
-                    (BackendEventMethod.context_compacted, ContextCompactedArguments()),
+                    (BackendEventMethod.context_compacted, ContextCompacted()),
                     (
                         BackendEventMethod.turn_ended,
-                        TurnEndedArguments(ending=ConversationTurnEnding.completed),
+                        TurnEnded(ending=ConversationTurnEnding.completed),
                     ),
                 )
                 for index, (method, arguments) in enumerate(sequence, 1):
                     if path == "local":
-                        await getattr(sink, method.value)(
-                            token,
-                            **{
-                                field.name: getattr(arguments, field.name)
-                                for field in fields(arguments)
-                            },
-                        )
+                        await sink.report(token, arguments)
                         await state.backend_event_queue.join()
                     else:
                         from planner.executor.protocol import encode_value
@@ -382,5 +373,30 @@ def test_stale_events_receive_durable_ignored_acceptance_without_rows_or_live_fr
             assert await harness.store.read_conversation("c") == original_record
             assert await harness.store.read_events_after("c", 0) == original_rows
             assert state.running_turn is original_turn
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+def test_local_completed_prose_settles_while_database_writer_is_busy(tmp_path: Path) -> None:
+    """Runtime-only prose must not wait for a notebook write that has nothing to save."""
+    from planner.conversation.backends.contracts import AgentMessageCompleted
+
+    async def exercise() -> None:
+        async with _case(tmp_path, False) as (harness, _, _, event, _):
+            await harness.system.wait_until_quiescent()
+            sink = harness.backends["c"].sink
+            assert sink is not None and event.turn is not None
+            before = await harness.store.read_events_after("c", 0)
+            writer = sqlite3.connect(harness.db_path)
+            try:
+                writer.execute("BEGIN IMMEDIATE")
+                await sink.report(
+                    event.turn, AgentMessageCompleted(content=text_message_content("runtime prose"))
+                )
+                await asyncio.wait_for(harness.system.wait_until_quiescent(), 0.5)
+            finally:
+                writer.rollback()
+                writer.close()
+            assert await harness.store.read_events_after("c", 0) == before
 
     asyncio.run(asyncio.wait_for(exercise(), 10))

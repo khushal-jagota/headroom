@@ -93,6 +93,8 @@ from acp.transports import spawn_stdio_transport
 
 from planner import __version__
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    AgentMessageDelta,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -101,12 +103,25 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
+    ComposerCatalogReported,
+    ContextCompacted,
+    ModelThinkingHappened,
     NeedsRebind,
     PermissionAnswerWriteFailed,
+    PermissionAskRaised,
+    PlanUpdated,
     PromptWriteFailed,
     SessionLoadFailed,
+    TokenUsageReported,
+    ToolCallFinished,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
     UserInputAnswerWriteFailed,
+    VendorSessionCursorRebound,
+)
+from planner.conversation.backends.contracts import (
+    ToolCallProgress as BackendToolCallProgress,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
@@ -777,7 +792,9 @@ class HermesAcpBackendChild:
         self._session_id = response.session_id
         self._session_configuration_options = tuple(response.config_options or ())
         self._session_model = _current_model_from_metadata(response.field_meta)
-        await self._sink.vendor_session_cursor_rebound(response.session_id)
+        await self._sink.report(
+            None, VendorSessionCursorRebound(vendor_session_cursor=response.session_id)
+        )
 
     async def _load_session(
         self,
@@ -1144,24 +1161,28 @@ class HermesAcpBackendChild:
         """
         if not isinstance(usage, Usage):
             return
-        await self._sink.token_usage_reported(
+        await self._sink.report(
             turn.token,
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            cached_input_tokens=usage.cached_read_tokens,
-            cost_usd=None,
+            TokenUsageReported(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cached_input_tokens=usage.cached_read_tokens,
+                cost_usd=None,
+            ),
         )
 
     async def _report_a_stated_cost(self, turn: _TurnInFlight, cost: Any) -> None:
         """What hermes says the session has cost, when it says it in dollars."""
         if cost is None or str(cost.currency).upper() not in _DOLLAR_CURRENCY_CODES:
             return
-        await self._sink.token_usage_reported(
+        await self._sink.report(
             turn.token,
-            input_tokens=None,
-            output_tokens=None,
-            cached_input_tokens=None,
-            cost_usd=float(cost.amount),
+            TokenUsageReported(
+                input_tokens=None,
+                output_tokens=None,
+                cached_input_tokens=None,
+                cost_usd=float(cost.amount),
+            ),
         )
 
     async def _end_turn(
@@ -1179,14 +1200,16 @@ class HermesAcpBackendChild:
             and turn.automatic_compaction
             and _confirms_hermes_compaction(turn.completed_agent_messages)
         ):
-            await self._sink.context_compacted(turn.token)
+            await self._sink.report(turn.token, ContextCompacted())
         self._settle_parked_asks(turn)
-        await self._sink.turn_ended(
+        await self._sink.report(
             turn.token,
-            ending=ending,
-            error_summary=error_summary,
-            standard_error_tail=(
-                self._standard_error_tail() if ending is ConversationTurnEnding.failed else None
+            TurnEnded(
+                ending=ending,
+                error_summary=error_summary,
+                standard_error_tail=self._standard_error_tail()
+                if ending is ConversationTurnEnding.failed
+                else None,
             ),
         )
 
@@ -1210,7 +1233,7 @@ class HermesAcpBackendChild:
         content = joined_runs_of_text(pieces)
         if turn.automatic_compaction:
             turn.completed_agent_messages.append(content)
-        await self._sink.agent_message_completed(turn.token, content)
+        await self._sink.report(turn.token, AgentMessageCompleted(content=content))
 
     def _settle_parked_asks(self, turn: _TurnInFlight) -> None:
         """A turn's asks die with it, and hermes is told so rather than left waiting."""
@@ -1248,8 +1271,11 @@ class HermesAcpBackendChild:
             # every one of them would be dropped.
             self._available_commands = tuple(update.available_commands)
             self._first_available_commands_arrived.set()
-            await self._sink.composer_catalog_reported(
-                _composer_catalog_entries(self._available_commands)
+            await self._sink.report(
+                None,
+                ComposerCatalogReported(
+                    composer_catalog=_composer_catalog_entries(self._available_commands)
+                ),
             )
             return
         turn = self._turn
@@ -1261,19 +1287,23 @@ class HermesAcpBackendChild:
             case AgentThoughtChunk():
                 # What it thought is dropped where it arrives: never stored, never
                 # forwarded. That it thought is forwarded, and is all that is.
-                await self._sink.model_thinking_happened(turn.token)
+                await self._sink.report(turn.token, ModelThinkingHappened())
                 return
             case AgentPlanUpdate():
-                await self._sink.plan_updated(turn.token, _plan_entries(update.entries))
+                await self._sink.report(
+                    turn.token, PlanUpdated(entries=_plan_entries(update.entries))
+                )
             case AgentMessageChunk():
                 await self._on_agent_message_chunk(turn, update)
             case ToolCallStart():
-                await self._sink.tool_call_started(
+                await self._sink.report(
                     turn.token,
-                    tool_call_id=update.tool_call_id,
-                    title=update.title,
-                    tool_kind=str(update.kind) if update.kind is not None else "other",
-                    detail=_tool_call_detail(update.content),
+                    ToolCallStarted(
+                        tool_call_id=update.tool_call_id,
+                        title=update.title,
+                        tool_kind=str(update.kind) if update.kind is not None else "other",
+                        detail=_tool_call_detail(update.content),
+                    ),
                 )
             case ToolCallProgress():
                 status = _FINISHED_TOOL_CALL_STATUSES.get(str(update.status))
@@ -1284,15 +1314,20 @@ class HermesAcpBackendChild:
                     # can read, and there is nothing to show for it.
                     detail = _tool_call_detail(update.content)
                     if detail is not None:
-                        await self._sink.tool_call_progress(
-                            turn.token, tool_call_id=update.tool_call_id, detail=detail
+                        await self._sink.report(
+                            turn.token,
+                            BackendToolCallProgress(
+                                tool_call_id=update.tool_call_id, detail=detail
+                            ),
                         )
                     return
-                await self._sink.tool_call_finished(
+                await self._sink.report(
                     turn.token,
-                    tool_call_id=update.tool_call_id,
-                    tool_call_status=status,
-                    detail=_tool_call_detail(update.content),
+                    ToolCallFinished(
+                        tool_call_id=update.tool_call_id,
+                        tool_call_status=status,
+                        detail=_tool_call_detail(update.content),
+                    ),
                 )
             case UsageUpdate():
                 # What this update carries is how full the session's context is — used out
@@ -1309,13 +1344,11 @@ class HermesAcpBackendChild:
                 await self._report_a_stated_cost(turn, update.cost)
             case SessionInfoUpdate():
                 if not turn.automatic_compaction and _names_a_compaction(update.field_meta):
-                    await self._sink.context_compacted(turn.token)
+                    await self._sink.report(turn.token, ContextCompacted())
             case _:
                 return
 
-    async def _on_agent_message_chunk(
-        self, turn: _TurnInFlight, update: AgentMessageChunk
-    ) -> None:
+    async def _on_agent_message_chunk(self, turn: _TurnInFlight, update: AgentMessageChunk) -> None:
         # The lock is taken before the piece is made, because making it is what lets go
         # of the loop: a picture is read and written while this runs, and the turn's
         # ending must not slip in between that and the piece being put on the message.
@@ -1336,7 +1369,7 @@ class HermesAcpBackendChild:
         # Only words stream. A picture arrives whole or not at all, so there is no
         # half-finished version of one to show and nothing is sent to the tail for it.
         if isinstance(piece, MessageText):
-            await self._sink.agent_message_delta(turn.token, piece.text)
+            await self._sink.report(turn.token, AgentMessageDelta(text_delta=piece.text))
 
     async def _on_request_permission(
         self, tool_call: ToolCallUpdate, options: Sequence[PermissionOption]
@@ -1356,20 +1389,22 @@ class HermesAcpBackendChild:
             asyncio.get_running_loop().create_future()
         )
         turn.parked_asks[ask_id] = _ParkedPermissionAsk(answer=answer, request_id=request_id)
-        await self._sink.permission_ask_raised(
+        await self._sink.report(
             turn.token,
-            BackendPermissionAsk(
-                ask_id=ask_id,
-                title=tool_call.title or tool_call.tool_call_id,
-                detail=_tool_call_detail(tool_call.content),
-                options=tuple(
-                    PermissionAskOption(
-                        option_id=option.option_id,
-                        label=option.name,
-                        option_kind=str(option.kind),
-                    )
-                    for option in options
-                ),
+            PermissionAskRaised(
+                ask=BackendPermissionAsk(
+                    ask_id=ask_id,
+                    title=tool_call.title or tool_call.tool_call_id,
+                    detail=_tool_call_detail(tool_call.content),
+                    options=tuple(
+                        PermissionAskOption(
+                            option_id=option.option_id,
+                            label=option.name,
+                            option_kind=str(option.kind),
+                        )
+                        for option in options
+                    ),
+                )
             ),
         )
         return await answer

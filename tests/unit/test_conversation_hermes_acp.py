@@ -38,10 +38,17 @@ from tests.support.conversation_system_under_test import (
 )
 
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    BackendEventValue,
     BackendPermissionAsk,
     BackendSpawnFailed,
-    BackendUserInputRequest,
+    ComposerCatalogReported,
+    ContextCompacted,
+    PermissionAskRaised,
+    TokenUsageReported,
+    TurnEnded,
     TurnToken,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.backends.hermes_acp import (
     AcpChildLaunch,
@@ -65,7 +72,6 @@ from planner.conversation.events import (
     ConversationEventKind,
     ConversationTurnEnding,
     ModelThinkingFrame,
-    PlanEntry,
     PromptEventPayload,
     TurnEndedEventPayload,
 )
@@ -365,7 +371,6 @@ async def _real_turn(
 class _RecordingSink:
     """Everything the adapter reported, for a test driving one child directly."""
 
-
     def __init__(self) -> None:
         self.agent_contents: list[MessageContent] = []
         self.message_files: ConversationMessageFiles | None = None
@@ -387,26 +392,33 @@ class _RecordingSink:
     async def wait_for_the_turn_to_end(self) -> None:
         await self._turn_over.wait()
 
-    async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
-        return None
-
-    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
-        return None
-
-    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
-        return None
-
-    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
-        self.agent_contents.append(content)
-
-    async def tool_call_started(self, turn_token: TurnToken, **kwargs: object) -> None:
-        return None
-
-    async def tool_call_progress(self, turn_token: TurnToken, **kwargs: object) -> None:
-        return None
-
-    async def tool_call_finished(self, turn_token: TurnToken, **kwargs: object) -> None:
-        return None
+    async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
+        if isinstance(event, AgentMessageCompleted):
+            self.agent_contents.append(event.content)
+        elif isinstance(event, TokenUsageReported):
+            self.token_usage.append(
+                {
+                    "input_tokens": event.input_tokens,
+                    "output_tokens": event.output_tokens,
+                    "cached_input_tokens": event.cached_input_tokens,
+                    "cost_usd": event.cost_usd,
+                }
+            )
+            self._token_usage_arrived.set()
+        elif isinstance(event, ContextCompacted):
+            self.compactions += 1
+            self._a_compaction_arrived.set()
+        elif isinstance(event, PermissionAskRaised):
+            self.asks.append(event.ask)
+            self._an_ask_arrived.set()
+        elif isinstance(event, TurnEnded):
+            self.endings.append(event.ending)
+            self._turn_over.set()
+        elif isinstance(event, VendorSessionCursorRebound):
+            self.vendor_session_cursor = event.vendor_session_cursor
+        elif isinstance(event, ComposerCatalogReported):
+            self.composer_catalog.append(event.composer_catalog)
+            self._commands_arrived.set()
 
     async def wait_for_an_ask(self) -> None:
         await self._an_ask_arrived.wait()
@@ -423,65 +435,6 @@ class _RecordingSink:
     async def wait_for_available_commands(self) -> None:
         await self._commands_arrived.wait()
         self._commands_arrived.clear()
-
-    async def token_usage_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        cached_input_tokens: int | None,
-        cost_usd: float | None,
-    ) -> None:
-        self.token_usage.append(
-            {
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cached_input_tokens": cached_input_tokens,
-                "cost_usd": cost_usd,
-            }
-        )
-        self._token_usage_arrived.set()
-
-    async def context_compacted(self, turn_token: TurnToken) -> None:
-        self.compactions += 1
-        self._a_compaction_arrived.set()
-
-    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
-        self.asks.append(ask)
-        self._an_ask_arrived.set()
-
-    async def user_input_requested(
-        self, turn_token: TurnToken, request: BackendUserInputRequest
-    ) -> None:
-        del turn_token, request
-
-    async def user_input_failed(
-        self, turn_token: TurnToken, *, request_id: str, detail: str
-    ) -> None:
-        del turn_token, request_id, detail
-
-    async def turn_ended(
-        self,
-        turn_token: TurnToken,
-        *,
-        ending: ConversationTurnEnding,
-        error_summary: str | None,
-        standard_error_tail: str | None,
-    ) -> None:
-        self.endings.append(ending)
-        self._turn_over.set()
-
-    async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
-        self.vendor_session_cursor = vendor_session_cursor
-
-    async def composer_catalog_reported(
-        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        # Each report is kept whole and on its own, so an exercise can say what the last
-        # one was and how many there have been.
-        self.composer_catalog.append(composer_catalog)
-        self._commands_arrived.set()
 
     @property
     def agent_messages(self) -> list[str]:

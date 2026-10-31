@@ -20,7 +20,9 @@ from planner.conversation.backends.contracts import (
     BackendPromptRejected,
     BackendSteerAccepted,
     BackendUserInputRequest,
+    TurnEnded,
     TurnToken,
+    UserInputRequested,
 )
 from planner.conversation.contracts import (
     AnswerFate,
@@ -84,28 +86,40 @@ class ScriptedChild:
 
     async def request_questions(self) -> None:
         assert self.token is not None
-        await self.sink.user_input_requested(self.token, BackendUserInputRequest(
-            request_id="input-1",
-            questions=(
-                UserInputQuestion(
-                    question_id="scope", header="Scope",
-                    question="Which surfaces should change?",
-                    options=(
-                        UserInputOption(label="Composer", description="The live composer"),
-                        UserInputOption(label="Transcript", description="Durable history"),
+        await self.sink.report(
+            self.token,
+            UserInputRequested(
+                request=BackendUserInputRequest(
+                    request_id="input-1",
+                    questions=(
+                        UserInputQuestion(
+                            question_id="scope",
+                            header="Scope",
+                            question="Which surfaces should change?",
+                            options=(
+                                UserInputOption(label="Composer", description="The live composer"),
+                                UserInputOption(label="Transcript", description="Durable history"),
+                            ),
+                            multi_select=True,
+                            allow_other=True,
+                        ),
+                        UserInputQuestion(
+                            question_id="proof",
+                            header="Proof",
+                            question="What proof should be required?",
+                            options=(
+                                UserInputOption(
+                                    label="Browser test",
+                                    description="Exercise the full flow",
+                                ),
+                            ),
+                            multi_select=False,
+                            allow_other=True,
+                        ),
                     ),
-                    multi_select=True, allow_other=True,
-                ),
-                UserInputQuestion(
-                    question_id="proof", header="Proof",
-                    question="What proof should be required?",
-                    options=(UserInputOption(
-                        label="Browser test", description="Exercise the full flow",
-                    ),),
-                    multi_select=False, allow_other=True,
-                ),
+                )
             ),
-        ))
+        )
         await asyncio.sleep(0)
 
     @property
@@ -123,9 +137,13 @@ class ScriptedChild:
 
     async def finish(self) -> None:
         assert self.token is not None
-        await self.sink.turn_ended(
-            self.token, ending=ConversationTurnEnding.completed,
-            error_summary=None, standard_error_tail=None,
+        await self.sink.report(
+            self.token,
+            TurnEnded(
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            ),
         )
         self.token = None
         # The sink queues backend news. Yield so normal core processing can run.

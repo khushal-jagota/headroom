@@ -22,8 +22,10 @@ import pytest
 from tests.support.conversation_codex_app_server_bench import _run, _scripted_child
 
 from planner.conversation.backends.contracts import (
+    BackendEventValue,
     BackendSteerAccepted,
     BackendSteerRefused,
+    ComposerCatalogReported,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
@@ -415,17 +417,18 @@ def test_catalog_publication_failures_back_off_and_republish_after_sink_recovery
                     and coordinator.installed is not None
                 )
             )
-            original_publish = scripted.sink.composer_catalog_reported
+            original_publish = scripted.sink.report
             attempts = [0]
             recovered = [False]
 
-            async def unavailable_sink(entries: Any) -> None:
-                attempts[0] += 1
-                if not recovered[0]:
-                    raise RuntimeError("event sink unavailable")
-                await original_publish(entries)
+            async def unavailable_sink(turn: TurnToken | None, event: BackendEventValue) -> None:
+                if isinstance(event, ComposerCatalogReported):
+                    attempts[0] += 1
+                    if not recovered[0]:
+                        raise RuntimeError("event sink unavailable")
+                await original_publish(turn, event)
 
-            monkeypatch.setattr(scripted.sink, "composer_catalog_reported", unavailable_sink)
+            monkeypatch.setattr(scripted.sink, "report", unavailable_sink)
             coordinator.hint_apps()
             now[0] += 1
             coordinator.wake()

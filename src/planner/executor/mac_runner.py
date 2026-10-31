@@ -16,26 +16,30 @@ from uuid import uuid4
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
-    BackendPermissionAsk,
+    BackendEventValue,
     BackendPromptRejected,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerRefused,
-    BackendUserInputRequest,
     NeedsRebind,
+    PermissionAskRaised,
     PromptWriteRefused,
     SessionLoadFailed,
+    ToolCallFinished,
+    ToolCallProgress,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
+    UserInputFailed,
+    UserInputRequested,
 )
 from planner.conversation.contracts import (
-    ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ResolvedConversationStart,
 )
-from planner.conversation.events import ConversationTurnEnding, PlanEntry, ToolCallStatus
 from planner.conversation.logic.addressed_reply import with_runtime_prompt_context
-from planner.conversation.message_content import MessageContent, MessageFile
+from planner.conversation.message_content import MessageFile
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.execution_identity import (
@@ -151,156 +155,20 @@ class NativeEventSink:
         self.runner = runner
         self.reference = reference
 
-    async def _report(
-        self, method: BackendEventMethod, turn: TurnToken | None, arguments: dict[str, object]
-    ) -> None:
-        if isinstance(detail := arguments.get("detail"), str):
-            arguments["detail"] = detail[:MAX_TOOL_DETAIL_CHARACTERS]
+    async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
+        if isinstance(
+            event, (ToolCallStarted, ToolCallProgress, ToolCallFinished, UserInputFailed)
+        ):
+            if event.detail is not None:
+                event = replace(event, detail=event.detail[:MAX_TOOL_DETAIL_CHARACTERS])
+        method, arguments = encode_backend_event(event)
         if method in LIVE_BACKEND_EVENT_METHODS:
             if self.runner.send_live_event is not None:
                 await self.runner.send_live_event(
-                    BackendEvent(
-                        self.reference, method, turn, encode_backend_event(method, turn, arguments)
-                    )
+                    BackendEvent(self.reference, method, turn, arguments)
                 )
             return
-        await self.runner.report_event(self.reference, method, turn, arguments)
-
-
-    async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
-        await self._report(
-            BackendEventMethod.agent_message_delta, turn_token, {"text_delta": text_delta}
-        )
-
-    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
-        await self._report(BackendEventMethod.model_thinking_happened, turn_token, {})
-
-    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
-        await self._report(
-            BackendEventMethod.agent_message_completed, turn_token, {"content": content}
-        )
-
-    async def tool_call_started(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        title: str,
-        tool_kind: str,
-        detail: str | None,
-    ) -> None:
-        await self._report(
-            BackendEventMethod.tool_call_started,
-            turn_token,
-            {
-                "tool_call_id": tool_call_id,
-                "title": title,
-                "tool_kind": tool_kind,
-                "detail": detail,
-            },
-        )
-
-    async def tool_call_progress(
-        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
-    ) -> None:
-        await self._report(
-            BackendEventMethod.tool_call_progress,
-            turn_token,
-            {"tool_call_id": tool_call_id, "detail": detail},
-        )
-
-    async def tool_call_finished(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        tool_call_status: ToolCallStatus,
-        detail: str | None,
-    ) -> None:
-        await self._report(
-            BackendEventMethod.tool_call_finished,
-            turn_token,
-            {"tool_call_id": tool_call_id, "tool_call_status": tool_call_status, "detail": detail},
-        )
-
-    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
-        await self._report(BackendEventMethod.plan_updated, turn_token, {"entries": entries})
-
-    async def token_usage_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        cached_input_tokens: int | None,
-        cost_usd: float | None,
-    ) -> None:
-        await self._report(
-            BackendEventMethod.token_usage_reported,
-            turn_token,
-            {
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cached_input_tokens": cached_input_tokens,
-                "cost_usd": cost_usd,
-            },
-        )
-
-    async def context_compacted(self, turn_token: TurnToken) -> None:
-        await self._report(BackendEventMethod.context_compacted, turn_token, {})
-
-    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
-        await self._report(BackendEventMethod.permission_ask_raised, turn_token, {"ask": ask})
-
-    async def user_input_requested(
-        self, turn_token: TurnToken, request: BackendUserInputRequest
-    ) -> None:
-        await self._report(
-            BackendEventMethod.user_input_requested, turn_token, {"request": request}
-        )
-
-    async def user_input_failed(
-        self, turn_token: TurnToken, *, request_id: str, detail: str
-    ) -> None:
-        await self._report(
-            BackendEventMethod.user_input_failed,
-            turn_token,
-            {"request_id": request_id, "detail": detail},
-        )
-
-    async def turn_ended(
-        self,
-        turn_token: TurnToken,
-        *,
-        ending: ConversationTurnEnding,
-        error_summary: str | None,
-        standard_error_tail: str | None,
-    ) -> None:
-        await self._report(
-            BackendEventMethod.turn_ended,
-            turn_token,
-            {
-                "ending": ending,
-                "error_summary": error_summary,
-                "standard_error_tail": standard_error_tail,
-            },
-        )
-
-    async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
-        await self._report(
-            BackendEventMethod.vendor_session_cursor_rebound,
-            None,
-            {"vendor_session_cursor": vendor_session_cursor},
-        )
-
-    async def composer_catalog_reported(
-        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        await self._report(
-            BackendEventMethod.composer_catalog_reported,
-            None,
-            {"composer_catalog": composer_catalog},
-        )
+        await self.runner.report_event(self.reference, turn, event)
 
 
 @dataclass
@@ -913,14 +781,13 @@ class MacRunner:
     async def report_event(
         self,
         reference: ChildReference,
-        method: BackendEventMethod,
         turn: TurnToken | None,
-        arguments: dict[str, object],
+        event: BackendEventValue,
     ) -> None:
         await asyncio.shield(
             self.source_work(
                 reference,
-                lambda: self._report_event(reference, method, turn, arguments),
+                lambda: self._report_event(reference, turn, event),
                 final_event=True,
             )
         )
@@ -928,39 +795,40 @@ class MacRunner:
     async def _report_event(
         self,
         reference: ChildReference,
-        method: BackendEventMethod,
         turn: TurnToken | None,
-        arguments: dict[str, object],
+        event: BackendEventValue,
     ) -> None:
         child = self._children.get(reference.child_id)
         if child is None or child.reference != reference:
             raise ValueError("event from unknown child")
-        if method == BackendEventMethod.permission_ask_raised:
-            ask = cast(BackendPermissionAsk, arguments["ask"])
+        if isinstance(event, PermissionAskRaised):
+            ask = event.ask
             if turn is None:
                 raise ValueError("permission ask lacks turn")
             child.asks[ask.ask_id] = AskReference(reference, turn, ask.ask_id, AskKind.permission)
-        elif method == BackendEventMethod.user_input_requested:
-            request = cast(BackendUserInputRequest, arguments["request"])
+        elif isinstance(event, UserInputRequested):
+            request = event.request
             if turn is None:
                 raise ValueError("user input request lacks turn")
             child.asks[request.request_id] = AskReference(
                 reference, turn, request.request_id, AskKind.user_input
             )
-        elif method == BackendEventMethod.turn_ended:
+        elif isinstance(event, TurnEnded):
             if child.active_turn == turn:
                 child.active_turn = None
                 child.asks.clear()
-        event = BackendEvent(reference, method, turn, encode_backend_event(method, turn, arguments))
+        method, arguments = encode_backend_event(event)
+        wire_event = BackendEvent(reference, method, turn, arguments)
         await asyncio.to_thread(
             self.outbox.add,
             OutboxEntry(
                 reference.conversation_id,
                 EnvelopeKind.backend_event,
-                cast(JsonObject, encode_value(event)),
+                cast(JsonObject, encode_value(wire_event)),
             ),
             ticket_id=child.ticket_id
-            if method in (
+            if method
+            in (
                 BackendEventMethod.agent_message_completed,
                 BackendEventMethod.tool_call_finished,
                 BackendEventMethod.turn_ended,

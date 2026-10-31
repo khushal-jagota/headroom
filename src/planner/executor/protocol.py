@@ -19,6 +19,7 @@ from typing import (
     Literal,
     Protocol,
     TypedDict,
+    cast,
     overload,
 )
 
@@ -29,24 +30,24 @@ from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
 from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
 from planner.conversation.backends.contracts import (
-    AgentMessageCompletedArguments,
-    AgentMessageDeltaArguments,
+    AgentMessageCompleted,
+    AgentMessageDelta,
+    BackendEventValue,
     BackendPromptAccepted,
-    ComposerCatalogReportedArguments,
-    ContextCompactedArguments,
-    DecodedBackendEventArguments,
-    ModelThinkingHappenedArguments,
-    PermissionAskRaisedArguments,
-    PlanUpdatedArguments,
-    TokenUsageReportedArguments,
-    ToolCallFinishedArguments,
-    ToolCallProgressArguments,
-    ToolCallStartedArguments,
-    TurnEndedArguments,
+    ComposerCatalogReported,
+    ContextCompacted,
+    ModelThinkingHappened,
+    PermissionAskRaised,
+    PlanUpdated,
+    TokenUsageReported,
+    ToolCallFinished,
+    ToolCallProgress,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
-    UserInputFailedArguments,
-    UserInputRequestedArguments,
-    VendorSessionCursorReboundArguments,
+    UserInputFailed,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.contracts import PromptDeliveryMode, ResolvedConversationStart
 from planner.conversation.events import UserInputAnswer
@@ -754,50 +755,34 @@ def encode_value(value: object) -> JsonValue:
     return type_adapter(object).dump_python(value, mode="json")  # type: ignore[no-any-return]
 
 
-def encode_backend_event(
-    method: BackendEventMethod,
-    turn: object,
-    arguments: dict[str, object],
-) -> JsonObject:
-    del method, turn
-    return {key: encode_value(value) for key, value in arguments.items()}
+# One closed registry preserves the native wire method names and event shapes.
+_BACKEND_EVENT_TYPES: dict[BackendEventMethod, type[BackendEventValue]] = {
+    BackendEventMethod.agent_message_delta: AgentMessageDelta,
+    BackendEventMethod.model_thinking_happened: ModelThinkingHappened,
+    BackendEventMethod.agent_message_completed: AgentMessageCompleted,
+    BackendEventMethod.tool_call_started: ToolCallStarted,
+    BackendEventMethod.tool_call_progress: ToolCallProgress,
+    BackendEventMethod.tool_call_finished: ToolCallFinished,
+    BackendEventMethod.plan_updated: PlanUpdated,
+    BackendEventMethod.token_usage_reported: TokenUsageReported,
+    BackendEventMethod.context_compacted: ContextCompacted,
+    BackendEventMethod.permission_ask_raised: PermissionAskRaised,
+    BackendEventMethod.user_input_requested: UserInputRequested,
+    BackendEventMethod.user_input_failed: UserInputFailed,
+    BackendEventMethod.turn_ended: TurnEnded,
+    BackendEventMethod.vendor_session_cursor_rebound: VendorSessionCursorRebound,
+    BackendEventMethod.composer_catalog_reported: ComposerCatalogReported,
+}
+_BACKEND_EVENT_METHODS = {event_type: method for method, event_type in _BACKEND_EVENT_TYPES.items()}
 
 
-def decode_event_arguments(event: BackendEvent) -> DecodedBackendEventArguments:
-    """Decode one closed callback shape without changing its wire representation."""
-    match event.method:
-        case BackendEventMethod.agent_message_delta:
-            return type_adapter(AgentMessageDeltaArguments).validate_python(event.arguments)
-        case BackendEventMethod.model_thinking_happened:
-            return type_adapter(ModelThinkingHappenedArguments).validate_python(event.arguments)
-        case BackendEventMethod.agent_message_completed:
-            return type_adapter(AgentMessageCompletedArguments).validate_python(event.arguments)
-        case BackendEventMethod.tool_call_started:
-            return type_adapter(ToolCallStartedArguments).validate_python(event.arguments)
-        case BackendEventMethod.tool_call_progress:
-            return type_adapter(ToolCallProgressArguments).validate_python(event.arguments)
-        case BackendEventMethod.tool_call_finished:
-            return type_adapter(ToolCallFinishedArguments).validate_python(event.arguments)
-        case BackendEventMethod.plan_updated:
-            return type_adapter(PlanUpdatedArguments).validate_python(event.arguments)
-        case BackendEventMethod.token_usage_reported:
-            return type_adapter(TokenUsageReportedArguments).validate_python(event.arguments)
-        case BackendEventMethod.context_compacted:
-            return type_adapter(ContextCompactedArguments).validate_python(event.arguments)
-        case BackendEventMethod.permission_ask_raised:
-            return type_adapter(PermissionAskRaisedArguments).validate_python(event.arguments)
-        case BackendEventMethod.user_input_requested:
-            return type_adapter(UserInputRequestedArguments).validate_python(event.arguments)
-        case BackendEventMethod.user_input_failed:
-            return type_adapter(UserInputFailedArguments).validate_python(event.arguments)
-        case BackendEventMethod.turn_ended:
-            return type_adapter(TurnEndedArguments).validate_python(event.arguments)
-        case BackendEventMethod.vendor_session_cursor_rebound:
-            return type_adapter(VendorSessionCursorReboundArguments).validate_python(
-                event.arguments
-            )
-        case BackendEventMethod.composer_catalog_reported:
-            return type_adapter(ComposerCatalogReportedArguments).validate_python(event.arguments)
+def encode_backend_event(event: BackendEventValue) -> tuple[BackendEventMethod, JsonObject]:
+    return _BACKEND_EVENT_METHODS[type(event)], cast(JsonObject, encode_value(event))
+
+
+def decode_event_arguments(event: BackendEvent) -> BackendEventValue:
+    """Decode one closed event value without changing its wire representation."""
+    return type_adapter(_BACKEND_EVENT_TYPES[event.method]).validate_python(event.arguments)
 
 
 def decode_prompt_result(result: JsonObject) -> BackendPromptAccepted:
@@ -886,7 +871,7 @@ class MacInboxConversations(Protocol):
     async def take_backend_event(
         self,
         turn: TurnToken | None,
-        arguments: DecodedBackendEventArguments,
+        arguments: BackendEventValue,
         *,
         in_commit: CommitParticipant,
         conversation_id: str | None = None,

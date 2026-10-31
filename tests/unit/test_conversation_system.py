@@ -23,6 +23,7 @@ from tests.support.conversation_test_loop import conversation_test_loop, run_con
 
 import planner.conversation.system as conversation_system
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -32,12 +33,17 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    ContextCompacted,
     NeedsRebind,
     PermissionAnswerWriteFailed,
+    PermissionAskRaised,
     PromptWriteRefused,
     SessionLoadFailed,
+    TurnEnded,
     TurnToken,
     UserInputAnswerWriteFailed,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.contracts import (
     AnswerFate,
@@ -232,7 +238,9 @@ class _FakeBackendChild:
             f"{resolved_start.reasoning_effort}"
         )
         if vendor_session_cursor is None:
-            await self._sink.vendor_session_cursor_rebound(VENDOR_SESSION_CURSOR)
+            await self._sink.report(
+                None, VendorSessionCursorRebound(vendor_session_cursor=VENDOR_SESSION_CURSOR)
+            )
 
     async def write_prompt(
         self,
@@ -281,11 +289,13 @@ class _FakeBackendChild:
         self._backend.live_turn_token = turn_token
         if self._backend.ends_the_turn_while_writing:
             self._backend.ends_the_turn_while_writing = False
-            await self._sink.turn_ended(
+            await self._sink.report(
                 turn_token,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             self._backend.live_turn_token = None
             # Hand the loop back enough times that the ending is certainly picked up while
@@ -329,11 +339,13 @@ class _FakeBackendChild:
         if self._backend.reports_its_ending_during_a_cancel and token is not None:
             # What a real agent does: it takes the cancel and says its turn has stopped,
             # while the core is still part-way through recording the interruption.
-            await self._sink.turn_ended(
+            await self._sink.report(
                 token,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             # A real cancel waits on its wire, which gives the queue time to work that
             # report through before the core comes back to record its own ending. Without
@@ -459,11 +471,11 @@ class _Harness:
         if token is None or backend.sink is None:
             return
         backend.live_turn_token = None
-        await backend.sink.turn_ended(
+        await backend.sink.report(
             token,
-            ending=ending,
-            error_summary=error_summary,
-            standard_error_tail=standard_error_tail,
+            TurnEnded(
+                ending=ending, error_summary=error_summary, standard_error_tail=standard_error_tail
+            ),
         )
         await self.settle()
 
@@ -489,20 +501,24 @@ class _Harness:
         assert token is not None and backend.sink is not None
         backend.permission_asks_raised += 1
         ask_id = f"ask-{backend.permission_asks_raised}"
-        await backend.sink.permission_ask_raised(
+        await backend.sink.report(
             token,
-            BackendPermissionAsk(
-                ask_id=ask_id,
-                title="Run a command?",
-                detail="ls",
-                options=(
-                    PermissionAskOption(
-                        option_id="allow-once",
-                        label="Approve once",
-                        option_kind="allow",
+            PermissionAskRaised(
+                ask=BackendPermissionAsk(
+                    ask_id=ask_id,
+                    title="Run a command?",
+                    detail="ls",
+                    options=(
+                        PermissionAskOption(
+                            option_id="allow-once",
+                            label="Approve once",
+                            option_kind="allow",
+                        ),
+                        PermissionAskOption(
+                            option_id="deny", label="Decline", option_kind="reject"
+                        ),
                     ),
-                    PermissionAskOption(option_id="deny", label="Decline", option_kind="reject"),
-                ),
+                )
             ),
         )
         await self.settle()
@@ -540,7 +556,7 @@ class _Harness:
                 ),
             ),
         )
-        await backend.sink.user_input_requested(token, request)
+        await backend.sink.report(token, UserInputRequested(request=request))
         await self.settle()
         public = next(
             event.payload
@@ -553,14 +569,14 @@ class _Harness:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.agent_message_completed(token, content)
+        await backend.sink.report(token, AgentMessageCompleted(content=content))
         await self.settle()
 
     async def confirm_compaction(self, conversation_id: str) -> None:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.context_compacted(token)
+        await backend.sink.report(token, ContextCompacted())
         await self.settle()
 
     # --- reading the record ---
@@ -1082,11 +1098,13 @@ def test_a_turn_ends_once_and_a_dead_turns_ending_never_kills_its_successor(
         await harness.system.interrupt("c")
         assert await harness.system.is_running("c") is True
 
-        await backend.sink.turn_ended(
+        await backend.sink.report(
             stale_token,
-            ending=ConversationTurnEnding.completed,
-            error_summary=None,
-            standard_error_tail=None,
+            TurnEnded(
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            ),
         )
         await harness.settle()
 
@@ -2368,11 +2386,13 @@ def test_accepted_queued_prompt_keeps_receipt_and_completion_behind_real_writer_
             writer.execute("BEGIN IMMEDIATE")
             token = backend.live_turn_token
             assert token is not None and backend.sink is not None
-            await backend.sink.turn_ended(
+            await backend.sink.report(
                 token,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             backend.live_turn_token = None
 
@@ -3207,7 +3227,9 @@ def test_shutdown_retains_unconfirmed_local_child_and_revokes_callbacks(
         assert state.child_is_quarantined
         assert state.backend_event_pump is None
         assert harness.system._runtime_ownership.closed
-        await sink.agent_message_completed(token, text_message_content("late callback"))
+        await sink.report(
+            token, AgentMessageCompleted(content=text_message_content("late callback"))
+        )
         assert await harness.events("c") == before
 
     _run(exercise)

@@ -120,6 +120,18 @@ Unread dots and working marks are per conversation. A child Ticket’s dot is no
 
 Gated Ticket text changes only through [proposals](proposals.md). Review and notifications read attention derived from proposals, messages, asks, and failures. A recap request is a real prompt, and the recap field updates when the agent follows it. Artifacts are files. The conversation can discuss them. A file written only on disk does not by itself refresh every screen. Usage rows in the notebook feed cost lines. They are not the provider’s bill. Allowance is a separate read, described in [Usage](usage.md).
 
+Backends report one typed fact at a time through `report(turn, event)`. Stored
+facts enter one queue per conversation and keep their reporting order. Message
+deltas, thinking pulses and tool progress go to the live tail without storage.
+The plain event rules predict transcript rows and turn changes; those changes
+become visible only after the write commits. Late facts and repeated endings keep
+the same turn checks as ordinary output.
+
+Finished backend prose is not an addressed notebook message. Locally it needs no
+write. On the Mac it still marks a file capture point and keeps an ordered receipt,
+so files can arrive even when the completed prose adds no transcript row. See the
+[executor](executor.md#the-outbox-keeps-authored-work-until-confirmation).
+
 A failed turn on a Ticket, when the ceiling holder is an agent, records a wake for that holder. When the holder is Khushal, the failure reaches him through attention and notifications instead of a wake.
 
 ## Where it shows up

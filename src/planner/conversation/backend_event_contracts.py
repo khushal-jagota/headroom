@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeGuard
 
 from pydantic import JsonValue
@@ -14,6 +14,7 @@ from planner.conversation.events import (
     AutomaticCompactionResult,
     ConversationEventPayload,
     PermissionAskedEventPayload,
+    UserInputQuestion,
     UserInputRequestedEventPayload,
 )
 from planner.conversation.lifecycle import LifecycleFact
@@ -31,7 +32,6 @@ def child_stops_outside_lock(child: BackendChild | None) -> TypeGuard[BackendChi
 class InterpretedRequest:
     payload: PermissionAskedEventPayload | UserInputRequestedEventPayload
     lifecycle: LifecycleFact
-    provider_identity: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,3 +71,37 @@ class AcceptedEvent:
 
 
 type CommitParticipant = Callable[[sqlite3.Connection, EventTaken], AcceptedEvent]
+
+
+@dataclass(slots=True)
+class RunningTurn:
+    token: TurnToken
+    automatic_compaction: bool = False
+    compaction_confirmed: bool = False
+    pending_permission_ask_ids: set[str] = field(default_factory=set)
+    permission_provider_ids: dict[str, str] = field(default_factory=dict)
+    user_input_provider_ids: dict[str, str] = field(default_factory=dict)
+    pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
+        default_factory=dict
+    )
+    prompt_senders: dict[Principal, None] = field(default_factory=dict)
+    explicit_reply_recipients: set[Principal] = field(default_factory=set)
+    automatic_notice: bool = False
+    ended: bool = False
+    callbacks_revoked: bool = False
+    # Set when the core is part-way through ending this turn itself — an interrupt, or a
+    # send-now killing the incumbent. The cancel goes out with the lock let go, and the
+    # backend reports the ending it was just asked for while that is happening. Only one
+    # of the two may be recorded, and it is the core's: the core is the side that knows
+    # the turn was interrupted rather than merely over.
+    ending_is_the_cores: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class InterpretedBackendEvent:
+    payloads: tuple[ConversationEventPayload, ...] = ()
+    lifecycle: tuple[LifecycleFact, ...] = ()
+    predicted: RunningTurn | None = None
+    compacted: bool = False
+    compaction_result: AutomaticCompactionResult | None = None
+    failure_notice: bool = False
