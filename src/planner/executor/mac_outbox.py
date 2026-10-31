@@ -419,16 +419,13 @@ class MacOutbox:
                 )
             )
 
-    def pending_count(self, conversation_id: str | None = None) -> int:
+    def pending_count(self) -> int:
         with self._lock:
-            query = "SELECT COUNT(*) FROM items WHERE receipt_json IS NULL"
-            args = () if conversation_id is None else (conversation_id,)
-            if conversation_id is not None:
-                query += " AND conversation_id=?"
-            return int(self._db.execute(query, args).fetchone()[0])
-
-    def has_pending(self, conversation_id: str | None = None) -> bool:
-        return self.pending_count(conversation_id) > 0
+            return int(
+                self._db.execute(
+                    "SELECT COUNT(*) FROM items WHERE receipt_json IS NULL"
+                ).fetchone()[0]
+            )
 
     def snapshots(self, envelope: QueuedEnvelope) -> tuple[FileSnapshot, ...]:
         return tuple(FileSnapshot(m, self._blobs / m.sha256) for m in envelope.file_dependencies)
