@@ -10,7 +10,6 @@ import sqlite3
 from functools import partial
 from pathlib import Path
 from typing import cast
-from uuid import uuid4
 
 from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
 from planner.core.clock import Clock
@@ -20,9 +19,9 @@ from planner.execution_identity import AskKind, AskReference, ChildReference, Ex
 from planner.executor.clock import now_ms
 from planner.executor.files import (
     contained_path,
-    copy_verified,
     directory_descriptor,
     file_digest,
+    install_verified,
     safe_component,
 )
 from planner.executor.link_files import settled_io
@@ -42,8 +41,8 @@ from planner.executor.protocol import (
     TransactionalWriter,
     as_object,
     decode_event_arguments,
-    envelope_child,
     envelope_payload_digest,
+    payload_child,
     type_adapter,
 )
 from planner.executor.store import ExecutorStore, VpsDatabase, _invalid, _record
@@ -181,14 +180,7 @@ class InboxStore(VpsDatabase):
     def store_upload(self, manifest: FileManifest, source: Path) -> None:
         """Verify and flush into private staging, never into the served file tree."""
         target = self._staged_file(manifest)
-        with directory_descriptor(target.parent, create=True) as parent:
-            temporary = target.parent / (".tmp-" + uuid4().hex)
-            try:
-                copy_verified(source, temporary, manifest)
-                os.replace(temporary.name, target.name, src_dir_fd=parent, dst_dir_fd=parent)
-                os.fsync(parent)
-            finally:
-                temporary.unlink(missing_ok=True)
+        install_verified(source, target, manifest)
 
     def install_files(self, manifests: tuple[FileManifest, ...]) -> None:
         """Called under the receipt transaction, before any referenced effect."""
@@ -271,7 +263,9 @@ class InboxStore(VpsDatabase):
         ):
             raise _invalid("Envelope digest does not match content")
         if check_files and envelope.file_dependencies:
-            reference = type_adapter(ChildReference).validate_python(envelope_child(envelope))
+            reference = type_adapter(ChildReference).validate_python(
+                payload_child(envelope.payload)
+            )
             assignment = connection.execute(
                 "SELECT principal_kind,principal_id FROM executor_child_assignments "
                 "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
@@ -352,9 +346,11 @@ class MacInbox:
                 if (
                     envelope.kind is EnvelopeKind.child_stopped
                     and previous.disposition is ReceiptDisposition.accepted
+                    and previous.result.get("recorded") is True
                 ):
                     await self.runs._resolve_command(
-                        type_adapter(CommandOutcome).validate_python(envelope.payload)
+                        type_adapter(CommandOutcome).validate_python(envelope.payload),
+                        stop_proven=True,
                     )
                 return previous
             return await self._apply_envelope(envelope, identity)
@@ -442,7 +438,7 @@ class MacInbox:
                 partial(
                     self.store.accept,
                     envelope,
-                    lambda conn, row: self._command_outcome(conn, outcome),
+                    lambda conn, row: cast(JsonObject, {"recorded": True}),
                     now_ms(),
                     identity=identity,
                 )
@@ -483,7 +479,3 @@ class MacInbox:
             )
 
         raise ValueError("unknown executor envelope")
-
-    def _command_outcome(self, conn: sqlite3.Connection, outcome: CommandOutcome) -> JsonObject:
-        self.runs.store.record_command_outcome_in_transaction(conn, outcome, output_confirmed=True)
-        return {"recorded": True}

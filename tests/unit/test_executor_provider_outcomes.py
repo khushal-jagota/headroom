@@ -30,6 +30,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     )
     from planner.conversation.contracts import (
         ConversationAccess,
+        ConversationRoleMaterials,
         PromptDeliveryMode,
         ResolvedConversationStart,
     )
@@ -84,7 +85,9 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
             ConversationBackendKey.codex,
             "exact",
             None,
-            None,
+            ConversationRoleMaterials(
+                "worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_provider"))
+            ),
             tmp_path,
             ConversationAccess.full,
             workspace_path_policy=WorkspacePathPolicy.native_absolute,

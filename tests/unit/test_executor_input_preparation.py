@@ -29,7 +29,7 @@ def test_withdraw_preparing_input_settles_before_exact_stop_and_never_invokes(
             finally:
                 await cleanup.wait()
 
-        registry.prepare_inputs = prepare
+        monkeypatch.setattr(registry, "_prepare_inputs", prepare)
         child = ChildReference(registry.incarnation, "input-child", "input-conversation")
         command = replace(native_registry[3], command_id="input-command", child=child)
         sending = asyncio.create_task(registry.run(command))

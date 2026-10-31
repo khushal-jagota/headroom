@@ -19,7 +19,6 @@ from typing import (
     Literal,
     Protocol,
     TypedDict,
-    cast,
     overload,
 )
 
@@ -321,23 +320,14 @@ class OutboxEntry:
     kind: EnvelopeKind
     payload: JsonObject
     submission_id: str | None = None
-    snapshots: tuple[FileSnapshot, ...] = ()
 
 
-def envelope_child(
-    envelope: QueuedEnvelope | OutboxEntry,
-    *,
-    lookup: Literal["object_then_ask", "child_then_ask", "ask"] = "object_then_ask",
-) -> JsonValue:
-    """Read the child while preserving each boundary's raw-payload precedence."""
-    child = envelope.payload.get("child")
-    if lookup == "child_then_ask":
-        if child is not None:
-            return child
-        return cast(JsonObject, envelope.payload.get("ask", {})).get("child")
-    if lookup == "object_then_ask" and isinstance(child, dict):
+def envelope_child(payload: JsonObject, *, ask_only: bool = False) -> JsonValue:
+    """Read a raw child; refused answers take it only from their ask."""
+    child = payload.get("child")
+    if not ask_only and isinstance(child, dict):
         return child
-    ask = envelope.payload.get("ask")
+    ask = payload.get("ask")
     return ask.get("child") if isinstance(ask, dict) else None
 
 
@@ -766,14 +756,9 @@ class ControlMessageWriter(Protocol):
     def is_closing(self) -> bool: ...
 
 
-class OutboxLink(Protocol):
-    async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage: ...
-
-    async def put_file(
-        self, envelope: QueuedEnvelope, snapshot: FileSnapshot
-    ) -> AcceptanceReceipt | None:
-        """Stage immutable bytes, or return the item's permanent refusal receipt."""
-        ...
+def payload_child(payload: JsonObject) -> JsonObject | None:
+    child = envelope_child(payload)
+    return child if isinstance(child, dict) else None
 
 
 def encode_value(value: object) -> JsonValue:

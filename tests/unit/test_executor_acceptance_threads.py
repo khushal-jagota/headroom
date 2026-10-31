@@ -22,12 +22,15 @@ from planner.core.db import connect
 from planner.executor import store as store_module
 from planner.executor.protocol import (
     AcceptanceReceipt,
+    ChildCommand,
+    ChildOperation,
     CommandDisposition,
     CommandOutcome,
     EnvelopeKind,
     JsonObject,
     LiveReadRequest,
     ReceiptDisposition,
+    StopRun,
     WireMessage,
     WireMessageKind,
     encode_value,
@@ -59,6 +62,12 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
 
         endpoint.app = app
         outcome = CommandOutcome("accepted-command", CHILD, CommandDisposition.succeeded, {})
+        stopping = asyncio.create_task(
+            endpoint.runs.send_command(
+                ChildCommand(outcome.command_id, CHILD, ChildOperation.stop, None, StopRun())
+            )
+        )
+        await asyncio.sleep(0)
         payload = encode_value(outcome)
         assert isinstance(payload, dict)
         queued = replace(envelope(), kind=EnvelopeKind.child_stopped, payload=payload)
@@ -152,23 +161,15 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
             receipt = await asyncio.wait_for(replay, 2)
             assert receipt.disposition is ReceiptDisposition.accepted
             assert store.lookup_receipt(queued.sender_id, queued.submission_id) == receipt
-            connection = connect(store.db_path)
-            try:
-                assert (
-                    connection.execute(
-                        "SELECT count(*) FROM executor_command_outcomes WHERE command_id=?",
-                        (outcome.command_id,),
-                    ).fetchone()[0]
-                    == 1
-                )
-            finally:
-                connection.close()
+            assert await asyncio.wait_for(stopping, 2) == outcome
         finally:
             release.set()
             await asyncio.to_thread(holder.join, 2)
             await asyncio.gather(
                 accepting, *(() if replay is None else (replay,)), return_exceptions=True
             )
+            stopping.cancel()
+            await asyncio.gather(stopping, return_exceptions=True)
             await endpoint.close()
 
     asyncio.run(exercise())

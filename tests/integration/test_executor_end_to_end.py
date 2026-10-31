@@ -61,7 +61,7 @@ from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION
-from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
+from planner.execution_identity import AskKind, AskReference, ExecutorIdentity
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.link import Link
 from planner.executor.mac_service import MacService
@@ -454,7 +454,7 @@ async def boot(
     root: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    native_factory: Callable[[ResolvedConversationStart, str, ChildReference], BackendChildFactory]
+    native_factory: Callable[[ResolvedConversationStart], BackendChildFactory]
     | None = None,
     backend_key: ConversationBackendKey = ConversationBackendKey.codex,
     model: str = "scripted",
@@ -543,10 +543,8 @@ async def boot(
     observer.efforts = ("low", "medium", "high", "xhigh", "max")
     mac.catalog.snapshots = observer
 
-    def factory(
-        resolved: ResolvedConversationStart, capability: str, child: ChildReference
-    ) -> BackendChildFactory:
-        del resolved, capability, child
+    def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+        del resolved
 
         def create(**arguments: object) -> BackendChild:
             native.sink = cast(BackendEventSink, arguments["event_sink"])
@@ -821,11 +819,8 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
             ClaudeAgentSdkChildLaunch(), client_factory=client_factory
         )
 
-        def native_factory(
-            resolved: ResolvedConversationStart, capability: str, child: ChildReference
-        ) -> BackendChildFactory:
+        def native_factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
             assert resolved.backend_key is ConversationBackendKey.claude
-            del capability, child
             return adapter
 
         harness = await boot(
@@ -972,10 +967,8 @@ def test_exact_model_and_effort_cross_authenticated_native_dispatch(
         try:
             second = CapturedNativeChild()
 
-            def factory(
-                resolved: ResolvedConversationStart, capability: str, child: ChildReference
-            ) -> BackendChildFactory:
-                del resolved, capability, child
+            def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+                del resolved
 
                 def create(**arguments: object) -> BackendChild:
                     second.sink = cast(BackendEventSink, arguments["event_sink"])
@@ -1676,7 +1669,7 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
                     finally:
                         await cleanup.wait()
 
-            harness.mac.runner.prepare_inputs = stalled
+            monkeypatch.setattr(harness.mac.runner, "_prepare_inputs", stalled)
             sending = asyncio.create_task(
                 harness.system.send(
                     "c_scripted",
@@ -2226,6 +2219,50 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
                 interrupt.cancel()
             if resume is not None:
                 resume.set()
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_stop_waits_for_queued_receipt_after_direct_result_and_reconnect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        stopping: asyncio.Task[None] | None = None
+        direct_result = asyncio.Event()
+        handle = harness.endpoint._handle_message
+
+        async def observe(message: WireMessage, identity: ExecutorIdentity, writer: Link) -> None:
+            await handle(message, identity, writer)
+            if message.kind is WireMessageKind.command_outcome:
+                direct_result.set()
+
+        monkeypatch.setattr(harness.endpoint, "_handle_message", observe)
+        try:
+            async with paused_outbox(harness.mac.outbox):
+                stopping = asyncio.create_task(harness.system.kill("c_scripted"))
+                await asyncio.wait_for(direct_result.wait(), 5)
+                assert not stopping.done()
+                generation = harness.mac.identity.connection_generation
+                assert harness.endpoint.runs.link is not None
+                harness.endpoint.runs.link.close()
+                await eventually(
+                    lambda: harness.mac.identity.connection_generation > generation
+                    and harness.endpoint.runs.identity == harness.mac.identity
+                    and harness.endpoint.runs.ready,
+                    "stop did not reconcile on the replacement connection",
+                )
+                assert not stopping.done()
+                assert harness.native.stop_count == 1
+            await asyncio.wait_for(stopping, 5)
+            await eventually(lambda: not harness.mac.outbox.pending(), "stop receipt did not drain")
+            assert not await harness.system.is_running("c_scripted")
+            assert harness.native.stop_count == 1
+        finally:
+            if stopping is not None and not stopping.done():
+                stopping.cancel()
+                await asyncio.gather(stopping, return_exceptions=True)
             await harness.close()
 
     asyncio.run(run())

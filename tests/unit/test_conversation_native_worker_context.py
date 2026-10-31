@@ -165,9 +165,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             clients.append(client)
             return client
 
-        def factory(
-            start: ResolvedConversationStart, capability: str, child: ChildReference
-        ) -> BackendChildFactory:
+        def factory(start: ResolvedConversationStart) -> BackendChildFactory:
             if backend is ConversationBackendKey.claude:
                 return ClaudeAgentSdkBackendChildFactory(
                     ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")),

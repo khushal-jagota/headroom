@@ -104,8 +104,10 @@ The VPS readiness loop claims a ready Ticket and starts or reuses its conversati
 The selected destination supplies the Mac backend factory; Chief and Manager
 conversations keep local children. The VPS saves the exact Mac child assignment
 and run before emitting its start command, and requires a reconciled, ready link.
-The Mac runner localizes the workspace, downloads and verifies the command's inputs,
-installs the current canonical skills, and starts the selected provider.
+The Mac runner downloads and verifies the command's inputs and requires a Ticket
+identity for every start. It installs the current canonical skills, then localizes
+the workspace and builds the native environment once before starting the selected provider.
+Provider locations are resolved afresh for each start.
 Before native invocation, it checks that the retained child can take work.
 The direct command result reports admission;
 recorded agent output takes the ordered outbox path independently.
@@ -168,6 +170,10 @@ conversations send at once; one slow upload does not block the others.
 Prompt and steer calls use the Mac's direct result. An event reported before the
 prompt returns can finish admission without waiting for any queued output.
 Stop and retirement require the final ordered stop receipt.
+Direct stop replies and reconnect reports cannot finish a successful stop. If the
+link drops before its queued `child_stopped` item arrives, the Mac sends that item
+after reconnect. If the VPS commits its receipt but acceptance is cancelled before
+settling the caller, replay of the stored `recorded: true` result settles it.
 
 A CLI write can outlast its connection. The client keeps its original request ID as
 the submission ID after any possible send, including partial-send failure, timeout,
@@ -284,10 +290,14 @@ matching target bytes allow the same item to finish without another upload.
 Sequence and receipt checks prevent an older retry from replacing newer bytes.
 A file linked by an accepted agent write is therefore durable on the VPS first,
 without separate link parsing. Pending items retain their exact original bytes.
+Uploads use the queued item's file references to find those bytes, without reading
+the outbox database again.
 If an upload descriptor is malformed or its upload is refused, the Mac replies
 with an error for that request. The VPS records a refused receipt for the item.
 The queue advances and the shared connection stays open for other conversations.
 
+A file still waiting for confirmation stays attached to later items that refer
+to the same unchanged file, so refusal of the first item cannot lose the bytes.
 Confirmation releases blobs no waiting item references. Temporary and unreferenced
 blobs are swept when the outbox opens. The size-and-time index does not retain
 file bytes after confirmation. Incompatible outbox formats require explicit
@@ -297,8 +307,14 @@ Generation loss closes admission before cleanup waits. Filesystem work can outli
 The transfer retains its files, descriptors, and capacity until that work settles. Cleanup never deletes a resource that admitted work still uses.
 Ordinary account access stays intact. Accepted bytes remain protected by receiver verification and atomic publication.
 
+Stored conversation input files are hashed in place, then copied once into the
+transfer's private storage. The copy checks length and hash before it is offered
+to the Mac. Both machines install received files through the same checked copy,
+atomic rename and directory flush.
+
 File manifests name the scope, owner, relative path, byte count and SHA-256 hash.
 Transfers do not use a media type or report download progress.
+
 Snapshots and hashes use bounded streams. One submission per conversation can
 proceed at a time. Separate conversations can progress while a large transfer
 waits. The outbox retains blobs until its item has a confirmed receipt.

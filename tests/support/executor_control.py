@@ -13,7 +13,6 @@ from planner.executor.link import ControlWebSocket, Link
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.protocol import (
     ControlMessageWriter,
-    OutboxLink,
     QueuedEnvelope,
     WireMessage,
     encode_message,
@@ -55,7 +54,7 @@ async def paused_outbox(outbox: MacOutbox) -> AsyncIterator[None]:
     release = asyncio.Event()
     send = outbox._send_one
 
-    async def held(link: OutboxLink, envelope: QueuedEnvelope) -> None:
+    async def held(link: Link, envelope: QueuedEnvelope) -> None:
         await release.wait()
         await send(link, envelope)
 

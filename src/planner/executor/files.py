@@ -14,7 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from planner.executor.configuration import FILE_CHUNK_BYTES
-from planner.executor.protocol import FileManifest, FileScope, FileSnapshot
+from planner.executor.protocol import FileManifest
 
 
 def fsync_file(descriptor: int) -> None:
@@ -94,6 +94,40 @@ def regular_descriptor(path: Path) -> Iterator[int]:
         os.close(descriptor)
 
 
+def copy_hashed(
+    incoming: int,
+    outgoing: int,
+    *,
+    byte_limit: int | None = None,
+    skip_unreadable_source: bool = False,
+) -> tuple[str, int]:
+    """Copy bounded blocks, returning the digest and length.
+
+    Capture may skip a failed source read (length -1), never a failed write.
+    """
+    digest = hashlib.sha256()
+    count = 0
+    while True:
+        try:
+            block = os.read(incoming, FILE_CHUNK_BYTES)
+        except (FileNotFoundError, NotADirectoryError, PermissionError):
+            if skip_unreadable_source:
+                return "", -1
+            raise
+        if not block:
+            return digest.hexdigest(), count
+        count += len(block)
+        if byte_limit is not None and count > byte_limit:
+            raise ValueError("file exceeds manifest length")
+        digest.update(block)
+        view = memoryview(block)
+        while view:
+            written = os.write(outgoing, view)
+            if not written:
+                raise OSError("file write made no progress")
+            view = view[written:]
+
+
 def copy_verified(source: Path, destination: Path, manifest: FileManifest) -> None:
     """Copy bounded blocks into a new inode and verify complete bytes."""
     with regular_descriptor(source) as incoming, directory_descriptor(destination.parent) as parent:
@@ -104,20 +138,8 @@ def copy_verified(source: Path, destination: Path, manifest: FileManifest) -> No
             dir_fd=parent,
         )
         try:
-            digest = hashlib.sha256()
-            count = 0
-            while block := os.read(incoming, FILE_CHUNK_BYTES):
-                count += len(block)
-                if count > manifest.byte_count:
-                    raise ValueError("file exceeds manifest length")
-                digest.update(block)
-                view = memoryview(block)
-                while view:
-                    written = os.write(outgoing, view)
-                    if not written:
-                        raise OSError("file write made no progress")
-                    view = view[written:]
-            if count != manifest.byte_count or digest.hexdigest() != manifest.sha256:
+            digest, count = copy_hashed(incoming, outgoing, byte_limit=manifest.byte_count)
+            if count != manifest.byte_count or digest != manifest.sha256:
                 raise ValueError("incomplete or corrupt file")
             fsync_file(outgoing)
         except BaseException:
@@ -127,45 +149,16 @@ def copy_verified(source: Path, destination: Path, manifest: FileManifest) -> No
             os.close(outgoing)
 
 
-def snapshot_file(
-    *,
-    root: Path,
-    relative_path: str,
-    scope: FileScope,
-    owner_id: str,
-) -> FileSnapshot:
-    safe_component(owner_id)
-    path = contained_path(root, relative_path)
-    private = root.parent / ".executor-snapshots"
-    with directory_descriptor(private, create=True):
-        pass
-    temporary_path = private / uuid4().hex
-    digest = hashlib.sha256()
-    count = 0
-    with regular_descriptor(path) as incoming, directory_descriptor(private) as parent:
-        outgoing = os.open(
-            temporary_path.name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=parent,
-        )
+def install_verified(source: Path, target: Path, manifest: FileManifest) -> None:
+    """Publish a checked new inode atomically and flush its directory."""
+    with directory_descriptor(target.parent, create=True) as parent:
+        temporary = target.parent / (".tmp-" + uuid4().hex)
         try:
-            with os.fdopen(outgoing, "wb", closefd=False) as snapshot:
-                while block := os.read(incoming, FILE_CHUNK_BYTES):
-                    snapshot.write(block)
-                    digest.update(block)
-                    count += len(block)
-                snapshot.flush()
-                fsync_file(outgoing)
-        except BaseException:
-            os.unlink(temporary_path.name, dir_fd=parent)
-            raise
+            copy_verified(source, temporary, manifest)
+            os.replace(temporary.name, target.name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
         finally:
-            os.close(outgoing)
-    return FileSnapshot(
-        FileManifest(scope, owner_id, relative_path, digest.hexdigest(), count),
-        temporary_path,
-    )
+            temporary.unlink(missing_ok=True)
 
 
 def file_digest(path: Path) -> tuple[str, int]:
