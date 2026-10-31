@@ -124,7 +124,7 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
                 endpoint._read(LiveReadRequest(sibling, "/api/tickets/other-ticket", {})), 1
             )
             assert read == {"conversation_id": sibling.conversation_id}
-            heartbeat = asyncio.create_task(endpoint.catalog._measure_clock())
+            heartbeat = asyncio.create_task(endpoint.runs.link.request(WireMessageKind.health, {}))
             while not endpoint.runs.link._pending:
                 await asyncio.sleep(0)
             request_id = next(iter(endpoint.runs.link._pending))
@@ -136,8 +136,7 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
                     {"mac_received_at_ms": 1001, "mac_sent_at_ms": 1002},
                 ),
             )
-            await asyncio.wait_for(heartbeat, 1)
-            assert endpoint.catalog.clock_sample is not None
+            assert (await asyncio.wait_for(heartbeat, 1)).kind is WireMessageKind.health
             writer.send.assert_awaited()
             assert not release.is_set() and not accepting.done()
             accepting.cancel()

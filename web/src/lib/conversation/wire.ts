@@ -391,6 +391,7 @@ export type BackendModel = {
   display_name: string | null;
   /** Provider-owned variant and its current concrete model. */
   selected_variant?: string | null;
+  version?: number[];
   resolved_model_id?: string | null;
   /** A failed catalogue refresh can leave a last known-good model available. */
   /** Disabled models remain visible on Backends, but no picker offers them for a run. */
@@ -713,7 +714,7 @@ export async function readScopedBackends(
   selection: BackendScopeRequest, refresh = false
 ): Promise<BackendSnapshot[]> {
   const answer = await request<{backends: BackendSnapshot[]}>(
-    `/backends${refresh ? "?refresh=true" : ""}`, postJson(selection)
+    `/backends${refresh ? "?refresh=true" : ""}`, postJson({ ticket_id: selection.ticket_id })
   );
   return answer.backends;
 }

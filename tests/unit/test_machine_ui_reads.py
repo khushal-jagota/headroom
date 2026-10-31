@@ -14,9 +14,7 @@ from fastapi import FastAPI, Request
 from tests.support.executor_control import MessageReader, message_link
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as ClockForTest
-from planner.core.contracts import OWNER_PRINCIPAL
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
 from planner.executor import link as link_module
@@ -30,11 +28,6 @@ from planner.executor.protocol import (
     encode_message,
     encode_value,
 )
-from planner.managers import data as managers
-from planner.projects import data as projects
-from planner.tickets import data, locale_configuration
-from planner.tickets.api import read_ticket_creation_context
-from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 
 
 def _draft_request() -> Request:
@@ -93,7 +86,6 @@ def test_contact_is_receipt_not_handshake_and_retains_history_after_loss(
         await vps.VpsExecutor._handle(endpoint, message, identity, cast(Any, writer))
         handled.set()
 
-    monkeypatch.setattr(endpoint.catalog, "_measure_clock", probe)
     monkeypatch.setattr(endpoint, "_handle", handle)
 
     async def run() -> None:
@@ -131,7 +123,7 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
     async def run() -> None:
         for superseded in (False, True):
             endpoint = _endpoint(tmp_db, fake_clock)
-            monkeypatch.setattr(endpoint.catalog, "_measure_clock", probe)
+
             tick = [100]
             monkeypatch.setattr(vps, "now_ms", lambda tick=tick: tick[0])
             monkeypatch.setattr(link_module, "now_ms", lambda tick=tick: tick[0])
@@ -160,48 +152,3 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
             assert writer.closed
 
     asyncio.run(run())
-
-
-def test_draft_inherits_project_matches_write_and_never_writes(
-    tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setitem(
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS,
-        TicketLocale.macos,
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS[TicketLocale.vps],
-    )
-    project = projects.create_project(tmp_db, name="Mac", requires_macos=True, now=1)
-    item = managers.create_manager(tmp_db, title="Parent", project_id=project.id, clock=fake_clock)
-    before = tuple(tmp_db.iterdump())
-    result = asyncio.run(
-        read_ticket_creation_context(
-            {"worker_type": "coding", "manager": {"kind": "manager", "id": item.id}},
-            tmp_db,
-            RequestContext(OWNER_PRINCIPAL),
-            _draft_request(),
-        )
-    )
-    legacy_alias = asyncio.run(
-        read_ticket_creation_context(
-            {"worker_type": "coding", "orchestrator": {"kind": "manager", "id": item.id}},
-            tmp_db,
-            RequestContext(OWNER_PRINCIPAL),
-            _draft_request(),
-        )
-    )
-    assert legacy_alias == result
-    assert tuple(tmp_db.iterdump()) == before
-    assert result["project_id"] == project.id
-    assert result["resolved_locale"] == "macos"
-    assert all(choice["compatible"] for choice in result["locale_choices"])
-    created = data.create_ticket(
-        tmp_db,
-        title="Actual",
-        worker_type="coding",
-        principal=OWNER_PRINCIPAL,
-        now=1,
-        title_max_chars=TITLE_MAX_CHARS,
-        manager_id=item.id,
-    )
-    assert created.locale.value == result["resolved_locale"]
-    assert created.employee_backend == result["employee_backend"]

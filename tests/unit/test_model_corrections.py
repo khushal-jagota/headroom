@@ -5,13 +5,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.unit.test_current_model_resolution import ScopedCatalogue, context, observation, row
+from tests.support.executor_catalog import ScriptedBackendSnapshots
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.contracts import ConversationBackendKey as Backend
-from planner.conversation.contracts import WorkspacePathPolicy
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, LaunchContext
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -30,36 +28,28 @@ def test_http_scoped_read_exact_write_and_retired_corrections(
     with closing(connect(db_path)) as conn:
         create_schema(conn)
         worker = create_ticket(
-            conn, title="Exact configuration", principal=OWNER_PRINCIPAL, now=1,
-            title_max_chars=200, worker_type="coding", employee_backend="codex",
-            employee_launch_model="gpt-6.1-terra", employee_launch_reasoning_effort="high",
+            conn,
+            title="Exact configuration",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+            worker_type="coding",
+            employee_backend="codex",
+            employee_launch_model="gpt-6.1-terra",
+            employee_launch_reasoning_effort="high",
         )
     cfg = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": db_path})
     app = create_app(
-        cfg, build_clock(cfg), lambda: connect(db_path),
+        cfg,
+        build_clock(cfg),
+        lambda: connect(db_path),
         conversation_system_for_test=InMemoryConversationSystem(),
     )
-    binding = CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None)
-    source = ScopedCatalogue(observation((row("gpt-6.1-terra"),), launch=context(
-        workspace=binding, localized_workspace_folder=tmp_path,
-    )))
     with TestClient(app) as client:
         runtime = app.state.conversation
-        runtime.system.configure_destination_validation(source)
-        # Read every provider through the same existing observer fixture.
-        original = source.capture_context
-        async def capture(
-            backend: Backend, *, workspace: CatalogWorkspaceBinding
-        ) -> LaunchContext:
-            from dataclasses import replace
-            captured = await original(backend, workspace=workspace)
-            source.current_context = replace(captured, backend_key=backend, workspace=workspace,
-                                             localized_workspace_folder=workspace.workspace_folder)
-            source.value = replace(source.value, evidence=replace(
-                source.value.evidence, context=source.current_context,
-            ))
-            return source.current_context
-        monkeypatch.setattr(source, "capture_context", capture)
+        source = ScriptedBackendSnapshots()
+        source.model = "gpt-6.1-terra"
+        object.__setattr__(runtime, "backend_snapshots", source)
         start = client.get(f"/api/tickets/{worker.id}/conversation/start-values")
         assert start.status_code == 200, start.text
         assert start.json()["workspace_folder"] == str(tmp_path)
@@ -70,29 +60,60 @@ def test_http_scoped_read_exact_write_and_retired_corrections(
         assert refreshed.status_code == 200, refreshed.text
         assert source.calls
         assert "backends" in refreshed.json() and "rows" not in refreshed.json()
-        assert any(model["model_id"] == "gpt-6.1-terra"
-                   for snapshot in refreshed.json()["backends"]
-                   for model in snapshot["available_models"])
-        invalid = client.post("/api/conversation/backends", json={
-            "ticket_id": worker.id, "executable": "/not-authorized",
-        })
+        assert any(
+            model["model_id"] == "gpt-6.1-terra"
+            for snapshot in refreshed.json()["backends"]
+            for model in snapshot["available_models"]
+        )
+        invalid = client.post(
+            "/api/conversation/backends",
+            json={
+                "ticket_id": worker.id,
+                "executable": "/not-authorized",
+            },
+        )
         assert invalid.status_code == 400
-        forbidden = client.post("/api/conversation/backends", json={"ticket_id": worker.id},
-                                headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "outside"})
+        forbidden = client.post(
+            "/api/conversation/backends",
+            json={"ticket_id": worker.id},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "outside"},
+        )
         assert forbidden.status_code in (400, 403, 404)
-        source.calls.clear()
-        source.fail = True
+        from typing import Any, cast
+
+        from planner.tickets.contracts import TicketLocale
+
+        mac_source = ScriptedBackendSnapshots()
+        mac_source.model = "mac-only-model"
+        runtime.system.configure_machine_catalog(cast(Any, mac_source))
+        with closing(connect(db_path)) as conn:
+            mac_ticket = create_ticket(
+                conn, title="Mac Hermes", principal=OWNER_PRINCIPAL, now=1,
+                title_max_chars=200, worker_type="coding", locale=TicketLocale.macos,
+                employee_backend="hermes", employee_launch_model="mac-only-model",
+            )
+        mac_read = client.post("/api/conversation/backends", json={"ticket_id": mac_ticket.id})
+        assert mac_read.status_code == 200, mac_read.text
+        assert {item["backend_key"] for item in mac_read.json()["backends"]} == {
+            "codex", "claude", "hermes"}
+        assert all(item["available_models"][0]["model_id"] == "mac-only-model"
+                   for item in mac_read.json()["backends"])
+        source.calls = 0
         for suffix in ("preview", "apply"):
             response = client.post(f"/api/conversation/model-corrections/{suffix}", json={})
             assert response.status_code == 404
         assert client.post("/api/conversation/backends/model-choices", json={}).status_code == 404
-        defaults = {"employee_backend": "codex", "employee_launch_model": "provider-next-token",
-                    "employee_launch_reasoning_effort": "future-effort"}
+        defaults = {
+            "employee_backend": "codex",
+            "employee_launch_model": "provider-next-token",
+            "employee_launch_reasoning_effort": "future-effort",
+        }
         response = client.put("/api/workers/chief-of-staff/launch-defaults", json=defaults)
         assert response.status_code == 200, response.text
         with closing(connect(db_path)) as conn:
-            saved = conn.execute("SELECT employee_launch_model,employee_launch_reasoning_effort "
-                                 "FROM chief_settings").fetchone()
+            saved = conn.execute(
+                "SELECT employee_launch_model,employee_launch_reasoning_effort FROM chief_settings"
+            ).fetchone()
             assert tuple(saved) == ("provider-next-token", "future-effort")
         disabled = BackendStateStore(db_path)
         disabled.write_model_enablement(Backend.codex, "provider-next-token", False)
@@ -100,4 +121,4 @@ def test_http_scoped_read_exact_write_and_retired_corrections(
             client.put("/api/workers/chief-of-staff/launch-defaults", json=defaults).status_code
             == 400
         )
-        assert source.calls == []
+        assert source.calls == 0

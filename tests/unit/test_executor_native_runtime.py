@@ -41,7 +41,6 @@ from planner.conversation.message_content import MessageContent, text_message_co
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
     CatalogWorkspaceBinding,
-    LaunchContext,
     ModelSelection,
     SelectionKind,
 )
@@ -91,20 +90,6 @@ def _fixture_admission(
     workspace = CatalogWorkspaceBinding(
         resolved.workspace_folder, resolved.workspace_path_policy, relative
     )
-    context = LaunchContext(
-        "fixture-context",
-        TicketLocale.macos,
-        resolved.backend_key,
-        ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
-        ),
-        workspace,
-        localized or resolved.workspace_folder,
-        "fixture-executable",
-        "1",
-        "fixture-provider-scope",
-        None,
-    )
     attempt_id = str(uuid4())
     return AdmissionExpectation(
         ModelSelection(
@@ -121,7 +106,9 @@ def _fixture_admission(
         resolved.reasoning_effort,
         resolved.conversation_id,
         child=reference,
-        executor_identity=context.executor_identity,
+        executor_identity=ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
+        ),
     )
 
 

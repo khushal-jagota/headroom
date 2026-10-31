@@ -240,12 +240,7 @@ def require_enabled_model(
     model_id: str,
 ) -> None:
     """Refuse a new choice without changing historical selections."""
-    from planner.conversation.backends.claude_model_catalog import claude_launch_model
-
-    mapped = (claude_launch_model(model_id)
-              if backend_key is ConversationBackendKey.claude else model_id)
-    disabled = next((token for token in dict.fromkeys((model_id, mapped))
-                     if token is not None and not model_is_enabled(conn, backend_key, token)), None)
+    disabled = model_id if not model_is_enabled(conn, backend_key, model_id) else None
     if disabled is not None:
         raise PlannerError(
             ErrorCode.validation,

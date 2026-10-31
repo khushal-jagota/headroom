@@ -32,7 +32,6 @@ def bind_model_intent(
     disabled_models: frozenset[str] = frozenset(),
 ) -> CanonicalModelValidation:
     """Bind exact intent locally. Only saved Panels aliases need retained suggestions."""
-    from planner.conversation.backends.claude_model_catalog import claude_launch_model
     from planner.conversation.contracts import ConversationBackendKey
     from planner.conversation.model_resolution.contracts import (
         CanonicalModelValidation,
@@ -61,8 +60,6 @@ def bind_model_intent(
             max(candidates, key=lambda model: numerical_version(model.model_id)).model_id
             if candidates else None
         )
-    if selection.backend_key is ConversationBackendKey.claude:
-        token = claude_launch_model(token)
     disabled = selection.submitted_token in disabled_models or token in disabled_models
     reason = (
         ValidationReason.model_incompatible if disabled

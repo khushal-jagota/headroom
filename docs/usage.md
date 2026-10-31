@@ -12,7 +12,11 @@ Refresh on Limits is the explicit provider read. It does not start an agent turn
 
 Tokens and Cost are a different number. Their Refresh updates prices and the totals from local Codex, Claude, and Grok Build transcripts on the server, including sessions that were not started inside Headroom, for 24 hours, 7 days, 30 days, and 90 days. That refresh does not ask the providers for allowance. Grok Build appears in the transcript scan. It is not a conversation backend. The conversation backends remain Hermes, Codex, and Claude. See [Conversations](conversations.md).
 
-Codex can be signed in from the screen. Claude and Hermes keep their own login commands. Models can be enabled or disabled in the catalog the composers use. A disabled model is blocked in the picker and at Ticket creation.
+Codex can be signed in from the screen. Claude and Hermes keep their own login commands. The backend cards read this host's installed tools through the same snapshot service
+used on the Mac. Claude supplies its models through the CLI handshake; Panels keeps
+no written Claude model table. Ticket composers use their Ticket's machine, with the
+Mac's last list retained on the VPS while it is offline. See [Executor](executor.md).
+Models can be enabled or disabled in the catalog the composers use. A disabled model is blocked in the picker and at Ticket creation.
 
 ## What feeds the page
 
@@ -26,4 +30,4 @@ The shell label is Usage. The address is `#/backends`, with Tokens, Cost, Limits
 
 `src/planner/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`. Codex sign-in from the UI lives under `web/src/lib/conversation/backendSignIn.ts`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-10-31._

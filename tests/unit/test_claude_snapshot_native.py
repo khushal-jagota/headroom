@@ -8,8 +8,8 @@ from uuid import uuid4
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
-from tests.unit.test_claude_settings_snapshot import ScriptedTransport
-from tests.unit.test_destination_catalog_observer import launch_fixture
+from tests.support.claude_protocol_transport import ScriptedTransport
+from tests.support.executor_launches import launch_fixture
 from tests.unit.test_executor_native_runtime import (
     _fixture_admission,
     canonical_snapshot,

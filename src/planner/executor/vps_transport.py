@@ -63,11 +63,11 @@ def _generation_root() -> tempfile.TemporaryDirectory[str]:
 class VpsExecutor:
     """Compose VPS owners and adapt app transport frames to their typed inputs."""
 
-    def __init__(self, db_path: str, clock: Clock) -> None:
+    def __init__(self, db_path: str, clock: Clock, *, machine_id: str = "macos") -> None:
         self.db_path = db_path
         self.runs = MacRuns(db_path)
         self.inbox = MacInbox(db_path, clock, self.runs)
-        self.catalog = VpsCatalogRelay(self.runs)
+        self.catalog = VpsCatalogRelay(self.runs, machine_id=machine_id)
         self.conversations: SqliteProcessConversationSystem
         self.message_files = ConversationMessageFiles(db_path)
         self.app: ASGIApp
@@ -147,7 +147,6 @@ class VpsExecutor:
                 self.process_id = health.process_id
                 self.observed_at_ms = now_ms()
                 self.lost_at_ms = None
-                self.catalog.clock_sample = None
                 self.last_contact_at_ms = now_ms()
             if old_identity is not None:
                 await self._close_transport(old_identity)
@@ -173,9 +172,6 @@ class VpsExecutor:
                 WireMessageKind.get_file,
             ):
                 link.on(kind, partial(self._handle, identity=identity, writer=link))
-            probe = asyncio.create_task(self.catalog._measure_clock())
-            self.catalog._tasks.add(probe)
-            probe.add_done_callback(self.catalog._tasks.discard)
             await link.closed()
         except (ConnectionError, OSError, ValueError, TimeoutError, PlannerError):
             pass
@@ -248,6 +244,7 @@ class VpsExecutor:
                     )
             elif message.kind is WireMessageKind.reconciliation_ready:
                 await self.runs.link_up(writer, message.request_id)
+                self.catalog.connected()
                 return
             elif message.kind is WireMessageKind.live_backend_event:
                 event = type_adapter(BackendEvent).validate_python(message.payload)

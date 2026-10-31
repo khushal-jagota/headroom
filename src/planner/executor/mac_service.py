@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import cast
 from uuid import uuid4
 
 import aiohttp
@@ -32,7 +31,6 @@ from planner.executor.protocol import (
     ConnectionFailureOrigin,
     ConnectionPhase,
     ConnectionState,
-    JsonObject,
     ReconnectAsk,
     ReconnectResult,
     WireMessage,
@@ -62,7 +60,7 @@ class MacService:
             PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, str(uuid4()), 0
         )
         self.outbox = MacOutbox(paths.spool)
-        self.catalog = MacCatalogRelay(self.server_url)
+        self.catalog = MacCatalogRelay()
         self.runner = MacRunner(
             paths=paths,
             incarnation=self.identity.executor_incarnation,
@@ -127,10 +125,7 @@ class MacService:
                 self.gateway._link = link
 
                 async def on_message(message: WireMessage) -> WireMessage | None:
-                    if message.kind in (
-                        WireMessageKind.catalog_request,
-                        WireMessageKind.catalog_cancel,
-                    ):
+                    if message.kind in (WireMessageKind.catalog_request,):
                         self.catalog.handle(
                             message, link, admit=lambda: self.gateway.accepting(link)
                         )
@@ -141,18 +136,6 @@ class MacService:
                         WireMessageKind.withdraw,
                     ):
                         raise ProtocolRefused("peer sent work before validated handshake")
-                    if message.kind is WireMessageKind.health and "clock_probe" in message.payload:
-                        probe = cast(JsonObject, message.payload["clock_probe"])
-                        received = now_ms()
-                        return WireMessage(
-                            WireMessageKind.health,
-                            message.request_id,
-                            {
-                                "vps_sent_at_ms": probe["vps_sent_at_ms"],
-                                "mac_received_at_ms": received,
-                                "mac_sent_at_ms": now_ms(),
-                            },
-                        )
                     if message.kind is WireMessageKind.withdraw:
                         request = type_adapter(WithdrawCommands).validate_python(message.payload)
                         return WireMessage(
@@ -183,7 +166,6 @@ class MacService:
 
                 for kind in (
                     WireMessageKind.catalog_request,
-                    WireMessageKind.catalog_cancel,
                     WireMessageKind.health,
                     WireMessageKind.withdraw,
                     WireMessageKind.command,

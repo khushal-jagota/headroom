@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, cast
 
 import pytest
-from tests.support.executor_catalog import ScriptedCatalogObserver
 from tests.support.executor_turns import MacRemoteChildFactory
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
@@ -22,8 +21,6 @@ from planner.conversation.contracts import (
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
-    CatalogWorkspaceBinding,
-    LaunchContext,
     SelectionKind,
 )
 from planner.conversation.storage import ConversationStore
@@ -51,7 +48,6 @@ from planner.executor.store import ExecutorStore
 from planner.executor.vps_agent_writes import deliver_native_message
 from planner.executor.vps_inbox import InboxStore
 from planner.tickets import data
-from planner.tickets.contracts import TicketLocale
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 CHIEF = Principal(PrincipalKind.chief, "chief")
@@ -80,29 +76,6 @@ class ScriptedNative:
             if command.operation is ChildOperation.write_prompt
             else {},
         )
-
-
-class HeldCatalogObserver(ScriptedCatalogObserver):
-    """Synthetic local context for the existing fake transport boundary."""
-
-    def __init__(self) -> None:
-        super().__init__(lambda: IDENTITY)
-        self.model = "scripted"
-        self.contexts: list[LaunchContext] = []
-
-    async def capture_context(
-        self, backend_key: ConversationBackendKey, *, workspace: CatalogWorkspaceBinding
-    ) -> LaunchContext:
-        current = replace(
-            await super().capture_context(backend_key, workspace=workspace),
-            destination=TicketLocale.vps,
-            executor_identity=None,
-        )
-        self.contexts.append(current)
-        return current
-
-    def verify_context(self, expected: LaunchContext) -> bool:
-        return expected in self.contexts
 
 
 @dataclass
@@ -153,11 +126,9 @@ class HeldFixture:
             idle_child_stop_after_seconds=0,
             idle_child_sweep_interval_seconds=0.005,
         )
-        observer = HeldCatalogObserver()
-        system.configure_destination_validation(observer)
         from types import SimpleNamespace
 
-        system._catalog_endpoint = cast(
+        system.machine_catalog = cast(
             Any,
             SimpleNamespace(
                 identity=IDENTITY,

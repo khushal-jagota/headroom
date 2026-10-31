@@ -28,6 +28,14 @@ Send Message is the door for a person, Chief, a Manager, or a Worker addressing 
 
 The fate is about delivery, not about whether the model agreed.
 
+Model lists come from the machine that runs the Ticket, including Hermes. The Mac's
+last answer stays available when it is offline; [Executor](executor.md) explains
+when it is refreshed. Claude's list comes from its CLI startup handshake, with no
+prompt or turn. Picking a Claude model saves the resolved, pinned ID, such as
+`claude-opus-5-5`, while showing the CLI's display name. Model metadata includes its
+family and numeric version, including Fable and Terra. Older models remain in the
+list.
+
 A saved model choice keeps its exact name and effort. Panels checks explicit model disables before sending. The provider can still refuse the prompt. Launch validation stores the choice, result, reason, action and launch token; it carries no catalog evidence or alias history. The composer shows the refusal without a separate validation panel.
 
 | Fate | Meaning |
@@ -87,4 +95,4 @@ The human’s message is a contained pill. The agent’s message is bare prose. 
 
 The contract is `src/planner/conversation/contracts.py`. The system and the three adapters live under `src/planner/conversation/`. Send Message is `src/planner/message_delivery/`. The pane is `web/src/components/conversation/`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-10-31._

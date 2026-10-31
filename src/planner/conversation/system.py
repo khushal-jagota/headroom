@@ -48,7 +48,7 @@ from planner.conversation.contracts import NativeMessageAdmission, NativeMessage
 if TYPE_CHECKING:
     from planner.conversation.admission.contracts import AdmissionExpectation
     from planner.conversation.model_resolution.contracts import RemoteCatalogSource
-    from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
+    from planner.conversation.snapshot import BackendSnapshotService
 
 
 from planner.conversation.backend_event_contracts import (
@@ -184,11 +184,9 @@ from planner.conversation.message_content import (
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
-    CatalogResult,
     CatalogWorkspaceBinding,
     CorrectiveAction,
     ModelSelection,
-    ProviderCatalogObserver,
     SelectionKind,
     ValidationReason,
     ValidationState,
@@ -497,8 +495,7 @@ class SqliteProcessConversationSystem:
         from planner.conversation.snapshot import BackendSnapshotService
 
         self._backend_snapshots = backend_snapshots or BackendSnapshotService()
-        self._catalog_observer: ProviderCatalogObserver | None = None
-        self._catalog_endpoint: RemoteCatalogSource | None = None
+        self.machine_catalog: RemoteCatalogSource | None = None
         self._message_files = message_files
         # Nobody watching is the ordinary case for a system built without one: the record
         # is written exactly the same way, and there is simply nowhere to show it.
@@ -3518,83 +3515,8 @@ class SqliteProcessConversationSystem:
         assert isinstance(value, dict)
         return value
 
-    def configure_destination_validation(
-        self, observer: ProviderCatalogObserver, *, endpoint: RemoteCatalogSource | None = None
-    ) -> None:
-        """Wire actual local launch inputs and the authenticated native endpoint."""
-        if self._catalog_observer is not observer or self._catalog_endpoint is not endpoint:
-            self._backend_snapshots.clear_destination_snapshots()
-        self._catalog_observer = observer
-        self._catalog_endpoint = endpoint
-
-
-    async def destination_backend_snapshot(
-        self,
-        backend_key: ConversationBackendKey,
-        workspace: CatalogWorkspaceBinding,
-        destination: str,
-        *,
-        refresh: bool = False,
-    ) -> BackendSnapshot:
-        """Read advisory configuration through the same retained snapshot service."""
-        from planner.conversation.model_resolution.contracts import (
-            CatalogExpectedContext,
-            CatalogRequest,
-        )
-        from planner.conversation.snapshot import BackendSnapshotScope
-        from planner.core.errors import ErrorCode
-
-        endpoint = self._catalog_endpoint
-        observer = self._catalog_observer
-        account = None
-        identity = None
-        if destination == "macos":
-            if endpoint is None or endpoint.identity is None or not endpoint.ready:
-                raise PlannerError(ErrorCode.validation, "The selected machine is offline")
-            identity = endpoint.identity
-        elif observer is not None:
-            context = await observer.capture_context(backend_key, workspace=workspace)
-            account = context.account_generation
-        else:
-            raise PlannerError(ErrorCode.validation, "Provider configuration is unavailable")
-        scope = BackendSnapshotScope(backend_key, destination, workspace, identity, account)
-
-        async def is_current() -> bool:
-            if destination == "macos":
-                current = self._catalog_endpoint
-                return (
-                    current is not None
-                    and current is endpoint
-                    and current.ready
-                    and current.identity == identity
-                )
-            if self._catalog_observer is not observer or observer is None:
-                return False
-            current_context = await observer.capture_context(backend_key, workspace=workspace)
-            return current_context.account_generation == account
-
-        async def observe() -> CatalogResult:
-            attempt_id = uuid4().hex
-            if destination == "macos":
-                assert identity is not None and endpoint is not None
-                return await endpoint.observe_catalog(
-                    CatalogRequest(backend_key, CatalogExpectedContext(identity, workspace)),
-                    attempt_id=attempt_id,
-                )
-            assert observer is not None
-            return await observer.observe(
-                backend_key,
-                workspace=workspace,
-                attempt_id=attempt_id,
-                deadline=asyncio.get_running_loop().time() + 30,
-            )
-
-        return await self._backend_snapshots.destination_snapshot(
-            scope,
-            observe=observe,
-            is_current=is_current,
-            refresh=refresh,
-        )
+    def configure_machine_catalog(self, endpoint: RemoteCatalogSource | None) -> None:
+        self.machine_catalog = endpoint
 
     async def validate_launch_selection(
         self,
@@ -3603,32 +3525,16 @@ class SqliteProcessConversationSystem:
     ) -> CanonicalModelValidation:
         from planner.conversation.backend_state import BackendStateStore
         from planner.conversation.launch_intent import bind_model_intent
-        from planner.conversation.snapshot import BackendModel, BackendSnapshotScope
+        from planner.conversation.snapshot import BackendModel
 
-        # Exact tokens never depend on advisory context or provider discovery.
         models: tuple[BackendModel, ...] = ()
-        if selection.selection_kind is SelectionKind.panels_alias and self._backend_snapshots:
-            account = None
-            identity = None
-            if selection.destination.value == "macos":
-                endpoint = self._catalog_endpoint
-                identity = endpoint.identity if endpoint is not None and endpoint.ready else None
-                if identity is None:
-                    return bind_model_intent(
-                        selection,
-                        disabled_models=BackendStateStore(
-                            self._store._db_path
-                        ).read_disabled_models(selection.backend_key),
-                    )
-            elif self._catalog_observer is not None:
-                context = await self._catalog_observer.capture_context(
-                    selection.backend_key, workspace=workspace
-                )
-                account = context.account_generation
-            scope = BackendSnapshotScope(
-                selection.backend_key, selection.destination.value, workspace, identity, account
+        if selection.selection_kind is SelectionKind.panels_alias:
+            source = (
+                self.machine_catalog
+                if selection.destination.value == "macos"
+                else self._backend_snapshots
             )
-            retained = self._backend_snapshots.retained_destination(scope)
+            retained = source.retained(selection.backend_key) if source is not None else None
             if retained is not None:
                 models = retained.available_models
         return bind_model_intent(
@@ -3697,9 +3603,9 @@ class SqliteProcessConversationSystem:
                     )
                 ),
                 executor_identity=(
-                    self._catalog_endpoint.identity
+                    self.machine_catalog.identity
                     if basis.selection.destination.value == "macos"
-                    and self._catalog_endpoint is not None
+                    and self.machine_catalog is not None
                     else None
                 ),
             )
@@ -3714,7 +3620,6 @@ class SqliteProcessConversationSystem:
                         and not accepted_running.ending_is_the_cores
                         and state.child is child
                     )
-
 
             return await child.steer(
                 token,
@@ -3777,7 +3682,7 @@ class SqliteProcessConversationSystem:
                 from planner.conversation.launch_intent import bind_model_intent
                 from planner.tickets.contracts import TicketLocale
 
-                endpoint = self._catalog_endpoint
+                endpoint = self.machine_catalog
                 native = endpoint is not None and endpoint.owns_conversation(
                     state.record.conversation_id
                 )
@@ -3829,11 +3734,10 @@ class SqliteProcessConversationSystem:
                 class ConversationContext:
                     def verify_context(self) -> bool:
                         checked_validation_policy(conn, carried_validation)
-                        current = system._catalog_endpoint
+                        current = system.machine_catalog
                         return not native or (
                             current is not None and current.ready and current.identity == identity
                         )
-
 
                 kwargs["model_change"] = (
                     validation.launch_token
@@ -3979,8 +3883,8 @@ class SqliteProcessConversationSystem:
                 turn=turn_token,
                 workspace=workspace,
                 executor_identity=(
-                    self._catalog_endpoint.identity
-                    if selection.destination.value == "macos" and self._catalog_endpoint is not None
+                    self.machine_catalog.identity
+                    if selection.destination.value == "macos" and self.machine_catalog is not None
                     else None
                 ),
             )
@@ -3998,7 +3902,6 @@ class SqliteProcessConversationSystem:
                 else None
             )
 
-
             system = self
 
             class CurrentContext:
@@ -4009,14 +3912,13 @@ class SqliteProcessConversationSystem:
                     finally:
                         policy_conn.close()
                     if selection.destination.value == "macos":
-                        endpoint = system._catalog_endpoint
+                        endpoint = system.machine_catalog
                         return (
                             endpoint is not None
                             and endpoint.ready
                             and endpoint.identity == expectation.executor_identity
                         )
                     return True
-
 
             delivered = await self._deliver_prompt_unsettled_verified(
                 state,

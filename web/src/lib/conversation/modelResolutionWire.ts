@@ -21,54 +21,6 @@ export type ModelSelection = {
   selection_revision: string;
 };
 
-export type CatalogWorkspaceBinding = {
-  workspace_folder: string;
-  workspace_path_policy: "legacy_home_mapping" | "native_absolute";
-  workspace_home_relative: string | null;
-};
-
-export type ModelExecutorIdentity = {
-  protocol_version: number;
-  application_revision: string;
-  spool_format_version: number;
-  executor_incarnation: string;
-  connection_generation: number;
-};
-
-export type LaunchContext = {
-  context_ref: string;
-  destination: TicketLocale;
-  backend_key: ConversationBackendKey;
-  executor_identity: ModelExecutorIdentity | null;
-  workspace: CatalogWorkspaceBinding;
-  localized_workspace_folder: string;
-  executable_identity: string | null;
-  executable_version: string | null;
-  provider_scope: string | null;
-  account_generation: { account_id: string; last_refresh: string } | null;
-};
-
-export type CatalogEvidenceReference = {
-  observation_id: string;
-  observation_revision: string;
-  context: LaunchContext;
-  observed_at: number;
-  attempt_id: string;
-  clock_uncertainty_seconds: number | null;
-};
-
-export type CatalogUnavailable = {
-  kind: "unavailable";
-  backend_key: ConversationBackendKey;
-  destination: TicketLocale;
-  attempted_context: LaunchContext | null;
-  reason: ValidationReason;
-  corrective_action: CorrectiveAction;
-  detail: string | null;
-  observed_at: number;
-  retained_evidence: CatalogEvidenceReference | null;
-};
-
 export type CanonicalModelValidation = {
   selection: ModelSelection;
   state: ValidationState;

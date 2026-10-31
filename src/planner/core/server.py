@@ -259,7 +259,9 @@ def create_app(
             from planner.executor.routing import LocaleBackendChildFactory
             from planner.executor.vps_transport import VpsExecutor
 
-            executor_endpoint = VpsExecutor(config.db_path, clock)
+            executor_endpoint = VpsExecutor(
+                config.db_path, clock, machine_id=config.executor_id or "macos"
+            )
             backend_factories = {
                 key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
                 for key, local in backend_factories.items()
@@ -289,17 +291,9 @@ def create_app(
 
             if executor_endpoint is not None:
                 executor_endpoint.configure(conversation.system, app)
-            from planner.conversation.model_resolution.observer import ProductionCatalogObserver
-            from planner.tickets.contracts import TicketLocale
-
-            if not config.test_mode and backend_child_factories_for_test is None:
-                conversation.system.configure_destination_validation(
-                    ProductionCatalogObserver(
-                        destination=TicketLocale.vps,
-                        panels_server_url=f"http://{HOST}:{config.port}",
-                    ),
-                    endpoint=None if executor_endpoint is None else executor_endpoint.catalog,
-                )
+            conversation.system.configure_machine_catalog(
+                None if executor_endpoint is None else executor_endpoint.catalog
+            )
             # A test that drives workers wants a conversation system it can hold still, so it
             # passes one in. Nothing else does: production always runs the real one.
             app.state.conversation_system = (

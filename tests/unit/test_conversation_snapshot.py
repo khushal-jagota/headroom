@@ -31,6 +31,7 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import (
     BackendInstallMethod,
+    BackendSnapshotService,
     CommandOutcome,
     SubprocessBackendProbeEnvironment,
     probe_backend,
@@ -248,35 +249,13 @@ def _installed_claude(
 # --- reading a version line ----------------------------------------------------------------
 
 
-
-
 # --- reading where a binary lives ------------------------------------------------------------
 
 
 # --- what a card says --------------------------------------------------------------------
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # --- what a backend runs when nobody picks --------------------------------------------------
-
-
-
-
 
 
 # --- the update advisory ------------------------------------------------------------------
@@ -318,12 +297,6 @@ def test_codex_user_local_npm_install_targets_the_same_resolved_prefix() -> None
     _run(exercise)
 
 
-
-
-
-
-
-
 # --- running an update --------------------------------------------------------------------
 
 
@@ -336,16 +309,6 @@ def _claude_update_command() -> tuple[str, ...]:
         USER_LOCAL_NPM_PREFIX,
         "@anthropic-ai/claude-code@latest",
     )
-
-
-
-
-
-
-
-
-
-
 
 
 # --- what a command that runs out of time leaves behind ------------------------------------
@@ -400,91 +363,74 @@ def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
 # --- keeping the answers ---------------------------------------------------------------------
 
 
-def test_destination_snapshot_retains_complete_choices_and_rejects_late_owner() -> None:
-    from dataclasses import replace
-
-    from tests.unit.test_current_model_resolution import context, observation, row
-
-    from planner.conversation.model_resolution.contracts import CatalogObservation
-    from planner.conversation.snapshot import BackendSnapshotScope, BackendSnapshotService
+def test_machine_catalog_refreshes_on_version_refresh_and_twelve_hour_backstop() -> None:
+    from datetime import UTC, datetime, timedelta
 
     async def exercise() -> None:
-        service = BackendSnapshotService()
-        launch = context()
-        scope = BackendSnapshotScope(
-            launch.backend_key, launch.destination.value, launch.workspace,
-            launch.executor_identity, launch.account_generation,
+        clock = [datetime(2026, 10, 31, tzinfo=UTC)]
+        machine = _installed_claude()
+        generation = ["claude-fable-5-1"]
+
+        async def models(executable: str) -> ClaudeModelCatalog:
+            return ClaudeModelCatalog(
+                (ClaudeModel(generation[0], "Fable", generation[0], ("high",)),),
+                ("high",),
+                generation[0],
+            )
+
+        service = BackendSnapshotService(
+            machine, claude_model_catalog_probe=models, machine_catalog=True, now=lambda: clock[0]
         )
-        current = True
-        calls = 0
-        entered, release = asyncio.Event(), asyncio.Event()
-        result = observation((row("gpt-6.1-terra"),), launch=launch)
+        first = await service.snapshot(ConversationBackendKey.claude)
+        assert first.available_models[0].selected_variant == "fable"
+        assert first.available_models[0].version == (5, 1)
+        generation[0] = "claude-fable-5-5"
+        assert (
+            await service.snapshot(ConversationBackendKey.claude)
+        ).default_model_id == "claude-fable-5-1"
+        machine.outcomes[(CLAUDE_PATH, "--version")] = CommandOutcome(0, "2.1.314", "")
+        assert (
+            await service.snapshot(ConversationBackendKey.claude)
+        ).default_model_id == "claude-fable-5-5"
+        generation[0] = "claude-fable-6"
+        clock[0] += timedelta(hours=12)
+        assert (
+            await service.snapshot(ConversationBackendKey.claude)
+        ).default_model_id == "claude-fable-6"
+        generation[0] = "claude-fable-7"
+        assert (
+            await service.snapshot(
+                ConversationBackendKey.claude, refresh=True, discover_update_advisory=False
+            )
+        ).default_model_id == "claude-fable-7"
+        assert machine.registry_lookups == []
 
-        async def is_current() -> bool:
-            return current
+    _run(exercise)
 
-        async def observe() -> CatalogObservation:
-            nonlocal calls
-            calls += 1
-            return result
 
-        async def slow() -> CatalogObservation:
-            nonlocal calls
-            calls += 1
-            entered.set()
-            await release.wait()
-            return result
-
-        complete = await service.destination_snapshot(scope, observe=observe, is_current=is_current)
-        assert complete.available_models[0].model_id == "gpt-6.1-terra"
-        result = replace(result, rows=(), complete=False)
-        pending = asyncio.create_task(service.destination_snapshot(
-            scope, observe=slow, is_current=is_current, refresh=True,
-        ))
-        await entered.wait()
-        assert await service.destination_snapshot(
-            scope, observe=observe, is_current=is_current,
-        ) is complete
-        coalesced = asyncio.create_task(service.destination_snapshot(
-            scope, observe=slow, is_current=is_current, refresh=True,
-        ))
-        await asyncio.sleep(0)
-        release.set()
-        assert await pending is complete
-        assert await coalesced is complete
-        assert calls == 2
-        other_scope = replace(
-            scope, workspace=replace(scope.workspace, workspace_folder=Path("/other"))
+def test_machine_codex_update_retains_complete_models_and_variant_metadata() -> None:
+    async def exercise() -> None:
+        machine = _installed_codex()
+        complete = [True]
+        full = _codex_that_answers(
+            CodexModel("gpt-6.1-terra", "GPT 6.1 Terra", ("high",), "high", True)
         )
-        assert service.retained_destination(other_scope) is None
-        # A complete empty list is a successful replacement, distinct from a partial list.
-        result = replace(result, complete=True)
-        empty = await service.destination_snapshot(
-            scope, observe=observe, is_current=is_current, refresh=True,
-        )
-        assert empty.models_complete and empty.available_models == ()
-        entered.clear()
-        release.clear()
-        result = observation((row("late-account-model"),), launch=launch)
-        pending = asyncio.create_task(service.destination_snapshot(
-            scope, observe=slow, is_current=is_current, refresh=True,
-        ))
-        await entered.wait()
-        current = False
-        release.set()
-        assert (await pending).available_models == ()
-        assert service.retained_destination(scope) is empty
-        # Sign-in invalidation must also reject an already pending old response.
-        current = True
-        entered.clear()
-        release.clear()
-        pending = asyncio.create_task(service.destination_snapshot(
-            scope, observe=slow, is_current=is_current, refresh=True,
-        ))
-        await entered.wait()
-        service.clear_destination_snapshots(scope.backend_key)
-        release.set()
-        assert (await pending).available_models == ()
-        assert service.retained_destination(scope) is None
 
-    asyncio.run(exercise())
+        async def models(executable: str) -> CodexModelCatalog:
+            if complete[0]:
+                return await full(executable)
+            return CodexModelCatalog((), (), complete=False)
+
+        service = BackendSnapshotService(
+            machine, machine_catalog=True, codex_model_catalog_probe=models
+        )
+        result = await service.snapshot(ConversationBackendKey.codex)
+        assert result.available_models[0].selected_variant == "terra"
+        assert result.available_models[0].version == (6, 1)
+        complete[0] = False
+        machine.outcomes[(CODEX_PATH, "--version")] = CommandOutcome(0, "0.166.0", "")
+        after_update = await service.snapshot(ConversationBackendKey.codex)
+        assert after_update.available_models == result.available_models
+        assert after_update.default_model_id == result.default_model_id
+
+    _run(exercise)

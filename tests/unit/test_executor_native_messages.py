@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
 import pytest
-from tests.support.executor_catalog import ScriptedCatalogObserver
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.backends.contracts import TurnToken
@@ -43,39 +41,6 @@ from planner.executor.protocol import (
 from planner.executor.vps_agent_writes import deliver_native_message
 from planner.executor.vps_inbox import InboxStore
 from planner.tickets import data
-
-
-def _configure_scoped_metadata(
-    system: SqliteProcessConversationSystem,
-    path: str,
-    identity: ExecutorIdentity,
-) -> None:
-    from planner.conversation.model_resolution.contracts import (
-        CatalogWorkspaceBinding,
-        LaunchContext,
-    )
-    from planner.tickets.contracts import TicketLocale
-
-    class Observer(ScriptedCatalogObserver):
-        async def capture_context(
-            self,
-            backend_key: ConversationBackendKey,
-            *,
-            workspace: CatalogWorkspaceBinding,
-        ) -> LaunchContext:
-            return replace(
-                await super().capture_context(backend_key, workspace=workspace),
-                destination=TicketLocale.vps,
-                executor_identity=None,
-            )
-
-        def verify_context(self, expected: LaunchContext) -> bool:
-            return self.context_valid and expected.executor_identity is None
-
-    observer = Observer(lambda: identity)
-    observer.model = "scripted"
-    observer.efforts = ()
-    system.configure_destination_validation(observer)
 
 
 class SimulatedCrash(BaseException):
@@ -159,7 +124,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             backend_child_factories={key: factory for key in ConversationBackendKey},
             message_files=ConversationMessageFiles(path),
         )
-        _configure_scoped_metadata(system, path, identity)
         system.crash_before_owner_record = not committed
         try:
             await system.start_conversation(

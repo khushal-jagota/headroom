@@ -55,9 +55,32 @@ may know both sides. A unit test keeps these import boundaries in place.
 | VPS runs | Retain run identity, command fate, reconnect and stop proof. Never infer termination from a missing inventory entry. |
 | VPS inbox | Apply each queued item once, in conversation order, with its receipt. A permanent refusal advances the queue. |
 | VPS transport | Admit connections and route messages and file slots. Run control and inbox saving do not own sockets. |
-| Catalog relay | Carry read-only model observations and cancellation. Never launch a Worker. |
+| Catalog relay | Carry machine model lists and keep the Mac's last answer on the VPS. Never launch a Worker. |
 
-Catalog observations travel over the link; they are not stored in separate catalog tables. The upgrade removes the unused model catalog tables from staging.
+Each machine reads its own models through one backend snapshot service. The Mac
+answers `catalog_request` with the same snapshot the VPS uses locally: installed
+version, sign-in state, models, efforts, defaults and any diagnosis. All three
+backends use this path, including Hermes. An empty Hermes list is a valid answer.
+The read sends no prompt and has no Worker or journal authority.
+
+The VPS keeps one snapshot per backend for its configured Mac in
+`machine_backend_snapshots`. This copy survives either process restarting and stays
+readable while the Mac is offline. A new Mac process does not lose the machine's
+list just because its process identity changed. The upgrade also removes the unused
+model-resolution tables from staging.
+
+On reconnect the VPS asks for fresh snapshots. A picker read serves the kept copy
+while the Mac checks whether Claude or Codex changed version, or whether its last
+read is twelve hours old. Refresh waits for a new read. Hermes uses the same triggers
+except the version check. These checks happen on demand; no timer runs provider
+reads. A failed or slow read leaves the last copy available and does not close the
+shared execution link. A partial answer keeps the previous complete model list and
+its defaults. Unchanged answers do not write another copy. The link request is
+bounded to 35 seconds.
+
+Lists belong to a machine, not a project folder. Project settings still apply when
+the agent runs; they do not change the machine's picker list. The Ticket model-list
+route takes only the Ticket ID, authorizes access, and selects that Ticket's machine.
 
 The remote child implements the same backend contract as local children. It holds
 saved answer commands in memory and checks admission before emission. Detaching
@@ -592,4 +615,4 @@ These controls remain available during a link outage while the request is curren
 Saved and applied status comes from the selected conversation rows, with separate
 application proof. Health and contact do not grant callback authority.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-10-31._

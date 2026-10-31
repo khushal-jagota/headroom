@@ -4,7 +4,7 @@ import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi import FastAPI
@@ -275,52 +275,6 @@ def test_unresumable_ticket_recovery_keeps_conversation_status_readable(
     switch conversation status off for the rest of the process."""
     from fastapi.testclient import TestClient
     from tests.unit.test_conversation_system import _FakeBackend
-    from tests.unit.test_current_model_resolution import ScopedCatalogue, context, observation, row
-
-    from planner.conversation.backends.contracts import BackendEmissionInputs
-    from planner.conversation.contracts import (
-        ConversationBackendKey,
-        ConversationSystem,
-        WorkspacePathPolicy,
-    )
-    from planner.conversation.deploy_interruptions import coordinator
-    from planner.conversation.model_resolution.contracts import (
-        CatalogWorkspaceBinding,
-        LaunchContext,
-        SelectionKind,
-    )
-    from planner.conversation.system import SqliteProcessConversationSystem
-
-    launch = context(
-        backend_key=ConversationBackendKey.claude,
-        workspace=CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None),
-        localized_workspace_folder=tmp_path,
-        account_generation=None,
-    )
-
-    class RecoveryCatalogue(ScopedCatalogue):
-        def verify_context(self, expected: LaunchContext) -> bool:
-            return expected == self.current_context
-
-        def verify_prepared_launch(
-            self, expected: LaunchContext, prepared: BackendEmissionInputs
-        ) -> bool:
-            return self.verify_context(expected) and prepared.workspace == tmp_path
-
-    catalogue = RecoveryCatalogue(
-        observation(
-            (row("opus", kind=SelectionKind.provider_alias, target="claude-opus-5", efforts=()),),
-            launch=launch,
-            stamp=int(time.time()),
-        )
-    )
-    automatic_recovery = coordinator.run_automatic_recovery
-
-    async def admitted_recovery(system: ConversationSystem, store: ConversationStore) -> None:
-        cast(SqliteProcessConversationSystem, system).configure_destination_validation(catalogue)
-        await automatic_recovery(system, store)
-
-    monkeypatch.setattr(coordinator, "run_automatic_recovery", admitted_recovery)
 
     backend = _FakeBackend("interrupted")
     # The prompt starts, but without the interruption context, so it cannot resume.
@@ -330,7 +284,6 @@ def test_unresumable_ticket_recovery_keeps_conversation_status_readable(
     with TestClient(app) as client:
         assert _settled_recovery_state(path) == "unable_to_resume"
         # Exact provider intent is independent of advisory catalog discovery.
-        assert catalogue.calls == []
         assert len(backend.writes) == 1
         with connect(str(path)) as conn:
             assert (
