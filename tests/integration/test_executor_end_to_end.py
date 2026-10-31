@@ -204,6 +204,7 @@ class CutReceiptEndpoint(VpsExecutor):
         self.cut_user_input_application = False
         self.cut_input = False
         self.input_cut_count = 0
+        self.cut_prompt_frame = False
 
     async def _handle_message(
         self, message: WireMessage, identity: ExecutorIdentity, writer: Link
@@ -221,6 +222,15 @@ class CutReceiptEndpoint(VpsExecutor):
         original = writer.send
 
         async def send(message: WireMessage) -> None:
+            if (
+                self.cut_prompt_frame
+                and message.kind is WireMessageKind.command
+                and message.payload.get("operation") == "write_prompt"
+            ):
+                self.cut_prompt_frame = False
+                assert self.runs.link is not None
+                self.runs.link.close()
+                return
             if (
                 message.kind is WireMessageKind.file_transfer
                 and message.payload.get("direction") == "download"
@@ -602,6 +612,95 @@ async def boot(
     except BaseException:
         await harness.close()
         raise
+
+
+@pytest.mark.parametrize("outage", ["lost_frame", "already_down"])
+def test_prompt_survives_short_link_drop_once_with_attachment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outage: str
+) -> None:
+    from planner.conversation.message_content import MessageFile, MessageText
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        resume: asyncio.Event | None = None
+        sending: asyncio.Task[PromptDeliveryFate] | None = None
+        try:
+            assert harness.native.sink is not None and harness.native.turn is not None
+            await harness.native.sink.turn_ended(
+                harness.native.turn,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+            await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
+            identity = harness.mac.identity
+            contents = b"Attachment from the VPS after reconnect"
+            kept = await harness.endpoint.message_files.keep(
+                "c_scripted", contents, media_type="application/octet-stream"
+            )
+            native_path = (
+                harness.mac.paths.root
+                / "artifacts/files/conversations/c_scripted"
+                / kept.stored_file_id
+            )
+            native_path.parent.mkdir(parents=True, exist_ok=True)
+            native_path.write_bytes(b"Stale local bytes must be fetched again")
+            harness.native.required_input_path = native_path
+            harness.native.required_input_contents = contents
+            if outage == "lost_frame":
+                harness.endpoint.cut_prompt_frame = True
+            else:
+                resume = await hold_reconnection(harness, monkeypatch)
+            sending = asyncio.create_task(
+                harness.system.send(
+                    "c_scripted",
+                    (
+                        MessageText("Inspect the attachment"),
+                        MessageFile(
+                            kept.stored_file_id,
+                            "application/octet-stream",
+                            "input.bin",
+                            len(contents),
+                        ),
+                    ),
+                    sender_label="Test",
+                )
+            )
+            if resume is not None:
+                await eventually(
+                    lambda: bool(harness.endpoint.runs.pending_commands),
+                    "Prompt was not queued while the link was down",
+                )
+                assert not sending.done()
+                assert harness.native.prompt_count == 1
+                resume.set()
+            fate = await asyncio.wait_for(sending, 3)
+            assert isinstance(fate, PromptDeliveryStarted), repr(fate)
+            assert harness.mac.identity.executor_incarnation == identity.executor_incarnation
+            assert harness.mac.identity.connection_generation > identity.connection_generation
+            assert not harness.endpoint.cut_prompt_frame
+            assert harness.native.start_count == 1
+            assert harness.native.prompt_count == 2
+            assert native_path.read_bytes() == contents
+            # Another reconciliation must not invoke the same prompt a second time.
+            generation = harness.mac.identity.connection_generation
+            assert harness.endpoint.runs.link is not None
+            harness.endpoint.runs.link.close()
+            await eventually(
+                lambda: harness.endpoint.runs.ready
+                and harness.mac.identity.connection_generation > generation,
+                "Follow-up reconnect did not finish",
+            )
+            assert harness.native.prompt_count == 2
+        finally:
+            if resume is not None:
+                resume.set()
+            if sending is not None and not sending.done():
+                sending.cancel()
+                await asyncio.gather(sending, return_exceptions=True)
+            await harness.close()
+
+    asyncio.run(run())
 
 
 def test_early_prompt_event_and_idle_publications_do_not_wait_for_retry_timer(
