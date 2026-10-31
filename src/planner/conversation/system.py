@@ -1203,7 +1203,10 @@ class SqliteProcessConversationSystem:
                 await self._discard_held_prompts(state)
                 return True
             child = state.child
-            if not child_stops_outside_lock(child):
+            if child is not None and not child_stops_outside_lock(child):
+                # Local writes settle under their owner, including behind the locale router.
+                return False
+            if child is None:
                 factory = self._backend_child_factories[state.record.backend_key]
                 if not isinstance(factory, RetainedBackendChildFactory):
                     return False
@@ -1506,6 +1509,9 @@ class SqliteProcessConversationSystem:
                     except BaseException:
                         self._settle_phase(state)
                         raise
+                if state.child_is_quarantined:
+                    self._settle_phase(state)
+                    return PromptDeliveryQueued(queue_position=position + 1)
                 self._begin_held_deliveries(state, (held,))
                 del state.held_prompts[position]
                 self._publish_held_prompts_changed(state)
@@ -2173,6 +2179,9 @@ class SqliteProcessConversationSystem:
                         # than staying in an ending nobody is finishing.
                         self._settle_phase(state)
                         raise
+                if state.child_is_quarantined:
+                    self._settle_phase(state)
+                    return self._hold_prompt(state=state, message=message)
                 if self._automatic_compaction_is_due(state):
                     held_fate = self._hold_prompt(state=state, message=message)
                     automatic_reservation = await self._reserve_turn(
@@ -3331,7 +3340,7 @@ class SqliteProcessConversationSystem:
 
         while True:
             async with state.lock:
-                if not state.held_prompts:
+                if state.child_is_quarantined or not state.held_prompts:
                     self._set_phase(state, _ConversationPhase.idle)
                     return
                 batch = leading_run_that_can_share_a_turn(state.held_prompts)
@@ -3833,6 +3842,8 @@ class SqliteProcessConversationSystem:
                 )
             )
         ) or (state.reserved_turn is not None and state.reserved_turn.shutdown_owned):
+            if not child_stops_outside_lock(child):
+                await self._stop_child(state, child)
             raise DeliveryCancelled()
         state.child = child
         return child
@@ -4024,9 +4035,10 @@ class SqliteProcessConversationSystem:
         A conversation whose lock is held is in the middle of something and is not idle, so
         it is left for the next sweep rather than waited on.
 
-        Remote cleanup registers quarantine under the lock, then awaits retirement
-        outside it. The fence prevents another child before confirmation. A failed
-        owned attempt requires explicit shutdown to retry. Local stops retain their
+        Remote cleanup registers quarantine under the lock and finishes in its own
+        task, so a lost link cannot stall other conversations. The fence prevents
+        another child before confirmation. A failed owned attempt requires explicit
+        shutdown to retry. Local stops retain their
         existing lock ownership.
         """
         due_ids = await self._store.conversations_due_for_automatic_compaction(
@@ -4043,7 +4055,9 @@ class SqliteProcessConversationSystem:
                     if self._automatic_compaction_is_due(state):
                         reservation = await self._reserve_turn(state, automatic_compaction=True)
             if reservation is not None:
-                await self._deliver_automatic_compaction(state, reservation)
+                self._settle_in_background(
+                    state, self._deliver_automatic_compaction(state, reservation)
+                )
 
         async with self._conversations_lock:
             states = list(self._conversations.values())
@@ -4051,7 +4065,6 @@ class SqliteProcessConversationSystem:
         for state in states:
             if state.child is None or state.lock.locked():
                 continue
-            cleanup: asyncio.Task[bool] | None = None
             async with state.lock:
                 child = state.child
                 if child is None or state.phase is not _ConversationPhase.idle:
@@ -4066,7 +4079,7 @@ class SqliteProcessConversationSystem:
                         < self._idle_child_stop_after_seconds
                     ):
                         continue
-                    cleanup = self._schedule_remote_retirement(state, child)
+                    self._schedule_remote_retirement(state, child)
                 else:
                     if not was_quarantined:
                         idle_for = self._monotonic_now() - state.last_touched_monotonic
@@ -4080,8 +4093,6 @@ class SqliteProcessConversationSystem:
                     state.child_is_quarantined = False
                     if was_quarantined and state.held_prompts:
                         recovered_quarantines.append(state)
-            if cleanup is not None and await asyncio.shield(cleanup) and state.held_prompts:
-                recovered_quarantines.append(state)
         for state in recovered_quarantines:
             await self._drain_held_prompts(state)
 

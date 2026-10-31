@@ -24,6 +24,7 @@ from tests.support.conversation_test_loop import conversation_test_loop, run_con
 import planner.conversation.system as conversation_system
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
+    BackendChildFactory,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -413,6 +414,7 @@ class _Harness:
         clock: _FakeMonotonicClock | None = None,
         idle_child_stop_after_seconds: float = 30 * 60,
         idle_child_sweep_interval_seconds: float = 5 * 60,
+        factory_wrapper: Callable[[BackendChildFactory], BackendChildFactory] | None = None,
     ) -> None:
         self.db_path = db_path
         self.clock = _FakeMonotonicClock() if clock is None else clock
@@ -421,11 +423,14 @@ class _Harness:
         self.spawned_conversation_ids: list[str] = []
         self.live_tail = ConversationLiveTail()
         self.message_files = ConversationMessageFiles(str(db_path))
+        child_factory = (
+            self._make_child if factory_wrapper is None else factory_wrapper(self._make_child)
+        )
         self.system = SqliteProcessConversationSystem(
             store=self.store,
             message_files=self.message_files,
             backend_child_factories={
-                backend_key: self._make_child for backend_key in ConversationBackendKey
+                backend_key: child_factory for backend_key in ConversationBackendKey
             },
             live_tail=self.live_tail,
             monotonic_now=self.clock,
@@ -1415,6 +1420,7 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
         await harness.complete_turn("c")
         harness.clock.advance(50 * 60)
         await harness.system._sweep_idle_children()
+        await harness.settle()
         ticket = Principal(PrincipalKind.ticket, "t_worker")
         await harness.system.send(
             "c",

@@ -97,6 +97,16 @@ The turn gets one ending,
 even if the backend reports its own ending during cancellation. Remote retirement
 keeps its quarantine fence until the exact child's stop is confirmed.
 
+Local writes finish before Kill disposes of their turn, including on a VPS with a
+Mac connected. A local child that finishes starting while Kill disposes of its
+delivery is stopped rather than left running.
+
+If cancellation or a stale queued notice starts a Mac stop, later messages stay
+queued until that stop is confirmed. Send now and promotion of a held message
+follow the same rule. A lost Mac link can delay that conversation's retirement or
+automatic compaction, but the idle sweep keeps stopping idle local children and
+starting due compactions elsewhere. Pending work still makes the workspace busy.
+
 Empty content is rejected before a fate exists.
 
 ## Permissions, voice, video, and a deploy
