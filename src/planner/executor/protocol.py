@@ -700,10 +700,8 @@ class MacOutboxWriter(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class QuiesceRequest:
-    """Expected live identity from fresh health, checked atomically with admission stop."""
+    """Stop admission and optionally exit once all work has settled."""
 
-    expected_identity: ExecutorIdentity
-    expected_process_id: int
     exit_when_ready: bool
 
 
@@ -712,7 +710,7 @@ class QuiescenceReceipt:
     """Readiness belongs only to this process/generation, never a later restart.
 
     Resident must retain this identity through stop/exit. A failed candidate needs
-    its own fresh health and quiescence request before rollback can replace code.
+    its own fresh quiescence receipt before rollback can replace code.
     """
 
     identity: ExecutorIdentity

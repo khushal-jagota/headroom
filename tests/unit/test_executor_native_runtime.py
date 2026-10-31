@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 import time
@@ -63,8 +64,6 @@ from planner.executor.protocol import (
     IpcRequest,
     OutboxEntry,
     QueuedEnvelope,
-    Quiescence,
-    QuiesceRequest,
     ReceiptDisposition,
     StartRun,
     StopRun,
@@ -567,7 +566,7 @@ def test_failed_stop_keeps_uncertainty_even_after_output_is_acknowledged(
     asyncio.run(run())
 
 
-def test_stale_quiesce_rejects_restart_and_exit_is_identity_bound(tmp_path: Path) -> None:
+def test_unknown_child_cannot_write_to_executor(tmp_path: Path) -> None:
     async def run() -> None:
         executor = MacService(
             paths=ExecutorPaths(tmp_path),
@@ -586,51 +585,6 @@ def test_stale_quiesce_rejects_restart_and_exit_is_identity_bound(tmp_path: Path
         )
         assert forbidden.error is not None
         assert executor.outbox.pending() == ()
-        observed = executor.identity
-        executor.identity = replace(observed, executor_incarnation=str(uuid4()))
-        stale = QuiesceRequest(observed, os.getpid(), True)
-        rejected = await executor.gateway.handle(
-            IpcRequest("old", IpcOperation.quiesce, None, None, as_object(stale))
-        )
-        assert rejected.error is not None
-        assert not executor.runner.admission_stopped
-        fresh = QuiesceRequest(executor.identity, os.getpid(), True)
-        accepted = await executor.gateway.handle(
-            IpcRequest("fresh", IpcOperation.quiesce, None, None, as_object(fresh))
-        )
-        assert accepted.error is None
-        assert accepted.result is not None
-        assert accepted.result["exit_committed"] is True
-        assert executor.gateway._stop.is_set()
-        executor.outbox.close()
-
-    asyncio.run(run())
-
-
-def test_generation_change_during_quiesce_cannot_commit_exit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def run() -> None:
-        executor = MacService(
-            paths=ExecutorPaths(tmp_path),
-            revision="a" * 40,
-            executor_id="owner-mac",
-            panels_server_url="https://unused",
-        )
-        original = executor.runner.quiesce
-
-        async def changed_generation() -> Quiescence:
-            result = await original()
-            executor.identity = replace(executor.identity, connection_generation=1)
-            return result
-
-        monkeypatch.setattr(executor.runner, "quiesce", changed_generation)
-        expected = QuiesceRequest(executor.identity, os.getpid(), True)
-        response = await executor.gateway.handle(
-            IpcRequest("race", IpcOperation.quiesce, None, None, as_object(expected))
-        )
-        assert response.error is not None
-        assert not executor.gateway._stop.is_set()
         executor.outbox.close()
 
     asyncio.run(run())
@@ -849,11 +803,25 @@ def test_real_daemon_controlled_quiesce_exits_zero(executor_transport_home: Path
             time.sleep(0.01)
         health = exchange(IpcRequest("health", IpcOperation.health, None, None, {}))
         assert health.result is not None
-        identity = TypeAdapter(ExecutorIdentity).validate_python(health.result["identity"])
-        request = QuiesceRequest(identity, process.pid, True)
-        result = exchange(IpcRequest("exit", IpcOperation.quiesce, None, None, as_object(request)))
-        assert result.result is not None
-        assert result.result["exit_committed"] is True
+
+        def quiesce(*arguments: str) -> dict[str, object]:
+            result = subprocess.run(
+                [str(Path(sys.executable).with_name("panels")), "executor", "quiesce", *arguments],
+                env={**os.environ, "PLAN_EXECUTOR_ROOT": str(root)},
+                text=True,
+                capture_output=True,
+                check=True,
+                timeout=10,
+            )
+            return cast(dict[str, object], json.loads(result.stdout))
+
+        receipt = quiesce()
+        assert receipt["exit_committed"] is False
+        assert process.poll() is None
+        receipt = quiesce("--exit-when-ready")
+        assert receipt["identity"] == health.result["identity"]
+        assert receipt["process_id"] == process.pid
+        assert receipt["exit_committed"] is True
         stdout, stderr = process.communicate(timeout=10)
         assert process.returncode == 0, (stdout, stderr)
     finally:
@@ -1080,7 +1048,8 @@ def test_absent_stop_orders_proof_after_output_and_preserves_old_outcomes(
         assert stopped.disposition is CommandDisposition.succeeded
         pending = spool.pending()
         assert [row.kind for row in pending] == [
-            EnvelopeKind.backend_event, EnvelopeKind.child_stopped
+            EnvelopeKind.backend_event,
+            EnvelopeKind.child_stopped,
         ]
         assert pending[0] == earlier
         assert await registry.run(old) == first

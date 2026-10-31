@@ -22,7 +22,6 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
     repository = Path(__file__).resolve().parents[2]
     paths = ServiceConfiguration(
         tmp_path / "Account With Spaces",
-        os.getuid(),
         "owner-mac",
         "a" * 40,
         "https://panels.example",
@@ -259,8 +258,6 @@ assert 'planner.core.db' not in sys.modules
                 "planner.environments.mac_executor",
                 "--home",
                 str(paths.home),
-                "--user-id",
-                str(paths.user_id),
                 "--application-revision",
                 paths.application_revision,
                 "--executor-id",

@@ -15,7 +15,6 @@ def test_agent_uses_account_home_gui_and_stable_data_with_spaces(tmp_path: Path)
     home = tmp_path / "Account With Spaces"
     configuration = ServiceConfiguration(
         home,
-        501,
         "owner-mac",
         "a" * 40,
         "https://panels.example",
@@ -59,7 +58,6 @@ def test_agent_preserves_explicit_root_backend_path_and_origin(tmp_path: Path) -
     root = tmp_path / "Existing Data"
     configuration = ServiceConfiguration(
         tmp_path,
-        501,
         "owner-mac",
         "diagnostic-label",
         "https://panels.example:8443/",
@@ -91,13 +89,13 @@ def test_agent_preserves_explicit_root_backend_path_and_origin(tmp_path: Path) -
     ],
 )
 def test_agent_refuses_invalid_server_origin(tmp_path: Path, origin: str) -> None:
-    configuration = ServiceConfiguration(tmp_path, 501, "owner-mac", "revision", origin)
+    configuration = ServiceConfiguration(tmp_path, "owner-mac", "revision", origin)
     with pytest.raises(MacExecutorConfigurationError):
         render_launch_agent(configuration)
 
 
 _VALID_CONFIGURATION = ServiceConfiguration(
-    Path("/owner"), 501, "owner-mac", "revision", "https://panels.example"
+    Path("/owner"), "owner-mac", "revision", "https://panels.example"
 )
 
 
@@ -110,7 +108,6 @@ _VALID_CONFIGURATION = ServiceConfiguration(
         replace(_VALID_CONFIGURATION, backend_path="relative/bin"),
         replace(_VALID_CONFIGURATION, executor_root=Path("relative")),
         replace(_VALID_CONFIGURATION, home=Path("relative")),
-        replace(_VALID_CONFIGURATION, user_id=-1),
     ],
 )
 def test_agent_refuses_invalid_explicit_inputs(configuration: ServiceConfiguration) -> None:

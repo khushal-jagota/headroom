@@ -22,7 +22,6 @@ class MacExecutorConfigurationError(RuntimeError):
 @dataclass(frozen=True)
 class ServiceConfiguration:
     home: Path
-    user_id: int
     executor_id: str
     application_revision: str
     panels_server_url: str
@@ -39,8 +38,6 @@ class ServiceConfiguration:
 
 
 def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
-    if configuration.user_id < 0:
-        raise MacExecutorConfigurationError("invalid Mac executor service identity")
     executor_root = (
         configuration.executor_root
         or configuration.home / "Library/Application Support/Panels/executor"
@@ -107,7 +104,6 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, required=True)
-    parser.add_argument("--user-id", type=int, required=True)
     parser.add_argument("--executor-root", type=Path)
     parser.add_argument("--application-revision", required=True)
     parser.add_argument("--executor-id", required=True)

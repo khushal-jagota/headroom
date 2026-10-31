@@ -152,27 +152,25 @@ It still requires intended VPS evidence and the SQLite version check before star
 
 ## Obtain successful graceful exit
 
-Use the identity and PID from fresh local health:
+Request quiescence through the owner-only socket:
 
 ```sh
 PLAN_EXECUTOR_ROOT="$EXECUTOR_ROOT" "$INSTALLED_PANELS" executor quiesce \
-  --expected-incarnation "$OLD_INCARNATION" \
-  --expected-generation "$OLD_GENERATION" \
-  --expected-revision "$OLD_REVISION" \
-  --expected-pid "$OLD_PID" \
   --exit-when-ready > "$EVIDENCE/exit-receipt.json"
 ```
 
-Check that the returned identity and PID match the request.
+The receipt identifies the process that handled the request.
+Retain its identity with the evidence and use its PID for the process check below.
+The command takes no expected identity arguments; an idle replacement process can also exit.
 Require `exit_committed=true`, stopped admission, stopped idle children, and every work count zero.
 Active turns, callbacks, uncertainty, transfers, source writes, or unsent entries prevent exit.
 
 A refused exit still stops admission. Outbound replay continues, but ordinary admission does not automatically resume.
 Defer the update until existing work settles or the operator resolves the exact dependency.
-Obtain fresh health before another identity-bound request.
+Read fresh health and request quiescence again after the dependency settles.
 Do not interpret a stopped admission flag as successful exit.
 
-After a matching committed exit, observe the service and process:
+After a committed exit, set `OLD_PID` from the receipt and observe the service and process:
 
 ```sh
 launchctl print "$SERVICE" > "$EVIDENCE/service-after-exit.txt"
@@ -304,7 +302,7 @@ Render with the explicit app origin and logical executor ID:
 
 ```sh
 "$VENV/bin/python" -m planner.environments.mac_executor \
-  --home "$HOME" --user-id "$(id -u)" \
+  --home "$HOME" \
   --executor-root "$EXECUTOR_ROOT" \
   --application-revision "$CANDIDATE_SHA" \
   --backend-path "$BACKEND_PATH" \
