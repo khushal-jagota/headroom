@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from tests.support.historical_coding_definition import seed_historical_coding_definition
 
 from planner.core import db as db_module
 from planner.core.db import (
@@ -934,6 +935,7 @@ def _database_before_calendar_removal(
     tree = _migration_tree_through(tmp_path, monkeypatch, "diagnostic_expiry_metadata")
     conn = connect(str(tmp_path / "before-calendar-removal.db"))
     create_schema(conn)
+    seed_historical_coding_definition(conn)
     project_id = str(conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0])
     personal = json.loads(
         conn.execute(

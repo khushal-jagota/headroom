@@ -183,7 +183,7 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 field="brief",
                 principal=OWNER_PRINCIPAL,
                 now=3,
-                next_ceiling="needs_success_condition",
+                next_ceiling="needs_what_changes",
                 next_holder=Principal(PrincipalKind.chief, "chief"),
             )
             assert changed.ceiling_holder != OWNER_PRINCIPAL
