@@ -41,9 +41,9 @@ def test_notice_scan_uses_current_locale_admission(
     tmp_db.execute("UPDATE tickets SET locale=? WHERE id=?", (locale, memory_ticket))
     store = _store(tmp_db)
     if state != "absent":
-        store.runs.begin_connection(IDENTITY, 1)
+        store.runs.begin_connection(IDENTITY)
     if state == "ready":
-        store.runs.mark_ready(IDENTITY, 2)
+        store.runs.mark_ready(IDENTITY)
     eligible = locale == "vps" or state == "ready"
     assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(tmp_db) == (
         (memory_ticket,) if eligible else ()
@@ -63,8 +63,8 @@ def test_mac_loss_during_held_prompt_await_prevents_send(
         conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket_id,))
         store = _store(conn)
     # Commit fixture routing before the store opens its independent writer.
-    store.runs.begin_connection(IDENTITY, 1)
-    store.runs.mark_ready(IDENTITY, 2)
+    store.runs.begin_connection(IDENTITY)
+    store.runs.mark_ready(IDENTITY)
     held_reads: list[str] = []
     connections: list[Connection] = []
     original_connect = world.connect
@@ -80,7 +80,7 @@ def test_mac_loss_during_held_prompt_await_prevents_send(
         held_reads.append(conversation_id)
         assert not connections[-1].in_transaction
         await asyncio.sleep(0)
-        store.runs.mark_lost(IDENTITY, 3)
+        store.runs.mark_lost(IDENTITY)
         return ()
 
     async def send(*args: object, **kwargs: object) -> None:

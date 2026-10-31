@@ -91,8 +91,8 @@ def test_claude_stop_result_controls_canonical_retirement(
     async def run() -> None:
         remote = endpoint(tmp_db)
         remote.runs.identity = IDENTITY
-        remote.runs.store.begin_connection(IDENTITY, 1)
-        remote.runs.store.mark_ready(IDENTITY, 2)
+        remote.runs.store.begin_connection(IDENTITY)
+        remote.runs.store.mark_ready(IDENTITY)
         registry, clients = claude_registry(tmp_path, monkeypatch)
         monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
         ticket = tickets.create_ticket(

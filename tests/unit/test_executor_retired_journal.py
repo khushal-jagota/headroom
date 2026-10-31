@@ -64,8 +64,8 @@ def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> VpsE
     result.runs.identity = identity
     result.runs.link = message_link(Writer(), identity)
     result.runs.ready = True
-    result.runs.store.begin_connection(identity, 1)
-    result.runs.store.mark_ready(identity, 2)
+    result.runs.store.begin_connection(identity)
+    result.runs.store.mark_ready(identity)
     return result
 
 

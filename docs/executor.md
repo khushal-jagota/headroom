@@ -632,8 +632,8 @@ See [runtime environments](environments.md) and [VPS deployment](deployment.md) 
 receipt time of a strictly decoded frame on the current established executor
 session. A validated initial handshake supplies the first observation. Later
 frames advance it before domain dispatch, including operations that receive a
-refusal. An old writer or generation cannot advance it. `observed_at_ms` keeps
-its original meaning: the handshake observation time.
+refusal. An old writer or generation cannot advance it. The database keeps the
+connection identity, generation and state; it stores no observation or loss time.
 
 Contact proves receipt only. It proves neither current activity nor answer
 delivery. After disconnect, the last contact remains historical. Before the first

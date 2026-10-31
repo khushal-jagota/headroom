@@ -12,7 +12,6 @@ from typing import Any, cast
 from planner.conversation.backends.contracts import RetainedBackendRun, TurnToken
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
     ChildCommand,
@@ -125,13 +124,7 @@ class ExecutorStore(VpsDatabase):
                 ),
             )
 
-    def begin_connection(self, identity: ExecutorIdentity, now_ms: int) -> None:
-        if (
-            identity.protocol_version != PROTOCOL_VERSION
-            or identity.spool_format_version != SPOOL_FORMAT_VERSION
-            or identity.connection_generation < 1
-        ):
-            raise _invalid("Executor protocol or spool format is incompatible")
+    def begin_connection(self, identity: ExecutorIdentity) -> None:
         with self._transaction() as connection:
             current = connection.execute(
                 "SELECT * FROM executor_connections WHERE active=1"
@@ -148,18 +141,15 @@ class ExecutorStore(VpsDatabase):
             if current is not None:
                 connection.execute("UPDATE executor_connections SET active=0 WHERE active=1")
             connection.execute(
-                "INSERT INTO executor_connections VALUES (?,?,?,?,?,?,1) "
+                "INSERT INTO executor_connections VALUES (?,?,?,?,1) "
                 "ON CONFLICT(executor_incarnation) DO UPDATE SET "
                 "connection_generation=excluded.connection_generation, "
-                "identity_json=excluded.identity_json,connection_state=excluded.connection_state, "
-                "observed_at_ms=excluded.observed_at_ms,lost_at_ms=NULL,active=1",
+                "identity_json=excluded.identity_json,connection_state=excluded.connection_state,active=1",
                 (
                     identity.executor_incarnation,
                     identity.connection_generation,
                     _record(identity),
                     ConnectionState.reconciling.value,
-                    now_ms,
-                    None,
                 ),
             )
 
@@ -180,16 +170,15 @@ class ExecutorStore(VpsDatabase):
             raise _invalid("Executor connection is unavailable")
         return current
 
-    def mark_ready(self, identity: ExecutorIdentity, now_ms: int) -> None:
+    def mark_ready(self, identity: ExecutorIdentity) -> None:
         with self._transaction() as connection:
             self._connected(connection, identity)
             connection.execute(
-                "UPDATE executor_connections SET connection_state=?,observed_at_ms=? "
-                "WHERE active=1",
-                (ConnectionState.ready.value, now_ms),
+                "UPDATE executor_connections SET connection_state=? WHERE active=1",
+                (ConnectionState.ready.value,),
             )
 
-    def mark_lost(self, identity: ExecutorIdentity, now_ms: int) -> None:
+    def mark_lost(self, identity: ExecutorIdentity) -> None:
         with self._transaction() as connection:
             # A late close from an old socket cannot invalidate the replacement.
             row = connection.execute(
@@ -198,76 +187,63 @@ class ExecutorStore(VpsDatabase):
             if row is None or row[0] != _record(identity):
                 return
             connection.execute(
-                "UPDATE executor_connections SET connection_state=?,"
-                "lost_at_ms=COALESCE(lost_at_ms,?),observed_at_ms=? "
-                "WHERE active=1",
-                (ConnectionState.disconnected.value, now_ms, now_ms),
+                "UPDATE executor_connections SET connection_state=? WHERE active=1",
+                (ConnectionState.disconnected.value,),
             )
 
     def register_child(
         self, child: ChildReference, principal_kind: str, principal_id: str, now_ms: int
     ) -> None:
         with self._transaction() as connection:
-            self.register_child_in_transaction(
-                connection, child, principal_kind, principal_id, now_ms
+            existing = connection.execute(
+                "SELECT * FROM executor_child_assignments "
+                "WHERE executor_incarnation=? AND child_id=?",
+                (child.executor_incarnation, child.child_id),
+            ).fetchone()
+            if existing:
+                if (
+                    existing["conversation_id"],
+                    existing["principal_kind"],
+                    existing["principal_id"],
+                ) != (child.conversation_id, principal_kind, principal_id):
+                    raise _invalid("Child assignment identity conflicts")
+                return
+            retained = connection.execute(
+                "SELECT * FROM mac_runs WHERE conversation_id=?", (child.conversation_id,)
+            ).fetchone()
+            if retained is not None and retained["stop_state"] != "closed":
+                raise _invalid("An unresolved Mac run already owns this conversation")
+            turn = connection.execute(
+                "SELECT COALESCE(MAX(turn_number),0) FROM conversation_turn_occurrences "
+                "WHERE conversation_id=?",
+                (child.conversation_id,),
+            ).fetchone()
+            connection.execute(
+                "INSERT INTO mac_runs VALUES(?,?,?,?,?,?,0,'open') "
+                "ON CONFLICT(conversation_id) DO UPDATE SET "
+                "executor_incarnation=excluded.executor_incarnation,child_id=excluded.child_id,"
+                "principal_kind=excluded.principal_kind,principal_id=excluded.principal_id,"
+                "turn_number=excluded.turn_number,delivery_uncertain=0,stop_state='open'",
+                (
+                    child.conversation_id,
+                    child.executor_incarnation,
+                    child.child_id,
+                    principal_kind,
+                    principal_id,
+                    turn[0],
+                ),
             )
-
-    @staticmethod
-    def register_child_in_transaction(
-        connection: sqlite3.Connection,
-        child: ChildReference,
-        principal_kind: str,
-        principal_id: str,
-        now_ms: int,
-    ) -> None:
-        existing = connection.execute(
-            "SELECT * FROM executor_child_assignments WHERE executor_incarnation=? AND child_id=?",
-            (child.executor_incarnation, child.child_id),
-        ).fetchone()
-        if existing:
-            if (
-                existing["conversation_id"],
-                existing["principal_kind"],
-                existing["principal_id"],
-            ) != (child.conversation_id, principal_kind, principal_id):
-                raise _invalid("Child assignment identity conflicts")
-            return
-        retained = connection.execute(
-            "SELECT * FROM mac_runs WHERE conversation_id=?", (child.conversation_id,)
-        ).fetchone()
-        if retained is not None and retained["stop_state"] != "closed":
-            raise _invalid("An unresolved Mac run already owns this conversation")
-        turn = connection.execute(
-            "SELECT COALESCE(MAX(turn_number),0) FROM conversation_turn_occurrences "
-            "WHERE conversation_id=?",
-            (child.conversation_id,),
-        ).fetchone()
-        connection.execute(
-            "INSERT INTO mac_runs VALUES(?,?,?,?,?,?,0,'open') "
-            "ON CONFLICT(conversation_id) DO UPDATE SET "
-            "executor_incarnation=excluded.executor_incarnation,child_id=excluded.child_id,"
-            "principal_kind=excluded.principal_kind,principal_id=excluded.principal_id,"
-            "turn_number=excluded.turn_number,delivery_uncertain=0,stop_state='open'",
-            (
-                child.conversation_id,
-                child.executor_incarnation,
-                child.child_id,
-                principal_kind,
-                principal_id,
-                turn[0],
-            ),
-        )
-        connection.execute(
-            "INSERT INTO executor_child_assignments VALUES (?,?,?,?,?,?,NULL)",
-            (
-                child.executor_incarnation,
-                child.child_id,
-                child.conversation_id,
-                principal_kind,
-                principal_id,
-                now_ms,
-            ),
-        )
+            connection.execute(
+                "INSERT INTO executor_child_assignments VALUES (?,?,?,?,?,?,NULL)",
+                (
+                    child.executor_incarnation,
+                    child.child_id,
+                    child.conversation_id,
+                    principal_kind,
+                    principal_id,
+                    now_ms,
+                ),
+            )
 
     def has_closed_child_assignment(self, child: ChildReference) -> bool:
         """Historical identity evidence only; this grants no child/domain authority."""
@@ -299,37 +275,29 @@ class ExecutorStore(VpsDatabase):
 
     def close_child(self, child: ChildReference, now_ms: int) -> None:
         with self._transaction() as connection:
-            self.close_child_in_transaction(connection, child, now_ms)
-
-    @staticmethod
-    def close_child_in_transaction(
-        connection: sqlite3.Connection,
-        child: ChildReference,
-        now_ms: int,
-    ) -> None:
-        """Retire assignment and asks inside the caller's existing transaction."""
-        row = connection.execute(
-            "SELECT stop_state FROM mac_runs WHERE conversation_id=? "
-            "AND executor_incarnation=? AND child_id=?",
-            (child.conversation_id, child.executor_incarnation, child.child_id),
-        ).fetchone()
-        current = connection.execute(
-            "SELECT executor_incarnation FROM executor_connections WHERE active=1"
-        ).fetchone()
-        if row is None or (
-            row[0] == "unproved" and (current is None or current[0] == child.executor_incarnation)
-        ):
-            raise ValueError("Mac run termination remains unproved")
-        connection.execute(
-            "UPDATE mac_runs SET stop_state='closed' WHERE conversation_id=? "
-            "AND executor_incarnation=? AND child_id=?",
-            (child.conversation_id, child.executor_incarnation, child.child_id),
-        )
-        connection.execute(
-            "UPDATE executor_child_assignments SET closed_at_ms=? "
-            "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
-            (now_ms, child.executor_incarnation, child.child_id, child.conversation_id),
-        )
+            row = connection.execute(
+                "SELECT stop_state FROM mac_runs WHERE conversation_id=? "
+                "AND executor_incarnation=? AND child_id=?",
+                (child.conversation_id, child.executor_incarnation, child.child_id),
+            ).fetchone()
+            current = connection.execute(
+                "SELECT executor_incarnation FROM executor_connections WHERE active=1"
+            ).fetchone()
+            if row is None or (
+                row[0] == "unproved"
+                and (current is None or current[0] == child.executor_incarnation)
+            ):
+                raise ValueError("Mac run termination remains unproved")
+            connection.execute(
+                "UPDATE mac_runs SET stop_state='closed' WHERE conversation_id=? "
+                "AND executor_incarnation=? AND child_id=?",
+                (child.conversation_id, child.executor_incarnation, child.child_id),
+            )
+            connection.execute(
+                "UPDATE executor_child_assignments SET closed_at_ms=? "
+                "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
+                (now_ms, child.executor_incarnation, child.child_id, child.conversation_id),
+            )
 
     def verify_connection(self, identity: ExecutorIdentity) -> None:
         with self._transaction() as connection:
