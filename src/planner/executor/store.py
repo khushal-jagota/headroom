@@ -20,6 +20,7 @@ from planner.executor.protocol import (
     ConnectionState,
     EnvelopeKind,
     QueuedEnvelope,
+    envelope_child,
     type_adapter,
 )
 
@@ -312,8 +313,7 @@ class ExecutorStore(VpsDatabase):
         if envelope.kind in (EnvelopeKind.backend_event, EnvelopeKind.child_stopped):
             child_payload = envelope.payload.get("child")
         elif envelope.kind is EnvelopeKind.answer_application:
-            ask = envelope.payload.get("ask")
-            child_payload = ask.get("child") if isinstance(ask, dict) else None
+            child_payload = envelope_child(envelope.payload, ask_only=True)
         else:
             return
         # A malformed publication still needs a refusal receipt. Its child alone
