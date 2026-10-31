@@ -4,7 +4,7 @@ A Ticket is one piece of work small enough to hand to a single AI Worker. It is 
 
 ## Why a Ticket is a ladder
 
-Each non-terminal stage has exactly one blank. Filling that blank, and having the fill accepted, moves the Ticket one stage forward. The ladder always starts at Brief and always ends at Done. The stages between belong to the Worker type: a coding Ticket walks Success Condition, What Changes, Plan, Implementation, and Consequences; a research Ticket walks a shorter path. The shapes are listed in [Worker types](worker-types.md).
+Each non-terminal stage has exactly one blank. Filling that blank, and having the fill accepted, moves the Ticket one stage forward. The ladder always starts at Brief and always ends at Done. The stages between belong to the Worker type: a coding Ticket walks What Changes, Implementation, and Consequences; a research Ticket walks Research Plan, Findings, and Consequences. The shapes are listed in [Worker types](worker-types.md).
 
 Brief holds intake: the original wording, the boundaries, and the advice that should stay readable beside the later stages. The title is ordinary metadata, not part of the Brief proposal. After Brief is settled, editing the title stays a metadata edit. Editing Brief text uses the ordinary field path.
 

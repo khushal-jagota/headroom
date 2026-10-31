@@ -105,7 +105,6 @@ def test_user_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None
     ("worker_type", "ceiling"),
     [
         ("coding", "needs_what_changes"),
-        ("coding", "needs_success_condition"),
         ("new_worker", "needs_what_good_looks_like_at_each_stage"),
         ("new_worker", "needs_stages"),
     ],

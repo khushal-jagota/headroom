@@ -6,16 +6,8 @@
         "label": "Brief"
       },
       {
-        "id": "success_condition",
-        "label": "Success Condition"
-      },
-      {
         "id": "what_changes",
         "label": "What Changes"
-      },
-      {
-        "id": "plan",
-        "label": "Plan"
       },
       {
         "id": "implementation",
@@ -43,24 +35,10 @@
         "ownership_mode": "worker"
       },
       {
-        "gating_field": "success_condition",
-        "id": "needs_success_condition",
-        "is_terminal": false,
-        "label": "Success Condition",
-        "ownership_mode": "worker"
-      },
-      {
         "gating_field": "what_changes",
         "id": "needs_what_changes",
         "is_terminal": false,
         "label": "What Changes",
-        "ownership_mode": "worker"
-      },
-      {
-        "gating_field": "plan",
-        "id": "needs_plan",
-        "is_terminal": false,
-        "label": "Plan",
         "ownership_mode": "worker"
       },
       {

@@ -76,7 +76,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             server,
             f"/api/tickets/{ticket['id']}/accept/brief",
             {
-                "next_ceiling": "needs_success_condition",
+                "next_ceiling": "needs_what_changes",
                 "next_holder": holder,
             },
         )

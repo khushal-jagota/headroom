@@ -41,8 +41,8 @@ and `initiative_planning` (working out the shared top-level how for a confirmed
 direction before creating its downstream Tickets). New Worker types are added here
 as they ship.
 
-Ticket workers shape a Ticket through **Brief → Success Condition → What Changes → Plan →
-Implementation → Consequences → Done**, filling one canonical field at each step.
+The coding Worker shapes a Ticket through **Brief → What Changes → Implementation →
+Consequences → Done**, with one canonical field at each non-terminal stage. Other Worker types declare their own stages.
 
 ## Communication
 
@@ -114,7 +114,7 @@ SELF-CHECK before returning: scan for contractions, "has been", "should", ", mak
 
 A ticket can own durable work products such as HTML, images, Markdown documents, and other files. For this live Panels instance, write them to `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/<relative-path>` and link them in ticket Markdown as `/files/tickets/<ticket-id>/<relative-path>`, for example `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never write ticket artifacts under `/home/vps/Coding/Panels/data/...`, a ticket worktree's `data/...`, or another path inferred from the current directory. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
 
-Artifacts complement the ticket record. Brief, success condition, what changes, plan, implementation, consequences, and recaps remain concise canonical Markdown, with links to richer work when it helps.
+Artifacts complement the ticket record. Declared Ticket fields and recaps remain concise canonical Markdown, with links to richer work when it helps.
 
 
 ## The CLI

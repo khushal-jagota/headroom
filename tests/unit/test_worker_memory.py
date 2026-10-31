@@ -55,7 +55,7 @@ def _add_ticket(
         "INSERT INTO tickets (id, worker_type, employee_backend, title, stage, "
         "ceiling, field_values, created_at, updated_at, worker_step_claim, "
         "conversation_id) VALUES (?, 'coding', 'claude', ?, "
-        "'needs_plan', 'done', '{}', 0, 0, ?, ?)",
+        "'needs_implementation', 'done', '{}', 0, 0, ?, ?)",
         (ticket_id, ticket_id, claim, conversation_id),
     )
 
