@@ -2,30 +2,26 @@
  import {setContext,untrack} from 'svelte';
  import {refreshAtBoundary,goalDateText,deadlineTone,deadlineColor} from '../../lib/goals/presentation';
  import {createQuery} from '@tanstack/svelte-query';
- import type {GoalResponse,ChartBlock} from '../../lib/goals/contracts';
+ import type {GoalResponse} from '../../lib/goals/contracts';
  import {goalQueries} from '../../lib/goals/queries';
  import PageChart from '../pageKit/PageChart.svelte';
  import PageChecklist from '../pageKit/PageChecklist.svelte';
  import {PAGE_CONTEXT,type PageContext} from '../../lib/pageKit/context';
  import {createGoalEditor} from '../../lib/goals/editing';
  import type {createGoalRequestSessions} from '../../lib/goals/requestSessions';
- import {selectedChecklist} from '../../lib/goals/checklistCompletion';
+ import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
+ import {createGoalPageContext} from '../../lib/goals/pageContext';
  import {workspaceAddress} from '../../lib/workspaceAddress';
  let {goal,projectName='',sessions}:{goal:GoalResponse;projectName?:string;sessions:ReturnType<typeof createGoalRequestSessions>}=$props();
  const goalId=untrack(()=>goal.id);
  const editor=createGoalEditor(goalId);
  const readings=createQuery(()=>goalQueries.readings(goalId));
  $effect(()=>{if(readings.data)return refreshAtBoundary(readings.data.next_refresh_at,()=>void readings.refetch());});
- let chart=$derived<ChartBlock|null>(goal.kind==='binary'?{type:'chart',id:'completion',kind:'binary',placement:'primary'}:goal.primary_chart);
- let checklist=$derived(goal.kind==='binary'?selectedChecklist(goal.page,goal.primary_checklist_block_id):null);
- setContext<PageContext>(PAGE_CONTEXT,{
-  goalId,get revision(){return goal.revision;},narrow:false,
-  get values(){return readings.data?.values??[];},get charts(){return readings.data?.charts;},
-  get completed(){return goal.completed;},get status(){return goal.status;},get statusDate(){return goal.status_date;},
-  updateBlock:editor.updateBlock,
-  checklistSession:(blockId,itemId)=>sessions.checklist(goalId,blockId,itemId),
-  checklistDeadlineSession:(blockId,itemId)=>sessions.checklistDeadline(goalId,blockId,itemId)
- });
+ let display=$derived(resolveGoalPrimaryDisplay(goal));
+ let chart=$derived(display.chart),checklist=$derived(display.checklist);
+ setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
+  goalId:()=>goalId,goal:()=>goal,readings:()=>readings.data,narrow:()=>false,sessions:()=>sessions,
+ },{updateBlock:editor.updateBlock}));
 </script>
 <article class="goal-card" data-goal-card={goal.id}>
  <header class="card-head"><div class="goal-meta"><span>{projectName}</span>{#if projectName&&goal.deadline}<span aria-hidden="true">·</span>{/if}<span data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{goal.deadline?`By ${goalDateText(goal.deadline)}`:'No deadline'}</span></div>
