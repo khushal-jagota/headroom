@@ -34,30 +34,28 @@ from planner.goals.logic.projection import (
     projection_status,
     scalar_projection,
 )
+from planner.goals.logic.reading_assembly import check_goal_demand_count, goal_actual_value
 from planner.goals.logic.status import (
     calendar_projection,
     chart_status,
     goal_status,
 )
+from planner.goals.reading_assembly import read_goal_evaluation
 from planner.measures.actions import read_values
 from planner.measures.contracts import (
     MeasureDate,
     MeasureOrigin,
-    MeasureReadStatus,
     MeasureValue,
     ReadMeasuresBody,
 )
 from planner.measures.data import (
     earliest_retained_date,
     read_definitions,
-    read_demanded,
     read_measure,
     transaction,
 )
 from planner.measures.logic.dates import calendar_date, date_range, invalid
 from planner.measures.logic.evaluation import (
-    Evaluation,
-    demanded_pairs,
     expression_references,
     phase_changed,
 )
@@ -211,18 +209,12 @@ def _formula_projections(
     roots: set[MeasureDate] = set()
     for identifier, first, last in retained_ranges:
         length = (calendar_date(last) - calendar_date(first)).days + 1
-        if len(roots) + length > limits.MAX_DEMANDED_MEASURE_DATES:
-            raise invalid(
-                f"goal projection exceeds {limits.MAX_DEMANDED_MEASURE_DATES} demanded "
-                "measure/date pairs; request a narrower date range"
-            )
+        check_goal_demand_count(
+            len(roots) + length, demand_limit=limits.MAX_DEMANDED_MEASURE_DATES
+        )
         for day in date_range(first, last):
             roots.add(MeasureDate(identifier, day))
-            if len(roots) > limits.MAX_DEMANDED_MEASURE_DATES:
-                raise invalid(
-                    f"goal projection exceeds {limits.MAX_DEMANDED_MEASURE_DATES} demanded "
-                    "measure/date pairs; request a narrower date range"
-                )
+            check_goal_demand_count(len(roots), demand_limit=limits.MAX_DEMANDED_MEASURE_DATES)
     days_by_chart = {}
     for chart in formula_charts:
         first, last, today = bounds[chart["id"]]
@@ -240,43 +232,10 @@ def _formula_projections(
                 references = ()  # Evaluation preserves date and arithmetic-depth failures.
             for pair in references:
                 roots.add(pair)
-                if len(roots) > limits.MAX_DEMANDED_MEASURE_DATES:
-                    raise invalid(
-                        f"goal projection exceeds {limits.MAX_DEMANDED_MEASURE_DATES} demanded "
-                        "measure/date pairs; request a narrower date range"
-                    )
-    try:
-        pairs = demanded_pairs(
-            tuple(roots),
-            definitions,
-            now=instant,
-            limit=limits.MAX_DEMANDED_MEASURE_DATES,
-            missing_ok=True,
-        )
-    except RecursionError:
-        # Preserve ordinary inputs when another root exceeds interpreter depth.
-        # Evaluation returns arithmetic_limit for the unexpanded deep root.
-        pairs = set()
-        for root in roots:
-            try:
-                pairs.update(
-                    demanded_pairs(
-                        (root,),
-                        definitions,
-                        now=instant,
-                        limit=limits.MAX_DEMANDED_MEASURE_DATES,
-                        missing_ok=True,
-                    )
-                )
-            except RecursionError:
-                continue
-            if len(pairs) > limits.MAX_DEMANDED_MEASURE_DATES:
-                raise invalid(
-                    f"goal projection exceeds {limits.MAX_DEMANDED_MEASURE_DATES} demanded "
-                    "measure/date pairs; request a narrower date range"
-                ) from None
-    observations = read_demanded(conn, pairs, definitions)
-    evaluation = Evaluation(definitions, observations, now=instant)
+                check_goal_demand_count(len(roots), demand_limit=limits.MAX_DEMANDED_MEASURE_DATES)
+    evaluation = read_goal_evaluation(
+        conn, tuple(roots), definitions, now=instant, demand_limit=limits.MAX_DEMANDED_MEASURE_DATES
+    )
     projections = {}
     for chart in formula_charts:
         first, last, today = bounds[chart["id"]]
@@ -284,18 +243,13 @@ def _formula_projections(
         points = []
         for day in days_by_chart[chart["id"]]:
             pair = MeasureDate(definition.id, day)
-            if day > today and pair not in observations:
-                actual = MeasureValue(
-                    definition.id,
-                    day,
-                    definition.definition_revision,
-                    MeasureReadStatus.missing_input,
-                    None,
-                    (),
-                    (pair,),
-                )
-            else:
-                actual = evaluation.measure(pair)
+            actual = goal_actual_value(
+                definition,
+                pair,
+                evaluation,
+                today=today,
+                has_retained_evidence=pair in evaluation.observations,
+            )
             expected = evaluation.expression(chart["expectation"], day, definition.timezone)
             points.append(
                 projection_point(
