@@ -77,6 +77,14 @@ A busy agent is not a refusal. The composer’s mode decides what busy means:
 
 Attachments, a model change, a steer the backend refused, and a Codex slash command that needs its own turn join the queue with a visible reason. When the agent frees, several queued messages may be combined into one backend prompt, with each sender named, unless a message carries a model change. That one starts its own turn. The notebook still records each sender’s content.
 
+Kill writes down each held message as discarded before ending the running turn. It
+uses the same cancellation and interruption path as Interrupt, then retires the
+current child. Cancellation leaves the conversation lock free for final backend
+receipts. Messages arriving during cancellation run after ending and retirement.
+The turn gets one ending,
+even if the backend reports its own ending during cancellation. Remote retirement
+keeps its quarantine fence until the exact child's stop is confirmed.
+
 Empty content is rejected before a fate exists.
 
 ## Permissions, voice, video, and a deploy
