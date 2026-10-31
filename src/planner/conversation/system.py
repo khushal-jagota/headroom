@@ -2519,17 +2519,27 @@ class SqliteProcessConversationSystem:
         """Start the maintenance turn and always release a message held behind failure."""
         try:
             await self._deliver_and_finalize(
-                state,
-                reservation,
-                content=text_message_content(AUTOMATIC_COMPACTION_PROMPT),
-                sender_label=AUTOMATIC_COMPACTION_SENDER_LABEL,
+                state=state,
+                reservation=reservation,
                 mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-                sender_message_id=None,
-                sent_at_unix_milliseconds=None,
                 drain_after_delivery_exception=False,
-                acknowledge_owner_on_failure=True,
+                message=_Message(
+                    held_prompt_id="",
+                    snapshot_sent_at_unix_milliseconds=0,
+                    queue_reason=PromptQueueReason.requested,
+                    model_change=None,
+                    reasoning_effort_change=None,
+                    sender_message_id=None,
+                    sent_at_unix_milliseconds=None,
+                    sender=None,
+                    recipient=None,
+                    reply_requested=True,
+                    recovery_references=(),
+                    owner_read_through_sequence=None,
+                    content=text_message_content(AUTOMATIC_COMPACTION_PROMPT),
+                    sender_label=AUTOMATIC_COMPACTION_SENDER_LABEL,
+                    acknowledge_owner_on_failure=True,
+                ),
             )
         except asyncio.CancelledError:
             raise
@@ -2608,91 +2618,40 @@ class SqliteProcessConversationSystem:
         self,
         state: _ConversationState,
         reservation: _ReservedTurn,
+        message: _Message,
         *,
-        content: MessageContent,
-        sender_label: str,
         mode: PromptDeliveryMode,
-        model_change: str | None,
-        reasoning_effort_change: str | None,
-        sender_message_id: str | None,
-        sent_at_unix_milliseconds: int | None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-        reply_requested: bool = True,
-        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         drain_after_delivery_exception: bool = True,
-        owner_read_through_sequence: int | None = None,
-        acknowledge_owner_on_failure: bool = True,
-        reasoning_effort_is_set: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
-        reservation.messages = (
-            _Message(
-                reasoning_effort_is_set=reasoning_effort_is_set,
-                held_prompt_id="",
-                content=content,
-                sender_label=sender_label,
-                model_change=model_change,
-                reasoning_effort_change=reasoning_effort_change,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                snapshot_sent_at_unix_milliseconds=0,
-                sender=sender,
-                recipient=recipient,
-                reply_requested=reply_requested,
-                recovery_references=recovery_references,
-                queue_reason=PromptQueueReason.steer_refused,
-                owner_read_through_sequence=owner_read_through_sequence,
-                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                native_message_operation=native_message_operation,
-            ),
-        )
+        reservation.messages = (message,)
         try:
             reservation.automatic_notice = await self._persist(
                 state,
                 partial(
                     self._store.all_sender_messages_are_manager_notices,
                     state.record.conversation_id,
-                    (sender_message_id,),
+                    (message.sender_message_id,),
                 ),
             )
             delivery = await self._deliver_prompt(
                 state,
                 reservation.token,
-                content=content,
-                sender_label=sender_label,
+                content=message.content,
+                sender_label=message.sender_label,
                 sender_message_count=1,
                 mode=mode,
-                model_change=model_change,
-                reasoning_effort_change=reasoning_effort_change,
+                model_change=message.model_change,
+                reasoning_effort_change=message.reasoning_effort_change,
                 automatic_compaction=reservation.automatic_compaction,
-                messages=(
-                    _Message(
-                        reasoning_effort_is_set=reasoning_effort_is_set,
-                        held_prompt_id="",
-                        content=content,
-                        sender_label=sender_label,
-                        model_change=model_change,
-                        reasoning_effort_change=reasoning_effort_change,
-                        sender_message_id=sender_message_id,
-                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                        snapshot_sent_at_unix_milliseconds=0,
-                        sender=sender,
-                        recipient=recipient,
-                        reply_requested=reply_requested,
-                        recovery_references=recovery_references,
-                        queue_reason=PromptQueueReason.steer_refused,
-                        owner_read_through_sequence=owner_read_through_sequence,
-                        acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-                        native_message_operation=native_message_operation,
-                    ),
-                ),
+                messages=(message,),
                 reply_senders=(
-                    (sender,)
-                    if reply_requested and sender is not None and recipient is not None
+                    (message.sender,)
+                    if message.reply_requested
+                    and message.sender is not None
+                    and message.recipient is not None
                     else ()
                 ),
-                native_message_operation=native_message_operation,
+                native_message_operation=message.native_message_operation,
             )
         except asyncio.CancelledError:
             if reservation.shutdown_owned:
@@ -2734,28 +2693,12 @@ class SqliteProcessConversationSystem:
             assert reservation.shutdown_fate is not None
             return reservation.shutdown_fate
         started = await self._finalize_delivery(
-            state,
-            reservation,
-            delivery.refusal_reason,
-            content=content,
-            sender_label=sender_label,
+            state=state,
+            reservation=reservation,
             mode=mode,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
-            recovery_references=recovery_references,
-            refusal_detail=delivery.refusal_detail,
-            composed_content_delivered=delivery.composed_content_delivered,
-            record_refusal=delivery.record_refusal,
             phase_when_not_started=_ConversationPhase.idle,
-            owner_read_through_sequence=owner_read_through_sequence,
-            acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-            reasoning_effort_is_set=reasoning_effort_is_set,
-            native_message_operation=native_message_operation,
+            message=message,
+            delivery=delivery,
         )
         if started:
             return PromptDeliveryStarted()
