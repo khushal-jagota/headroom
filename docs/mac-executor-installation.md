@@ -101,7 +101,7 @@ PY
 
 Check that the resolved commit equals the reviewed full SHA.
 Record the constants printed from the exact candidate source; they govern compatibility.
-The current candidate uses wire protocol 16 and outbox format 5.
+The current candidate uses wire protocol 18 and outbox format 5.
 The shared timestamp, payload, and Worker identity helpers do not change either
 format. They ship in the standard executor package; no separate helper install is
 needed.
