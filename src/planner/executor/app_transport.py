@@ -25,8 +25,6 @@ def build_executor_router() -> APIRouter:
         except ValueError as error:
             raise HTTPException(403, str(error)) from error
         endpoint = getattr(connection.app.state, "executor_endpoint", None)
-        if endpoint is None:
-            raise HTTPException(503, "executor endpoint unavailable")
         if not isinstance(endpoint, VpsExecutor):
             raise HTTPException(503, "executor endpoint unavailable")
         return endpoint
@@ -56,7 +54,7 @@ def build_executor_router() -> APIRouter:
         await socket.accept()
         stream = ControlWebSocket(ServerWebSocketPeer(socket))
         try:
-            await endpoint._session(stream, stream)
+            await endpoint.session(stream, stream)
         finally:
             await stream.wait_closed()
 
@@ -64,7 +62,7 @@ def build_executor_router() -> APIRouter:
     async def upload(request: Request, transfer_id: str) -> Response:
         endpoint = endpoint_for(request)
         identity = generation_for(request, endpoint)
-        service = endpoint._transports.get(identity)
+        service = endpoint.transfers.get(identity)
         if service is None or request.headers.get("Content-Encoding"):
             raise HTTPException(409, "file generation unavailable or encoded body")
         try:
@@ -78,7 +76,7 @@ def build_executor_router() -> APIRouter:
     async def download(request: Request, transfer_id: str) -> Response:
         endpoint = endpoint_for(request)
         identity = generation_for(request, endpoint)
-        service = endpoint._transports.get(identity)
+        service = endpoint.transfers.get(identity)
         if service is None:
             raise HTTPException(409, "file generation unavailable")
         try:

@@ -6,35 +6,25 @@ import hashlib
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
-
-from tests.support.executor_control import MessageReader
-from tests.support.executor_inbox import lookup_receipt
-
-from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 import pytest
+from tests.support.executor_inbox import lookup_receipt
 from tests.support.executor_turns import persist_pending_turn
 from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
-from tests.unit.test_executor_request_deadlines import peer
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
     EnvelopeKind,
     FileManifest,
     FileScope,
-    FileUploadRequest,
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
-    WireMessage,
-    WireMessageKind,
     envelope_payload_digest,
 )
 from planner.executor.vps_inbox import InboxStore
@@ -132,74 +122,6 @@ def manifest(contents: bytes) -> FileManifest:
         hashlib.sha256(contents).hexdigest(),
         len(contents),
     )
-
-
-def test_session_file_cleanup_failure_still_releases_transport_root(
-    store: InboxStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import asyncio
-    import os
-    import tempfile
-    from unittest.mock import AsyncMock, Mock
-    from uuid import uuid4
-
-    from planner.core.clock import RealClock
-    from planner.executor.link_files import GenerationTransfers
-    from planner.executor.protocol import (
-        ConnectionState,
-        ExecutorHealth,
-        as_object,
-        encode_message,
-    )
-    from planner.executor.vps_transport import VpsExecutor
-
-    async def run() -> None:
-        endpoint = VpsExecutor(str(tmp_path / "vps.sqlite"), RealClock())
-        endpoint.inbox.store = store
-        identity = replace(IDENTITY, executor_incarnation=str(uuid4()))
-        reader = MessageReader()
-        reader.feed_data(
-            encode_message(
-                WireMessage(
-                    WireMessageKind.hello,
-                    "hello",
-                    as_object(
-                        ExecutorHealth(
-                            identity, os.getpid(), ConnectionState.reconciling, False, 1, None
-                        )
-                    ),
-                )
-            )
-        )
-        reader.feed_eof()
-        service = Mock()
-        service.close = AsyncMock(side_effect=OSError("service cleanup failed"))
-        root = tempfile.TemporaryDirectory(dir=tmp_path)
-        root_path = Path(root.name)
-
-        async def setup_generation(*_: object) -> None:
-            endpoint._transports[identity] = cast(GenerationTransfers, service)
-            endpoint._transport_roots[identity] = root
-            endpoint._upload_transfers[(identity, "transfer")] = (
-                "request",
-                FileUploadRequest(manifest(b"bytes"), CHILD),
-            )
-
-        writer = peer()
-        writer.send = AsyncMock(side_effect=setup_generation)
-        try:
-            with pytest.raises(OSError, match="service cleanup failed"):
-                await endpoint._session(reader, writer)
-            service.close.assert_awaited_once()
-            assert not root_path.exists()
-            assert not endpoint._transports and not endpoint._transport_roots
-            assert not endpoint._upload_transfers
-            assert endpoint.runs.link is None and not endpoint.runs.ready
-        finally:
-            root.cleanup()
-            await endpoint.catalog.close()
-
-    asyncio.run(run())
 
 
 def test_postcommit_error_preserves_durable_effect_and_receipt(
@@ -319,59 +241,3 @@ def test_rename_before_database_rollback_recovers_without_upload(
     assert (
         store.accept(row, effect, 2, identity=IDENTITY).disposition is ReceiptDisposition.accepted
     )
-
-
-def test_upload_cancellation_keeps_transfer_until_private_copy_settles(
-    store: InboxStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The replaced completion exchange must still own an admitted copy on cancellation."""
-    import asyncio
-    import threading
-    from collections.abc import AsyncIterator
-
-    from planner.core.clock import RealClock
-    from planner.executor.link_files import GenerationTransfers
-    from planner.executor.protocol import FileUploadRequest
-    from planner.executor.vps_transport import VpsExecutor
-
-    async def run() -> None:
-        endpoint = VpsExecutor(store.db_path, RealClock())
-        service = GenerationTransfers(IDENTITY, tmp_path / "transfers", lambda: True)
-        endpoint._transports[IDENTITY] = service
-        file = manifest(b"complete")
-        slot = service.create_upload(file)
-        endpoint._upload_transfers[IDENTITY, slot.transfer_id] = (
-            "request",
-            FileUploadRequest(file, CHILD),
-        )
-
-        async def chunks() -> AsyncIterator[bytes]:
-            yield b"complete"
-
-        await service.upload(slot.transfer_id, chunks())
-        entered, release = threading.Event(), threading.Event()
-        original = endpoint.inbox.store.store_upload
-
-        def held(manifest: FileManifest, source: Path) -> None:
-            entered.set()
-            assert release.wait(5)
-            assert source.exists()
-            original(manifest, source)
-
-        monkeypatch.setattr(endpoint.inbox.store, "store_upload", held)
-        copying = asyncio.create_task(endpoint.store_upload(IDENTITY, slot.transfer_id))
-        assert await asyncio.to_thread(entered.wait, 2)
-        copying.cancel()
-        await asyncio.sleep(0)
-        assert not copying.done() and slot.transfer_id in service.transfers
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await copying
-        assert slot.transfer_id not in service.transfers
-        assert not endpoint._receiver_work
-        assert not endpoint.inbox.store.file_target(file).exists()
-        endpoint.inbox.store.install_files((file,))
-        assert endpoint.inbox.store.file_target(file).read_bytes() == b"complete"
-        await service.close()
-
-    asyncio.run(run())

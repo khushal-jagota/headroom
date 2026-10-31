@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import stat
+import tempfile
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ from planner.core.task_settlement import wait_for_settlement
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import FILE_CHUNK_BYTES, MAX_TRANSFERS, TRANSFER_CHUNK_BYTES
 from planner.executor.files import copy_verified, directory_descriptor, regular_descriptor
-from planner.executor.protocol import FileManifest, FileSnapshot, FileTransfer
+from planner.executor.protocol import FileManifest, FileSnapshot, FileTransfer, FileUploadRequest
 
 
 async def settled_io[Result](function: Callable[..., Result], *args: Any) -> Result:
@@ -41,18 +42,15 @@ class _Transfer:
 
 
 class GenerationTransfers:
-    def __init__(self, identity: ExecutorIdentity, root: Path, valid: Callable[[], bool]) -> None:
-        self.identity, self.root, self._valid = identity, root, valid
+    def __init__(self, identity: ExecutorIdentity, valid: Callable[[], bool]) -> None:
+        self._directory = tempfile.TemporaryDirectory(prefix="panels-executor-")
+        self.identity, self.root, self._valid = identity, Path(self._directory.name), valid
         self.closed = False
         self.transfers: dict[str, _Transfer] = {}
+        self.uploads: dict[str, tuple[str, FileUploadRequest]] = {}
         self.preparations: set[asyncio.Task[Any]] = set()
         self.active: set[asyncio.Task[Any]] = set()
-        if not root.is_absolute():
-            raise ValueError("transfer directory must be absolute")
-        with directory_descriptor(root, create=True) as descriptor:
-            info = os.fstat(descriptor)
-            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
-                raise ValueError("transfer directory must be private and owned")
+        self._guarded_work: set[asyncio.Task[None]] = set()
 
     def valid(self) -> bool:
         return not self.closed and self._valid()
@@ -197,17 +195,48 @@ class GenerationTransfers:
                 except FileNotFoundError:
                     pass
 
+    async def run_guarded[**P](
+        self, operation: Callable[P, None], *args: P.args, **kwargs: P.kwargs
+    ) -> None:
+        if not self.valid():
+            raise ValueError("generation revoked")
+        # Cancellation cannot terminate a filesystem thread. Keep its source alive.
+        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        self._guarded_work.add(task)
+        try:
+            await asyncio.shield(task)
+        except BaseException:
+            await wait_for_settlement(task)
+            raise
+        finally:
+            self._guarded_work.discard(task)
+
     async def close(self) -> None:
         self.closed = True
-        tasks = tuple(self.active)
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            await wait_for_settlement(task)
-        for task in tuple(self.preparations):
-            await wait_for_settlement(task)
-        for transfer_id in tuple(self.transfers):
-            self.release(transfer_id)
+
+        async def cleanup() -> None:
+            try:
+                for task in tuple(self._guarded_work):
+                    await wait_for_settlement(task)
+                tasks = tuple(self.active)
+                for task in tasks:
+                    task.cancel()
+                for task in tasks:
+                    await wait_for_settlement(task)
+                for task in tuple(self.preparations):
+                    await wait_for_settlement(task)
+                for transfer_id in tuple(self.transfers):
+                    self.release(transfer_id)
+            finally:
+                self.uploads.clear()
+                self._directory.cleanup()
+
+        closing = asyncio.create_task(cleanup())
+        try:
+            await asyncio.shield(closing)
+        except BaseException:
+            await wait_for_settlement(closing)
+            raise
 
 
 def _write_all(descriptor: int, content: bytes) -> None:

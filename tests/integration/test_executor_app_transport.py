@@ -47,7 +47,7 @@ def test_native_admission_and_generation_file_slots(
             finally:
                 await production_client.close()
             assert harness.mac.gateway._link is not None
-            service = harness.endpoint._transports[identity]
+            service = harness.endpoint.transfers[identity]
 
             # This case isolates HTTP body validation; connected item acceptance
             # exercises the real store_upload path in the file-producing event case.
@@ -160,7 +160,7 @@ def test_stalled_canceled_upload_keeps_control_live_and_revokes_slot(
                 harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
             )
             assert harness.mac.gateway._link is not None
-            service = harness.endpoint._transports[identity]
+            service = harness.endpoint.transfers[identity]
             data = b"x" * 1000000
             manifest = FileManifest(
                 FileScope.ticket,
@@ -276,7 +276,7 @@ def test_duplicate_hello_preserves_active_file_reservations(
             assert identity is not None
             writer = harness.endpoint.runs.link
             assert harness.mac.gateway._link is not None
-            service = harness.endpoint._transports[identity]
+            service = harness.endpoint.transfers[identity]
             child = next(iter(harness.mac.runner._children.values()))
             assert child.ticket_id is not None
             manifest = FileManifest(
@@ -316,7 +316,7 @@ def test_duplicate_hello_preserves_active_file_reservations(
                     assert reply.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
             assert harness.endpoint.runs.ready and harness.endpoint.runs.identity == identity
             assert harness.endpoint.runs.link is writer
-            assert harness.endpoint._transports[identity] is service and service.valid()
+            assert harness.endpoint.transfers[identity] is service and service.valid()
             assert slot.transfer_id in service.transfers
             native_client = ExecutorAppClient(
                 harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory

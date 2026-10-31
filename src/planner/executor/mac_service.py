@@ -184,12 +184,6 @@ class MacService:
                     phase = ConnectionPhase.hello
                     await link.request(WireMessageKind.hello, as_object(self.gateway.health()))
                     self.gateway._handshake_accepted = True
-                    phase = ConnectionPhase.transport_open
-                    opened = await link.request(
-                        WireMessageKind.transport_open, {"identity": as_object(identity)}
-                    )
-                    if opened.kind is not WireMessageKind.transport_opened:
-                        raise ValueError("file generation refused")
                     phase = ConnectionPhase.reconnect_ask
                     response = await link.request(
                         WireMessageKind.reconciliation_ready, as_object(identity)

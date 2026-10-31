@@ -104,7 +104,6 @@ class CanonicalSkillSnapshot:
 class ConnectionPhase(StrEnum):
     app_connect = "app_connect"
     hello = "hello"
-    transport_open = "transport_open"
     reconnect_ask = "reconnect_ask"
     steady_state = "steady_state"
 
@@ -596,8 +595,6 @@ class TransactionalWriter(Protocol):
 class WireMessageKind(StrEnum):
     hello = "hello"
     hello_accepted = "hello_accepted"
-    transport_open = "transport_open"
-    transport_opened = "transport_opened"
     protocol_refused = "protocol_refused"
     reconnect_ask = "reconnect_ask"
     reconnect_result = "reconnect_result"

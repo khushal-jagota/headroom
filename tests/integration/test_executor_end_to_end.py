@@ -230,7 +230,7 @@ class CutReceiptEndpoint(VpsExecutor):
                     self.cut_submission = envelope.submission_id
         await super()._handle_message(message, identity, writer)
 
-    async def _session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
+    async def session(self, reader: ControlMessageReader, writer: ControlMessageWriter) -> None:
         original = writer.send
 
         async def send(message: WireMessage) -> None:
@@ -266,7 +266,7 @@ class CutReceiptEndpoint(VpsExecutor):
             await original(message)
 
         writer.send = send  # type: ignore[method-assign]
-        await super()._session(reader, writer)
+        await super().session(reader, writer)
 
 
 def public_ask_id(ask: AskReference) -> str:
@@ -1952,7 +1952,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                 == refusals[0]
             )
             await eventually(lambda: not harness.mac.outbox.pending(), "Refused item did not drain")
-            assert not harness.endpoint._upload_transfers
+            assert all(not service.uploads for service in harness.endpoint.transfers.values())
             assert artifact.read_bytes() == contents
             assert harness.mac.identity == generation and harness.endpoint.runs.link is writer
             assert harness.endpoint.runs.link is not None
