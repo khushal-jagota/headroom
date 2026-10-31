@@ -324,6 +324,23 @@ class OutboxEntry:
     snapshots: tuple[FileSnapshot, ...] = ()
 
 
+def envelope_child(
+    envelope: QueuedEnvelope | OutboxEntry,
+    *,
+    lookup: Literal["object_then_ask", "child_then_ask", "ask"] = "object_then_ask",
+) -> JsonValue:
+    """Read the child while preserving each boundary's raw-payload precedence."""
+    child = envelope.payload.get("child")
+    if lookup == "child_then_ask":
+        if child is not None:
+            return child
+        return cast(JsonObject, envelope.payload.get("ask", {})).get("child")
+    if lookup == "object_then_ask" and isinstance(child, dict):
+        return child
+    ask = envelope.payload.get("ask")
+    return ask.get("child") if isinstance(ask, dict) else None
+
+
 class ChildOperation(StrEnum):
     start = "start"
     write_prompt = "write_prompt"
@@ -873,7 +890,10 @@ def encode_frame(value: object) -> bytes:
 
 
 def as_object(value: object) -> JsonObject:
-    return cast(JsonObject, encode_value(value))
+    encoded = encode_value(value)
+    if not isinstance(encoded, dict):
+        raise ValueError("expected object")
+    return encoded
 
 
 class MacRunConversations(Protocol):

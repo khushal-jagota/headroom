@@ -18,6 +18,7 @@ from planner.core.task_settlement import wait_for_settlement
 from planner.execution_identity import (
     ExecutorIdentity,
 )
+from planner.executor.clock import now_ms
 from planner.executor.configuration import (
     CLI_RESULT_TIMEOUT_SECONDS,
 )
@@ -26,7 +27,7 @@ from planner.executor.files import (
 )
 from planner.executor.link import Link
 from planner.executor.mac_outbox import MacOutbox
-from planner.executor.mac_runner import MacRunner, now_ms
+from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
     AcceptanceReceipt,
     CliWrite,

@@ -25,6 +25,7 @@ from planner.execution_identity import (
     parse_identity,
 )
 from planner.executor.catalog_relay import VpsCatalogRelay
+from planner.executor.clock import now_ms
 from planner.executor.files import snapshot_file
 from planner.executor.link import Link, accept_link
 from planner.executor.link_files import GenerationTransfers, settled_io
@@ -48,12 +49,14 @@ from planner.executor.protocol import (
     WireMessage,
     WireMessageKind,
     WritePrompt,
+    as_object,
     decode_event_arguments,
     encode_value,
+    envelope_child,
     type_adapter,
 )
 from planner.executor.vps_inbox import MacInbox, MissingFiles
-from planner.executor.vps_runs import MacRuns, now_ms
+from planner.executor.vps_runs import MacRuns
 
 
 def _generation_root() -> tempfile.TemporaryDirectory[str]:
@@ -119,7 +122,7 @@ class VpsExecutor:
 
     def health(self) -> ExecutorHealthRead:
         return {
-            "identity": None if self.runs.identity is None else _object(self.runs.identity),
+            "identity": None if self.runs.identity is None else as_object(self.runs.identity),
             "process_id": self.process_id,
             "observed_at_ms": self.observed_at_ms,
             "lost_at_ms": self.lost_at_ms,
@@ -259,13 +262,13 @@ class VpsExecutor:
             elif message.kind is WireMessageKind.envelope:
                 envelope = type_adapter(QueuedEnvelope).validate_python(message.payload)
                 try:
-                    result = _object(await self.inbox.accept(envelope, identity))
+                    result = as_object(await self.inbox.accept(envelope, identity))
                     response_kind = WireMessageKind.receipt
                 except MissingFiles as missing:
                     result = {"files": encode_value(missing.manifests)}
                     response_kind = WireMessageKind.missing_files
             elif message.kind is WireMessageKind.error:
-                result = _object(await self._refuse_upload_item(message, identity))
+                result = as_object(await self._refuse_upload_item(message, identity))
                 response_kind = WireMessageKind.receipt
             elif message.kind is WireMessageKind.command_outcome:
                 outcome = type_adapter(CommandOutcome).validate_python(message.payload)
@@ -337,11 +340,7 @@ class VpsExecutor:
     ) -> AcceptanceReceipt:
         rejected = type_adapter(EnvelopeRefusal).validate_python(message.payload)
         envelope = rejected.envelope
-        raw = envelope.payload.get("child")
-        if not isinstance(raw, dict):
-            ask = envelope.payload.get("ask")
-            raw = ask.get("child") if isinstance(ask, dict) else None
-        child = type_adapter(ChildReference).validate_python(raw)
+        child = type_adapter(ChildReference).validate_python(envelope_child(envelope))
         if child.executor_incarnation != identity.executor_incarnation or (
             child.conversation_id != envelope.conversation_id
         ):
@@ -380,7 +379,7 @@ class VpsExecutor:
             await settled_io(self.runs.store.verify_connection, identity)
             slot = service.create_upload(upload.manifest)
             self._upload_transfers[identity, slot.transfer_id] = message.request_id, upload
-            return _object(slot), WireMessageKind.file_transfer
+            return as_object(slot), WireMessageKind.file_transfer
         request = type_adapter(FileDownloadRequest).validate_python(message.payload)
         pending = self.runs.pending_commands.get(request.command_id)
         if pending is None or pending[1].done():
@@ -422,7 +421,7 @@ class VpsExecutor:
             snapshot = await asyncio.shield(preparation)
             slot = await service.create_download_async(snapshot)
             await settled_io(self.runs.store.verify_connection, identity)
-            return _object(slot), WireMessageKind.file_transfer
+            return as_object(slot), WireMessageKind.file_transfer
         finally:
             await wait_for_settlement(preparation)
             if not preparation.cancelled() and preparation.exception() is None:
@@ -491,10 +490,3 @@ class VpsExecutor:
         except BaseException:
             await wait_for_settlement(closing)
             raise
-
-
-def _object(value: object) -> JsonObject:
-    encoded = encode_value(value)
-    if not isinstance(encoded, dict):
-        raise ValueError("expected object")
-    return encoded

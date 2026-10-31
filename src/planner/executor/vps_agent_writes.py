@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
 from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, cast
@@ -28,6 +27,7 @@ from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.execution_identity import ExecutorIdentity
+from planner.executor.clock import now_ms
 from planner.executor.link_files import settled_io
 from planner.executor.mutations import write_ticket_mutation
 from planner.executor.protocol import (
@@ -45,10 +45,6 @@ from planner.message_delivery.contracts import MessageDeliveryMode
 if TYPE_CHECKING:
     from planner.executor.vps_inbox import InboxStore
     from planner.executor.vps_runs import MacRuns
-
-
-def now_ms() -> int:
-    return time.time_ns() // 1_000_000
 
 
 class AgentWrites:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import cast
@@ -28,6 +27,7 @@ from planner.execution_identity import (
     ChildReference,
     ProtocolRefused,
 )
+from planner.executor.clock import now_ms
 from planner.executor.protocol import (
     AnswerPermission,
     AnswerUserInput,
@@ -342,7 +342,7 @@ class MacRemoteChild:
                 answer_id,
                 AskReference(self.reference, turn_token, ask_id, AskKind.permission),
                 option_id,
-                time.time_ns() // 1_000_000,
+                now_ms(),
             )
         )
 
@@ -361,7 +361,7 @@ class MacRemoteChild:
                 answer_id,
                 AskReference(self.reference, turn_token, request_id, AskKind.user_input),
                 None,
-                time.time_ns() // 1_000_000,
+                now_ms(),
                 answers,
             )
         )

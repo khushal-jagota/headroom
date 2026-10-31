@@ -7,7 +7,6 @@ import contextlib
 import hashlib
 import os
 import secrets
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -51,6 +50,7 @@ from planner.execution_identity import (
     AskReference,
     ChildReference,
 )
+from planner.executor.clock import now_ms
 from planner.executor.configuration import (
     MAX_TOOL_DETAIL_CHARACTERS,
     NATIVE_SKILLS_DIR_ENV,
@@ -101,10 +101,6 @@ from planner.executor.protocol import (
 )
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
 from planner.workspace_localization import localize_workspace
-
-
-def now_ms() -> int:
-    return time.time_ns() // 1_000_000
 
 
 class _CommandAdmissionRefused(Exception):

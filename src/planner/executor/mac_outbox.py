@@ -58,6 +58,7 @@ from planner.executor.protocol import (
     as_object,
     encode_message,
     encode_value,
+    envelope_child,
     envelope_payload_digest,
     type_adapter,
 )
@@ -329,10 +330,7 @@ class MacOutbox:
                 encoded = json.dumps(
                     payload, sort_keys=True, separators=(",", ":"), allow_nan=False
                 ).encode()
-                child = entry.payload.get("child")
-                if not isinstance(child, dict):
-                    ask = entry.payload.get("ask")
-                    child = ask.get("child") if isinstance(ask, dict) else None
+                child = envelope_child(entry)
                 child_id = str(child.get("child_id", "")) if isinstance(child, dict) else ""
                 with self._db:
                     cursor = self._db.execute(
@@ -380,7 +378,7 @@ class MacOutbox:
                     )
                     # Reject an unsendable item before acknowledging its durable addition.
                     encode_message(
-                        WireMessage(WireMessageKind.envelope, "0" * 32, self._object(envelope))
+                        WireMessage(WireMessageKind.envelope, "0" * 32, as_object(envelope))
                     )
                 self._notify()  # Only a committed item may wake sending.
                 return envelope
@@ -388,10 +386,6 @@ class MacOutbox:
                 for snapshot in snapshots:
                     if snapshot.local_path.parent.name == ".executor-snapshots":
                         snapshot.local_path.unlink(missing_ok=True)
-
-    @staticmethod
-    def _object(value: object) -> JsonObject:
-        return cast(JsonObject, type_adapter(JsonObject).validate_python(encode_value(value)))
 
     def _envelope(self, row: tuple[object, ...]) -> QueuedEnvelope:
         sequence, submission, conversation, _, kind, encoded, _ = row
@@ -557,7 +551,7 @@ class MacOutbox:
     async def _send_one(self, link: OutboxLink, envelope: QueuedEnvelope) -> None:
         while True:
             try:
-                response = await link.request(WireMessageKind.envelope, self._object(envelope))
+                response = await link.request(WireMessageKind.envelope, as_object(envelope))
                 if response.kind is WireMessageKind.missing_files:
                     from planner.executor.protocol import FileManifest
 
@@ -650,10 +644,7 @@ class _OutboxDelivery:
         self, envelope: QueuedEnvelope, snapshot: FileSnapshot
     ) -> AcceptanceReceipt | None:
         link = self.link
-        child = envelope.payload.get("child")
-        if child is None:
-            ask = cast(JsonObject, envelope.payload.get("ask", {}))
-            child = ask.get("child")
+        child = envelope_child(envelope, lookup="child_then_ask")
         if child is None:
             raise ValueError("file upload lacks assigned child")
         self.outbox.transfers += 1

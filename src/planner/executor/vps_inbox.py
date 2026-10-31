@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import os
 import re
 import sqlite3
-from dataclasses import asdict
 from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 from uuid import uuid4
 
 from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
@@ -19,6 +17,7 @@ from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
 from planner.core.db import connect
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
+from planner.executor.clock import now_ms
 from planner.executor.files import (
     contained_path,
     copy_verified,
@@ -43,23 +42,13 @@ from planner.executor.protocol import (
     TransactionalWriter,
     as_object,
     decode_event_arguments,
+    envelope_child,
+    envelope_payload_digest,
     type_adapter,
 )
-from planner.executor.store import ExecutorStore, VpsDatabase
+from planner.executor.store import ExecutorStore, VpsDatabase, _invalid, _record
 from planner.executor.vps_agent_writes import AgentWrites
-from planner.executor.vps_runs import MacRuns, now_ms
-
-
-def _json(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _record(value: Any) -> str:
-    return _json(asdict(value))
-
-
-def _invalid(message: str) -> PlannerError:
-    return PlannerError(ErrorCode.validation, message)
+from planner.executor.vps_runs import MacRuns
 
 
 class MissingFiles(Exception):
@@ -271,8 +260,6 @@ class InboxStore(VpsDatabase):
     def _validate_envelope(
         self, connection: sqlite3.Connection, envelope: QueuedEnvelope, *, check_files: bool = True
     ) -> None:
-        from planner.executor.protocol import envelope_payload_digest
-
         if envelope.payload_sha256 != envelope_payload_digest(
             envelope.payload,
             envelope.file_dependencies,
@@ -284,11 +271,7 @@ class InboxStore(VpsDatabase):
         ):
             raise _invalid("Envelope digest does not match content")
         if check_files and envelope.file_dependencies:
-            child = envelope.payload.get("child")
-            if not isinstance(child, dict):
-                ask = envelope.payload.get("ask")
-                child = ask.get("child") if isinstance(ask, dict) else None
-            reference = type_adapter(ChildReference).validate_python(child)
+            reference = type_adapter(ChildReference).validate_python(envelope_child(envelope))
             assignment = connection.execute(
                 "SELECT principal_kind,principal_id FROM executor_child_assignments "
                 "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
