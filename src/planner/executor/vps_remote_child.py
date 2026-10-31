@@ -55,7 +55,6 @@ from planner.executor.protocol import (
     WireMessageKind,
     WritePrompt,
     decode_prompt_result,
-    decode_provider_submission,
     encode_message,
     encode_value,
     type_adapter,
@@ -171,9 +170,6 @@ class MacRemoteChild:
             if error_name == "BackendPromptRejected":
                 raise backend.BackendPromptRejected(
                     str(result.result.get("error_message", "provider rejected prompt")),
-                    provider_submission=decode_provider_submission(
-                        result.result.get("provider_submission")
-                    ),
                 )
             if error_name == "AdmissionRefused":
                 raise backend.AdmissionRefused(
@@ -300,14 +296,12 @@ class MacRemoteChild:
         if result["kind"] == "steer_refused":
             return backend.BackendSteerRefused(
                 PromptDeliveryRefusalReason(str(result["refusal_reason"])),
-                provider_submission=decode_provider_submission(result.get("provider_submission")),
             )
         if result["kind"] == "steer_uncertain":
             delivered = result.get("composed_content_delivered")
             return backend.BackendSteerUncertain(delivered if isinstance(delivered, bool) else None)
         return backend.BackendSteerAccepted(
             bool(result.get("composed_content_delivered", True)),
-            provider_submission=decode_provider_submission(result.get("provider_submission")),
         )
 
     async def cancel_running_turn(self) -> None:

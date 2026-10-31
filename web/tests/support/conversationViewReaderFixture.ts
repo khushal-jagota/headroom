@@ -17,7 +17,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
   const unreadText=new URLSearchParams(search).get('unread');
   const unread=unreadText===null?null:Number(unreadText);
   const ownerWidth=new URLSearchParams(search).get('owner-width');
-  const widthBody=JSON.stringify({kind:'prompt',provider_submission:null,sender_label:'owner',mode:'queue',sent_at_unix_milliseconds:1,content:[{piece:'text',text:'Short prompt.'}]});
+  const widthBody=JSON.stringify({kind:'prompt',sender_label:'owner',mode:'queue',sent_at_unix_milliseconds:1,content:[{piece:'text',text:'Short prompt.'}]});
   let releaseOwnerBody: (()=>void)|null=null;
   (window as any).__releaseOwnerBody=()=>releaseOwnerBody?.();
   const expiry=new URLSearchParams(search).has('expiry');

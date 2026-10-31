@@ -135,7 +135,6 @@ from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
-    ConversationBackendKey,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
@@ -145,7 +144,6 @@ from planner.conversation.events import (
     PermissionAskOption,
     PlanEntry,
     PlanEntryStatus,
-    ProviderSubmissionFact,
     ToolCallStatus,
     UserInputAnswer,
     UserInputOption,
@@ -903,7 +901,6 @@ class ClaudeAgentSdkBackendChild:
         self._standard_error: deque[str] = deque()
         self._asks_raised = 0
         self._available_command_names: frozenset[str] = frozenset()
-        self._child_lifetime = uuid.uuid4().hex
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -924,7 +921,6 @@ class ClaudeAgentSdkBackendChild:
         if self._client is not None or self._reader is not None:
             raise BackendSpawnFailed("the previous Claude child still owns cleanup handles")
         self._resolved_start = resolved_start
-        self._child_lifetime = uuid.uuid4().hex
         minted_session_id = None if vendor_session_cursor is not None else str(uuid.uuid4())
         options = self._options(resolved_start, vendor_session_cursor, minted_session_id)
         client = self._client_factory(options, emission_check=emission_check)
@@ -1048,14 +1044,7 @@ class ClaudeAgentSdkBackendChild:
         if admission is False:
             if self._turn is turn:
                 self._turn = None
-            raise BackendPromptRejected(
-                "claude refused the user message",
-                provider_submission=ProviderSubmissionFact(
-                    provider=ConversationBackendKey.claude, status="rejected",
-                    observation_kind="command_lifecycle_rejected",
-                    correlation_id=user_message_uuid,
-                ),
-            )
+            raise BackendPromptRejected("claude refused the user message")
         if admission is not True:
             self._wire_broken = True
             raise PromptWriteFailed("claude did not acknowledge the user message")
@@ -1063,11 +1052,6 @@ class ClaudeAgentSdkBackendChild:
             await self._fail_the_running_turn(str(query_failure))
         return BackendPromptAccepted(
             composed_content_delivered=not (automatic_compaction or native_command),
-            provider_submission=ProviderSubmissionFact(
-                provider=ConversationBackendKey.claude, status="accepted",
-                    observation_kind="user_message_admitted",
-                correlation_id=user_message_uuid,
-            ),
         )
 
     async def _query_argument(
@@ -1236,11 +1220,6 @@ class ClaudeAgentSdkBackendChild:
         if admission is True:
             return BackendSteerAccepted(
                 composed_content_delivered=not native_command,
-                provider_submission=ProviderSubmissionFact(
-                    provider=ConversationBackendKey.claude, status="accepted",
-                    observation_kind="user_message_admitted",
-                    correlation_id=user_message_uuid,
-                ),
             )
         if admission is False:
             turn.owned_steer_uuids.discard(user_message_uuid)
@@ -1692,11 +1671,6 @@ class ClaudeAgentSdkBackendChild:
             # A subagent talking inside a tool call. The tool call is the thing that
             # happened; its inner conversation is not the agent's message to anyone.
             return
-        if message.model:
-            await self._sink.provider_selection_reported(
-                turn.token, provider=ConversationBackendKey.claude, source_kind="response_model",
-                model=message.model, reasoning_effort=None, child_lifetime=self._child_lifetime,
-            )
         said: list[str] = []
         for block in message.content:
             match block:

@@ -121,12 +121,6 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
             )
             outcome = await registry.run(prompt)
             assert outcome.disposition is CommandDisposition.succeeded
-            assert outcome.result["provider_submission"] == {
-                "provider": "claude",
-                "status": "accepted",
-                "observation_kind": "user_message_admitted",
-                "correlation_id": next(f["uuid"] for f in actual[0].frames if f["type"] == "user"),
-            }
             assert await registry.run(prompt) == outcome
             assert len(actual) == 1
             assert len([f for f in actual[0].frames if f["type"] == "user"]) == 1
