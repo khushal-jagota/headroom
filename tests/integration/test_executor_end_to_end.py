@@ -2317,6 +2317,10 @@ def test_stop_waits_for_queued_receipt_after_direct_result_and_reconnect(
                 ),
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
+            await eventually(
+                lambda: harness.system._conversations["c_scripted"].running_turn is None,
+                "initial runtime turn did not settle",
+            )
             assert not await harness.system.is_running("c_scripted")
             await eventually(lambda: not harness.mac.outbox.pending(), "initial events did not drain")
             async with paused_outbox(harness.mac.outbox):
