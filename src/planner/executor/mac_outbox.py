@@ -23,8 +23,6 @@ from planner.executor.configuration import (
     FILE_CHUNK_BYTES,
     FILE_MODIFIED_WINDOW_NS,
     MAX_TRANSFERS,
-    OUTBOX_BUSY_TIMEOUT_MS,
-    OUTBOX_RETRY_SECONDS,
     ExecutorPaths,
 )
 from planner.executor.files import (
@@ -120,9 +118,7 @@ class MacOutbox:
         try:
             fcntl.flock(self._process_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             existed = path.exists()
-            db = sqlite3.connect(
-                path, timeout=OUTBOX_BUSY_TIMEOUT_MS / 1000, check_same_thread=False
-            )
+            db = sqlite3.connect(path, check_same_thread=False)
             self._database = db
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
@@ -539,38 +535,28 @@ class MacOutbox:
 
     async def _send_one(self, link: OutboxLink, envelope: QueuedEnvelope) -> None:
         while True:
-            try:
-                response = await link.request(WireMessageKind.envelope, self._object(envelope))
-                if response.kind is WireMessageKind.missing_files:
-                    from planner.executor.protocol import FileManifest
-
-                    missing = type_adapter(tuple[FileManifest, ...]).validate_python(
-                        response.payload.get("files")
-                    )
-                    snapshots = {
-                        s.manifest: s
-                        for s in await asyncio.to_thread(self.snapshots, envelope.submission_id)
-                    }
-                    for manifest in missing:
-                        if manifest not in snapshots:
-                            raise ValueError("VPS requested a file outside this item")
-                        refusal = await link.put_file(envelope, snapshots[manifest])
-                        if refusal is not None:
-                            await asyncio.to_thread(self.acknowledge, refusal)
-                            return
-                    continue
-                if response.kind is not WireMessageKind.receipt:
-                    raise ValueError("expected outbox receipt")
-                receipt = type_adapter(AcceptanceReceipt).validate_python(response.payload)
-                await asyncio.to_thread(self.acknowledge, receipt)
-                return
-            except sqlite3.OperationalError as error:
-                if error.sqlite_errorcode not in (
-                    sqlite3.SQLITE_BUSY,
-                    sqlite3.SQLITE_LOCKED,
-                ):
-                    raise
-                await asyncio.sleep(OUTBOX_RETRY_SECONDS)
+            response = await link.request(WireMessageKind.envelope, self._object(envelope))
+            if response.kind is WireMessageKind.missing_files:
+                missing = type_adapter(tuple[FileManifest, ...]).validate_python(
+                    response.payload.get("files")
+                )
+                snapshots = {
+                    s.manifest: s
+                    for s in await asyncio.to_thread(self.snapshots, envelope.submission_id)
+                }
+                for manifest in missing:
+                    if manifest not in snapshots:
+                        raise ValueError("VPS requested a file outside this item")
+                    refusal = await link.put_file(envelope, snapshots[manifest])
+                    if refusal is not None:
+                        await asyncio.to_thread(self.acknowledge, refusal)
+                        return
+                continue
+            if response.kind is not WireMessageKind.receipt:
+                raise ValueError("expected outbox receipt")
+            receipt = type_adapter(AcceptanceReceipt).validate_python(response.payload)
+            await asyncio.to_thread(self.acknowledge, receipt)
+            return
 
     async def send_pending(self, link: OutboxLink | Link) -> None:
         if isinstance(link, Link):

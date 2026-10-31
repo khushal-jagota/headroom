@@ -293,53 +293,6 @@ def test_refused_confirmation_is_available_to_later_retry_without_requeue(tmp_pa
     asyncio.run(run())
 
 
-def test_busy_confirmation_retries_same_sequence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from planner.executor import mac_outbox as module
-
-    monkeypatch.setattr(module, "OUTBOX_BUSY_TIMEOUT_MS", 10)
-
-    async def run() -> None:
-        outbox = MacOutbox(tmp_path / "outbox")
-        envelope = outbox.add(entry())
-        busy = sqlite3.connect(outbox.root / DATABASE_NAME)
-        busy.execute("BEGIN IMMEDIATE")
-        attempts = 0
-        retried = asyncio.Event()
-
-        class Link:
-            async def request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-                nonlocal attempts
-                assert TypeAdapter(QueuedEnvelope).validate_python(payload) == envelope
-                attempts += 1
-                if attempts > 1:
-                    retried.set()
-                return WireMessage(
-                    WireMessageKind.receipt,
-                    "reply",
-                    json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
-                )
-
-            async def put_file(self, envelope: QueuedEnvelope, snapshot: FileSnapshot) -> None:
-                raise AssertionError("no files")
-
-        sender = asyncio.create_task(outbox.send_pending(Link()))
-        try:
-            await asyncio.wait_for(retried.wait(), 2)
-            assert outbox.pending_count() == 1
-            busy.rollback()
-            assert await outbox.wait_confirmed("write", 2) == receipt(envelope)
-            assert outbox.pending_count() == 0
-        finally:
-            busy.close()
-            sender.cancel()
-            await asyncio.gather(sender, return_exceptions=True)
-            outbox.close()
-
-    asyncio.run(run())
-
-
 def test_ticket_index_skips_unchanged_sources_and_rechecks_racy_same_size_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
