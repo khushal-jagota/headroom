@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import threading
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -2288,7 +2289,7 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.gateway._link is not None
-        release_application, release_event = asyncio.Event(), asyncio.Event()
+        release_application, release_event = threading.Event(), asyncio.Event()
         application_waiting, event_waiting, stop_hint = (
             asyncio.Event(),
             asyncio.Event(),
@@ -2302,7 +2303,8 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             await harness.wait_ask_reachable()
             reference = harness.ask.child
             stop_exact = harness.mac.runner._stop_exact_child
-            publish_application = harness.mac.runner._publish_application
+            publish = harness.mac.outbox.add
+            loop = asyncio.get_running_loop()
             native_stop = harness.native.stop
             accept = harness.endpoint.inbox.accept
             resolve = harness.endpoint.runs._resolve_command
@@ -2311,10 +2313,13 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                 stopping.set()
                 return await stop_exact(command)
 
-            async def late_application(application: Any) -> None:
-                application_waiting.set()
-                await release_application.wait()
-                await publish_application(application)
+            def late_application(
+                entry: OutboxEntry, *, ticket_id: str | None = None
+            ) -> QueuedEnvelope:
+                if entry.kind is EnvelopeKind.answer_application:
+                    loop.call_soon_threadsafe(application_waiting.set)
+                    assert release_application.wait(10), "callback publication was not released"
+                return publish(entry, ticket_id=ticket_id)
 
             async def final_native_event() -> None:
                 assert harness.native.sink is not None
@@ -2344,7 +2349,7 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
                 pass
 
             monkeypatch.setattr(harness.mac.runner, "_stop_exact_child", observe_native_stop)
-            monkeypatch.setattr(harness.mac.runner, "_publish_application", late_application)
+            monkeypatch.setattr(harness.mac.outbox, "add", late_application)
             monkeypatch.setattr(harness.native, "cancel_running_turn", cancel_native, raising=False)
             monkeypatch.setattr(harness.native, "stop", final_native_event)
             monkeypatch.setattr(harness.endpoint.inbox, "accept", withheld_event)

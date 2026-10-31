@@ -92,10 +92,14 @@ content hash and required files before choosing the event, stop, answer or agent
 handler. Missing bytes request an upload before a bad payload is refused.
 The inbox then joins the conversation's write transaction to record replay position
 and receipt, checking the connection generation and replay position again at commit.
-A stale event is accepted with `applied: false` and changes no conversation rows or
-live output. Agent writes use canonical writers. Before sending an
-agent-authored message, the inbox records `dispatching`; a repeat without a known
-outcome returns uncertainty and sends nothing. There is no separate message ledger.
+The append is shared with local conversation rows and keeps activity, compaction,
+attention, failure wakes and turn/request state in that transaction. Only a newly
+accepted effect applies its live conversation change; replay and refusal keep their
+receipt without applying it again. A stale event is accepted with `applied: false`
+and changes no conversation rows or live output. Agent writes use canonical writers.
+Before sending an agent-authored message, the inbox records `dispatching`; a repeat
+without a known outcome returns uncertainty and sends nothing. There is no separate
+message ledger.
 
 Code paths: `src/planner/conversation/`, `src/planner/executor/link.py`, `link_files.py`,
 `protocol.py`, `mac_runner.py`, `mac_outbox.py`, `mac_agent_gateway.py`, `mac_service.py`,
@@ -386,13 +390,16 @@ turn ending.
 Each connection asks the Mac once for pending command IDs and its live children.
 The Mac holds command state in memory for its process lifetime. An unknown ID can
 be sent again with exactly the same ID and content. A preparing or invoking command
-keeps its existing waiter. A finished command returns its first result. Ordinary
-command results use direct replies and this reconnect answer; they do not enter
+keeps its existing waiter. A finished command returns its first result. Its command
+record also holds any required callback application or stop proof until publication
+succeeds. Retrying that publication never repeats the provider call. Ordinary command
+results use direct replies and this reconnect answer; they do not enter
 the outbox or need result acknowledgments. No periodic inventory pass rewrites
 question rows. A Mac restart ends its runs and leaves possible delivery uncertain.
 
 Saved answers use their answer ID as their only command ID. Reconnect checks the
-original child, turn and callback before sending one. Native callback application
+original child, turn and callback before sending one. Permission and question callbacks
+share one inventory of exact callback references. Native callback application
 remains a separate durable output fact. An answer is never redirected to a replacement.
 Connection readiness precedes ordinary outbox draining; ongoing output cannot
 hold the ready acknowledgment behind an ever-growing replay prefix.
@@ -416,7 +423,10 @@ Late command preparation and delayed inventory cannot revive that identity.
 A surviving VPS process keeps its existing idle and active child proxies across link loss.
 A restarted VPS uses saved run identities only to stop the old children.
 The next explicit prompt starts a fresh child with the retained provider session cursor.
-An explicit new stop can confirm an absent exact child only after all earlier work and journal receipts settle.
+An explicit new stop waits for earlier admitted commands and source publications even
+when the child is already absent. It queues its proof behind that output without
+waiting for earlier receipts. The VPS confirms the stop only when it accepts the
+ordered proof. Lost output keeps the stop uncertain.
 An old uncertain command always retains its first outcome. A failed cleanup keeps quarantine and blocks replacement.
 Claude cleanup retains the exact SDK client until disconnect succeeds.
 The adapter also retains the SDK process object and requires its exit before transport cleanup succeeds.
@@ -633,8 +643,8 @@ See [runtime environments](environments.md) and [VPS deployment](deployment.md) 
 receipt time of a strictly decoded frame on the current established executor
 session. A validated initial handshake supplies the first observation. Later
 frames advance it before domain dispatch, including operations that receive a
-refusal. An old writer or generation cannot advance it. `observed_at_ms` keeps
-its original meaning: the handshake observation time.
+refusal. An old writer or generation cannot advance it. The database keeps the
+connection identity, generation and state; it stores no observation or loss time.
 
 Contact proves receipt only. It proves neither current activity nor answer
 delivery. After disconnect, the last contact remains historical. Before the first

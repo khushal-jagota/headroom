@@ -69,7 +69,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
         registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "native"),
             incarnation=reference.executor_incarnation,
-            spool=spool,
+            outbox=spool,
             factory=cast(Any, lambda *args: lambda **kwargs: native),
             message_files=ConversationMessageFiles(tmp_path / "db"),
         )

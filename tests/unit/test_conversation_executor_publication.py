@@ -173,7 +173,7 @@ def test_refused_evidence_before_stop_commit_keeps_core_available(
             identity = ExecutorIdentity(
                 PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
             )
-            native.runs.begin_connection(identity, 1)
+            native.runs.begin_connection(identity)
             native.runs.register_child(reference, "chief", "chief", 1)
 
             stops: list[str] = []

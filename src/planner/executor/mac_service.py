@@ -65,7 +65,7 @@ class MacService:
         self.runner = MacRunner(
             paths=paths,
             incarnation=self.identity.executor_incarnation,
-            spool=self.outbox,
+            outbox=self.outbox,
             panels_server_url=self.server_url,
             message_files=ConversationMessageFiles(paths.root / "artifacts" / "unused-db-path"),
             connection=lambda: self.gateway.connection(),

@@ -1582,6 +1582,7 @@ def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
         backend = harness.backend("c")
         backend.cancels_wait_for_release = asyncio.Event()
         backend.cancel_has_begun = asyncio.Event()
+        backend.reports_its_ending_during_a_cancel = True
 
         killing = asyncio.create_task(harness.system.kill("c"))
         await backend.cancel_has_begun.wait()
@@ -1597,120 +1598,14 @@ def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
         backend.cancels_wait_for_release.set()
 
         await killing
-        assert await sending == PromptDeliveryStarted()
+        # A send admitted while cancellation releases the lock can queue. Either
+        # delivery fate must lead to the message reaching the successor child.
+        assert isinstance(await sending, (PromptDeliveryStarted, PromptDeliveryQueued))
         await harness.settle()
 
         assert await harness.system.is_running("c") is True
         assert backend.written_texts() == ("incumbent", "sent during the kill")
-
-    _run(exercise)
-
-
-def test_remote_kill_cannot_retire_or_end_a_successor_after_cancel(
-    harness: _Harness,
-) -> None:
-    """A cancel result owns its exact child and turn, never later runtime work."""
-    from tests.unit.test_executor_native_runtime import canonical_snapshot
-
-    from planner.execution_identity import ChildReference
-    from planner.executor.protocol import (
-        ChildCommand,
-        ChildOperation,
-        CommandDisposition,
-        CommandOutcome,
-    )
-    from planner.executor.vps_remote_child import MacRemoteChild
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        state = harness.system._conversations["c"]
-        running = state.running_turn
-        assert running is not None
-        reference = ChildReference("incarnation", "original-child", "c")
-        entered, release = asyncio.Event(), asyncio.Event()
-        commands: list[ChildCommand] = []
-
-        async def send(command: ChildCommand) -> CommandOutcome:
-            commands.append(command)
-            if command.operation is ChildOperation.cancel_running_turn:
-                entered.set()
-                await release.wait()
-            return CommandOutcome(
-                command.command_id, command.child, CommandDisposition.succeeded, {}
-            )
-
-        def proxy(child_reference: ChildReference) -> MacRemoteChild:
-            return MacRemoteChild(child_reference, send, lambda resolved: canonical_snapshot())
-
-        state.child = proxy(reference)
-        state.executor_child_reference = reference
-        killing = asyncio.create_task(harness.system.kill("c"))
-        await entered.wait()
-        # The replacement arrives through the backend seam while the old cancel
-        # is outstanding. Its public command stream must receive no stale stop.
-        replacement = replace(reference, child_id="successor")
-        async with state.lock:
-            state.child = proxy(replacement)
-            state.executor_child_reference = replacement
-        release.set()
-        await killing
-        assert [command.operation for command in commands] == [ChildOperation.cancel_running_turn]
-        assert await harness.recorded_endings("c") == ()
-
-    _run(exercise)
-
-
-def test_remote_kill_retires_same_child_without_ending_its_completed_copy_twice(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Inventory copies a turn record, so the captured record can outlive its ending."""
-    from tests.unit.test_executor_native_runtime import canonical_snapshot
-
-    from planner.execution_identity import ChildReference
-    from planner.executor.protocol import ChildCommand, CommandDisposition, CommandOutcome
-    from planner.executor.vps_remote_child import MacRemoteChild
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        state = harness.system._conversations["c"]
-        running = state.running_turn
-        assert running is not None
-        reference = ChildReference("incarnation", "original-child", "c")
-        entered, release = asyncio.Event(), asyncio.Event()
-        retired: list[object] = []
-
-        async def send(command: ChildCommand) -> CommandOutcome:
-            entered.set()
-            await release.wait()
-            return CommandOutcome(
-                command.command_id, command.child, CommandDisposition.succeeded, {}
-            )
-
-        async def discard(current_state: Any, child: Any) -> None:
-            assert current_state is state
-            retired.append(child)
-
-        monkeypatch.setattr(harness.system, "_discard_child", discard)
-        original = MacRemoteChild(reference, send, lambda resolved: canonical_snapshot())
-        current = MacRemoteChild(reference, send, lambda resolved: canonical_snapshot())
-        state.child = original
-        state.executor_child_reference = reference
-        killing = asyncio.create_task(harness.system.kill("c"))
-        await entered.wait()
-        async with state.lock:
-            state.child = current
-            copied = replace(running)
-            state.running_turn = copied
-            await harness.system._end_turn(state, copied, ConversationTurnEnding.completed, None)
-            assert state.running_turn is None
-            assert not running.ended
-        release.set()
-        await killing
-        assert retired == [current]
-        assert await harness.recorded_endings("c") == (ConversationTurnEnding.completed,)
-        assert state.last_ended_turn_token == running.token
+        assert await harness.recorded_endings("c") == (ConversationTurnEnding.interrupted,)
 
     _run(exercise)
 

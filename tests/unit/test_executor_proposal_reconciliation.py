@@ -74,8 +74,8 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         identity = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "mac_process", 1
         )
-        store.runs.begin_connection(identity, 1000)
-        store.runs.mark_ready(identity, 1001)
+        store.runs.begin_connection(identity)
+        store.runs.mark_ready(identity)
         ticket = data.create_ticket(
             tmp_db,
             title="Mac collaborative proposal",
@@ -199,9 +199,9 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         reconnected = ExecutorIdentity(
             PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, identity.executor_incarnation, 2
         )
-        store.runs.mark_lost(identity, 1005)
-        store.runs.begin_connection(reconnected, 2000)
-        store.runs.mark_ready(reconnected, 2001)
+        store.runs.mark_lost(identity)
+        store.runs.begin_connection(reconnected)
+        store.runs.mark_ready(reconnected)
         for _ in range(2):
             assert store.accept(envelope, writer, 2002, identity=reconnected) == receipt
             assert data.read_ticket(tmp_db, ticket.id) == next_claim
