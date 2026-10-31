@@ -440,7 +440,7 @@ class ExecutorHarness:
             await self.transport_stack.aclose()
 
     async def _close(self) -> None:
-        self.mac.gateway._stop.set()
+        self.mac._stop.set()
         if self.endpoint.runs.link is not None:
             self.endpoint.runs.link.close()
         with contextlib.suppress(TimeoutError):
@@ -576,7 +576,7 @@ async def boot(
     )
     try:
         await eventually(
-            lambda: endpoint.runs.ready and mac.gateway.state == ConnectionState.ready,
+            lambda: endpoint.runs.ready and mac.connection.state == ConnectionState.ready,
             "Initial Mac/VPS handshake did not become ready",
         )
         await system.start_conversation(
@@ -792,7 +792,8 @@ def test_early_prompt_event_and_idle_publications_do_not_wait_for_retry_timer(
                 )
             assert harness.mac.identity.connection_generation == generation
             assert (
-                harness.mac.gateway.state is ConnectionState.ready and harness.endpoint.runs.ready
+                harness.mac.connection.state is ConnectionState.ready
+                and harness.endpoint.runs.ready
             )
             assert harness.native.prompt_count == 2
         finally:
@@ -982,7 +983,7 @@ def test_exact_model_and_effort_cross_authenticated_native_dispatch(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         conn = connect(harness.endpoint.db_path)
         try:
             second = CapturedNativeChild()
@@ -1150,7 +1151,7 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                     )
                     resume = await hold_reconnection(harness, monkeypatch)
                     await eventually(
-                        lambda: harness.mac.gateway._link is None, "Mac link stayed open"
+                        lambda: harness.mac.connection.link is None, "Mac link stayed open"
                     )
                     await sink.report(turn, AgentMessageDelta(text_delta="Lost text"))
                     await sink.report(turn, ModelThinkingHappened())
@@ -1211,7 +1212,7 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
 
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         try:
             child = next(iter(harness.mac.runner._children.values())).reference
             native_child = next(iter(harness.mac.runner._children.values()))
@@ -1311,7 +1312,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         try:
             if receipt_failure != "disconnect":
                 original_send = harness.endpoint.runs.link._writer.send
@@ -1329,7 +1330,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                 monkeypatch.setattr(harness.endpoint.runs.link._writer, "send", fail_receipt)
                 if receipt_failure == "silent":
                     monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 0.2)
-                    writer = harness.mac.gateway._link
+                    writer = harness.mac.connection.link
                     assert writer is not None
                     close = writer.close
 
@@ -1392,7 +1393,7 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         try:
             await asyncio.wait_for(harness.endpoint.close(), 2)
             await harness.native.raise_ask()
@@ -1425,7 +1426,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         release = asyncio.Event()
         late_delivery: asyncio.Task[PromptDeliveryFate] | None = None
         try:
@@ -1453,7 +1454,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
                 )
             )
             await asyncio.wait_for(reached.wait(), 3)
-            old_mac.gateway._stop.set()
+            old_mac._stop.set()
             assert harness.endpoint.runs.link is not None
             harness.endpoint.runs.link.close()
             await asyncio.wait_for(harness.task, 3)
@@ -1480,7 +1481,7 @@ def test_mac_replacement_interrupts_old_run_and_allows_fresh_send(
             await eventually(
                 lambda: (
                     harness.endpoint.runs.ready
-                    and replacement.gateway.state is ConnectionState.ready
+                    and replacement.connection.state is ConnectionState.ready
                 ),
                 "Replacement Mac did not reconcile",
             )
@@ -1527,7 +1528,7 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             await harness.native.sink.report(
@@ -1626,7 +1627,7 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             await harness.native.sink.report(
@@ -1688,7 +1689,7 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         entered, cleanup = asyncio.Event(), asyncio.Event()
         sending = None
         try:
@@ -1782,7 +1783,7 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         try:
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
@@ -1851,7 +1852,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         try:
             identity = harness.endpoint.runs.identity
             assert identity is not None
@@ -1896,7 +1897,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         try:
             reject = True
             rejected = asyncio.Event()
@@ -1992,7 +1993,7 @@ def test_input_descriptor_must_validate_before_provider_invocation(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
             await harness.native.sink.report(
@@ -2071,9 +2072,9 @@ async def hold_reconnection(
     resume = asyncio.Event()
     connected = harness.mac._connected
 
-    async def paused(command_tasks: set[asyncio.Task[None]] | None = None) -> None:
+    async def paused() -> None:
         await resume.wait()
-        await connected(command_tasks)
+        await connected()
 
     monkeypatch.setattr(harness.mac, "_connected", paused)
     assert harness.endpoint.runs.link is not None
@@ -2122,7 +2123,7 @@ def test_saved_answer_after_vps_restart_remains_unapplied(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         resume = None
         try:
             if kind is AskKind.permission:
@@ -2216,7 +2217,7 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         resume = None
         native_cancel = asyncio.Event()
         cancel_entered = asyncio.Event()
@@ -2335,7 +2336,7 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
-        assert harness.mac.gateway._link is not None
+        assert harness.mac.connection.link is not None
         release_application, release_event = threading.Event(), asyncio.Event()
         application_waiting, event_waiting, stop_hint = (
             asyncio.Event(),
@@ -2573,8 +2574,8 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
                 None,
                 decode_command_arguments(ChildOperation.cancel_running_turn, {}),
             )
-            assert harness.mac.gateway._link is not None
-            mac_send = harness.mac.gateway._link._writer.send
+            assert harness.mac.connection.link is not None
+            mac_send = harness.mac.connection.link._writer.send
             # Commands use the shared send lock directly; observe at the writer boundary.
             writer = harness.endpoint.runs.link
             assert writer is not None
@@ -2619,7 +2620,7 @@ def test_reconnect_asks_once_and_resends_only_unknown_command_with_same_id(
 
             monkeypatch.setattr(harness.native, "cancel_running_turn", invoke, raising=False)
             monkeypatch.setattr(harness.mac, "_command", receive)
-            monkeypatch.setattr(harness.mac.gateway._link._writer, "send", lose_result)
+            monkeypatch.setattr(harness.mac.connection.link._writer, "send", lose_result)
             monkeypatch.setattr(Link, "request", ask)
             if phase == "preparing":
                 locked = harness.mac.runner._children[reference.child_id].lock
@@ -2687,10 +2688,10 @@ def test_reconnect_ready_precedes_retained_output_drain(
                 generation = harness.mac.identity.connection_generation
                 resume = await hold_reconnection(harness, monkeypatch)
                 await eventually(
-                    lambda: harness.mac.gateway.lost_at_ms is not None,
+                    lambda: harness.mac.connection.lost_at_ms is not None,
                     "Mac did not record the current connection loss",
                 )
-                loss = harness.mac.gateway.lost_at_ms
+                loss = harness.mac.connection.lost_at_ms
                 from planner.executor import mac_service
                 from planner.executor.link import dial_link
 
@@ -2700,12 +2701,12 @@ def test_reconnect_ready_precedes_retained_output_drain(
                 @contextlib.asynccontextmanager
                 async def interrupted_dial(*args: Any, **kwargs: Any) -> AsyncIterator[Link]:
                     nonlocal failed_attempts
-                    assert harness.mac.gateway.health().lost_at_ms == loss
+                    assert harness.mac.connection.health().lost_at_ms == loss
                     if failed_attempts == 0:
                         failed_attempts += 1
                         raise OSError("scripted connection refusal during the outage")
                     async with dial(*args, **kwargs) as link:
-                        assert harness.mac.gateway.health().lost_at_ms == loss
+                        assert harness.mac.connection.health().lost_at_ms == loss
                         yield link
 
                 monkeypatch.setattr(mac_service, "dial_link", interrupted_dial)
@@ -2729,7 +2730,7 @@ def test_reconnect_ready_precedes_retained_output_drain(
             )
             assert receipt is not None and receipt.result.get("applied") is True
             assert await harness.endpoint.inbox.accept(queued[0], harness.mac.identity) == receipt
-            assert harness.mac.gateway.lost_at_ms is None
+            assert harness.mac.connection.lost_at_ms is None
             assert harness.events("permission_asked") == 1
         finally:
             if resume is not None:

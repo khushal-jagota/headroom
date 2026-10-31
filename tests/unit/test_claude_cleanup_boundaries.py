@@ -35,6 +35,7 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.executor.configuration import ExecutorPaths
+from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
@@ -68,6 +69,7 @@ def claude_registry(
 
     return MacRunner(
         incarnation=IDENTITY.executor_incarnation,
+        connection=MacConnection(IDENTITY),
         outbox=MacOutbox(tmp_path / "spool"),
         factory=factory,
         paths=ExecutorPaths(tmp_path / "executor"),

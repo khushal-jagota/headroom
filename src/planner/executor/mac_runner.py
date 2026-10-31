@@ -62,8 +62,8 @@ from planner.executor.files import (
     install_verified,
     safe_component,
 )
-from planner.executor.link import Link
 from planner.executor.link_files import get_file, settled_io
+from planner.executor.mac_connection import MacConnection
 from planner.executor.protocol import (
     LIVE_BACKEND_EVENT_METHODS,
     AnswerApplication,
@@ -98,6 +98,7 @@ from planner.executor.protocol import (
     type_adapter,
 )
 from planner.executor.skills import install_native_skill_snapshot, native_skill_home
+from planner.files.logic.paths import conversation_files_root
 from planner.workspace_localization import localize_workspace
 
 
@@ -163,10 +164,9 @@ class NativeEventSink:
                 event = replace(event, detail=event.detail[:MAX_TOOL_DETAIL_CHARACTERS])
         method, arguments = encode_backend_event(event)
         if method in LIVE_BACKEND_EVENT_METHODS:
-            if self.runner.send_live_event is not None:
-                await self.runner.send_live_event(
-                    BackendEvent(self.reference, method, turn, arguments)
-                )
+            await self.runner._send_live_event(
+                BackendEvent(self.reference, method, turn, arguments)
+            )
             return
         await self.runner.report_event(self.reference, turn, event)
 
@@ -196,8 +196,7 @@ class MacRunner:
         outbox: MacOutboxWriter,
         factory: Callable[[ResolvedConversationStart], BackendChildFactory] | None = None,
         panels_server_url: str = "",
-        connection: Callable[[], Link | None] = lambda: None,
-        ready: Callable[[], bool] = lambda: False,
+        connection: MacConnection,
         message_files: ConversationMessageFiles,
         paths: ExecutorPaths,
         workspace_home: Path | None = None,
@@ -206,11 +205,7 @@ class MacRunner:
         self.paths = paths
         self.incarnation = incarnation
         self.outbox = outbox
-        self.send_live_event: Callable[[BackendEvent], Awaitable[None]] | None = (
-            self._send_live_event
-        )
         self.connection = connection
-        self.ready = ready
         self.factory = factory or self._factory(panels_server_url)
         self.message_files = message_files
         self._children: dict[str, RunningChild] = {}
@@ -269,8 +264,8 @@ class MacRunner:
         return factory
 
     async def _send_live_event(self, event: BackendEvent) -> None:
-        link = self.connection()
-        if link is not None and self.ready():
+        link = self.connection.ready_link()
+        if link is not None:
             with contextlib.suppress(ConnectionError, OSError):
                 await link.tell(WireMessageKind.live_backend_event, as_object(event))
 
@@ -286,7 +281,7 @@ class MacRunner:
                     await self._download_input(command, piece.stored_file_id)
 
     async def _download_input(self, command: ChildCommand, stored_file_id: str) -> None:
-        link = self.connection()
+        link = self.connection.link
         if link is None:
             raise ConnectionError("executor link unavailable")
         temporary = self.paths.run / (".input-" + uuid4().hex)
@@ -306,13 +301,13 @@ class MacRunner:
                     or Path(manifest.relative_path).name != stored_file_id
                 ):
                     raise ValueError("invalid input transfer")
-                root = self.paths.root / "artifacts" / "files" / "conversations"
+                root = conversation_files_root(self.paths.message_files_anchor)
                 target = contained_path(
                     root, f"{safe_component(manifest.owner_id)}/{manifest.relative_path}"
                 )
                 self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
                 await get_file(link, slot, temporary)
-                if link is not self.connection():
+                if link is not self.connection.link:
                     raise ConnectionError("input generation changed")
 
                 await settled_io(install_verified, temporary, target, manifest)

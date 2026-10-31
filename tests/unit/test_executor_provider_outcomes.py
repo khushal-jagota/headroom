@@ -36,8 +36,10 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     )
     from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
-    from planner.execution_identity import ChildReference
+    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.execution_identity import ChildReference, ExecutorIdentity
     from planner.executor.configuration import ExecutorPaths
+    from planner.executor.mac_connection import MacConnection
     from planner.executor.mac_outbox import MacOutbox
     from planner.executor.mac_runner import MacRunner
     from planner.executor.protocol import ChildCommand, CommandDisposition
@@ -69,6 +71,15 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
         registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "native"),
             incarnation=reference.executor_incarnation,
+            connection=MacConnection(
+                ExecutorIdentity(
+                    PROTOCOL_VERSION,
+                    "a" * 40,
+                    SPOOL_FORMAT_VERSION,
+                    reference.executor_incarnation,
+                    1,
+                )
+            ),
             outbox=spool,
             factory=cast(Any, lambda *args: lambda **kwargs: native),
             message_files=ConversationMessageFiles(tmp_path / "db"),

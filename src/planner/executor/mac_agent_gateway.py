@@ -13,23 +13,20 @@ from functools import partial
 from pathlib import Path
 from typing import Literal, cast
 
-from planner.execution_identity import ChildReference, ExecutorIdentity
-from planner.executor.clock import now_ms
+from planner.execution_identity import ChildReference
 from planner.executor.configuration import (
     CLI_RESULT_TIMEOUT_SECONDS,
 )
 from planner.executor.files import (
     safe_component,
 )
-from planner.executor.link import Link
+from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner, RunningChild
 from planner.executor.protocol import (
     AcceptanceReceipt,
     CliWrite,
-    ConnectionState,
     EnvelopeKind,
-    ExecutorHealth,
     IpcOperation,
     IpcRequest,
     IpcResponse,
@@ -43,7 +40,6 @@ from planner.executor.protocol import (
     QuiesceRequest,
     ReceiptDisposition,
     UnconfirmedCliResult,
-    WireMessage,
     WireMessageKind,
     as_object,
     encode_frame,
@@ -58,60 +54,23 @@ class AgentGateway:
         *,
         runner: MacRunner,
         outbox: MacOutbox,
-        identity: Callable[[], ExecutorIdentity],
+        connection: MacConnection,
+        request_exit: Callable[[], None],
         settle_catalogs: Callable[[], Awaitable[None]],
     ) -> None:
         self.runner = runner
         self.spool = outbox
-        self._identity = identity
+        self.connection = connection
+        self._request_exit = request_exit
         self._settle_catalogs = settle_catalogs
-        self._link: Link | None = None
-        self._handshake_accepted = False
-        self.state = ConnectionState.disconnected
-        self.lost_at_ms: int | None = None
-        self._transport_admission_stopped = False
         self._publishing: dict[str, tuple[ChildReference, asyncio.Task[QueuedEnvelope]]] = {}
-        self._stop = asyncio.Event()
         self.exit_committed = False
         self._quiesce_lock = asyncio.Lock()
-
-    @property
-    def identity(self) -> ExecutorIdentity:
-        return self._identity()
-
-    def accepting(self, link: Link) -> bool:
-        return (
-            self._link is link
-            and self._handshake_accepted
-            and self.state is ConnectionState.ready
-            and not self._transport_admission_stopped
-        )
-
-    def connection(self) -> Link | None:
-        return self._link if self._handshake_accepted else None
-
-    def health(self) -> ExecutorHealth:
-        return ExecutorHealth(
-            self.identity,
-            os.getpid(),
-            self.state,
-            self.state == ConnectionState.ready,
-            now_ms(),
-            self.lost_at_ms,
-        )
-
-    async def request(
-        self, kind: WireMessageKind, payload: JsonObject, *, request_id: str | None = None
-    ) -> WireMessage:
-        link = self._link
-        if link is None:
-            raise ConnectionError("executor link unavailable")
-        return await link.request(kind, payload, request_id=request_id)
 
     async def handle(self, request: IpcRequest) -> IpcResponse:
         try:
             if request.operation == IpcOperation.health:
-                return IpcResponse(request.request_id, as_object(self.health()), None)
+                return IpcResponse(request.request_id, as_object(self.connection.health()), None)
             if request.operation == IpcOperation.quiesce:
                 return await self._quiesce(request)
             child = self.runner.authenticate(request.child_id, request.capability)
@@ -140,20 +99,23 @@ class AgentGateway:
     async def _quiesce(self, request: IpcRequest) -> IpcResponse:
         maintenance = type_adapter(QuiesceRequest).validate_python(request.payload)
         async with self._quiesce_lock:
-            self._transport_admission_stopped = True
+            self.connection.admission_stopped = True
             await self._settle_catalogs()
             quiescence = await self.runner.quiesce()
             exit_committed = quiescence.ready and maintenance.exit_when_ready
             if exit_committed:
                 self.exit_committed = True
-                self._stop.set()
-            result = QuiescenceReceipt(self.identity, os.getpid(), quiescence, exit_committed)
+                self._request_exit()
+            result = QuiescenceReceipt(
+                self.connection.identity, os.getpid(), quiescence, exit_committed
+            )
             return IpcResponse(request.request_id, as_object(result), None)
 
     async def _read(self, request: IpcRequest, child: RunningChild) -> IpcResponse:
-        if self.state != ConnectionState.ready:
+        link = self.connection.ready_link()
+        if link is None:
             raise ConnectionError("VPS unavailable; reads never use journal")
-        response = await self.request(
+        response = await link.request(
             WireMessageKind.read_request,
             as_object(
                 LiveReadRequest(

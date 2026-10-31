@@ -101,27 +101,6 @@ class CanonicalSkillSnapshot:
     required_skill_names: tuple[str, ...]
 
 
-class ConnectionPhase(StrEnum):
-    app_connect = "app_connect"
-    hello = "hello"
-    reconnect_ask = "reconnect_ask"
-    steady_state = "steady_state"
-
-
-class ConnectionFailureOrigin(StrEnum):
-    reader = "reader"
-    session = "session"
-
-
-class ConnectionFailureCategory(StrEnum):
-    configuration = "configuration"
-    tls = "tls"
-    authentication = "authentication"
-    timeout = "timeout"
-    network = "network"
-    connection_or_protocol = "connection_or_protocol"
-
-
 @dataclass(frozen=True, slots=True)
 class FileTransfer:
     """Generation reservation; publication authority stays with the original child."""

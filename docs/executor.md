@@ -105,7 +105,7 @@ without a known outcome returns uncertainty and sends nothing. There is no separ
 message ledger.
 
 Code paths: `src/planner/conversation/`, `src/planner/executor/link.py`, `link_files.py`,
-`protocol.py`, `mac_runner.py`, `mac_outbox.py`, `mac_agent_gateway.py`, `mac_service.py`,
+`protocol.py`, `mac_runner.py`, `mac_outbox.py`, `mac_agent_gateway.py`, `mac_connection.py`, `mac_service.py`,
 `vps_runs.py`, `vps_remote_child.py`, `vps_inbox.py`, `vps_agent_writes.py`,
 `vps_transport.py`, `app_transport.py`, `catalog_relay.py`, `src/planner/core/server.py`.
 
@@ -634,7 +634,16 @@ boundary. `worker_identity.py` reads the Worker Ticket identity used by routing,
 run assignment, and canonical skill loading. Inbox persistence reuses the store's
 JSON encoding and validation errors.
 
-Connection diagnostics omit credentials, addresses, paths, exception messages, and remote payloads.
+`MacConnection` owns the Mac's link, connection identity, readiness, admission and
+first loss time. The service updates those facts; the runner and agent gateway use
+the same object. A link becomes available only after hello is accepted. Live events use only a ready link, and
+reads fail while it is unavailable. Commands keep their outcomes across reconnects.
+Message input downloads and the provider's message-file reader resolve the same
+folder beneath the executor's artifacts directory.
+
+Connection diagnostics log one line per failure category per process. Each line
+names the connection phase and exception class. They omit credentials, addresses,
+paths, exception messages and remote payloads.
 Active transfers prevent quiescence. The Manager coordinates compatible peers through the existing identity-bound application procedure.
 A coding candidate grants no permission for a live route or peer change.
 

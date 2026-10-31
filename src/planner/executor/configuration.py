@@ -62,6 +62,11 @@ class ExecutorPaths:
         return self.root / "artifacts" / "tickets"
 
     @property
+    def message_files_anchor(self) -> Path:
+        """Path anchor for message files; no database is opened here."""
+        return self.root / "artifacts" / "message-files.db"
+
+    @property
     def skills(self) -> Path:
         return self.root / "skills"
 
