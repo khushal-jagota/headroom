@@ -356,8 +356,11 @@ command proves it cannot call the provider; stop waits for its physical cleanup.
 There are no input progress, completion or cancellation frames.
 
 The Mac resolves a checkout below the VPS account home relative to its own account
-home. The directory must exist. Workers receive local artifact paths and executor
-capabilities after host-specific role values are replaced.
+home when the conversation's workspace policy is `home_relative`. The `absolute`
+policy uses the stored path directly. These same policy values apply to Tickets,
+Managers, the Chief and goal agents. The directory must exist. Workers receive
+local artifact paths and executor capabilities after host-specific role values
+are replaced.
 
 Code paths: `src/planner/executor/mac_outbox.py`, `files.py`, `vps_inbox.py`, `vps_agent_writes.py`.
 

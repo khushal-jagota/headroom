@@ -53,7 +53,7 @@ class MacRunConversations(Protocol):
         self, turn: TurnToken, emit: Callable[[], Coroutine[Any, Any, None]]
     ) -> None: ...
 
-    async def interrupt_replaced_executor_runs(self, current_incarnation: str) -> None: ...
+    async def interrupt_runs_of_replaced_host(self, current_incarnation: str) -> None: ...
 
     async def stop_interrupted_remote_child(
         self, reference: ChildReference, child: MacRemoteChild
@@ -149,7 +149,7 @@ class MacRuns:
                 await settled_io(self.store.close_child, run.reference, now_ms())
                 replaced = True
         if replaced and hasattr(self, "conversations"):
-            await self.conversations.interrupt_replaced_executor_runs(identity.executor_incarnation)
+            await self.conversations.interrupt_runs_of_replaced_host(identity.executor_incarnation)
 
     async def link_up(self, link: Link, request_id: str) -> None:
         identity = link.identity

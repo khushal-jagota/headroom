@@ -1737,7 +1737,7 @@ def test_failed_turn_recording_error_retains_event_until_explicit_storage_resume
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("work"), sender_label="owner")
-        real_append = harness.store.accept_executor_effect
+        real_append = harness.store.commit_backend_event
         failed = asyncio.Event()
         calls = 0
         available = False
@@ -1750,7 +1750,7 @@ def test_failed_turn_recording_error_retains_event_until_explicit_storage_resume
             failed.set()
             raise sqlite3.OperationalError("disk unavailable")
 
-        harness.store.accept_executor_effect = unavailable  # type: ignore[method-assign]
+        harness.store.commit_backend_event = unavailable  # type: ignore[method-assign]
         completing = asyncio.create_task(harness.fail_turn("c", error_summary="the model refused"))
         await failed.wait()
         await asyncio.sleep(0)

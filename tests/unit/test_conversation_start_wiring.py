@@ -148,7 +148,7 @@ class _LinkWatchingConversationSystem:
         recipient: Principal | None = None,
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -165,7 +165,7 @@ class _LinkWatchingConversationSystem:
             recipient=recipient,
             reply_requested=reply_requested,
             recovery_references=recovery_references,
-            native_message_operation=native_message_operation,
+            recording_receipt=recording_receipt,
         )
 
     async def send_with_receipt(
@@ -186,7 +186,7 @@ class _LinkWatchingConversationSystem:
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> AddressedPromptDeliveryReceipt:
         return await self._system.send_with_receipt(
             conversation_id,
@@ -204,7 +204,7 @@ class _LinkWatchingConversationSystem:
             reply_requested=reply_requested,
             recovery_references=recovery_references,
             record_refusal=record_refusal,
-            native_message_operation=native_message_operation,
+            recording_receipt=recording_receipt,
         )
 
     async def record_message_to_owner(
@@ -218,7 +218,7 @@ class _LinkWatchingConversationSystem:
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         credit_explicit_reply: bool = True,
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
         await self._system.record_message_to_owner(
             conversation_id,
@@ -229,7 +229,7 @@ class _LinkWatchingConversationSystem:
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             credit_explicit_reply=credit_explicit_reply,
-            native_message_operation=native_message_operation,
+            recording_receipt=recording_receipt,
         )
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
@@ -525,7 +525,7 @@ def test_mac_project_path_is_resolved_on_the_execution_host(
     ticket = read_ticket(tmp_db, ticket.id)
     values = worker_resolve(tmp_db, ticket)
     assert values.workspace_folder == alias
-    assert values.workspace_path_policy is WorkspacePathPolicy.native_absolute
+    assert values.workspace_path_policy is WorkspacePathPolicy.absolute
     # The checkout may not exist on the VPS. Starting work must retain the Mac path.
     update_project(tmp_db, project.id, folder_path=tmp_path / "mac-only", now=2)
     values = worker_resolve(tmp_db, ticket)

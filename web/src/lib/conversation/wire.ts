@@ -517,7 +517,7 @@ export type OwnerSendBody = {
  */
 export type ConversationStartValues = {
   workspace_folder?: string;
-  workspace_path_policy?: "legacy_home_mapping" | "native_absolute";
+  workspace_path_policy?: "home_relative" | "absolute";
   backend_key: ConversationBackendKey;
   model: string | null;
   reasoning_effort: string | null;

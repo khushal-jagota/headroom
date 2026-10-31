@@ -90,7 +90,7 @@ def test_saved_choice_and_late_application_are_distinct_conversation_facts(
                 reference, send, lambda _: canonical_snapshot(), send_answer=commands.append
             )
             state.child = proxy
-            state.executor_child_reference = reference
+            state.retained_child_reference = reference
             response = await client.post(f"/api/conversation/conversations/c/{path}", json=body)
             assert response.json() == {"fate": "saved"}
             assert (

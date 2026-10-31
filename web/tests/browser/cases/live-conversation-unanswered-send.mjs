@@ -20,7 +20,7 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
   import { connectionStatus } from "../src/lib/changeStream";
 
   const scopeProof = new URLSearchParams(location.search).has('scope-proof');
-  let startValues = $state({backend_key:"codex" as const, model:"gpt-test", reasoning_effort:null as string|null, workspace_folder:"/project", workspace_path_policy:"native_absolute" as const});
+  let startValues = $state({backend_key:"codex" as const, model:"gpt-test", reasoning_effort:null as string|null, workspace_folder:"/project", workspace_path_policy:"absolute" as const});
   (window as any).__scopeWorkspace = (folder:string) => startValues = {...startValues, workspace_folder:folder};
   let scopedConversationId = $state<string|null>(null);
   let shown = $state(true);

@@ -215,7 +215,7 @@ class AgentWrites:
                     message,
                     mode,
                     sender_message_id=envelope.submission_id,
-                    native_message_operation=operation,
+                    recording_receipt=operation,
                 )
                 result = cast(JsonObject, api._result_json(delivered))
             except PlannerError as error:

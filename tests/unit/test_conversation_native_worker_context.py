@@ -112,7 +112,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             ConversationRoleMaterials("Old persisted Worker role.", identity),
             tmp_path,
             ConversationAccess.full,
-            workspace_path_policy=WorkspacePathPolicy.native_absolute,
+            workspace_path_policy=WorkspacePathPolicy.absolute,
         )
         await store.create_conversation(resolved)
         connection = connect(db_path)
@@ -141,7 +141,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             model_change=None,
         )
         with connect(db_path) as connection:
-            store.update_remote_identity_in_transaction(
+            store.update_session_in_transaction(
                 connection, "c_native", vendor_session_cursor=cursor
             )
             connection.commit()

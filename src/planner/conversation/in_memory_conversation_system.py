@@ -282,7 +282,7 @@ class InMemoryConversationSystem:
         recipient: Principal | None = None,
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         receipt = await self.send_with_receipt(
             conversation_id,
@@ -299,7 +299,7 @@ class InMemoryConversationSystem:
             recipient=recipient,
             reply_requested=reply_requested,
             recovery_references=recovery_references,
-            native_message_operation=native_message_operation,
+            recording_receipt=recording_receipt,
         )
         return receipt.fate
 
@@ -321,7 +321,7 @@ class InMemoryConversationSystem:
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> AddressedPromptDeliveryReceipt:
 
         # This implementation has no await within admission or delivery.
@@ -554,7 +554,7 @@ class InMemoryConversationSystem:
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         credit_explicit_reply: bool = True,
-        native_message_operation: NativeMessageOperation | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
         require_message_content(content)
         state = self._conversations.get(conversation_id)
