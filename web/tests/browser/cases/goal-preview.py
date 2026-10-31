@@ -18,6 +18,9 @@ from playwright.sync_api import expect
 
 TODAY = "2026-10-30"
 YESTERDAY = "2026-10-29"
+WRAPPED_LABEL = ("A completed checklist label long enough that it must wrap across "
+                 "two full lines at both the narrow phone width and the wider "
+                 "desktop width")
 
 
 class GoalFixture:
@@ -1337,7 +1340,34 @@ def goal_presentation_fixture():
                     "[Build bundle](/files/goals/goal_wrenfixture/artifacts/build.wrenbundle).",
         },
     ]
+    wrap = fixture.goal("goal_wrapfixture", "Wrapped checklist strike", 7)
+    wrap["primary_checklist_block_id"] = "wrap"
+    wrap["page"]["blocks"] = [
+        {
+            "type": "checklist", "id": "wrap", "title": "Wrap check",
+            "items": [
+                {"id": "short", "label": "Short label", "state": "done"},
+                {"id": "wrapped", "label": WRAPPED_LABEL, "state": "done"},
+            ],
+        },
+    ]
     return fixture
+
+
+def strike_mark_rects(checklist, label):
+    # getClientRects() returns one box per rendered line only when the mark is an
+    # inline fragment; a single box here would mean the old whole-row strike regressed.
+    return checklist.evaluate(
+        """(node, label) => {
+            const mark = Array.from(node.querySelectorAll('.strike-mark'))
+                .find(el => el.textContent.trim() === label);
+            if (!mark) return null;
+            return Array.from(mark.getClientRects()).map(
+                rect => ({width: rect.width, height: rect.height})
+            );
+        }""",
+        label,
+    )
 
 
 def centered_checklist_row(row):
@@ -1495,6 +1525,21 @@ def authored_goal_presentation(browser, url):
             geometry = centered_checklist_row(active)
             if output:
                 page.screenshot(path=str(output / f"{mode}.png"))
+            # Multi-line completed labels must carry one strike per rendered line, not
+            # one across the whole wrapped box. Read-only: runs before the no-write check.
+            page.goto(url + "#/workspace/goal/goal_wrapfixture", wait_until="domcontentloaded")
+            wrap_checklist = page.locator(
+                '[data-goal-page="goal_wrapfixture"]'
+            ).get_by_role("region", name="Completion checklist")
+            expect(wrap_checklist.get_by_role("button", name="2 completed", exact=True)).to_be_visible()
+            wrap_checklist.locator("[data-group-toggle]").click()
+            short_lines = strike_mark_rects(wrap_checklist, "Short label")
+            assert short_lines is not None and len(short_lines) == 1, short_lines
+            wrapped_lines = strike_mark_rects(wrap_checklist, WRAPPED_LABEL)
+            assert wrapped_lines is not None and len(wrapped_lines) >= 2, wrapped_lines
+            if output:
+                wrap_checklist.screenshot(path=str(output / f"{mode}-wrap.png"))
+            page.goto(url + "#/workspace/goal/goal_wrenfixture", wait_until="domcontentloaded")
             motion = disclosure_motion(
                 checklist.get_by_role("button", name="Review release", exact=True),
                 reduced,
@@ -1591,6 +1636,21 @@ def authored_goal_presentation(browser, url):
             assert errors == [], errors
             if not reduced:
                 overview_checklist_remount(page, fixture, phone, output, mode)
+                # Reopening a wrapped completed label must drop the strike and keep
+                # the label split one rendered line per fragment, not one merged box.
+                page.goto(url + "#/workspace/goal/goal_wrapfixture", wait_until="domcontentloaded")
+                wrap_checklist = page.locator(
+                    '[data-goal-page="goal_wrapfixture"]'
+                ).get_by_role("region", name="Completion checklist")
+                expect(wrap_checklist.get_by_role("button", name="2 completed", exact=True)).to_be_visible()
+                wrap_checklist.locator("[data-group-toggle]").click()
+                reopen = wrap_checklist.get_by_role("checkbox", name=WRAPPED_LABEL, exact=True)
+                (reopen.tap if phone else reopen.click)()
+                wrapped_row = wrap_checklist.locator('[data-step="wrapped"]')
+                expect(wrapped_row).not_to_have_class(re.compile("struck"))
+                reopened_lines = strike_mark_rects(wrap_checklist, WRAPPED_LABEL)
+                assert reopened_lines is not None and len(reopened_lines) >= 2, reopened_lines
+                page.goto(url + "#/workspace/goal/goal_wrenfixture", wait_until="domcontentloaded")
             receipts.append({"mode": mode, "geometry": geometry, "disclosure": motion,
                              "prose_geometry": prose_geometry,
                              "rail_geometry": rail_geometry, "writes": writes, "errors": errors})

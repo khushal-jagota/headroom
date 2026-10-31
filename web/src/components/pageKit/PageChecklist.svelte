@@ -276,7 +276,7 @@
                 <div class="step-main">
                   <div class="step-heading">
                     <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
-                      <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
+                      <span id="{uid}-{step.id}-title" class="title-text"><span class="strike-mark">{step.title}</span></span>
                     </button>
                     <ChecklistDeadline blockId={block.id} item={step.item}/>
                   </div>
@@ -320,7 +320,7 @@
                         </span>
                       </button>
                       <div class="step-heading">
-                        <div class="completed-title"><div id="{uid}-{step.id}-done" class="title-text">{step.title}</div></div>
+                        <div class="completed-title"><div id="{uid}-{step.id}-done" class="title-text"><span class="strike-mark">{step.title}</span></div></div>
                         <ChecklistDeadline blockId={block.id} item={step.item}/>
                       </div>
                     </div>
@@ -446,14 +446,18 @@
     text-align: left;
   }
   .step-title { cursor: pointer; border-radius: var(--radius-md); }
-  .title-text {
+  .title-text { transition: color var(--motion-base) var(--motion-ease); }
+  .strike-mark {
     background-image: linear-gradient(currentColor, currentColor);
     background-position: 0 60%;
     background-repeat: no-repeat;
     background-size: 0% 1px;
-    transition: background-size var(--motion-slow) var(--motion-ease), color var(--motion-base) var(--motion-ease);
+    transition: background-size var(--motion-slow) var(--motion-ease);
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
-  .step.struck .title-text { background-size: 100% 1px; color: var(--text-faint); }
+  .step.struck .title-text { color: var(--text-faint); }
+  .step.struck .strike-mark { background-size: 100% 1px; }
   /* Named for this disclosure, so the application-wide .panel card cannot style it. */
   .step-panel { overflow: hidden; }
   .step-panel-inner { padding: 0 0 var(--space-3); }
@@ -514,6 +518,7 @@
   .reduced .check-fill,
   .reduced .check-mark path,
   .reduced .title-text,
+  .reduced .strike-mark,
   .reduced .chevron,
   .reduced .check-visual { transition: none; animation: none; }
   .reduced .check:active .check-visual,
