@@ -46,9 +46,6 @@ def test_configuration_commit_rechecks_disables_without_catalog_evidence(
             employee_backend="codex",
             employee_launch_model="gpt-6-sol",
             employee_launch_reasoning_effort="high",
-            advertised_models=frozenset({"gpt-6-sol"}),
-            reasoning_supported=True,
-            advertised_reasoning_efforts=frozenset({"high"}),
             selection_kind=SelectionKind.concrete,
             validation=result,
             now=2,
@@ -60,8 +57,6 @@ def test_configuration_commit_rechecks_disables_without_catalog_evidence(
     assert refused.value.detail["corrective_action"] == "choose_model"
     assert tickets.employee_launch_configuration(tickets.read_ticket(tmp_db, ticket.id)) == expected
     write_model_enablement(tmp_db, Backend.codex, "gpt-6-sol", True)
-    tmp_db.execute("DELETE FROM scoped_model_catalog_rows")
-    tmp_db.execute("DELETE FROM scoped_model_catalog_observations")
     commit_configuration()
     current = validation_data.read_launch_validation(tmp_db, ticket.id)
     assert current is not None and current.current

@@ -1,4 +1,4 @@
-import type { DraftCreationContext, ExecutorHealth, TicketCreationDraft } from "./ticketMachines";
+import type { ExecutorHealth } from "./ticketMachines";
 import { MACHINE_HEALTH_POLL_MS } from "./machines/config";
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
@@ -55,14 +55,6 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
-  ticketCreationContext: (draft: TicketCreationDraft) => queryOptions({
-    queryKey: ["ticket-creation-context", draft] as const,
-    queryFn: ({ signal }) => fetchJson<DraftCreationContext>("/api/tickets/creation-context", {
-      method: "POST", body: draft, signal
-    }),
-    refetchOnWindowFocus: true,
-    retry: false
-  }),
   executorHealth: () => ({
     ...jsonQuery<ExecutorHealth>(["executor-health"], "/api/executor/health"),
     refetchInterval: MACHINE_HEALTH_POLL_MS,

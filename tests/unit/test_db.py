@@ -848,7 +848,6 @@ def test_model_resolution_migration_preserves_saved_choices_and_removes_pinned_t
         ).fetchone()
         is None
     )
-    assert conn.execute("SELECT COUNT(*) FROM model_variant_resolutions").fetchone()[0] == 0
     conn.close()
 
 

@@ -111,7 +111,6 @@ async def restart_worker(
     principal: Principal,
     ticket_id: str,
     *,
-    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     start_worker_step: Callable[[], Awaitable[WorkerStepStartResult]],
     now: Callable[[], int],
     prepare_employee_configuration: Callable[
@@ -124,7 +123,7 @@ async def restart_worker(
     A reset on its own would leave the claim out, with no conversation and nothing that
     ever picks the Ticket up. Both halves happen here, and the caller sees one action.
 
-    ``write_employee_configuration`` is already validated when it arrives: the caller
+    The prepared configuration is already validated when it arrives: the caller
     resolved it against the backend registry and catalog before anything was killed, so a
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
@@ -137,7 +136,7 @@ async def restart_worker(
         conn,
         principal,
         ticket_id,
-        write_employee_configuration=write_employee_configuration,
+        write_employee_configuration=None,
         prepare_employee_configuration=prepare_employee_configuration,
         now=now,
     )

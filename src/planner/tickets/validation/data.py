@@ -6,7 +6,6 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import replace
-from typing import Any
 
 from pydantic import TypeAdapter
 
@@ -78,13 +77,6 @@ def read_launch_validation(
     )
 
 
-def selection_is_historical(conn: sqlite3.Connection, ticket_id: str) -> bool:
-    row = conn.execute(
-        "SELECT intent_origin FROM ticket_launch_validation WHERE ticket_id=?", (ticket_id,)
-    ).fetchone()
-    return row is None or row[0] == "historical"
-
-
 def set_selection_kind(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -118,38 +110,15 @@ def set_selection_kind_in_transaction(
         )
     if before.selection_kind is not kind:
         conn.execute(
-            "UPDATE ticket_launch_validation SET selection_kind=?,intent_origin='new',"
+            "UPDATE ticket_launch_validation SET selection_kind=?,"
             "launch_revision=launch_revision+1 WHERE ticket_id=?",
             (kind.value, ticket_id),
         )
     return read_launch_selection(conn, ticket_id)
 
 
-def _semantic(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _semantic(item)
-            for key, item in value.items()
-            if key
-            not in {
-                "observation_id",
-                "observation_revision",
-                "observed_at",
-                "attempt_id",
-                "clock_uncertainty_seconds",
-                "retained_evidence",
-            }
-        }
-    if isinstance(value, list):
-        return [_semantic(item) for item in value]
-    return value
-
-
 def notification_fingerprint(validation: CanonicalModelValidation) -> str:
-    facts = _semantic(_validation.dump_python(validation, mode="json"))
-    # Safe diagnostic detail is not a support fact and may vary per transport attempt.
-    if isinstance(facts.get("unavailable"), dict):
-        facts["unavailable"].pop("detail", None)
+    facts = _validation.dump_python(validation, mode="json")
     return hashlib.sha256(
         json.dumps(facts, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -195,15 +164,6 @@ def record_launch_validation_in_transaction(
     ticket = tickets.read_ticket(conn, ticket_id)
     current_workspace = workspace_binding_from_start(worker_resolve(conn, ticket), ticket.locale)
     if current_workspace != expected_workspace:
-        return False
-    evidence_context = (
-        validation.evidence.context
-        if validation.evidence
-        else validation.unavailable.attempted_context
-        if validation.unavailable
-        else None
-    )
-    if evidence_context is not None and evidence_context.workspace != expected_workspace:
         return False
     row = conn.execute(
         "SELECT transition_revision,notification_fingerprint "
@@ -273,16 +233,9 @@ def _prepare_written_configuration_validation(
         from planner.conversation.backends.contracts import AdmissionRefused
 
         try:
-            if validation.launch_token is None:
-                raise AdmissionRefused(
-                    "original catalog evidence missing", reason="catalog_unavailable"
-                )
             dependencies = recorded_policy_dependencies(
-                conn,
                 selection=validation.selection,
                 launch_token=validation.launch_token,
-                resolved_model_id=validation.resolved_model_id,
-                evidence=validation.evidence,
             )
         except (AdmissionRefused, ValueError, TypeError) as error:
             reason = ValidationReason.catalog_unavailable
@@ -327,20 +280,10 @@ def _prepare_written_configuration_validation(
                         "model policy changed before configuration was committed",
                         {"reason": error.reason, "corrective_action": error.corrective_action},
                     ) from error
-    context = (
-        validation.evidence.context
-        if validation.evidence
-        else validation.unavailable.attempted_context
-        if validation.unavailable
-        else None
-    )
-    if context is None:
-        from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
+    from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
 
-        ticket = tickets.read_ticket(conn, ticket_id)
-        workspace = workspace_binding_from_start(worker_resolve(conn, ticket), ticket.locale)
-    else:
-        workspace = context.workspace
+    ticket = tickets.read_ticket(conn, ticket_id)
+    workspace = workspace_binding_from_start(worker_resolve(conn, ticket), ticket.locale)
     return replace(validation, selection=selection), workspace
 
 

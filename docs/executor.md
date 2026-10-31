@@ -34,7 +34,7 @@ The application revision is a nonempty diagnostic label, not a compatibility ver
 
 Migration `mac_vps_execution` installs the final schema directly after staging's
 `video_upload_ledger`. Any database that ran this branch's earlier migrations must
-be rebuilt. Existing staging Tickets, conversations, native usage, catalog evidence,
+be rebuilt. Existing staging Tickets, conversations, native usage,
 and video reservations retain their data.
 
 ## Modules and their rules
@@ -56,6 +56,8 @@ may know both sides. A unit test keeps these import boundaries in place.
 | VPS inbox | Apply each queued item once, in conversation order, with its receipt. A permanent refusal advances the queue. |
 | VPS transport | Admit connections and route messages and file slots. Run control and inbox saving do not own sockets. |
 | Catalog relay | Carry read-only model observations and cancellation. Never launch a Worker. |
+
+Catalog observations travel over the link; they are not stored in separate catalog tables. The upgrade removes the unused model catalog tables from staging.
 
 The remote child implements the same backend contract as local children. It holds
 saved answer commands in memory and checks admission before emission. Detaching

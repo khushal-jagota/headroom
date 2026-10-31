@@ -37,11 +37,7 @@ export function installMachineEvidenceFixture(): void {
     if(url.pathname==='/api/worker-types')return Response.json({worker_types:[{worker_type:'coding',label:'Coding'}]});
     if(url.pathname==='/api/projects')return Response.json({projects:[]});
     if(url.pathname==='/api/managers')return Response.json({managers:[{id:'manager-fixture',title:'Manager fixture'}]});
-    if(url.pathname==='/api/tickets/creation-context'){
-      const draft=JSON.parse(String(init?.body));drafts.push(draft);
-      return Response.json({resolved_locale:draft.locale??'vps',employee_backend:'codex',project_id:draft.manager.kind==='manager'?'inherited':null,
-        locale_choices:[{locale:'vps',compatible:true,reason:null},{locale:'macos',compatible:true,reason:null}]});
-    }
+
     if(url.pathname==='/api/tickets'){
       if(init?.method==='POST'){creates.push(JSON.parse(String(init.body)));return Response.json({id:'created-worker'});}
       return Response.json({id:'mac-worker',title:'Mac Worker',locale:'macos',record_sha256:'a'.repeat(64)});

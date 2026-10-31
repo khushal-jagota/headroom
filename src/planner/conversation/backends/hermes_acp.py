@@ -758,8 +758,6 @@ class HermesAcpBackendChild:
                         resolved_start.model,
                         resolved_start.reasoning_effort,
                         resolved_start.workspace_folder,
-                        launch.argv[0],
-                        _child_environment(launch, resolved_start),
                     )
                 )
             reader, writer, process = await self._processes.enter_async_context(

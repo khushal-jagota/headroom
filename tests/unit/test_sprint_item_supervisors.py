@@ -13,7 +13,6 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backends.contracts import BackendChildFactory
@@ -64,7 +63,7 @@ def _app(
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(str(db_path))
     create_schema(conn)
-    seed_test_model_catalogue(conn)
+
     conn.close()
     env = {
         "PLAN_TEST_MODE": "1",

@@ -12,7 +12,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.db import connect, create_schema
@@ -93,7 +92,7 @@ def test_real_socket_association_no_bytes_before_accept_and_irreversible_expiry(
     db_path = tmp_path / "preview.db"
     conn = connect(str(db_path))
     create_schema(conn)
-    seed_test_model_catalogue(conn)
+
     placement = create_project(conn, name="Preview integration", folder_path=project, now=1)
     ticket = create_ticket(
         conn,

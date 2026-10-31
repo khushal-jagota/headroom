@@ -76,10 +76,5 @@ def bind_model_intent(
         reason=reason,
         corrective_action=CorrectiveAction.choose_model if disabled or token is None
         else CorrectiveAction.none,
-        resolved_model_id=None,
         launch_token=None if disabled else token,
-        evidence=None,
-        current_alias_resolution=None,
-        previous_alias_resolution=None,
-        unavailable=None,
     )

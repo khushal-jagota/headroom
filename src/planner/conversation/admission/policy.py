@@ -10,7 +10,6 @@ from planner.conversation.backends.contracts import AdmissionRefused
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
-    CatalogEvidenceReference,
     ModelSelection,
 )
 
@@ -19,7 +18,6 @@ from planner.conversation.model_resolution.contracts import (
 class ModelPolicyDependencies:
     backend_key: ConversationBackendKey
     model_ids: tuple[str, ...]
-
 
 
 def _unproved(reason: str = "identity_unproved") -> AdmissionRefused:
@@ -31,12 +29,9 @@ def _unproved(reason: str = "identity_unproved") -> AdmissionRefused:
 
 
 def recorded_policy_dependencies(
-    conn: sqlite3.Connection,
     *,
     selection: ModelSelection,
     launch_token: str,
-    resolved_model_id: str | None,
-    evidence: CatalogEvidenceReference | None,
 ) -> ModelPolicyDependencies:
     """Policy covers exact requested and submitted tokens, never inferred targets."""
     if not selection.submitted_token or not launch_token:
@@ -67,11 +62,8 @@ def check_expectation_policy(
     conn: sqlite3.Connection, expectation: AdmissionExpectation
 ) -> ModelPolicyDependencies:
     dependencies = recorded_policy_dependencies(
-        conn,
         selection=expectation.selection,
         launch_token=expectation.launch_token,
-        resolved_model_id=expectation.resolved_model_id,
-        evidence=expectation.evidence,
     )
     check_policy_dependencies(conn, dependencies)
     return dependencies
@@ -84,11 +76,8 @@ def checked_validation_policy(
     if validation.launch_token is None:
         raise _unproved()
     dependencies = recorded_policy_dependencies(
-        conn,
         selection=validation.selection,
         launch_token=validation.launch_token,
-        resolved_model_id=validation.resolved_model_id,
-        evidence=validation.evidence,
     )
     check_policy_dependencies(conn, dependencies)
     return dependencies

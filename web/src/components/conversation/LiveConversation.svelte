@@ -249,11 +249,6 @@
   let rows = $derived((reader?.pages ?? []).flatMap(page=>page.items.flatMap(item=>
     item.kind==='row'&&item.body.kind==='inline' ? [rowForBody(item,item.body.value)] : [])));
   let visibleRows = $derived(rows);
-  let recordedRefusalValidation = $derived.by(() => {
-    if (reader?.id !== openedId) return null;
-    const latestOutcome = [...rows].reverse().find(row => row.kind === "prompt" || row.kind === "prompt_refused" || row.kind === "prompt_uncertain" || row.kind === "prompt_discarded");
-    return latestOutcome?.kind === "prompt_refused" ? latestOutcome.modelValidation ?? null : null;
-  });
   let ask = $derived.by(()=>{
     if(reader?.status?.pending_permission===null)return null;
     const row=liveAskFrom(visibleRows);if(row!==null)return row;

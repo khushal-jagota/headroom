@@ -71,10 +71,6 @@ def launch_configuration_for_a_new_ticket(
 def normalize_employee_launch_configuration(
     current: EmployeeLaunchConfiguration,
     candidate: EmployeeLaunchConfiguration,
-    *,
-    advertised_models: frozenset[str] | None,
-    reasoning_supported: bool | None,
-    advertised_reasoning_efforts: frozenset[str] | None,
 ) -> EmployeeLaunchConfiguration:
     """Preserve authored intent independently of advisory model suggestions."""
 

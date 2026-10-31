@@ -24,7 +24,6 @@ and is not translated into a refusal.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -59,8 +58,6 @@ class BackendEmissionInputs:
     model: str | None
     reasoning_effort: str | None
     workspace: Path
-    executable: str | None = None
-    environment: Mapping[str, str] | None = None
 
 
 class EmissionCheck(Protocol):

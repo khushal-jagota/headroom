@@ -854,14 +854,12 @@ def _backend_ticket_arguments(
         if prior is not None and not changed
         else SelectionKind.legacy_unclassified
     )
-    changed = changed or (prior is not None and kind is not prior.selection_kind)
     return ticket, {
         "locale": destination,
         "employee_backend": backend,
         "employee_launch_model": model,
         "employee_launch_reasoning_effort": effort,
         "selection_kind": kind,
-        "classify_new": changed,
     }
 
 
@@ -880,7 +878,6 @@ async def read_scoped_backends(
     with closing(connect(runtime.database_path)) as conn:
         if "ticket_id" in raw:
             ticket, arguments = _backend_ticket_arguments(raw, conn, ctx)
-            arguments.pop("classify_new", None)
             selection, workspace = resolve_ticket_launch_selection(conn, ticket, **arguments)
         else:
             selection, project_id = resolve_ticket_creation_selection(
@@ -1569,8 +1566,7 @@ def _snapshot_json(
                 "display_name": model.display_name,
                 "selected_variant": model.selected_variant,
                 "resolved_model_id": model.resolved_model_id,
-                "catalogue_warning": model.catalogue_warning,
-                "detail": model.detail,
+                        "detail": model.detail,
                 "reasoning_effort_options": (
                     list(model.reasoning_effort_options)
                     if model.reasoning_effort_options is not None

@@ -28,20 +28,6 @@ class ResolvedTicketCreationContext:
     project_id: str | None
 
 
-class TicketLocaleChoice(TypedDict):
-    locale: str
-    compatible: bool
-    reason: str | None
-
-
-class TicketCreationContextRead(TypedDict):
-    resolved_locale: str
-    employee_backend: str
-    project_id: str | None
-    locale_choices: list[TicketLocaleChoice]
-    launch_validation: NotRequired[JsonDict]
-
-
 class StageOwnershipMode(StrEnum):
     worker = "worker"
     user = "user"
