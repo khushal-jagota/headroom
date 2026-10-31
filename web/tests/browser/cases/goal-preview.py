@@ -1567,13 +1567,13 @@ def authored_goal_presentation(browser, url):
                 card = text.locator('[data-file-preview-kind="markdown"]')
                 card.scroll_into_view_if_needed()
                 if phone:
-                    expect(card.locator(".file-preview-name-link")).to_be_visible()
+                    expect(card.locator(".pv-name")).to_be_visible()
                 else:
                     expect(card.get_by_role(
                         "heading", name="Wren intake", exact=True
                     )).to_be_visible()
                     expect(card).to_contain_text("The release identity is Wren iOS.")
-                    expect(card.locator(".file-preview-document-body p")).to_have_css(
+                    expect(card.locator(".file-preview-natural p")).to_have_css(
                         "white-space", "normal"
                     )
                     prose_geometry = text.locator(".markdown-block > p").first.evaluate("""p => {
@@ -1590,8 +1590,8 @@ def authored_goal_presentation(browser, url):
                     }""")
                     assert abs(prose_geometry["secondLine"] - prose_geometry["firstLine"]
                                - prose_geometry["lineHeight"]) <= 1, prose_geometry
-                link = card.locator("a.file-preview-link:visible")
-                expect(link).to_have_text("Open intake.md")
+                link = card.locator("a.pv-name:visible")
+                expect(link).to_have_text("intake.md")
                 original = page.url
                 link.click()
                 viewer = page.locator("[data-ticket-artifact]")
@@ -2430,7 +2430,7 @@ def native_goal_edits(browser, url):
             text = goal.locator('[data-block="text"]').first
             markdown = text.get_by_role("textbox", name="Text", exact=True)
             count = len(fixture.writes)
-            link = text.locator('[data-file-preview-kind="markdown"] a.file-preview-link:visible')
+            link = text.locator('[data-file-preview-kind="markdown"] a.pv-name:visible')
             (link.tap if phone else link.click)()
             viewer = page.locator("[data-ticket-artifact]")
             expect(viewer.get_by_role("heading", name="Wren intake", exact=True)).to_be_visible()
