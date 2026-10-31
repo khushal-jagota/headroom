@@ -290,6 +290,9 @@ Code paths: `src/planner/executor/mac_outbox.py`, `files.py`, `vps_inbox.py`, `v
 The Mac service owns its children independently of the socket. A short link loss
 within the same VPS process keeps the current run. Reconnect checks the exact
 children, turns, and callbacks before replaying queued events and saved answers.
+Starts and prompts stay bound to their original Mac process. A new connection to
+that process does not by itself refuse them. A resent prompt fetches its attached
+files on the current connection before the provider receives it.
 
 A VPS restart interrupts every old Mac run and closes its callbacks. It does not
 reattach the turn. Child assignment and retained run identity commit together

@@ -458,7 +458,11 @@ def command_emission_decision(
                     corrective_action="classify_selection",
                 )
             check_expectation_policy(conn, expected)
-            if expected.executor_identity != identity:
+            if (
+                expected.executor_identity is None
+                or identity is None
+                or expected.executor_identity.executor_incarnation != identity.executor_incarnation
+            ):
                 raise AdmissionRefused(
                     "The destination connection changed before submission",
                     reason="context_changed",
