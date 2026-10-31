@@ -87,7 +87,7 @@ Voice input never sends audio into the conversation. The mic captures a clip, Gr
 
 One video, MP4, MOV, or WebM, up to 250 MiB, can be attached. The upload can finish before Send. Headroom validates it with ffprobe, holds it under a disk budget, and expires an unused upload after a day. The agent receives a link or a path. Headroom does not transcode it and does not promise the model understands it.
 
-A deploy can kill a running session. After the new runtime is admitted, eligible conversations receive one recovery prompt through the ordinary send path. Nothing is replayed. A queued recovery does not count as resumed. Only a started turn whose prompt actually contains the notice does. See [Deployment](deployment.md).
+A deploy can kill a running session. After the new runtime is admitted, eligible conversations receive one recovery prompt through the ordinary send path. Nothing is replayed. A queued recovery does not count as resumed. Only a started turn whose prompt actually contains the notice does. If its write may have crossed the wire but the acknowledgment is lost, the notebook records one uncertain row with the recovery reference. Recovery becomes unable to resume; the reservation and child remain fenced, and Panels does not retry. See [Deployment](deployment.md).
 
 ## Three conversations, one contract
 

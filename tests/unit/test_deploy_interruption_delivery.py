@@ -719,9 +719,9 @@ def test_second_boot_does_not_replay_an_unknown_recovery_attempt(tmp_path: Path)
     _run(exercise)
 
 
-@pytest.mark.parametrize("delivery", ["refused", "unknown"])
+@pytest.mark.parametrize("delivery", ["refused", "unknown", "possible_emission"])
 def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
-    tmp_path: Path, delivery: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delivery: str,
 ) -> None:
     """The owner's Chief chat retains a factual delivery failure without another surface."""
     from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
@@ -756,6 +756,19 @@ def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
         try:
             restarted.backend("c").spawn_fails = delivery == "refused"
             restarted.backend("c").write_fails = delivery == "unknown"
+            if delivery == "possible_emission":
+                from typing import Any
+
+                from tests.unit.test_conversation_system import _FakeBackendChild
+
+                from planner.conversation.backends.contracts import PromptWriteFailed
+
+                async def possible_emission(
+                    self: _FakeBackendChild, *args: Any, **kwargs: Any
+                ) -> None:
+                    raise PromptWriteFailed("acknowledgment lost after possible transmission")
+
+                monkeypatch.setattr(_FakeBackendChild, "write_prompt", possible_emission)
             await run_automatic_recovery(restarted.system, restarted.store)
             events = await restarted.store.read_events_after("c", 0)
             payload_type = (
@@ -767,6 +780,7 @@ def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
             ]
             assert len(failures) == 1
             assert failures[0].sender_label == "Panels deployment recovery"
+            assert failures[0].recovery_references
             assert _entry(path)["recovery_state"] == "unable_to_resume"
             await run_automatic_recovery(restarted.system, restarted.store)
             assert await restarted.store.read_events_after("c", 0) == events
