@@ -171,7 +171,7 @@ def test_concurrent_claim_and_move_serialize_their_database_writes(
     from planner.worker_types.contracts import WorkerTypeDefinition
 
     advance_ticket(
-        tmp_db, ticket.id, new_stage="needs_success_condition",
+        tmp_db, ticket.id, new_stage="needs_what_changes",
         principal=OWNER_PRINCIPAL, now=2,
     )
     database_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])

@@ -84,7 +84,7 @@
   let picker = $state<ListboxPickerController>(null!);
   let ceilingOptions = $derived([
     ...(!pendingStage ? [{ value:"none", name:"No further" }] : []),
-    ...ceilingOptionsFor(lifecycle, pendingStage ? lifecycle?.stageOrder[0] || pendingStage : newStage || lifecycle?.ceilingRange[0] || "needs_success_condition")
+    ...ceilingOptionsFor(lifecycle, pendingStage ? lifecycle?.stageOrder[0] || pendingStage : newStage || lifecycle?.ceilingRange[0] || "needs_brief")
       .map((option) => ({ value:option.value, name:option.label }))
   ]);
   let holders = $derived(holderOptionsFor(manager, holder).map((option) => ({

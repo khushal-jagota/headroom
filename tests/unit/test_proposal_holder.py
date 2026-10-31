@@ -30,7 +30,7 @@ def _park(
     now: int = 10,
     *,
     worker_type: str = "coding",
-    stated_ceiling: str = "needs_success_condition",
+    stated_ceiling: str = "needs_what_changes",
 ) -> Ticket:
     ticket = data.create_ticket(
         conn,
@@ -68,10 +68,10 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
         data.accept_proposal(
             tmp_db,
             ticket.id,
-            field="success_condition",
+            field="what_changes",
             principal=OWNER_PRINCIPAL,
             now=12,
-            next_ceiling="needs_what_changes",
+            next_ceiling="needs_implementation",
             next_holder=self_principal,
         )
 
@@ -81,10 +81,10 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
         data.accept_proposal(
             tmp_db,
             ticket.id,
-            field="success_condition",
+            field="what_changes",
             principal=self_principal,
             now=12,
-            next_ceiling="needs_what_changes",
+            next_ceiling="needs_implementation",
             next_holder=OWNER_PRINCIPAL,
         )
     assert forbidden.value.code is ErrorCode.agent_forbidden
@@ -189,7 +189,7 @@ def _park_under(conn: Connection, manager_id: str, *, now: int = 10) -> Ticket:
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Agreed kickoff",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
         manager_id=manager_id,
         stated_holder=holder,
     )
@@ -353,10 +353,10 @@ def test_historical_invalid_holders_remain_editable_and_repairable(
         assert repaired.pending_proposal == ticket.pending_proposal
     else:
         repaired = data.accept_proposal(
-            tmp_db, ticket.id, field="success_condition", principal=OWNER_PRINCIPAL,
-            now=23, next_ceiling="needs_what_changes", next_holder=OWNER_PRINCIPAL,
+            tmp_db, ticket.id, field="what_changes", principal=OWNER_PRINCIPAL,
+            now=23, next_ceiling="needs_implementation", next_holder=OWNER_PRINCIPAL,
         )
-        assert repaired.field_values["success_condition"] == "Success proposal"
+        assert repaired.field_values["what_changes"] == "Success proposal"
         assert repaired.pending_proposal is None
     assert repaired.ceiling_holder == OWNER_PRINCIPAL
 
@@ -375,7 +375,7 @@ def test_declared_ticket_authority_never_admits_a_review_holder(
             if operation == "create":
                 data.create_ticket(
                     tmp_db, title="Declared reviewer", worker_type="coding", brief="Kickoff",
-                    stated_ceiling="needs_success_condition", stated_holder=holder,
+                    stated_ceiling="needs_what_changes", stated_holder=holder,
                     principal=OWNER_PRINCIPAL, now=30, title_max_chars=TITLE_MAX_CHARS,
                 )
             elif operation == "edit":
@@ -385,8 +385,8 @@ def test_declared_ticket_authority_never_admits_a_review_holder(
                 )
             else:
                 data.accept_proposal(
-                    tmp_db, target.id, field="success_condition", principal=OWNER_PRINCIPAL,
-                    now=30, next_ceiling="needs_what_changes", next_holder=holder,
+                    tmp_db, target.id, field="what_changes", principal=OWNER_PRINCIPAL,
+                    now=30, next_ceiling="needs_implementation", next_holder=holder,
                 )
         assert tuple(tmp_db.iterdump()) == before
 

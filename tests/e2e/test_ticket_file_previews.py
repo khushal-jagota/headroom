@@ -124,14 +124,14 @@ def _write_ticket_files(server: ServerHandle, ticket_id: str) -> None:
     (root / "archive.bin").write_bytes(b"download me")
 
 
-def _settle_success(server: ServerHandle, ticket_id: str, body: str) -> None:
+def _settle_what_changes(server: ServerHandle, ticket_id: str, body: str) -> None:
     """Seed saved Markdown through the same proposal/accept writers as ordinary work."""
     _propose(server, ticket_id, body)
-    ticket = _post(server, f"/api/tickets/{ticket_id}/accept/success_condition", {
+    ticket = _post(server, f"/api/tickets/{ticket_id}/accept/what_changes", {
         "next_ceiling": "none", "next_holder": {"kind": "owner", "id": "owner"},
     })
-    assert ticket["stage"] == "needs_what_changes"
-    assert ticket["field_values"]["success_condition"] == body
+    assert ticket["stage"] == "needs_implementation"
+    assert ticket["field_values"]["what_changes"] == body
     assert ticket["pending_proposal"] is None
 
 
@@ -210,7 +210,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         encoding="utf-8",
     )
     retained_document = document.read_text(encoding="utf-8")
-    _settle_success(
+    _settle_what_changes(
         server,
         ticket_id,
         f"[HTML](/files/tickets/{ticket_id}/previews/index.html)",
@@ -252,7 +252,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     # Check the combined staging UI through rendered controls, never source strings.
     for retired_text in ("Steer the work", "Everything", "Newsreader"):
         expect(page.get_by_text(retired_text, exact=True)).to_have_count(0)
-    _open_ticket_field(page, "success_condition")
+    _open_ticket_field(page, "what_changes")
     page.evaluate("window.__artifactInPlaceMarker = 'kept'")
     html_requests: list[str] = []
     page.on(
@@ -505,7 +505,7 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
     root = _ticket_files_dir(server, ticket_id)
     clip = Path(__file__).parent / "fixtures" / "playable_clip.mp4"
     (root / "video" / "clip.mp4").write_bytes(clip.read_bytes())
-    _settle_success(
+    _settle_what_changes(
         server,
         ticket_id,
         f"Take a look.\n\n[clip.mp4](/files/tickets/{ticket_id}/video/clip.mp4)",
@@ -524,7 +524,7 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
     page.wait_for_selector(
         f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
-    _open_ticket_field(page, "success_condition")
+    _open_ticket_field(page, "what_changes")
     play = page.locator('[data-file-preview-kind="video"] [data-media-play]').first
     play.wait_for(timeout=WAIT_MS)
     page.wait_for_timeout(1500)

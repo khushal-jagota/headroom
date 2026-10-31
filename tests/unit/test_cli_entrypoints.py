@@ -22,7 +22,7 @@ from planner.cli import main as cli_main
             {
                 "id": "t_one",
                 "title": "One",
-                "stage": "needs_success_condition",
+                "stage": "needs_what_changes",
                 "ticket_status": "empty",
                 "project": None,
                 "recap_preview": "Ready.",

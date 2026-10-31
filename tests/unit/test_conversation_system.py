@@ -2591,7 +2591,7 @@ def _review_notice(db_path: Path, *, conversation_id: str = "c") -> tuple[str, s
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="coding",
             brief="Review",
-            stated_ceiling="needs_success_condition",
+            stated_ceiling="needs_what_changes",
         )
         tickets_data.file_current_proposal(
             conn,
@@ -2622,10 +2622,10 @@ def _resolve_review(db_path: Path, ticket_id: str) -> None:
         tickets_data.accept_proposal(
             conn,
             ticket_id,
-            field="success_condition",
+            field="what_changes",
             principal=CHIEF_PRINCIPAL,
             next_holder=CHIEF_PRINCIPAL,
-            next_ceiling="needs_what_changes",
+            next_ceiling="needs_implementation",
             now=4,
         )
     finally:
@@ -2910,7 +2910,7 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
                 title_max_chars=TITLE_MAX_CHARS,
                 worker_type="coding",
                 brief="Review",
-                stated_ceiling="needs_success_condition",
+                stated_ceiling="needs_what_changes",
             )
             worker = Principal(PrincipalKind.ticket, ticket.id)
             tickets_data.file_current_proposal(
@@ -2956,10 +2956,10 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
                 tickets_data.accept_proposal(
                     conn,
                     ticket.id,
-                    field="success_condition",
+                    field="what_changes",
                     principal=CHIEF_PRINCIPAL,
                     next_holder=CHIEF_PRINCIPAL,
-                    next_ceiling="needs_what_changes",
+                    next_ceiling="needs_implementation",
                     now=4,
                 )
             tickets_data.edit_ticket(

@@ -491,7 +491,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
     conversation_id = "conv-restart-next-opener-race"
     ticket_id = world.ready_ticket(
         conversation_id=conversation_id,
-        next_ceiling="needs_plan",
+        next_ceiling="needs_implementation",
     )
     world.start_conversation(conversation_id)
     assert world.start_step(ticket_id).started is True
@@ -551,7 +551,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
     assert restart_error.code is ErrorCode.already_running
     assert next_step.started is True
     ticket = world.ticket(ticket_id)
-    assert ticket.stage == "needs_what_changes"
+    assert ticket.stage == "needs_implementation"
     assert ticket.worker_step_claim is WorkerStepClaim.out
     assert ticket.conversation_id == conversation_id
     assert len(world.conversations.backend_prompt_writes(conversation_id)) == 2
@@ -668,7 +668,7 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
 
     writes = world.conversations.backend_prompt_writes("conv-revision-feedback")
     assert len(writes) == 1
-    assert "Revision feedback from owner owner for stage needs_success_condition" in writes[0].text
+    assert "Revision feedback from owner owner for stage needs_what_changes" in writes[0].text
     assert "  Preserve this exact feedback.  " in writes[0].text
     # A rejection delivers its own feedback, independently of retired historical data.
     assert "Historical guidance remains stored." not in writes[0].text
