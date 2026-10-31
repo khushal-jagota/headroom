@@ -53,7 +53,6 @@ def _setup(
 ) -> tuple[VpsExecutor, ScriptedPreparation, QueuedEnvelope, ExecutorIdentity]:
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
 
-    conn.execute("DELETE FROM model_variant_resolutions")
     conn.execute(
         "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
         "created_at,updated_at) VALUES('manager','Retained Manager','project_other',"

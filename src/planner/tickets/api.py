@@ -25,7 +25,6 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import TypeAdapter
 
 from planner.conversation.api import (
     OwnerSendBody,
@@ -99,10 +98,8 @@ from planner.tickets.contracts import (
     RejectionBody,
     ReviewTransferNotice,
     Ticket,
-    TicketCreationContextRead,
     TicketEdit,
     TicketListFilters,
-    TicketLocaleChoice,
     TicketStatus,
 )
 from planner.tickets.logic import admission
@@ -539,16 +536,6 @@ def resolve_ticket_creation_selection(
     return selection, context.project_id
 
 
-async def validate_ticket_creation(
-    raw: JsonDict,
-    conn: sqlite3.Connection,
-    system: ConversationSystem,
-    *,
-    principal: Principal | None = None,
-) -> CanonicalModelValidation:
-    return resolve_ticket_creation_validation(raw, conn, principal=principal)
-
-
 def resolve_ticket_creation_validation(
     raw: JsonDict, conn: sqlite3.Connection, *, principal: Principal | None = None
 ) -> CanonicalModelValidation:
@@ -614,62 +601,6 @@ def write_create_ticket(
     return tickets_views.ticket_creation_json(conn, ticket, now)
 
 
-@router.post("/tickets/creation-context")
-async def read_ticket_creation_context(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, request: Request
-) -> TicketCreationContextRead:
-    """Resolve a partial draft without creating state or requiring final text."""
-    from planner.tickets.contracts import TicketLocale
-    from planner.tickets.locale_configuration import require_locale_backend_compatibility
-
-    # The existing marshaller owns draft input validation as well as final creation.
-    # Text is irrelevant to this projection and is never passed to its resolver.
-    body = _marshal_create_ticket(raw, draft=True)
-    manager = (
-        _parse_manager(body["manager"])
-        if "manager" in raw or "orchestrator" in raw
-        else Principal(PrincipalKind.chief, "chief")
-    )
-    project = projects_data.resolve_project(
-        conn, project_id=body["project_id"], project_name=body["project"]
-    )
-    context = tickets_data.resolve_ticket_draft_context(
-        conn,
-        worker_type=body["worker_type"],
-        locale=body.get("locale"),
-        employee_backend=body.get("employee_backend"),
-        employee_launch_model=body.get("employee_launch_model"),
-        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
-        reasoning_effort_is_set="employee_launch_reasoning_effort" in body,
-        project_id=project.id if project is not None else None,
-        manager_id=manager.id if manager.kind is PrincipalKind.manager else None,
-        deadline=body["deadline"],
-        blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
-    )
-    choices: list[TicketLocaleChoice] = []
-    for locale in TicketLocale:
-        reason = None
-        try:
-            require_locale_backend_compatibility(
-                locale, context.launch_configuration.employee_backend
-            )
-        except PlannerError as error:
-            reason = error.message
-        choices.append({"locale": locale.value, "compatible": reason is None, "reason": reason})
-    return {
-        "resolved_locale": context.locale.value,
-        "employee_backend": context.launch_configuration.employee_backend,
-        "project_id": context.project_id,
-        "locale_choices": choices,
-        "launch_validation": TypeAdapter(CanonicalModelValidation).dump_python(
-            await validate_ticket_creation(
-                raw, conn, get_conversation_system(request), principal=ctx.principal
-            ),
-            mode="json",
-        ),
-    }
-
-
 @router.post("/tickets")
 async def create_ticket(
     raw: dict[str, Any],
@@ -679,8 +610,8 @@ async def create_ticket(
     clk: Clk,
     request: Request,
 ) -> JsonDict:
-    validation = await validate_ticket_creation(
-        raw, conn, get_conversation_system(request), principal=ctx.principal
+    validation = resolve_ticket_creation_validation(
+        raw, conn, principal=ctx.principal
     )
     conversation_start.refuse_known_incompatibility(validation)
     return write_create_ticket(raw, conn, ctx, clk, validation=validation)
@@ -856,9 +787,6 @@ class ResolvedEmployeeConfiguration:
     employee_backend: str
     employee_launch_model: str
     employee_launch_reasoning_effort: str | None
-    advertised_models: frozenset[str] | None
-    reasoning_supported: bool | None
-    advertised_reasoning_efforts: frozenset[str] | None
     validation: CanonicalModelValidation | None
     selection_kind: SelectionKind
 
@@ -900,11 +828,6 @@ async def resolve_employee_configuration(
             employee_launch_model=employee_launch_model,
             employee_launch_reasoning_effort=employee_launch_reasoning_effort,
             selection_kind=selection_kind,
-            classify_new=(
-                prior is None
-                or employee_launch_model != prior.submitted_token
-                or registered_backend != prior.backend_key
-            ),
             persist=False,
             now=get_clock(request).now_unix(),
         )
@@ -914,9 +837,6 @@ async def resolve_employee_configuration(
         employee_backend=registered_backend.value,
         employee_launch_model=employee_launch_model,
         employee_launch_reasoning_effort=employee_launch_reasoning_effort,
-        advertised_models=None,
-        reasoning_supported=None,
-        advertised_reasoning_efforts=None,
         validation=validation,
         selection_kind=(
             selection_kind if validation is None else validation.selection.selection_kind
@@ -939,9 +859,6 @@ def write_resolved_employee_configuration(
         employee_backend=resolved.employee_backend,
         employee_launch_model=resolved.employee_launch_model,
         employee_launch_reasoning_effort=resolved.employee_launch_reasoning_effort,
-        advertised_models=resolved.advertised_models,
-        reasoning_supported=resolved.reasoning_supported,
-        advertised_reasoning_efforts=resolved.advertised_reasoning_efforts,
         selection_kind=resolved.selection_kind.value,
         validation=resolved.validation,
         now=now,
@@ -1121,7 +1038,6 @@ async def restart_ticket_worker(
         conn,
         ctx.principal,
         ticket_id,
-        write_employee_configuration=None,
         prepare_employee_configuration=prepare_configuration,
         start_worker_step=start_worker_step,
         now=clk.now_unix,

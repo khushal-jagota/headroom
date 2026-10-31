@@ -183,12 +183,10 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import (
-    AliasResolutionFact,
     CanonicalModelValidation,
     CatalogResult,
     CatalogWorkspaceBinding,
     CorrectiveAction,
-    LaunchContext,
     ModelSelection,
     ProviderCatalogObserver,
     SelectionKind,
@@ -452,8 +450,6 @@ class _ConversationState:
     last_ended_turn_token: TurnToken | None = None
     last_ended_turn_was_automatic_compaction: bool = False
     child: BackendChild | None = None
-    child_resolved_model_id: str | None = None
-    child_launch_context: LaunchContext | None = None
     local_child_retirement_proven: bool = False
     child_is_quarantined: bool = False
     executor_child_reference: ChildReference | None = None
@@ -3531,12 +3527,6 @@ class SqliteProcessConversationSystem:
         self._catalog_observer = observer
         self._catalog_endpoint = endpoint
 
-    def launch_policy_revision(self, backend_key: ConversationBackendKey) -> str:
-        from planner.conversation.backend_state import BackendStateStore
-
-        return repr(
-            sorted(BackendStateStore(self._store._db_path).read_disabled_models(backend_key))
-        )
 
     async def destination_backend_snapshot(
         self,
@@ -3610,10 +3600,6 @@ class SqliteProcessConversationSystem:
         self,
         selection: ModelSelection,
         workspace: CatalogWorkspaceBinding,
-        *,
-        attempt_id: str,
-        classify_new: bool = False,
-        previous_alias_resolution: AliasResolutionFact | None = None,
     ) -> CanonicalModelValidation:
         from planner.conversation.backend_state import BackendStateStore
         from planner.conversation.launch_intent import bind_model_intent
@@ -3665,18 +3651,15 @@ class SqliteProcessConversationSystem:
         attempt_id: str,
     ) -> BackendSteerOutcome:
         """Validate the running turn's accepted intent without changing next-turn intent."""
-        from typing import cast
 
         from planner.conversation.admission.policy import (
             check_policy_dependencies,
             checked_validation_policy,
         )
         from planner.conversation.admission.service import (
-            AdmissionContextObserver,
             admission_check,
             expectation_from_validation,
         )
-        from planner.conversation.backends.contracts import BackendEmissionInputs
         from planner.core.db import connect
 
         conn = connect(self._store._db_path)
@@ -3707,14 +3690,9 @@ class SqliteProcessConversationSystem:
                 validation,
                 attempt_id=attempt_id,
                 conversation_id=state.record.conversation_id,
-                disabled_models_revision=self.launch_policy_revision(basis.selection.backend_key),
                 turn=token,
                 workspace=(
-                    basis.evidence.context.workspace
-                    if basis.evidence is not None
-                    else basis.unavailable.attempted_context.workspace
-                    if basis.unavailable and basis.unavailable.attempted_context
-                    else CatalogWorkspaceBinding(
+                    CatalogWorkspaceBinding(
                         state.record.workspace_folder, state.record.workspace_path_policy, None
                     )
                 ),
@@ -3725,29 +3703,18 @@ class SqliteProcessConversationSystem:
                     else None
                 ),
             )
-            observer = cast(AdmissionContextObserver, self._catalog_observer)
             accepted_running = running
 
             class RunningContext:
-                def verify_context(inner, expected: LaunchContext | None) -> bool:
+                def verify_context(inner) -> bool:
                     check_policy_dependencies(conn, dependencies)
                     return (
                         state.running_turn is accepted_running
                         and not accepted_running.ended
                         and not accepted_running.ending_is_the_cores
                         and state.child is child
-                        and (
-                            expected is None
-                            or (observer is not None and observer.verify_context(expected))
-                        )
                     )
 
-                def verify_prepared_launch(
-                    inner, expected: LaunchContext, prepared: BackendEmissionInputs
-                ) -> bool:
-                    return inner.verify_context(expected) and observer.verify_prepared_launch(
-                        expected, prepared
-                    )
 
             return await child.steer(
                 token,
@@ -3851,7 +3818,6 @@ class SqliteProcessConversationSystem:
                     validation,
                     attempt_id=uuid4().hex,
                     conversation_id=state.record.conversation_id,
-                    disabled_models_revision=self.launch_policy_revision(selection.backend_key),
                     workspace=workspace,
                     executor_identity=identity,
                     turn=turn_token,
@@ -3861,17 +3827,13 @@ class SqliteProcessConversationSystem:
                 carried_validation = validation
 
                 class ConversationContext:
-                    def verify_context(self, expected: LaunchContext | None) -> bool:
+                    def verify_context(self) -> bool:
                         checked_validation_policy(conn, carried_validation)
                         current = system._catalog_endpoint
                         return not native or (
                             current is not None and current.ready and current.identity == identity
                         )
 
-                    def verify_prepared_launch(
-                        self, expected: LaunchContext, prepared: Any
-                    ) -> bool:
-                        return self.verify_context(expected)
 
                 kwargs["model_change"] = (
                     validation.launch_token
@@ -3978,8 +3940,6 @@ class SqliteProcessConversationSystem:
             validation = await self.validate_launch_selection(
                 selection,
                 workspace,
-                attempt_id=attempt_id,
-                classify_new=model is not None,
             )
             if model is None and effort is None and not effort_is_set:
                 if not record_launch_validation(
@@ -4016,7 +3976,6 @@ class SqliteProcessConversationSystem:
                 validation,
                 attempt_id=attempt_id,
                 conversation_id=state.record.conversation_id,
-                disabled_models_revision=self.launch_policy_revision(selection.backend_key),
                 turn=turn_token,
                 workspace=workspace,
                 executor_identity=(
@@ -4038,16 +3997,12 @@ class SqliteProcessConversationSystem:
                 or selection.reasoning_effort != state.record.reasoning_effort
                 else None
             )
-            from typing import cast
 
-            from planner.conversation.admission.service import AdmissionContextObserver
-            from planner.conversation.backends.contracts import BackendEmissionInputs
 
             system = self
-            captured_observer = cast(AdmissionContextObserver, self._catalog_observer)
 
             class CurrentContext:
-                def verify_context(self, expected: LaunchContext | None) -> bool:
+                def verify_context(self) -> bool:
                     policy_conn = connect(system._store._db_path)
                     try:
                         check_policy_dependencies(policy_conn, policy_dependencies)
@@ -4060,18 +4015,8 @@ class SqliteProcessConversationSystem:
                             and endpoint.ready
                             and endpoint.identity == expectation.executor_identity
                         )
-                    return expected is None or (
-                        captured_observer is not None and captured_observer.verify_context(expected)
-                    )
+                    return True
 
-                def verify_prepared_launch(
-                    self,
-                    expected: LaunchContext,
-                    prepared: BackendEmissionInputs,
-                ) -> bool:
-                    return self.verify_context(
-                        expected
-                    ) and captured_observer.verify_prepared_launch(expected, prepared)
 
             delivered = await self._deliver_prompt_unsettled_verified(
                 state,
@@ -5408,10 +5353,6 @@ class SqliteProcessConversationSystem:
             emission_check=emission_check,
             admission_expectation=admission_expectation,
         )
-        state.child_resolved_model_id = (
-            None if expectation is None else expectation.resolved_model_id
-        )
-        state.child_launch_context = None if expectation is None else expectation.context
         if (
             child_stops_outside_lock(child)
             and (

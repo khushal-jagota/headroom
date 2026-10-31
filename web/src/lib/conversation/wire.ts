@@ -393,7 +393,6 @@ export type BackendModel = {
   selected_variant?: string | null;
   resolved_model_id?: string | null;
   /** A failed catalogue refresh can leave a last known-good model available. */
-  catalogue_warning?: string | null;
   /** Disabled models remain visible on Backends, but no picker offers them for a run. */
   enabled: boolean;
   /** What this model really is, when the name alone does not say — an alias and the

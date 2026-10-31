@@ -159,7 +159,6 @@ class BackendModel:
     reasoning_effort_options: tuple[str, ...] | None = None
     selected_variant: str | None = None
     resolved_model_id: str | None = None
-    catalogue_warning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

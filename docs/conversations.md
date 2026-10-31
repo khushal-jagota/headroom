@@ -28,6 +28,8 @@ Send Message is the door for a person, Chief, a Manager, or a Worker addressing 
 
 The fate is about delivery, not about whether the model agreed.
 
+A saved model choice keeps its exact name and effort. Panels checks explicit model disables before sending. The provider can still refuse the prompt. Launch validation stores the choice, result, reason, action and launch token; it carries no catalog evidence or alias history. The composer shows the refusal without a separate validation panel.
+
 | Fate | Meaning |
 | --- | --- |
 | started | The prompt was written to a live backend before the call returned. |

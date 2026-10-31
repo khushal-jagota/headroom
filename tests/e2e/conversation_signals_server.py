@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 import uvicorn
 from fastapi import FastAPI
-from tests.support.model_catalogue import seed_test_model_catalogue
 
 from planner.conversation.backends.contracts import (
     BackendEventSink,
@@ -147,7 +146,7 @@ def build_app(config: Config) -> FastAPI:
     assert config.test_mode
     with closing(connect(config.db_path)) as conn:
         create_schema(conn)
-        seed_test_model_catalogue(conn)
+
     children: dict[str, ScriptedChild] = {}
     delivered_text: dict[str, list[str]] = {}
 

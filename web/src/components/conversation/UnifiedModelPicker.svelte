@@ -86,7 +86,6 @@
   let currentEffort = $derived(displayed.reasoningEffort);
   let activeBackendKey = $derived(displayed.backendKey);
   let activeBackendName = $derived(activeBackendKey ? activeBackendKey[0].toUpperCase() + activeBackendKey.slice(1) : "");
-  let reasoningUnavailable = $derived(false);
   let effortRows = $derived([
     {value: "", name: "Provider default"},
     ...effortOptionsFor(models, pendingModel ?? displayed.model ?? "", backendEffortOptions)
@@ -279,13 +278,11 @@
         </PickerRailRow>
         <PickerRailRow
           on={showing === "efforts"}
-          dim={reasoningUnavailable}
           disabled={pickerBusy}
           label="Reasoning"
           attributes={{
             "data-conversation-picker-reasoning": "",
             "aria-pressed": showing === "efforts" ? "true" : "false",
-            "aria-disabled": reasoningUnavailable ? "true" : undefined
           }}
           onclick={showReasoning}
         >
@@ -323,7 +320,6 @@
 </ListboxPicker>
 
 <style>
-  :global([data-canonical-model-picker] .picker-rail-row.dim) { color: var(--text-muted); opacity: 1; }
   .model-picker-custom { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-custom label { min-width: 0; font-size: var(--type-xs); color: var(--text-muted); }
   .model-picker-custom input { display: block; width: 100%; min-width: 0; box-sizing: border-box; padding: var(--space-1) var(--space-2); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); background: var(--surface-recessed); color: var(--text-default); font: inherit; }

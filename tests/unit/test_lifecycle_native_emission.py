@@ -42,12 +42,8 @@ def expectation(workspace: Path) -> AdmissionExpectation:
             "1",
         ),
         workspace=CatalogWorkspaceBinding(workspace, WorkspacePathPolicy.native_absolute, None),
-        context=None,
-        evidence=None,
         attempt_id="attempt",
         launch_token="exact",
-        resolved_model_id=None,
-        disabled_models_revision="[]",
         conversation_id="conversation",
         reasoning_effort=None,
     )
@@ -206,7 +202,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
             return await registry.run(command)
 
         remote = MacRemoteChild(reference, send, lambda _: canonical_snapshot())
-        exact = replace(expectation(tmp_path), context=None, evidence=None, resolved_model_id=None)
+        exact = expectation(tmp_path)
         resolved = ResolvedConversationStart(
             "conversation",
             ConversationBackendKey.codex,

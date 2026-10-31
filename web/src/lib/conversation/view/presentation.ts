@@ -41,7 +41,7 @@ function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequ
     const base = { key: item.key, sequence: item.source_sequence, createdAt: item.created_at };
     switch (body.kind) {
         case 'prompt': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, mode: body.mode, sentAtUnixMilliseconds: body.sent_at_unix_milliseconds, ...(body.provider_submission ? {providerSubmission: body.provider_submission} : {}) };
-        case 'prompt_refused': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, reason: body.reason, modelValidation: body.model_validation ?? null, sentence: refusalSentence(body.reason, body.refusal_detail), ...(body.provider_submission ? {providerSubmission: body.provider_submission} : {}) };
+        case 'prompt_refused': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, reason: body.reason, sentence: refusalSentence(body.reason, body.refusal_detail), ...(body.provider_submission ? {providerSubmission: body.provider_submission} : {}) };
         case 'prompt_uncertain':
         case 'prompt_discarded': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null };
         case 'agent_message': return { ...base, kind: body.kind, content: pieces(body.content), toOwner: body.to_owner };

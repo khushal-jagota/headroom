@@ -24,7 +24,6 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.admission.contracts import AdmissionExpectation
@@ -558,7 +557,7 @@ def harness(tmp_path: Path) -> Iterator[_Harness]:
     db_path = tmp_path / "conversation-api.db"
     conn = connect(str(db_path))
     create_schema(conn)
-    seed_test_model_catalogue(conn)
+
     conn.close()
     built = _Harness(db_path)
     with conversation_test_loop() as runner:

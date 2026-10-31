@@ -15,9 +15,7 @@ from tests.unit.test_manager_wakes import _item_and_ticket
 
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
-    CatalogEvidenceReference,
     CorrectiveAction,
-    LaunchContext,
     SelectionKind,
     ValidationReason,
     ValidationState,
@@ -83,7 +81,6 @@ def test_upgrade_preserves_existing_wake_members_and_historical_intent(
             )
         ] == members
         assert list(conn.execute("PRAGMA foreign_key_check")) == []
-        assert validation.selection_is_historical(conn, ticket_id)
         assert (
             validation.read_launch_selection(conn, ticket_id).selection_kind
             is SelectionKind.legacy_unclassified
@@ -92,47 +89,20 @@ def test_upgrade_preserves_existing_wake_members_and_historical_intent(
         conn.close()
 
 
-def _failure(conn: Connection, ticket_id: str) -> CanonicalModelValidation:
-    selected = validation.read_launch_selection(conn, ticket_id)
-    ticket = tickets.read_ticket(conn, ticket_id)
-    workspace = workspace_binding_from_start(worker_resolve(conn, ticket), ticket.locale)
-    context = LaunchContext(
-        "stable-context",
-        selected.destination,
-        selected.backend_key,
-        None,
-        workspace,
-        workspace.workspace_folder,
-        "test-executable",
-        "1",
-        "test-settings",
-        None,
-    )
-    evidence = CatalogEvidenceReference(
-        "observation-1", "revision-1", context, 10, "attempt-1", 0.0
-    )
-    return CanonicalModelValidation(
-        selected,
-        ValidationState.incompatible,
-        ValidationReason.model_incompatible,
-        CorrectiveAction.choose_model,
-        selected.submitted_token,
-        None,
-        evidence,
-        None,
-        None,
-        None,
-    )
-
-
 def test_corrected_validation_is_silent_and_a_new_failure_reaches_the_manager(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     """One real sender history covers final eligibility and actual model context."""
     _, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    failure = _failure(tmp_db, ticket_id)
-    assert failure.evidence is not None
-    workspace = failure.evidence.context.workspace
+    ticket = tickets.read_ticket(tmp_db, ticket_id)
+    workspace = workspace_binding_from_start(worker_resolve(tmp_db, ticket), ticket.locale)
+    failure = CanonicalModelValidation(
+        validation.read_launch_selection(tmp_db, ticket_id),
+        ValidationState.incompatible,
+        ValidationReason.model_incompatible,
+        CorrectiveAction.choose_model,
+        None,
+    )
     validation.record_launch_validation(
         tmp_db, ticket_id, failure, expected_workspace=workspace, now=10, notify=True
     )
