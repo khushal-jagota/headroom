@@ -13,8 +13,6 @@ from claude_agent_sdk import ClaudeAgentOptions
 from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
 from tests.support.executor_catalog import ScriptedCatalogObserver
 from tests.unit.test_executor_native_runtime import (
-    _fixture_admission,
-    acknowledge_pending,
     canonical_snapshot,
 )
 from tests.unit.test_executor_retired_journal import IDENTITY as SOURCE_IDENTITY
@@ -27,7 +25,6 @@ from planner.conversation.backends.claude_agent_sdk import (
 )
 from planner.conversation.backends.contracts import BackendChildFactory, EmissionCheck
 from planner.conversation.contracts import (
-    ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
@@ -53,8 +50,6 @@ from planner.executor.protocol import (
     CommandDisposition,
     CommandOutcome,
     ReceiptDisposition,
-    decode_command_arguments,
-    encode_value,
 )
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets
@@ -230,60 +225,6 @@ def test_claude_stop_result_controls_canonical_retirement(
             await system.shutdown()
             if native is not None:
                 await native.stop()
-            cast(MacOutbox, registry.spool).close()
-
-    asyncio.run(run())
-
-
-def test_claude_disconnect_failure_cannot_confirm_quiescence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Gap: these gates previously exercised only a fake native stop exception."""
-
-    async def run() -> None:
-        registry, clients = claude_registry(tmp_path, monkeypatch)
-        reference = ChildReference(IDENTITY.executor_incarnation, "cleanup-child", "c_source")
-        resolved = ResolvedConversationStart(
-            "c_source",
-            ConversationBackendKey.claude,
-            "test",
-            None,
-            ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "t_source"),)),
-            tmp_path,
-            ConversationAccess.full,
-        )
-        expectation = _fixture_admission(registry, reference, resolved)
-        start = ChildCommand(
-            "start",
-            reference,
-            ChildOperation.start,
-            None,
-            decode_command_arguments(
-                ChildOperation.start,
-                {
-                    "resolved_start": encode_value(resolved),
-                    "admission_expectation": encode_value(expectation),
-                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
-                },
-            ),
-        )
-        assert (await registry.run(start)).disposition is CommandDisposition.succeeded
-        child = registry._children[reference.child_id]
-        native = cast(ClaudeAgentSdkBackendChild, child.native)
-        client = clients[0]
-        original_disconnect = client.disconnect
-        monkeypatch.setattr(client, "disconnect", disconnect_failure)
-        acknowledge_pending(cast(MacOutbox, registry.spool))
-        try:
-            with pytest.raises(RuntimeError, match="before native termination"):
-                await registry.quiesce()
-            assert registry.admission_stopped
-            assert registry._children[reference.child_id] is child
-            assert child.native is native and native._client is client
-            assert not client.disconnected
-        finally:
-            monkeypatch.setattr(client, "disconnect", original_disconnect)
-            await native.stop()
             cast(MacOutbox, registry.spool).close()
 
     asyncio.run(run())

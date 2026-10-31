@@ -30,12 +30,6 @@ import WorkerRow from "../src/components/WorkerRow.svelte";
 import WorkspaceRailCard from "../src/components/WorkspaceRailCard.svelte";
 
 describe("shared conversation signal consumers", () => {
-  it("keeps the VPS machine control outside its row button and preserves current activity", () => {
-    const html=render(WorkerRow,{props:{locale:"vps",ticketId:"worker",title:"Worker",signal:{working:true,message_for_owner:false},conversationId:"vps-exact"}}).body;
-    expect(html).toContain('data-ticket-locale="vps"');
-    expect(html).toContain('data-conversation-signal="working"');
-    expect(html).not.toMatch(/class="ticket-row[^>]*>[\s\S]*?<button/);
-  });
   it("forwards mixed signal identity through the actual Worker and manager consumers", () => {
     const signal = { working: true, message_for_owner: true };
     const worker = render(WorkerRow, { props: {

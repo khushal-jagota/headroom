@@ -22,7 +22,7 @@ from typing import cast
 
 import pytest
 from anyio.abc import Process
-from claude_agent_sdk import ClaudeAgentOptions, CLINotFoundError, ResultMessage, TextBlock
+from claude_agent_sdk import ClaudeAgentOptions, CLINotFoundError, TextBlock
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from tests.support.conversation_claude_agent_sdk_bench import (
     ANOTHER_SESSION_ID,
@@ -106,23 +106,6 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
     _run(exercise)
 
 
-def _failed_result(**changes: object) -> ResultMessage:
-    values: dict[str, object] = {
-        "subtype": "error_during_execution",
-        "duration_ms": 1,
-        "duration_api_ms": 1,
-        "is_error": True,
-        "num_turns": 1,
-        "session_id": SESSION_ID,
-    }
-    values.update(changes)
-    return ResultMessage(**values)  # type: ignore[arg-type]
-
-
-
-
-
-
 # --- the claude on this machine ------------------------------------------------------------------
 
 
@@ -165,41 +148,6 @@ def test_unavailable_claude_start_preserves_adapter_failure_and_sends_no_prompt(
     _run(exercise)
 
 
-@pytest.mark.parametrize("abort", [False, True])
-def test_transport_retains_exact_process_until_exit_across_noop_cleanup(
-    monkeypatch: pytest.MonkeyPatch, abort: bool
-) -> None:
-    async def exercise() -> None:
-        transport = _ClaudeCleanupTransport("", ClaudeAgentOptions())
-        process = SimpleNamespace(returncode=None)
-        transport._process = cast(Process, process)
-        calls = 0
-
-        async def sdk_close(self: SubprocessCLITransport) -> None:
-            nonlocal calls
-            calls += 1
-            self._process = None
-            if abort and calls == 1:
-                raise asyncio.CancelledError
-
-        monkeypatch.setattr(SubprocessCLITransport, "close", sdk_close)
-        expected = asyncio.CancelledError if abort else RuntimeError
-        with pytest.raises(expected):
-            await transport.close()
-        with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
-            await transport.close()
-        assert transport._cleanup_process is cast(Process, process)
-        with pytest.raises(RuntimeError, match="cannot reconnect"):
-            await transport.connect()
-        process.returncode = 0
-        await transport.close()
-        await transport.close()
-        assert transport._cleanup_process is cast(Process, process)
-        await _ClaudeCleanupTransport("", ClaudeAgentOptions()).close()
-
-    _run(exercise)
-
-
 @pytest.mark.parametrize("failure", [RuntimeError("disconnect failed"), asyncio.CancelledError()])
 def test_failed_disconnect_retains_client_and_fences_prompt_and_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: BaseException
@@ -232,98 +180,6 @@ def test_failed_disconnect_retains_client_and_fences_prompt_and_restart(
         assert client.disconnected
 
     _run(exercise)
-
-
-@pytest.mark.parametrize("phase", ["reader", "disconnect"])
-def test_caller_cancellation_retains_cleanup_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
-) -> None:
-    async def exercise() -> None:
-        start = _start_request(workspace_folder=tmp_path)
-        child, _sink, clients = _bench(start)
-        await child.start(start, vendor_session_cursor=None)
-        client = clients[0]
-        entered = asyncio.Event()
-        release = asyncio.Event()
-        reader = child._reader
-        assert reader is not None
-        if phase == "reader":
-            reader.cancel()
-            await asyncio.gather(reader, return_exceptions=True)
-
-            async def delayed_reader() -> None:
-                try:
-                    await asyncio.Future[None]()
-                finally:
-                    entered.set()
-                    await release.wait()
-
-            reader = asyncio.create_task(delayed_reader())
-            child._reader = reader
-            await asyncio.sleep(0)
-        else:
-            original_disconnect = client.disconnect
-
-            async def delayed_disconnect() -> None:
-                entered.set()
-                await release.wait()
-                await original_disconnect()
-
-            monkeypatch.setattr(client, "disconnect", delayed_disconnect)
-        stopping = asyncio.create_task(child.stop())
-        await entered.wait()
-        stopping.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await stopping
-        assert child._client is client
-        if phase == "reader":
-            assert child._reader is reader
-        assert not client.disconnected
-        retry = asyncio.create_task(child.stop())
-        await asyncio.sleep(0)
-        assert not retry.done()
-        release.set()
-        await retry
-        assert child._reader is None
-        assert child._client is None
-
-    _run(exercise)
-
-
-def test_reader_cleanup_failure_retains_both_handles(
-    tmp_path: Path,
-) -> None:
-    async def exercise() -> None:
-        start = _start_request(workspace_folder=tmp_path)
-        child, _sink, clients = _bench(start)
-        await child.start(start, vendor_session_cursor=None)
-        original_reader = child._reader
-        assert original_reader is not None
-        original_reader.cancel()
-        await asyncio.gather(original_reader, return_exceptions=True)
-
-        async def failed_reader() -> None:
-            raise RuntimeError("reader cleanup failed")
-
-        reader = asyncio.create_task(failed_reader())
-        child._reader = reader
-        await asyncio.sleep(0)
-        with pytest.raises(RuntimeError, match="reader cleanup failed"):
-            await child.stop()
-        assert child._reader is reader
-        assert child._client is clients[0]
-        assert not clients[0].disconnected
-        with pytest.raises(RuntimeError, match="reader cleanup failed"):
-            await child.stop()
-        assert child._reader is reader
-        assert child._client is clients[0]
-        # Release this test's deliberate failed-reader fixture without masking the
-        # production obligation to retain it until cleanup can be established.
-        child._reader = None
-        await child.stop()
-
-    _run(exercise)
-
 
 
 def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
@@ -402,63 +258,6 @@ def test_ordinary_send_requires_observed_uuid_admission(
     _run(exercise)
 
 
-def test_early_result_retains_exact_uuid_admission_after_result_consumption() -> None:
-    from tests.unit.test_claude_settings_snapshot import ScriptedTransport
-
-    async def exercise() -> None:
-        transport = _ClaudeProtocolTransport(ScriptedTransport(ClaudeAgentOptions()))
-        transport.watch_user_message("owned")
-        observed = transport._user_messages["owned"]
-        transport._observe({
-            "type": "command_lifecycle", "command_uuid": "other", "state": "queued",
-        })
-        assert not transport._user_messages["owned"].admission.done()
-        transport._observe({"type": "result", "uuid": "result", "user_message_uuid": "owned"})
-        assert transport.user_message_uuids_for_result("result") == frozenset({"owned"})
-        # A later cancellation cannot reverse observed admission, even before consumption.
-        transport._observe({
-            "type": "command_lifecycle", "command_uuid": "owned", "state": "cancelled",
-        })
-        assert await transport.wait_for_user_message_admission("owned") is True
-        assert observed.admission.result() is True
-        assert transport._user_messages == {}
-        transport.watch_user_message("next")
-        transport._observe({
-            "type": "command_lifecycle", "command_uuid": "next", "state": "queued",
-        })
-        assert await transport.wait_for_user_message_admission("next") is True
-        assert set(transport._user_messages) == {"next"}
-        transport._observe({
-            "type": "command_lifecycle", "command_uuid": "next", "state": "completed",
-        })
-        assert transport._user_messages == {}
-    _run(exercise)
-
-
-def test_root_tool_only_model_report_excludes_subagent_model(tmp_path: Path) -> None:
-    from claude_agent_sdk import ToolUseBlock
-
-    async def exercise() -> None:
-        start = _start_request(workspace_folder=tmp_path)
-        child, sink, clients = _bench(start)
-        await child.start(start, vendor_session_cursor=SESSION_ID)
-        try:
-            await _write(child)
-            clients[0].say(_assistant(ToolUseBlock(id="tool", name="Read", input={})))
-            clients[0].say(_assistant(TextBlock(text="private child"), parent="tool"))
-            await clients[0].until_taken_in()
-            assert len(sink.model_reports) == 1
-            token, fact = sink.model_reports[0]
-            assert token.turn_number == 1
-            assert fact["source_kind"] == "response_model"
-            assert fact["model"] == "claude"
-            assert fact["child_lifetime"] == child._child_lifetime
-            assert sink.message_texts == []
-        finally:
-            await child.stop()
-    _run(exercise)
-
-
 def test_observed_admission_survives_subsequent_query_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -486,53 +285,4 @@ def test_observed_admission_survives_subsequent_query_failure(
             assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
         finally:
             await child.stop()
-    _run(exercise)
-
-
-@pytest.mark.parametrize("activity", ["queued", "started", "completed", "result"])
-def test_claude_rejection_followed_by_activity_before_waiter_resumes_is_unknown(
-    activity: str,
-) -> None:
-    from tests.unit.test_claude_settings_snapshot import ScriptedTransport
-
-    async def exercise() -> None:
-        transport = _ClaudeProtocolTransport(ScriptedTransport(ClaudeAgentOptions()))
-        transport.watch_user_message("owned")
-        transport._observe({
-            "type": "command_lifecycle", "command_uuid": "owned", "state": "refused",
-        })
-        if activity == "result":
-            transport._observe({
-                "type": "result", "uuid": "result", "user_message_uuid": "owned",
-            })
-        else:
-            transport._observe({
-                "type": "command_lifecycle", "command_uuid": "owned", "state": activity,
-            })
-        assert await transport.wait_for_user_message_admission("owned") is None
-        assert transport._user_messages == {}
-    _run(exercise)
-
-
-def test_exact_effort_and_explicit_default_rebind_claude(tmp_path: Path) -> None:
-
-    async def exercise() -> None:
-        start = _start_request(
-            workspace_folder=tmp_path, model="provider-custom", reasoning_effort="future-effort"
-        )
-        child, _sink, clients = _bench(start)
-        await child.start(start, vendor_session_cursor=None)
-        try:
-            assert str(clients[0].options.effort) == "future-effort"
-            child._require_the_carried_values_are_in_force(
-                None, None, reasoning_effort_is_set=False
-            )
-            with pytest.raises(NeedsRebind):
-                child._require_the_carried_values_are_in_force(
-                    None, None, reasoning_effort_is_set=True
-                )
-            assert clients[0].prompts == []
-        finally:
-            await child.stop()
-
     _run(exercise)

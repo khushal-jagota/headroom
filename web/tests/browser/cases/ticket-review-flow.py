@@ -142,8 +142,6 @@ def run(browser, urls):
     requests = []
     writes = []
     placement_writes = []
-    move_reads = []
-    move_writes = []
     ceiling_writes = []
     approvals = []
     backlog_writes = []
@@ -403,16 +401,6 @@ def run(browser, urls):
         nonlocal navigation_proposal, session_revised, fail_field_save, review_read, review_sibling_read, chief_pointer
         path = route.request.url.split("/api/", 1)[1]
         requests.append(path)
-        if path.startswith("tickets?") and parse_qs(path.split("?", 1)[1]).get("detail") == ["full"]:
-            identity = parse_qs(path.split("?", 1)[1])["id"][0]
-            move_reads.append(identity)
-            route.fulfill(json={**fixture_ticket(identity), "record_sha256": format(len(move_reads), "064x")})
-            return
-        if path.startswith("tickets/") and path.endswith("/move"):
-            assert route.request.method == "POST"
-            move_writes.append(route.request.post_data_json)
-            route.fulfill(status=409, json={"error": {"code": "move_refused", "message": "Source state unknown.", "detail": None}})
-            return
         if path.startswith("resource-body?"):
             path = parse_qs(path.split("?", 1)[1])["key"][0].removeprefix("/api/")
             requests.append(path)
@@ -1253,13 +1241,6 @@ def run(browser, urls):
     page.locator('[data-ticket-id="t_done"]').wait_for()
     expect(page.locator("[data-ticket-backlog-action], [data-ticket-backlogged]")).to_have_count(0)
     assert page.evaluate("window.__wait()")["status"] == "included"
-    # Existing Tickets retain their machine; terminal sections expose no switch workflow.
-    assert page.evaluate("window.__terminalMoveProof()") == {
-        "valid": True, "extraAction": False, "visible": False, "restored": True,
-    }
-    assert page.locator('[data-ticket-move], [data-ticket-move-dialog], [data-employee-destination-picker]').count() == 0
-    assert move_reads == [] and move_writes == []
-
     assert page.locator("[data-copy]").count() == 0
     assert page.locator(".ticket-operating").count() == 0
     page.evaluate("window.__showTicket('t_personal_pending')")

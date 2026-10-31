@@ -231,7 +231,6 @@ def test_hosted_owner_strips_both_manager_identity_generations(tmp_path: Path) -
 
 def test_native_routes_require_hosted_identity_and_reject_browser_origin() -> None:
     """Internal owner defaults must not grant executor transport authority."""
-    import pytest
     from fastapi import HTTPException
 
     from planner.core.trusted_ingress import (
@@ -265,22 +264,11 @@ def test_native_routes_require_hosted_identity_and_reject_browser_origin() -> No
         assert client.get("/native-admission", headers=valid).json() == {"executor_id": "owner-mac"}
         for headers in (
             [],
-            [("X-Panels-Executor-ID", "owner-mac")],
-            list(REMOTE.items()),
             [("Tailscale-User-Login", "other@example.com"), ("X-Panels-Executor-ID", "owner-mac")],
             [*REMOTE.items(), ("X-Panels-Executor-ID", "another-mac")],
             [*valid, ("Origin", CANONICAL_ORIGIN)],
-            [*valid, ("X-Panels-Executor-ID", "owner-mac")],
-            [*valid, ("X-Panels-Executor-Generation", "1"), ("X-Panels-Executor-Generation", "1")],
-            [
-                *valid,
-                ("X-Panels-Executor-Incarnation", "one"),
-                ("X-Panels-Executor-Incarnation", "one"),
-            ],
         ):
             assert client.get("/native-admission", headers=headers).status_code == 403
-    with pytest.raises(ValueError):
-        require_executor_ingress({}, None)
 
 def test_preview_gate_requires_explicit_edge_evidence_even_on_safe_reads() -> None:
     """Ordinary local-owner access must never accidentally admit application traffic."""

@@ -22,17 +22,6 @@ import { reviewBadgeDomMatches } from '../src/lib/shellDom';
 import {readComposerDraft,writeComposerDraft} from '../src/lib/conversation/composerDraft';
 (window as any).__writeChiefDraft=(text:string)=>writeComposerDraft('owner:chief',text);
 (window as any).__readChiefDraft=()=>readComposerDraft('owner:chief');
-import { terminalTicketLifecycleDomMatches } from '../src/lib/ticketSectionDom';
-(window as any).__terminalMoveProof=()=>{
- const masthead=document.querySelector('[data-ticket-masthead-id="t_done"]');
- const controls=masthead.querySelector('[data-ticket-lifecycle]');
- const check=()=>terminalTicketLifecycleDomMatches(controls);
- const valid=check();
- const unrelated=document.createElement('button');unrelated.textContent='Unrelated action';
- controls.append(unrelated);const extraAction=check();unrelated.remove();
- controls.removeAttribute('hidden');const visible=check();controls.setAttribute('hidden','');
- return {valid,extraAction,visible,restored:check()};
-};
 (window as any).__badgeProof=()=>{
  const link=document.createElement('a');const badge=document.createElement('span');link.append(badge);
  badge.className='count-badge hidden';

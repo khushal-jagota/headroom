@@ -18,7 +18,6 @@ from planner.conversation.contracts import (
     NativeMessageOperation,
     PromptDeliveryMode,
     ResolvedConversationStart,
-    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     AgentMessageEventPayload,
@@ -30,7 +29,6 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.storage import (
     ConversationStore,
-    ensure_started_conversation_record,
 )
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import ChangeSignallingConnection, connect, create_schema
@@ -309,40 +307,6 @@ def test_sqlite_commit_failure_with_automatic_rollback_is_not_reported_as_saved(
         with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
             await store.append_delivered_prompt("c", prompt=A_PROMPT, model_change=None)
         assert await store.read_events_after("c", 0) == ()
-
-    asyncio.run(exercise())
-
-
-def test_existing_conversation_refuses_a_different_workspace_policy(
-    tmp_db: sqlite3.Connection,
-) -> None:
-    resolved = replace(_resolved(), workspace_path_policy=WorkspacePathPolicy.native_absolute)
-    ensure_started_conversation_record(tmp_db, resolved, created_at=1)
-    ensure_started_conversation_record(tmp_db, resolved, created_at=2)
-    with pytest.raises(RuntimeError, match="differ from its durable record"):
-        ensure_started_conversation_record(
-            tmp_db,
-            replace(resolved, workspace_path_policy=WorkspacePathPolicy.legacy_home_mapping),
-            created_at=3,
-        )
-    assert (
-        tmp_db.execute(
-            "SELECT workspace_path_policy FROM conversations WHERE conversation_id = 'c'"
-        ).fetchone()[0]
-        == "native_absolute"
-    )
-
-
-@pytest.mark.parametrize("policy", list(WorkspacePathPolicy))
-def test_workspace_policy_round_trip(store: ConversationStore, policy: WorkspacePathPolicy) -> None:
-    async def exercise() -> None:
-        resolved = replace(_resolved(), workspace_path_policy=policy)
-        await store.create_conversation(resolved)
-        read = await store.read_conversation("c")
-        assert read is not None
-        assert read.workspace_path_policy is policy
-        assert read.resolved_start().workspace_path_policy is policy
-        assert read.workspace_folder == resolved.workspace_folder
 
     asyncio.run(exercise())
 

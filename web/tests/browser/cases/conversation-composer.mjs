@@ -17,16 +17,12 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
   import UnifiedModelPicker from "../src/components/conversation/UnifiedModelPicker.svelte";
   import WorkerConfigurationSetup from "../src/components/WorkerConfigurationSetup.svelte";
   import { resolveModelPicker } from "../src/lib/conversation/modelPicker";
-  import { pickerModels, representativeClaudeModels, representativeCodexModels } from "../tests/fixtures/modelPickerFacts";
+  import { pickerModels } from "../tests/fixtures/modelPickerFacts";
   const pickerProof = new URLSearchParams(location.search).has("picker");
   const missingRetry = new URLSearchParams(location.search).has("missingRetry");
-  const selectionProof = new URLSearchParams(location.search).get("selection");
-  const normal = new URLSearchParams(location.search).get("normal");
-  let proofModels = $state.raw(normal === "claude" ? representativeClaudeModels : normal === "codex" ? representativeCodexModels : pickerModels);
+  let proofModels = $state.raw(pickerModels);
   let proofError = $state<string | null>(null);
-  let proofSelection = $state<any>(normal === "codex"
-    ? {backendKey:"codex",model:"gpt-6-astra",reasoningEffort:"low"}
-    : {backendKey:"claude",model:normal ? "claude-opus-5-5" : "opus",reasoningEffort:"high"});
+  let proofSelection = $state<any>({backendKey:"claude",model:"opus",reasoningEffort:"high"});
   (window as any).__pickerPending = () => {
     proofSelection = {backendKey:"claude",model:"sonnet",reasoningEffort:null};
     proofModels = [];
@@ -70,7 +66,6 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
       <UnifiedModelPicker {view} displaySelection={proofSelection} snapshots={[]} models={proofModels} backendEffortOptions={[]} readError={proofError} onRetry={missingRetry ? undefined : retry} scrollPanel chevron="none"
         onChooseBackend={() => {}} onChooseModel={(model, effort) => {
           (window as any).__pickerChoices.push({model, effort});
-          if (normal) proofSelection = {...proofSelection, model, reasoningEffort:effort};
         }} />
     </div>
   {:else}

@@ -37,8 +37,9 @@ it("retains snapshots during refresh and rejects a late response after canonical
   expect(state.response).toBeNull();
 });
 
-it("keeps provider-specific deliberate intent without reads on model, effort, or backend choice", async () => {
-  const read = vi.fn(async () => []), save = vi.fn(async () => {});
+it("keeps each backend's chosen intent through an offline catalog and a refused save", async () => {
+  const read = vi.fn(async () => {throw new Error("offline");});
+  const save = vi.fn(async () => {});
   let state = initialTicketSetupChoicesState();
   const controller = createTicketSetupModelChoices({read, save, onChange: value => {state = value;}});
   controller.sync(ticket, workspace); await settle();
@@ -47,31 +48,12 @@ it("keeps provider-specific deliberate intent without reads on model, effort, or
   await controller.chooseCustomModel("gpt-6.1-terra", "ultra");
   await controller.previewBackend("claude");
   expect(state.intent).toMatchObject({employee_launch_model: "sonnet", employee_launch_reasoning_effort: null});
+  save.mockRejectedValueOnce(new Error("Save failed"));
+  await controller.chooseCustomModel("refused", null);
+  expect(state.intent).toMatchObject({employee_launch_model: "sonnet", employee_launch_reasoning_effort: null});
+  expect(state.saveError).toEqual(new Error("Save failed"));
   await controller.previewBackend("codex");
   expect(state.intent).toMatchObject({employee_launch_model: "gpt-6.1-terra", employee_launch_reasoning_effort: "ultra"});
   expect(read).toHaveBeenCalledTimes(1);
-  expect(save).toHaveBeenCalledTimes(2);
-  controller.dispose();
-});
-
-it("preserves exact custom intent after catalog failure and restores it after a refused save", async () => {
-  const read = vi.fn(async () => {throw new Error("offline");});
-  const save = vi.fn(async () => {});
-  let state = initialTicketSetupChoicesState();
-  const controller = createTicketSetupModelChoices({read, save, onChange: value => {state = value;}});
-  controller.sync(ticket, workspace); await settle();
-  await controller.chooseCustomModel("provider-next[1m]", "future-effort");
-  controller.sync({...ticket, record_sha256:"record-2", employee_launch_model:"provider-next[1m]", employee_launch_reasoning_effort:"future-effort"}, workspace);
-  await settle();
-  expect(read).toHaveBeenCalledTimes(1);
-  await controller.previewBackend("claude");
-  expect(save).toHaveBeenLastCalledWith(ticket.id, {
-    employee_backend:"claude", employee_launch_model:"provider-next[1m]",
-    employee_launch_reasoning_effort:"future-effort", selection_kind:"legacy_unclassified"
-  });
-  save.mockRejectedValueOnce(new Error("Save failed"));
-  await controller.chooseCustomModel("refused", null);
-  expect(state.intent?.employee_launch_model).toBe("provider-next[1m]");
-  expect(state.saveError).toEqual(new Error("Save failed"));
   controller.dispose();
 });

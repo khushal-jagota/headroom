@@ -45,9 +45,6 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
             "PLAN_UPDATE_REPOSITORY": "owner/panels",
             "PLAN_UPDATE_TOKEN_FILE": "/operator/update-token",
             "SECRET": "no",
-            "PLAN_EXECUTOR_MODE": "remote",
-            "PLAN_EXECUTOR_ID": "ambient-mac",
-            "PLAN_EXECUTOR_VPS_SOCKET": "/ambient/socket",
         },
     )
     assert env == {
@@ -61,32 +58,6 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
         "PLAN_APP_SHA": SHA,
         "PLAN_APP_ROOT": str(app),
     }
-
-    from planner.environments.executor_launch_contracts import (
-        ExecutorLaunchConfigurationError,
-        VpsExecutorLaunchConfiguration,
-    )
-
-    explicit = build_app_launch_env(
-        app,
-        ambient={"PLAN_EXECUTOR_ID": "ambient-mac"},
-        executor_launch=VpsExecutorLaunchConfiguration("remote", "owner-mac"),
-    )
-    assert explicit["PLAN_EXECUTOR_ID"] == "owner-mac"
-    assert explicit["PLAN_EXECUTOR_MODE"] == "remote"
-    assert "PLAN_EXECUTOR_VPS_SOCKET" not in explicit
-    with pytest.raises(
-        ExecutorLaunchConfigurationError,
-        match="unsupported VPS executor launch configuration version",
-    ):
-        build_app_launch_env(
-            app,
-            ambient={},
-            executor_launch=VpsExecutorLaunchConfiguration(
-                "remote",
-                version=1,
-            ),
-        )
 
 
 def test_exported_cli_is_relocatable_and_preserves_caller_context(

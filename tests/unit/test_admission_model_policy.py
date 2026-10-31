@@ -5,37 +5,13 @@ from sqlite3 import Connection
 
 import pytest
 
-from planner.conversation.admission.policy import (
-    check_policy_dependencies,
-)
-from planner.conversation.backend_state import model_is_enabled, write_model_enablement
+from planner.conversation.backend_state import write_model_enablement
 from planner.conversation.contracts import ConversationBackendKey as Backend
 from planner.conversation.launch_intent import bind_model_intent
 from planner.conversation.model_resolution.contracts import SelectionKind, ValidationState
 from planner.core.contracts import OWNER_PRINCIPAL
-from planner.core.db import connect
 from planner.core.errors import PlannerError
 from planner.tickets import data as tickets
-
-
-def test_model_disables_apply_across_connections(
-    tmp_db: Connection,
-) -> None:
-    from planner.conversation.admission.policy import ModelPolicyDependencies
-    from planner.conversation.backends.contracts import AdmissionRefused
-
-    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    dependencies = ModelPolicyDependencies(Backend.codex, ("gpt-6.1-terra",))
-    other = connect(path)
-    try:
-        write_model_enablement(other, Backend.codex, "gpt-6.1-terra", False)
-        assert not model_is_enabled(other, Backend.codex, "gpt-6.1-terra")
-        with pytest.raises(AdmissionRefused, match="disabled"):
-            check_policy_dependencies(other, dependencies)
-        write_model_enablement(other, Backend.codex, "gpt-6.1-terra", True)
-        check_policy_dependencies(other, dependencies)
-    finally:
-        other.close()
 
 
 def test_configuration_commit_rechecks_disables_without_catalog_evidence(

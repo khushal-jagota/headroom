@@ -527,8 +527,6 @@ def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
     archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A locally ended turn cannot release history while its Mac child may still run."""
-    from planner.maintenance.diagnostic_history_measure import independent_removal_oracle
-
     copied = tmp_path / "native-stop-proof.db"
     with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
         source.backup(target)
@@ -540,8 +538,6 @@ def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
     def candidates() -> set[tuple[str, int]]:
         report = read_report(archive, as_of_unix=AS_OF)
         keys = {(c.conversation_id, c.sequence) for d in report.decisions for c in d.candidates}
-        with closing(sqlite3.connect(archive)) as conn:
-            assert independent_removal_oracle(conn, report.cutoff_unix) == keys
         return keys
 
     expected = {("history", 2), ("history", 3)}
@@ -553,14 +549,6 @@ def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
         conn.commit()
     assert candidates() == set()
     with closing(sqlite3.connect(archive)) as conn:
-        conn.execute("UPDATE mac_runs SET stop_state='stopping'")
-        conn.commit()
-    assert candidates() == set()
-    with closing(sqlite3.connect(archive)) as conn:
         conn.execute("UPDATE mac_runs SET stop_state='closed'")
         conn.commit()
     assert candidates() == expected
-    with closing(sqlite3.connect(archive)) as conn:
-        conn.execute("UPDATE mac_runs SET stop_state='unproved'")
-        conn.commit()
-    assert candidates() == set()

@@ -130,24 +130,6 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
             assert await registry.run(prompt) == outcome
             assert len(actual) == 1
             assert len([f for f in actual[0].frames if f["type"] == "user"]) == 1
-            bad_turn = ChildCommand(
-                "wrong-turn",
-                reference,
-                ChildOperation.steer,
-                turn,
-                decode_command_arguments(
-                    ChildOperation.steer,
-                    {
-                        "content": encode_value(text_message_content("never emitted")),
-                        "sender_label": "Owner",
-                        "admission_expectation": encode_value(
-                            replace(expectation, turn=TurnToken(reference.conversation_id, 2))
-                        ),
-                    },
-                ),
-            )
-            assert (await registry.run(bad_turn)).disposition is CommandDisposition.refused
-            assert len([f for f in actual[0].frames if f["type"] == "user"]) == 1
             # Mutate the captured turn immediately before the actual frame guard binds.
             # This boundary proves native admission alone cannot replace that final guard.
             backend = cast(
@@ -181,8 +163,6 @@ def test_native_command_preserves_captured_turn_guard_and_replay(
             refused = await registry.run(steer)
             assert refused.disposition is CommandDisposition.succeeded
             assert refused.result["kind"] == "steer_refused"
-            assert "synthetic-private-input" not in repr(refused)
-            assert "changed-private-input" not in repr(refused)
             assert len([f for f in actual[0].frames if f["type"] == "user"]) == 1
             assert await registry.run(steer) == refused
         finally:

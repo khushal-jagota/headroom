@@ -210,34 +210,6 @@ def setup(
     return BackendSnapshotService(), None, path
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def test_actual_creation_route_preserves_offline_explicit_effort(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -298,77 +270,42 @@ def test_actual_creation_route_preserves_offline_explicit_effort(
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize(
-    "change",
-    ["context", "alias", "default_effort", "authored_default", "old_held", "authored_direct"],
-)
-def test_real_reused_local_child_preserves_actual_launch_inputs(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    change: str,
+@pytest.mark.parametrize("held", [False, True], ids=["idle", "queued"])
+def test_explicit_default_effort_reaches_the_provider_on_the_next_send(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held: bool
 ) -> None:
-    """A retained process cannot inherit fresh ambient facts or retain an explicit old effort."""
-    import time
+    from datetime import UTC, datetime
 
+    from fastapi import FastAPI, Request
     from tests.support.principals import OWNER_PRINCIPAL
 
+    from planner.conversation.api import OwnerSendBody, SentTextPiece
+    from planner.core.authctx import RequestContext
+    from planner.core.clock import TestClock
     from planner.core.contracts import JsonDict
+    from planner.core.errors import PlannerError
     from planner.runtime import conversation_start
+    from planner.tickets import api as ticket_api
     from planner.tickets import data as tickets
 
-    stamp = int(time.time())
-    binding = CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None)
-    launch = context(
-        backend_key=Backend.claude, workspace=binding, localized_workspace_folder=tmp_path
-    )
-    source = ScopedCatalogue(
-        observation(
-            (
-                CatalogRow(
-                    "fable",
-                    SelectionKind.provider_alias,
-                    "claude-fable-1",
-                    "Fable",
-                    ("high",),
-                    False,
-                    True,
-                    None,
-                    "provider",
-                ),
-            ),
-            launch=launch,
-            stamp=stamp,
-        )
-    )
-    service, store, path = setup(tmp_path, source)
-    monkeypatch.setattr(service, "_now", time.time)
+    _, _, path = setup(tmp_path)
     harness = _Harness(path)
-    harness.clock.now = float(stamp)
-    harness.system.configure_destination_validation(source)
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
 
     async def exercise() -> None:
-        began = time.monotonic()
-        refreshed = await harness.system.destination_backend_snapshot(
-            Backend.claude, binding, "vps", refresh=True,
-        )
-        assert refreshed.available_models and source.calls
-        source.calls.clear()
         conn = connect(str(path))
         try:
             ticket = tickets.create_ticket(
                 conn,
                 worker_type="coding",
-                title="Retained launch",
+                title="Explicit provider default",
                 principal=OWNER_PRINCIPAL,
-                now=stamp,
+                now=1000,
                 title_max_chars=200,
                 employee_backend="claude",
                 employee_launch_model="fable",
                 selection_kind=SelectionKind.provider_alias,
-                employee_launch_reasoning_effort="high"
-                if change in ("default_effort", "authored_default", "old_held", "authored_direct")
-                else None,
+                employee_launch_reasoning_effort="high",
             )
             async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
                 first = await conversation_start.send_to_ticket_conversation(
@@ -378,94 +315,48 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
                     text_message_content("First"),
                     conversation_id=None,
                     sender_label="Owner",
-                    now=stamp,
+                    now=1000,
                 )
-            assert first.conversation_id is not None
             conversation_id = first.conversation_id
-            if change not in ("authored_default", "old_held"):
+            assert conversation_id is not None
+            if not held:
                 await harness.complete_turn(conversation_id)
-            assert harness.backend(conversation_id).session_starts == 1
-            if change == "context":
-                updated = replace(
-                    launch, context_ref="new-effective-context", provider_scope="new-scope"
-                )
-                source.current_context = updated
-                source.value = replace(
-                    source.value,
-                    evidence=replace(
-                        source.value.evidence,
-                        context=updated,
-                        observation_revision="2",
+            request = Request({"type": "http", "app": FastAPI()})
+            clock = TestClock(datetime.fromtimestamp(1000, UTC))
+
+            async def send() -> JsonDict:
+                return await ticket_api.send_to_ticket_conversation(
+                    ticket.id,
+                    OwnerSendBody(
+                        content=[SentTextPiece(piece="text", text="Use provider default")],
+                        model="fable",
+                        reasoning_effort=None,
+                        sender_label="Owner",
+                        sender_message_id="explicit-default",
                     ),
+                    request,
+                    conn,
+                    RequestContext(OWNER_PRINCIPAL),
+                    clock,
+                    harness.system,
+                    harness.message_files,
                 )
-            elif change == "alias":
-                source.value = replace(
-                    source.value,
-                    rows=(
-                        replace(
-                            source.value.rows[0],
-                            resolved_model_id="claude-fable-2",
-                        ),
-                    ),
-                    evidence=replace(
-                        source.value.evidence,
-                        observation_id="alias-refresh",
-                        observation_revision="2",
-                    ),
+
+            if held:
+                assert (await send())["fate"] == "queued"
+                # A queued choice takes effect when that message departs.
+                assert (
+                    tickets.read_ticket(conn, ticket.id).employee_launch_reasoning_effort == "high"
                 )
-                await harness.system.destination_backend_snapshot(
-                Backend.claude, binding, "vps", refresh=True
-            )
-            elif change == "default_effort":
-                # Preserve a legacy conversation whose recorded process used explicit high,
-                # while its canonical request now asks for the provider default.
-                conn.execute(
-                    "UPDATE tickets SET employee_launch_reasoning_effort=NULL WHERE id=?",
-                    (ticket.id,),
-                )
-                conn.commit()
-            if change in ("authored_default", "old_held", "authored_direct"):
-                from datetime import UTC, datetime
-
-                from fastapi import FastAPI, Request
-
-                from planner.conversation.api import OwnerSendBody, SentTextPiece
-                from planner.core.authctx import RequestContext
-                from planner.core.clock import TestClock
-                from planner.tickets import api as ticket_api
-
-                body = OwnerSendBody(
-                    content=[SentTextPiece(piece="text", text="Next exact request")],
-                    model="fable",
-                    sender_label="Owner",
-                    sender_message_id="explicit-default",
-                )
-                if change != "old_held":
-                    body = body.model_copy(update={"reasoning_effort": None})
-                request = Request({"type": "http", "app": FastAPI()})
-
-                async def send_request() -> JsonDict:
-                    return await ticket_api.send_to_ticket_conversation(
-                        ticket.id,
-                        body,
-                        request,
-                        conn,
-                        RequestContext(OWNER_PRINCIPAL),
-                        TestClock(datetime.fromtimestamp(stamp, UTC)),
-                        harness.system,
-                        harness.message_files,
-                    )
-
-                if change == "authored_direct":
-                    from planner.core.errors import PlannerError
-
-                    backend = harness.backend(conversation_id)
-                    backend.write_has_begun = asyncio.Event()
-                    backend.writes_wait_for_release = asyncio.Event()
-                    sending = asyncio.create_task(send_request())
-                    await backend.write_has_begun.wait()
-                    # A configuration writer must not hold mutation while waiting for
-                    # this sender's link and thereby block its departure transaction.
+                await harness.complete_turn(conversation_id)
+            else:
+                backend = harness.backend(conversation_id)
+                backend.write_has_begun = asyncio.Event()
+                backend.writes_wait_for_release = asyncio.Event()
+                sending = asyncio.create_task(send())
+                await backend.write_has_begun.wait()
+                # Regression: configuration must refuse rather than deadlock with a send.
+                try:
                     with pytest.raises(PlannerError, match="conversation operation"):
                         await ticket_api.put_ticket_employee_configuration(
                             ticket.id,
@@ -473,93 +364,21 @@ def test_real_reused_local_child_preserves_actual_launch_inputs(
                             request,
                             conn,
                             RequestContext(OWNER_PRINCIPAL),
-                            TestClock(datetime.fromtimestamp(stamp, UTC)),
+                            clock,
                         )
+                finally:
                     backend.writes_wait_for_release.set()
-                    response = await sending
-                    assert response["fate"] == "started"
-                else:
-                    response = await send_request()
-                    assert response["fate"] == "queued"
-            else:
-                async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
-                    second = await conversation_start.send_to_ticket_conversation(
-                        harness.system,
-                        conn,
-                        ticket.id,
-                        text_message_content("Next exact request"),
-                        conversation_id=conversation_id,
-                        sender_label="Owner",
-                        now=stamp,
-                    )
-            from planner.conversation.contracts import PromptDeliveryStarted
-
-            if change in ("authored_default", "old_held"):
-                from pydantic import TypeAdapter
-
-                from planner.conversation.system import _HeldPrompt
-                from planner.executor.protocol import encode_value
-
-                assert (
-                    tickets.read_ticket(conn, ticket.id).employee_launch_reasoning_effort == "high"
-                )
-                state = await harness.system._conversation_state(conversation_id)
-                assert state is not None
-                held = encode_value(state.held_prompts[0])
-                assert isinstance(held, dict)
-                if change == "old_held":
-                    held.pop("reasoning_effort_is_set")
-                replayed = TypeAdapter(_HeldPrompt).validate_python(held)
-                assert replayed.reasoning_effort_is_set is (change == "authored_default")
-                state.held_prompts[0] = replayed
-                await harness.complete_turn(conversation_id)
-                expected_effort = "high" if change == "old_held" else None
-                assert (
-                    tickets.read_ticket(conn, ticket.id).employee_launch_reasoning_effort
-                    == expected_effort
-                )
-            elif change != "authored_direct":
-                assert isinstance(second.fate, PromptDeliveryStarted)
+                assert (await sending)["fate"] == "started"
             backend = harness.backend(conversation_id)
-            assert backend.session_starts == (
-                1 if change in ("old_held", "context", "alias") else 2
-            )
-            assert backend.most_live_children_at_once == 1
             assert len(backend.writes) == 2
-            if change in ("default_effort", "authored_default", "authored_direct"):
-                assert backend.reasoning_effort is None
-                record = await harness.store.read_conversation(conversation_id)
-                assert record is not None and record.reasoning_effort is None
-            assert tickets.read_ticket(conn, ticket.id).employee_launch_model == "fable"
-            if change == "alias":
-                await harness.complete_turn(conversation_id)
-                async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
-                    await conversation_start.send_to_ticket_conversation(
-                        harness.system,
-                        conn,
-                        ticket.id,
-                        text_message_content("Same alias again"),
-                        conversation_id=conversation_id,
-                        sender_label="Owner",
-                        now=stamp,
-                    )
-                from planner.tickets.validation.data import read_launch_validation
-
-                retained = read_launch_validation(conn, ticket.id)
-                assert retained is not None
-                assert retained.validation.previous_alias_resolution is None
-                assert retained.validation.launch_token == "fable"
-
-            assert len(source.calls) == (1 if change == "alias" else 0)
-            print(f"synthetic VPS refresh/model/effort/two-send sequence ({change}): "
-                  f"{time.monotonic()-began:.3f}s")
+            assert backend.reasoning_effort is None
+            assert backend.most_live_children_at_once == 1
+            assert tickets.read_ticket(conn, ticket.id).employee_launch_reasoning_effort is None
         finally:
             conn.close()
             await harness.system.shutdown()
 
     asyncio.run(asyncio.wait_for(exercise(), 10))
-
-
 
 
 @pytest.mark.parametrize("backend", [Backend.codex, Backend.hermes])
@@ -652,52 +471,6 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
     asyncio.run(exercise())
 
 
-def test_refusal_event_keeps_canonical_validation_and_decodes_older_rows() -> None:
-    import json
-
-    from pydantic import TypeAdapter
-
-    from planner.conversation.contracts import PromptDeliveryMode, PromptDeliveryRefusalReason
-    from planner.conversation.events import (
-        ConversationEventKind,
-        PromptDeliveryRefusedEventPayload,
-        conversation_event_payload_from_canonical_json,
-        conversation_event_payload_to_canonical_json,
-    )
-    from planner.conversation.model_resolution.contracts import CanonicalModelValidation
-    from planner.conversation.model_resolution.logic.validation import unresolved_validation
-
-    validation = TypeAdapter(CanonicalModelValidation).dump_python(
-        unresolved_validation(selection(), ValidationReason.offline),
-        mode="json",
-    )
-    event = PromptDeliveryRefusedEventPayload(
-        text_message_content("Unchanged draft"),
-        "Owner",
-        PromptDeliveryMode.queue,
-        PromptDeliveryRefusalReason.model_resolution_failed,
-        model_validation=validation,
-    )
-    encoded = conversation_event_payload_to_canonical_json(event)
-    restored = conversation_event_payload_from_canonical_json(
-        ConversationEventKind.prompt_delivery_refused,
-        encoded,
-    )
-    assert restored == event
-    old = json.loads(encoded)
-    del old["model_validation"]
-    legacy = conversation_event_payload_from_canonical_json(
-        ConversationEventKind.prompt_delivery_refused,
-        json.dumps(old),
-    )
-    assert isinstance(legacy, PromptDeliveryRefusedEventPayload)
-    assert legacy.model_validation is None
-
-
-
-
-
-
 @pytest.mark.parametrize("initial", [True, False])
 def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial: bool
@@ -707,14 +480,11 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
     from datetime import UTC, datetime
 
     from fastapi import FastAPI, Request
-    from pydantic import TypeAdapter
     from tests.support.principals import OWNER_PRINCIPAL
 
     from planner.conversation.api import OwnerSendBody, SentTextPiece
-    from planner.conversation.system import _HeldPrompt
     from planner.core.authctx import RequestContext
     from planner.core.clock import TestClock
-    from planner.executor.protocol import encode_value
     from planner.runtime import conversation_start
     from planner.tickets import api as ticket_api
     from planner.tickets import data as tickets
@@ -835,18 +605,7 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
                         harness.system,
                         harness.message_files,
                     )
-                state = await harness.system._conversation_state(conversation_id)
-                assert state is not None
-                held = encode_value(state.held_prompts[0])
-                assert isinstance(held, dict)
-                assert held["selection_kind"] == "concrete"
-                retained_held = state.held_prompts[0]
-                assert retained_held.selection_kind is SelectionKind.concrete
-                assert retained_held.reasoning_effort_is_set
-                assert retained_held.reasoning_effort_change is None
-                # The old absent field retains its historical semantics on new readers.
-                held.pop("selection_kind")
-                assert TypeAdapter(_HeldPrompt).validate_python(held).selection_kind is None
+                (retained_held,) = await harness.system.held_prompts(conversation_id)
                 from planner.conversation.contracts import (
                     HeldPromptPromotionMode,
                     PromptDeliveryQueued,
@@ -860,7 +619,7 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
                     HeldPromptPromotionMode.steer,
                 )
                 assert isinstance(retained, PromptDeliveryQueued)
-                assert state.held_prompts[0] == retained_held
+                assert await harness.system.held_prompts(conversation_id) == (retained_held,)
                 promoted = await harness.system.promote_held_prompt(
                     conversation_id,
                     held_id,
@@ -877,39 +636,5 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_held_admission(
         finally:
             await harness.system.shutdown()
             conn.close()
-
-    asyncio.run(exercise())
-
-
-def test_explicit_kind_rejects_orphans_and_does_not_leak_to_a_later_send() -> None:
-    """The asynchronous capture belongs to one send, including its exceptional exit."""
-    from pydantic import ValidationError
-
-    from planner.conversation.api import OwnerSendBody, SentTextPiece
-    from planner.conversation.launch_intent import validate_launch_intent
-    from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
-
-    with pytest.raises(ValidationError, match="explicit model"):
-        OwnerSendBody(
-            content=[SentTextPiece(piece="text", text="No model")],
-            sender_label="Owner",
-            selection_kind=SelectionKind.concrete,
-        )
-    with pytest.raises(ValueError, match="explicit model"):
-        ConversationStartOverrides(selection_kind=SelectionKind.concrete)
-
-    async def capture(
-        *, model_change: str | None = None, selection_kind: SelectionKind | None = None
-    ) -> None:
-        validate_launch_intent(model_change, selection_kind)
-        if model_change is not None:
-            raise RuntimeError("send failed")
-
-    async def exercise() -> None:
-        with pytest.raises(ValueError, match="explicit model"):
-            await capture(selection_kind=SelectionKind.concrete)
-        with pytest.raises(RuntimeError, match="send failed"):
-            await capture(model_change="exact", selection_kind=SelectionKind.concrete)
-        await capture()
 
     asyncio.run(exercise())

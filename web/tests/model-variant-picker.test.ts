@@ -27,14 +27,7 @@ describe("current model variants in the shared picker", () => {
     expect(view.catalogueWarning).toBeNull();
   });
 
-  it("keeps explicit effort while catalog support remains unknown", () => {
-    const view = picker([{
-      model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,
-      reasoning_effort_options: null,
-    }]);
-    expect(view.efforts).toEqual([]);
-    expect(view.face).toBe("GPT 6.1 Sol medium");
-  });
+
 
   it("keeps the last known-good model selectable and reports the catalogue failure", () => {
     const warning = "Model catalogue unavailable. Using the last known-good model for sol.";

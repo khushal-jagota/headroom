@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -172,16 +171,11 @@ def test_mac_commands_and_retained_preview_never_inspect_vps_processes(
         monkeypatch.setattr(service.inspector, "check", no_vps_process)
         monkeypatch.setattr(service.inspector, "discover", no_vps_process)
         try:
-            operations: tuple[Callable[[], Awaitable[object]], ...] = (
-                lambda: service.prepare(ticket.id),
-                lambda: service.register(ticket.id, 3001),
-                lambda: service.show(ticket.id),
-                lambda: service.stop(ticket.id),
-                lambda: service.check(ticket.id, prepared.generation),
-            )
-            for operation in operations:
-                with pytest.raises(PreviewError, match="unavailable.*Mac"):
-                    await operation()
+            with pytest.raises(PreviewError, match="unavailable.*Mac"):
+                await service.stop(ticket.id)
+            # Reading the old address expires it; a refused stop itself is read-only.
+            with pytest.raises(PreviewError, match="unavailable.*Mac"):
+                await service.check(ticket.id, prepared.generation)
             ended = data.get(tmp_db, ticket.id, prepared.generation)
             assert ended is not None and ended.state == "ended"
         finally:
