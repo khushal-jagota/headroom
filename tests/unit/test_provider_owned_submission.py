@@ -10,7 +10,13 @@ from tests.unit.test_current_model_resolution import (
     setup,
 )
 
-from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
+from planner.conversation.backends.contracts import (
+    AgentMessageDelta,
+    BackendPromptRejected,
+    PromptWriteFailed,
+    ToolCallStarted,
+    TurnEnded,
+)
 from planner.conversation.contracts import (
     PromptDeliveryUncertain,
 )
@@ -155,19 +161,20 @@ def test_provider_events_and_held_messages_keep_their_original_turn(
         accepted = await original(self, turn, content, **kwargs)
         if early and len(attempted_tokens) == 1:
             # These callbacks must finish before the provider returns acceptance.
-            await self._sink.agent_message_delta(turn, "early delta")
-            await self._sink.tool_call_started(
+            await self._sink.report(turn, AgentMessageDelta(text_delta="early delta"))
+            await self._sink.report(
                 turn,
-                tool_call_id="early-tool",
-                title="Read",
-                tool_kind="read",
-                detail="detail",
+                ToolCallStarted(
+                    tool_call_id="early-tool", title="Read", tool_kind="read", detail="detail"
+                ),
             )
-            await self._sink.turn_ended(
+            await self._sink.report(
                 turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             return BackendPromptAccepted(
                 True,

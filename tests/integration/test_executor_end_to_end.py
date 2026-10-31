@@ -24,13 +24,23 @@ from tests.support.executor_https import HttpsProxy, serve_executor_app
 from tests.support.executor_inbox import lookup_receipt
 
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    AgentMessageDelta,
     BackendChild,
     BackendChildFactory,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
     BackendUserInputRequest,
+    ModelThinkingHappened,
+    PermissionAskRaised,
+    ToolCallFinished,
+    ToolCallProgress,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.contracts import (
     AnswerFate,
@@ -123,12 +133,14 @@ class ScriptedNativeChild:
         self.turn = turn_token
         if self.emit_early_event:
             assert self.sink is not None
-            await self.sink.tool_call_started(
+            await self.sink.report(
                 turn_token,
-                tool_call_id=f"early-{self.prompt_count}",
-                title="Before prompt returns",
-                tool_kind="other",
-                detail=None,
+                ToolCallStarted(
+                    tool_call_id=f"early-{self.prompt_count}",
+                    title="Before prompt returns",
+                    tool_kind="other",
+                    detail=None,
+                ),
             )
         return BackendPromptAccepted(True)
 
@@ -146,28 +158,30 @@ class ScriptedNativeChild:
 
     async def raise_user_input(self, request_id: str = "request_input") -> None:
         assert self.sink is not None and self.turn is not None
-        await self.sink.user_input_requested(
+        await self.sink.report(
             self.turn,
-            BackendUserInputRequest(
-                request_id,
-                (
-                    UserInputQuestion(
-                        "q_one",
-                        "First",
-                        "Choose one",
-                        (UserInputOption("Yes", "Proceed"), UserInputOption("No", "Decline")),
-                        False,
-                        False,
+            UserInputRequested(
+                request=BackendUserInputRequest(
+                    request_id,
+                    (
+                        UserInputQuestion(
+                            "q_one",
+                            "First",
+                            "Choose one",
+                            (UserInputOption("Yes", "Proceed"), UserInputOption("No", "Decline")),
+                            False,
+                            False,
+                        ),
+                        UserInputQuestion(
+                            "q_two",
+                            "Colors",
+                            "Choose colors",
+                            (UserInputOption("Red", "Warm"), UserInputOption("Blue", "Cool")),
+                            True,
+                            False,
+                        ),
                     ),
-                    UserInputQuestion(
-                        "q_two",
-                        "Colors",
-                        "Choose colors",
-                        (UserInputOption("Red", "Warm"), UserInputOption("Blue", "Cool")),
-                        True,
-                        False,
-                    ),
-                ),
+                )
             ),
         )
 
@@ -176,16 +190,18 @@ class ScriptedNativeChild:
 
     async def raise_ask(self) -> None:
         assert self.sink is not None and self.turn is not None
-        await self.sink.permission_ask_raised(
+        await self.sink.report(
             self.turn,
-            BackendPermissionAsk(
-                "ask_permission",
-                "Run the scripted action?",
-                None,
-                (
-                    PermissionAskOption("allow", "Allow", "allow_once"),
-                    PermissionAskOption("deny", "Deny", "reject_once"),
-                ),
+            PermissionAskRaised(
+                ask=BackendPermissionAsk(
+                    "ask_permission",
+                    "Run the scripted action?",
+                    None,
+                    (
+                        PermissionAskOption("allow", "Allow", "allow_once"),
+                        PermissionAskOption("deny", "Deny", "reject_once"),
+                    ),
+                )
             ),
         )
 
@@ -618,11 +634,13 @@ def test_prompt_survives_short_link_drop_once_with_attachment(
         sending: asyncio.Task[PromptDeliveryFate] | None = None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
+            await harness.native.sink.report(
                 harness.native.turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
             identity = harness.mac.identity
@@ -708,11 +726,13 @@ def test_early_prompt_event_and_idle_publications_do_not_wait_for_retry_timer(
             generation = harness.mac.identity.connection_generation
             assert harness.events("tool_call_started") == 1
             assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
+            await harness.native.sink.report(
                 harness.native.turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             await eventually(
                 lambda: harness.system._conversations["c_scripted"].running_turn is None,
@@ -734,12 +754,11 @@ def test_early_prompt_event_and_idle_publications_do_not_wait_for_retry_timer(
             # Let the sender become idle; an event alone must wake it too.
             await asyncio.sleep(0.1)
             assert harness.native.turn is not None
-            await harness.native.sink.tool_call_started(
+            await harness.native.sink.report(
                 harness.native.turn,
-                tool_call_id="idle",
-                title="While idle",
-                tool_kind="other",
-                detail=None,
+                ToolCallStarted(
+                    tool_call_id="idle", title="While idle", tool_kind="other", detail=None
+                ),
             )
             await eventually(
                 lambda: harness.events("tool_call_started") == 3,
@@ -1029,11 +1048,13 @@ def test_exact_model_and_effort_cross_authenticated_native_dispatch(
 
             async def finish_turn() -> None:
                 assert second.sink is not None and second.turn is not None
-                await second.sink.turn_ended(
+                await second.sink.report(
                     second.turn,
-                    ending=ConversationTurnEnding.completed,
-                    error_summary=None,
-                    standard_error_tail=None,
+                    TurnEnded(
+                        ending=ConversationTurnEnding.completed,
+                        error_summary=None,
+                        standard_error_tail=None,
+                    ),
                 )
                 await eventually(
                     lambda: harness.system._conversations[conversation_id].phase.value == "idle",
@@ -1077,7 +1098,6 @@ def test_exact_model_and_effort_cross_authenticated_native_dispatch(
 def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from planner.conversation import system as conversation_module
     from planner.conversation.events import (
         AgentMessageDeltaFrame,
         ModelThinkingFrame,
@@ -1093,16 +1113,6 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
             monkeypatch.setattr(harness.system, "_live_tail", tail)
             sink, turn = harness.native.sink, harness.native.turn
             assert sink is not None and turn is not None
-            completed = []
-            complete = conversation_module.completed_backend_text_event
-
-            def observe_completion(content: MessageContent) -> None:
-                completed.append(content)
-                complete(content)
-
-            monkeypatch.setattr(
-                conversation_module, "completed_backend_text_event", observe_completion
-            )
             minted = []
             mint = harness.mac.outbox.add
 
@@ -1117,9 +1127,9 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                     0
                 ]
                 with tail.subscribe("c_scripted") as watcher:
-                    await sink.agent_message_delta(turn, "Live text")
-                    await sink.model_thinking_happened(turn)
-                    await sink.tool_call_progress(turn, tool_call_id="tool", detail="Working")
+                    await sink.report(turn, AgentMessageDelta(text_delta="Live text"))
+                    await sink.report(turn, ModelThinkingHappened())
+                    await sink.report(turn, ToolCallProgress(tool_call_id="tool", detail="Working"))
                     assert await asyncio.wait_for(watcher.next_item(), 2) == AgentMessageDeltaFrame(
                         text_delta="Live text"
                     )
@@ -1136,18 +1146,21 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                     await eventually(
                         lambda: harness.mac.gateway._link is None, "Mac link stayed open"
                     )
-                    await sink.agent_message_delta(turn, "Lost text")
-                    await sink.model_thinking_happened(turn)
-                    await sink.tool_call_progress(turn, tool_call_id="tool", detail="Lost progress")
+                    await sink.report(turn, AgentMessageDelta(text_delta="Lost text"))
+                    await sink.report(turn, ModelThinkingHappened())
+                    await sink.report(
+                        turn, ToolCallProgress(tool_call_id="tool", detail="Lost progress")
+                    )
                     assert not minted and not harness.mac.outbox.pending()
-                    await sink.agent_message_completed(turn, text_message_content("Full reply"))
+                    await sink.report(
+                        turn, AgentMessageCompleted(content=text_message_content("Full reply"))
+                    )
                     pending = harness.mac.outbox.pending()
                     assert len(pending) == 1
                     resume.set()
                     await eventually(
                         lambda: not harness.mac.outbox.pending(), "Completed reply did not replay"
                     )
-                    assert completed == [text_message_content("Full reply")]
                     # Nothing shown while disconnected is replayed to live watchers.
                     with pytest.raises(TimeoutError):
                         await asyncio.wait_for(watcher.next_item(), 0.05)
@@ -1497,11 +1510,13 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
         assert harness.mac.gateway._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
+            await harness.native.sink.report(
                 harness.native.turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
             generation = harness.mac.identity.connection_generation
@@ -1594,11 +1609,13 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
         assert harness.mac.gateway._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
+            await harness.native.sink.report(
                 harness.native.turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
             contents = bytes(range(256)) * 3000
@@ -1656,11 +1673,13 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
         sending = None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
+            await harness.native.sink.report(
                 harness.native.turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "first turn did not end")
             original = next(iter(harness.mac.runner._children.values())).reference
@@ -1893,11 +1912,13 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             contents = bytes(range(256)) * 2000
             artifact.write_bytes(contents)
             assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.tool_call_finished(
+            await harness.native.sink.report(
                 harness.native.turn,
-                tool_call_id="typed_ack",
-                tool_call_status=ToolCallStatus.completed,
-                detail="The file needs an authorized upload slot.",
+                ToolCallFinished(
+                    tool_call_id="typed_ack",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail="The file needs an authorized upload slot.",
+                ),
             )
             await asyncio.wait_for(rejected.wait(), 8)
             target = tmp_path / "vps/files/tickets" / ticket_id / "typed-ack.bin"
@@ -1920,11 +1941,13 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             )
             assert control.kind is WireMessageKind.catalog_response
             reject = False
-            await harness.native.sink.tool_call_finished(
+            await harness.native.sink.report(
                 harness.native.turn,
-                tool_call_id="corrected_descriptor",
-                tool_call_status=ToolCallStatus.completed,
-                detail="The next item uses a valid descriptor.",
+                ToolCallFinished(
+                    tool_call_id="corrected_descriptor",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail="The next item uses a valid descriptor.",
+                ),
             )
             await eventually(
                 lambda: harness.events("tool_call_finished") == 1,
@@ -1952,11 +1975,13 @@ def test_input_descriptor_must_validate_before_provider_invocation(
         assert harness.mac.gateway._link is not None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
-            await harness.native.sink.turn_ended(
+            await harness.native.sink.report(
                 harness.native.turn,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
             send = harness.endpoint.runs.link._writer.send
@@ -2325,7 +2350,9 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
 
             async def final_native_event() -> None:
                 assert harness.native.sink is not None
-                await harness.native.sink.vendor_session_cursor_rebound("cleanup-cursor")
+                await harness.native.sink.report(
+                    None, VendorSessionCursorRebound(vendor_session_cursor="cleanup-cursor")
+                )
                 await native_stop()
 
             async def withheld_event(

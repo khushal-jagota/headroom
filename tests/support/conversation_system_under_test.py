@@ -55,12 +55,13 @@ from tests.support.conversation_scripted_acp_agent import (
 
 from planner.conversation.backends.contracts import (
     BackendEventSink,
-    BackendPermissionAsk,
+    BackendEventValue,
     BackendPromptAccepted,
     BackendSteerOutcome,
     BackendSteerRefused,
-    BackendUserInputRequest,
+    PermissionAskRaised,
     PromptWriteRefused,
+    TurnEnded,
     TurnToken,
 )
 from planner.conversation.backends.hermes_acp import (
@@ -69,7 +70,6 @@ from planner.conversation.backends.hermes_acp import (
 )
 from planner.conversation.contracts import (
     AnswerFate,
-    ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationSystem,
     PromptDeliveryMode,
@@ -81,12 +81,10 @@ from planner.conversation.events import (
     ModelChangedEventPayload,
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
-    PlanEntry,
     PromptDeliveryRefusedEventPayload,
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
-    ToolCallStatus,
     TurnEndedEventPayload,
     UserInputAnswer,
 )
@@ -176,116 +174,15 @@ class _ObservingSink:
         self._sink = sink
         self._conversation = conversation
 
-
-    async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
-        await self._sink.agent_message_delta(turn_token, text_delta)
-
-    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
-        await self._sink.model_thinking_happened(turn_token)
-
-    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
-        await self._sink.plan_updated(turn_token, entries)
-
-    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
-        await self._sink.agent_message_completed(turn_token, content)
-
-    async def tool_call_started(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        title: str,
-        tool_kind: str,
-        detail: str | None,
-    ) -> None:
-        await self._sink.tool_call_started(
-            turn_token,
-            tool_call_id=tool_call_id,
-            title=title,
-            tool_kind=tool_kind,
-            detail=detail,
-        )
-
-    async def tool_call_progress(
-        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
-    ) -> None:
-        await self._sink.tool_call_progress(turn_token, tool_call_id=tool_call_id, detail=detail)
-
-    async def tool_call_finished(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        tool_call_status: ToolCallStatus,
-        detail: str | None,
-    ) -> None:
-        await self._sink.tool_call_finished(
-            turn_token,
-            tool_call_id=tool_call_id,
-            tool_call_status=tool_call_status,
-            detail=detail,
-        )
-
-    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
-        await self._sink.permission_ask_raised(turn_token, ask)
-        self._conversation.ask_ids_in_order.append(ask.ask_id)
-        self._conversation.permission_asks_reported += 1
-        self._conversation.pulse.send()
-
-    async def user_input_requested(
-        self, turn_token: TurnToken, request: BackendUserInputRequest
-    ) -> None:
-        await self._sink.user_input_requested(turn_token, request)
-
-    async def user_input_failed(
-        self, turn_token: TurnToken, *, request_id: str, detail: str
-    ) -> None:
-        await self._sink.user_input_failed(turn_token, request_id=request_id, detail=detail)
-
-    async def turn_ended(
-        self,
-        turn_token: TurnToken,
-        *,
-        ending: ConversationTurnEnding,
-        error_summary: str | None,
-        standard_error_tail: str | None,
-    ) -> None:
-        await self._sink.turn_ended(
-            turn_token,
-            ending=ending,
-            error_summary=error_summary,
-            standard_error_tail=standard_error_tail,
-        )
-        self._conversation.turn_endings_reported += 1
-        self._conversation.pulse.send()
-
-    async def token_usage_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        cached_input_tokens: int | None,
-        cost_usd: float | None,
-    ) -> None:
-        await self._sink.token_usage_reported(
-            turn_token,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cached_input_tokens=cached_input_tokens,
-            cost_usd=cost_usd,
-        )
-
-    async def context_compacted(self, turn_token: TurnToken) -> None:
-        await self._sink.context_compacted(turn_token)
-
-    async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
-        await self._sink.vendor_session_cursor_rebound(vendor_session_cursor)
-
-    async def composer_catalog_reported(
-        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        await self._sink.composer_catalog_reported(composer_catalog)
+    async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
+        await self._sink.report(turn, event)
+        if isinstance(event, PermissionAskRaised):
+            self._conversation.ask_ids_in_order.append(event.ask.ask_id)
+            self._conversation.permission_asks_reported += 1
+            self._conversation.pulse.send()
+        elif isinstance(event, TurnEnded):
+            self._conversation.turn_endings_reported += 1
+            self._conversation.pulse.send()
 
 
 class _CountedChild:

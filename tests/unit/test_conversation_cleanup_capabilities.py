@@ -13,7 +13,11 @@ import pytest
 from tests.unit.test_conversation_system import _FakeBackend, _FakeBackendChild, _Harness, _start
 
 from planner.conversation.api import ConversationRuntime, build_conversation_runtime
-from planner.conversation.backends.contracts import BackendEventSink
+from planner.conversation.backends.contracts import (
+    AgentMessageDelta,
+    BackendEventSink,
+    ModelThinkingHappened,
+)
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
@@ -200,8 +204,8 @@ def test_retained_sink_cannot_publish_after_shutdown_starts(
         backend.stops_wait_for_release = asyncio.Event()
         shutdown: asyncio.Task[None] | None = None
         try:
-            await sink.agent_message_delta(token, "active")
-            await sink.model_thinking_happened(token)
+            await sink.report(token, AgentMessageDelta(text_delta="active"))
+            await sink.report(token, ModelThinkingHappened())
             assert isinstance(await subscription.next_item(), AgentMessageDeltaFrame)
             assert isinstance(await subscription.next_item(), ModelThinkingFrame)
             assert subscription._items.empty()
@@ -211,8 +215,8 @@ def test_retained_sink_cannot_publish_after_shutdown_starts(
                 backend.stops_wait_for_release.set()
                 await shutdown
             harness.clock.advance(100)
-            await sink.agent_message_delta(token, "stale")
-            await sink.model_thinking_happened(token)
+            await sink.report(token, AgentMessageDelta(text_delta="stale"))
+            await sink.report(token, ModelThinkingHappened())
             assert subscription._items.empty(), f"retained sink published {phase} shutdown"
         finally:
             backend.stops_wait_for_release.set()

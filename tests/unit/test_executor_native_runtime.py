@@ -21,10 +21,13 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
+    PermissionAskRaised,
     PromptWriteFailed,
     PromptWriteRefused,
     SessionLoadFailed,
+    ToolCallFinished,
     TurnToken,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.contracts import (
     AnswerFate,
@@ -283,11 +286,11 @@ def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
 
             monkeypatch.setattr(os, "read", append)
         detail = "x" * (1024 * 1024 + 1) if trigger == "detail" else "ordinary detail"
-        await native.sink.tool_call_finished(
+        await native.sink.report(
             TurnToken("turn", 1),
-            tool_call_id="tool",
-            tool_call_status=ToolCallStatus.completed,
-            detail=detail,
+            ToolCallFinished(
+                tool_call_id="tool", tool_call_status=ToolCallStatus.completed, detail=detail
+            ),
         )
         events = [row for row in spool.pending() if row.kind is EnvelopeKind.backend_event]
         assert len(events) == 1
@@ -649,7 +652,9 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
         async def stop() -> None:
             native_stops.append(True)
             assert native.sink is not None
-            await native.sink.vendor_session_cursor_rebound("cursor-at-stop")
+            await native.sink.report(
+                None, VendorSessionCursorRebound(vendor_session_cursor="cursor-at-stop")
+            )
 
         monkeypatch.setattr(native, "start", starting)
         monkeypatch.setattr(native, "stop", stop)
@@ -697,7 +702,11 @@ def test_cancelled_event_caller_leaves_stop_waiting_for_publication(
             return add(entry, ticket_id=ticket_id)
 
         monkeypatch.setattr(outbox, "add", held_event)
-        event = asyncio.create_task(native.sink.vendor_session_cursor_rebound("saved-cursor"))
+        event = asyncio.create_task(
+            native.sink.report(
+                None, VendorSessionCursorRebound(vendor_session_cursor="saved-cursor")
+            )
+        )
         stopping = None
         try:
             await asyncio.wait_for(entered.wait(), 5)
@@ -742,8 +751,8 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         await registry.run(start)
         assert native.sink is not None
         turn = TurnToken("c_one", 1)
-        await native.sink.permission_ask_raised(
-            turn, BackendPermissionAsk("ask", "Allow?", None, ())
+        await native.sink.report(
+            turn, PermissionAskRaised(ask=BackendPermissionAsk("ask", "Allow?", None, ()))
         )
         ask = registry.children()[0].pending_asks[0]
         answer = DurableAnswer("answer", ask, "allow", 1)

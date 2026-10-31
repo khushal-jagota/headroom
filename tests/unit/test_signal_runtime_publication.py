@@ -21,6 +21,8 @@ from tests.unit.test_signal_publication import (
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     PermissionAnswerWriteFailed,
+    PermissionAskRaised,
+    TurnEnded,
 )
 from planner.conversation.contracts import (
     AnswerFate,
@@ -314,10 +316,11 @@ def test_rejected_request_restores_actual_slot_fields_before_gate_release(
 
             coordinator._participant = reject
             task = asyncio.create_task(
-                runtime.system._on_permission_ask_raised(
-                    state,
+                runtime.system.take_backend_event(
                     running.token,
-                    BackendPermissionAsk("provider-ask", "Title", "Detail", ()),
+                    PermissionAskRaised(
+                        ask=BackendPermissionAsk("provider-ask", "Title", "Detail", ())
+                    ),
                 )
             )
             for _ in range(500):
@@ -384,12 +387,9 @@ def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
                 runtime.system.answer_permission_ask("c", permission, "deny")
             )
             await entered.wait()
-            await runtime.system._on_turn_ended(
-                state,
+            await runtime.system.take_backend_event(
                 running.token,
-                ConversationTurnEnding.completed,
-                None,
-                None,
+                TurnEnded(ending=ConversationTurnEnding.completed),
             )
             release.set()
             assert await answer is AnswerFate.refused

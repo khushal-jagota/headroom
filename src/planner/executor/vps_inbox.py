@@ -397,15 +397,15 @@ class MacInbox:
         proxy = self.runs.children.get(event.child.child_id)
         if result.taken and proxy is not None and event.turn is not None:
             from planner.conversation.backends.contracts import (
-                PermissionAskRaisedArguments,
-                UserInputRequestedArguments,
+                PermissionAskRaised,
+                UserInputRequested,
             )
 
-            if isinstance(decoded, PermissionAskRaisedArguments):
+            if isinstance(decoded, PermissionAskRaised):
                 proxy.observe_callback(
                     AskReference(event.child, event.turn, decoded.ask.ask_id, AskKind.permission)
                 )
-            elif isinstance(decoded, UserInputRequestedArguments):
+            elif isinstance(decoded, UserInputRequested):
                 proxy.observe_callback(
                     AskReference(
                         event.child, event.turn, decoded.request.request_id, AskKind.user_input

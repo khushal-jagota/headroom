@@ -178,6 +178,12 @@ Separate conversations retain separate order. Saving a backend event, callback
 application, stop proof, or CLI write commits before waking the sender. Up to four
 conversations send at once; one slow upload does not block the others.
 
+The Mac uses the same typed backend facts as local agents. One registry maps those
+values to the existing wire method names and fields. Live message deltas, thinking
+pulses and tool progress bypass the journal and are dropped while disconnected.
+Other facts keep their ordered receipts. A completed backend message still captures
+Ticket files and receives a receipt even though its prose adds no notebook row.
+
 Prompt and steer calls use the Mac's direct result. An event reported before the
 prompt returns can finish admission without waiting for any queued output.
 Stop and retirement require the final ordered stop receipt.

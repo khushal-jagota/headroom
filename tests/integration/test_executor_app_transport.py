@@ -13,6 +13,7 @@ import pytest
 from starlette.responses import StreamingResponse
 from tests.integration.test_executor_end_to_end import boot, eventually
 
+from planner.conversation.backends.contracts import TurnEnded
 from planner.executor import app_transport
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.link import ExecutorAppClient
@@ -386,11 +387,13 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
 
             async def cancel() -> None:
                 assert harness.native.sink is not None
-                await harness.native.sink.turn_ended(
+                await harness.native.sink.report(
                     first_turn,
-                    ending=ConversationTurnEnding.interrupted,
-                    error_summary=None,
-                    standard_error_tail=None,
+                    TurnEnded(
+                        ending=ConversationTurnEnding.interrupted,
+                        error_summary=None,
+                        standard_error_tail=None,
+                    ),
                 )
 
             monkeypatch.setattr(harness.native, "write_prompt", uncertain_write)
@@ -406,11 +409,13 @@ def test_native_held_unknown_keeps_reservation_and_never_replays_provider_write(
                 )
                 assert isinstance(result, PromptDeliveryUncertain)
             else:
-                await harness.native.sink.turn_ended(
+                await harness.native.sink.report(
                     first_turn,
-                    ending=ConversationTurnEnding.completed,
-                    error_summary=None,
-                    standard_error_tail=None,
+                    TurnEnded(
+                        ending=ConversationTurnEnding.completed,
+                        error_summary=None,
+                        standard_error_tail=None,
+                    ),
                 )
             await eventually(
                 lambda: harness.events("prompt_delivery_uncertain") == 1,
