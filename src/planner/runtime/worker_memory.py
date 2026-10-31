@@ -7,29 +7,18 @@ it was, and nothing in it says so. Panels records the boundary, so Panels is the
 side that can say it.
 
 A boundary is *answered* once Panels has sent a worker-step message after it — a wake, or
-the notice sent here. Automatic permission is a separate durable caller fact: one consumed
-authorization prevents replay even when no answering prompt exists.
+the notice sent here. The automatic notice scan also leaves an uncertain notice alone;
+uncertainty does not answer the memory-loss note owed on the next wake.
 """
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from collections.abc import Iterable
-from hashlib import sha256
 from typing import Final
 from uuid import uuid4
 
 from planner.conversation.contracts import HeldPrompt
-from planner.runtime.worker_memory_contracts import (
-    MemoryNoticeAcquisition,
-    MemoryNoticeEligibility,
-    MemoryNoticeEventKey,
-    MemoryNoticeEvidence,
-    MemoryNoticeHold,
-    MemoryNoticeInspection,
-    MemoryNoticeReservation,
-)
 from planner.tickets import locale_configuration
 from planner.tickets.contracts import TicketLocale
 
@@ -104,12 +93,7 @@ def ticket_ids_holding_an_unanswered_memory_loss(conn: sqlite3.Connection) -> tu
         "SELECT t.id, t.conversation_id FROM tickets t "
         "WHERE t.worker_step_claim = 'out' AND t.conversation_id IS NOT NULL"
     ).fetchall()
-    return tuple(
-        str(row[0])
-        for row in rows
-        if (key := current_memory_notice_key(conn, str(row[0]))) is not None
-        and memory_notice_eligibility(conn, key) is MemoryNoticeEligibility.eligible
-    )
+    return tuple(str(row[0]) for row in rows if ticket_needs_memory_notice(conn, str(row[0])))
 
 
 def _latest_answering_prompt_sequence(conn: sqlite3.Connection, conversation_id: str) -> int | None:
@@ -126,150 +110,27 @@ def _latest_answering_prompt_sequence(conn: sqlite3.Connection, conversation_id:
     return int(row[0])
 
 
-def current_memory_notice_key(
-    conn: sqlite3.Connection, ticket_id: str
-) -> MemoryNoticeEventKey | None:
-    """Resolve immutable event identity; a watermark alone grants no permission."""
+def ticket_needs_memory_notice(conn: sqlite3.Connection, ticket_id: str) -> bool:
+    """Check the automatic notice rule, without changing the next-wake memory rule."""
     row = conn.execute(
-        "SELECT t.conversation_id,c.automatically_compacted_through_sequence,"
-        "(SELECT MAX(e.sequence) FROM conversation_events e "
-        "WHERE e.conversation_id=t.conversation_id AND e.kind='context_compacted'),t.locale "
-        "FROM tickets t JOIN conversations c ON c.conversation_id=t.conversation_id "
-        "WHERE t.id=? AND t.worker_step_claim='out'",
+        "SELECT conversation_id,locale FROM tickets WHERE id=? AND worker_step_claim='out'",
         (ticket_id,),
     ).fetchone()
-    if row is None or row[2] is None:
-        return None
-    if not locale_configuration.can_execute_locale(conn, TicketLocale(str(row[3]))):
-        return None
-    conversation_id, coverage, event_sequence = str(row[0]), int(row[1]), int(row[2])
-    answer = _latest_answering_prompt_sequence(conn, conversation_id)
-    if not memory_was_lost_unanswered(
-        automatically_compacted_through_sequence=coverage,
-        latest_answering_prompt_sequence=answer,
-    ) or (answer is not None and answer >= event_sequence):
-        return None
-    return MemoryNoticeEventKey(
-        ticket_id=ticket_id,
-        conversation_id=conversation_id,
-        context_compacted_sequence=event_sequence,
-    )
-
-
-def memory_notice_eligibility(
-    conn: sqlite3.Connection, key: MemoryNoticeEventKey
-) -> MemoryNoticeEligibility:
-    if current_memory_notice_key(conn, key.ticket_id) != key:
-        return MemoryNoticeEligibility.ineligible
-    if conn.execute(
-        "SELECT 1 FROM worker_memory_notice_holds WHERE ticket_id=? AND conversation_id=? "
-        "AND (context_compacted_sequence IS NULL OR context_compacted_sequence=?)",
-        (key.ticket_id, key.conversation_id, key.context_compacted_sequence),
-    ).fetchone():
-        return MemoryNoticeEligibility.held
-    if conn.execute(
-        "SELECT 1 FROM worker_memory_notice_reservations WHERE ticket_id=? AND conversation_id=? "
-        "AND context_compacted_sequence=?",
-        (key.ticket_id, key.conversation_id, key.context_compacted_sequence),
-    ).fetchone():
-        return MemoryNoticeEligibility.consumed
-    return MemoryNoticeEligibility.eligible
-
-
-def consume_memory_notice_authorization(
-    conn: sqlite3.Connection, key: MemoryNoticeEventKey, *, now: int
-) -> MemoryNoticeAcquisition:
-    """Commit permission once, before I/O. Every later outcome retains consumption.
-
-    Acquisition and commit exceptions propagate to the caller, which must send nothing.
-    No receipt, attempt, delivery, answer, or running-state fact is written here.
-    """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        eligibility = memory_notice_eligibility(conn, key)
-        if eligibility is not MemoryNoticeEligibility.eligible:
-            conn.execute("ROLLBACK")
-            return MemoryNoticeAcquisition(eligibility=eligibility)
-        identity = json.dumps(
-            [key.ticket_id, key.conversation_id, key.context_compacted_sequence],
-            separators=(",", ":"),
-        )
-        reservation = MemoryNoticeReservation(
-            key=key,
-            sender_message_id=MEMORY_NOTICE_MESSAGE_PREFIX + sha256(identity.encode()).hexdigest(),
-            consumed_at=now,
-        )
+    if row is None or not locale_configuration.can_execute_locale(conn, TicketLocale(row[1])):
+        return False
+    conversation_id = row[0]
+    if not conversation_holds_an_unanswered_memory_loss(conn, conversation_id):
+        return False
+    # A possibly sent notice must not be retried automatically. It is not a delivered
+    # prompt, so ordinary wakes still owe their memory-loss note. Uncertain owner
+    # messages and worker-step openers do not consume a notice either.
+    return (
         conn.execute(
-            "INSERT INTO worker_memory_notice_reservations VALUES (?,?,?,?,?)",
-            (
-                key.ticket_id,
-                key.conversation_id,
-                key.context_compacted_sequence,
-                reservation.sender_message_id,
-                now,
-            ),
-        )
-        conn.execute("COMMIT")
-        return MemoryNoticeAcquisition(eligibility=eligibility, reservation=reservation)
-    except BaseException:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
-
-
-def inspect_memory_notices(conn: sqlite3.Connection, ticket_id: str) -> MemoryNoticeInspection:
-    """Read original associations and actual event references without inferred delivery."""
-    reservations = tuple(
-        MemoryNoticeReservation(
-            key=MemoryNoticeEventKey(
-                ticket_id=str(row[0]),
-                conversation_id=str(row[1]),
-                context_compacted_sequence=int(row[2]),
-            ),
-            sender_message_id=str(row[3]),
-            consumed_at=int(row[4]),
-        )
-        for row in conn.execute(
-            "SELECT * FROM worker_memory_notice_reservations WHERE ticket_id=? "
-            "ORDER BY conversation_id,context_compacted_sequence",
-            (ticket_id,),
-        )
+            "SELECT 1 FROM conversation_events e JOIN conversations c USING(conversation_id) "
+            "WHERE e.conversation_id=? AND e.kind='prompt_delivery_uncertain' "
+            "AND e.sequence > c.automatically_compacted_through_sequence "
+            "AND substr(json_extract(e.payload,'$.sender_message_id'),1,?)=? LIMIT 1",
+            (conversation_id, len(MEMORY_NOTICE_MESSAGE_PREFIX), MEMORY_NOTICE_MESSAGE_PREFIX),
+        ).fetchone()
+        is None
     )
-    holds = tuple(
-        MemoryNoticeHold(
-            ticket_id=str(row[0]),
-            conversation_id=str(row[1]),
-            context_compacted_sequence=None if row[2] is None else int(row[2]),
-            created_at=int(row[3]),
-            reason=str(row[4]),
-        )
-        for row in conn.execute(
-            "SELECT * FROM worker_memory_notice_holds WHERE ticket_id=? "
-            "ORDER BY conversation_id,context_compacted_sequence",
-            (ticket_id,),
-        )
-    )
-    evidence = tuple(
-        MemoryNoticeEvidence(
-            conversation_id=str(row[0]),
-            sequence=int(row[1]),
-            kind=str(row[2]),
-            sender_message_id=str(row[3]),
-        )
-        for row in conn.execute(
-            "SELECT e.conversation_id,e.sequence,e.kind,"
-            "json_extract(e.payload,'$.sender_message_id') "
-            "FROM conversation_events e JOIN worker_memory_notice_reservations r "
-            "ON r.conversation_id=e.conversation_id AND "
-            "r.sender_message_id=json_extract(e.payload,'$.sender_message_id') "
-            "WHERE r.ticket_id=? ORDER BY e.conversation_id,e.sequence",
-            (ticket_id,),
-        )
-    )
-    return MemoryNoticeInspection(reservations=reservations, holds=holds, evidence=evidence)
-
-
-def require_memory_notice_storage(conn: sqlite3.Connection) -> None:
-    """Fail closed before polling if migration did not complete."""
-    conn.execute("SELECT 1 FROM worker_memory_notice_reservations LIMIT 1")
-    conn.execute("SELECT 1 FROM worker_memory_notice_holds LIMIT 1")

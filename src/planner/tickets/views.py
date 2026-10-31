@@ -22,7 +22,7 @@ from planner.managers import views as managers_views
 from planner.navigation.review import review_message_items
 from planner.navigation.review_contracts import ReviewMessageItem, ReviewProposalItem
 from planner.navigation.review_logic import group_review_items
-from planner.runtime import conversation_start, worker_memory
+from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets import derivation
 from planner.tickets.contracts import (
@@ -373,9 +373,6 @@ def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> J
             "artifacts": _ticket_artifacts(conn, ticket_id),
             "blocked": blocker_summary.blocked,
             "employee_configuration_editable": tickets_data.employee_configuration_editable(ticket),
-            "memory_notice_inspection": worker_memory.inspect_memory_notices(
-                conn, ticket_id
-            ).model_dump(mode="json"),
             "conversation_history": [
                 {
                     "conversation_id": str(row["conversation_id"]),

@@ -1,7 +1,4 @@
-"""Scripted subprocess proofs. Wire attempts do not establish provider admission.
-
-A consumed caller authorization never supplies a delivered prompt or an answered boundary.
-"""
+"""Notice retries and uncertainty through the real system with a scripted Codex adapter."""
 
 from __future__ import annotations
 
@@ -57,9 +54,17 @@ def _synthetic_process_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     codex_home = tmp_path / "synthetic-codex-home"
     codex_home.mkdir()
     safe_environment_names = {
-        "PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "VIRTUAL_ENV",
-        "PLAN_DB_PATH", "PLAN_LOGS_DIR", "PLAN_DISPATCHER_LOCK_PATH",
-        "PLAN_SERVER_CONTROL_SOCKET", "PLAN_HERMES_HOME",
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+        "TMPDIR",
+        "VIRTUAL_ENV",
+        "PLAN_DB_PATH",
+        "PLAN_LOGS_DIR",
+        "PLAN_DISPATCHER_LOCK_PATH",
+        "PLAN_SERVER_CONTROL_SOCKET",
+        "PLAN_HERMES_HOME",
     }
     for name in tuple(os.environ):
         if name not in safe_environment_names:
@@ -177,7 +182,8 @@ async def _notice_bench(
         create_schema(conn)
         conn.execute(
             "INSERT INTO projects(id,name,folder_path,created_at,updated_at) "
-            "VALUES ('notice-project','Synthetic notice workspace',?,0,0)", (str(workspace),)
+            "VALUES ('notice-project','Synthetic notice workspace',?,0,0)",
+            (str(workspace),),
         )
         conn.commit()
         ticket = tickets_data.create_ticket(
@@ -228,9 +234,10 @@ async def _notice_bench(
             )
             conn.execute(
                 "UPDATE conversations SET automatically_compacted_through_sequence=? "
-                "WHERE conversation_id='c'", (compacted.sequence,),
+                "WHERE conversation_id='c'",
+                (compacted.sequence,),
             )
-            assert worker_memory.current_memory_notice_key(conn, ticket.id) is not None
+            assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
         if busy:
             await system.send(
                 "c", text_message_content("Synthetic running turn"), sender_label="owner"
@@ -240,7 +247,7 @@ async def _notice_bench(
         await system.shutdown()
 
 
-def test_explicit_steer_uncertainty_keeps_reservation_without_replacement(
+def test_uncertain_notice_is_not_replaced_but_next_wake_still_owes_the_note(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
@@ -267,11 +274,7 @@ def test_explicit_steer_uncertainty_keeps_reservation_without_replacement(
             assert len(bench.requests("turn/steer")) == 1
             assert await bench.notice_events() == events
             with bench.connect() as conn:
-                inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                assert len(inspection.reservations) == 1
-                assert inspection.reservations[0].sender_message_id == first.sender_message_id
-                assert len(inspection.evidence) == 1
-                assert inspection.evidence[0].kind == "prompt_delivery_uncertain"
+                assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ()
                 assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
             # Only explicit promotion returned uncertainty. Ordinary queue did not.
             # This uncertainty is neither a delivered prompt nor an answered boundary.
@@ -279,92 +282,29 @@ def test_explicit_steer_uncertainty_keeps_reservation_without_replacement(
     asyncio.run(asyncio.wait_for(exercise(), 15))
 
 
-def test_concurrent_polls_emit_one_scripted_notice_request(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        async with _notice_bench(tmp_path, script={"turns": [{}, {"actions": []}]}) as bench:
-            results = await asyncio.gather(*(bench.tell() for _ in range(8)))
-            assert results.count(True) == 1
-            assert len(bench.requests("turn/start")) == 2
-            assert len(await bench.notice_events()) == 1
-            with bench.connect() as conn:
-                inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                assert len(inspection.reservations) == 1
-
-    asyncio.run(asyncio.wait_for(exercise(), 15))
-
-
-def test_discarded_held_notice_retains_consumption_and_unanswered_boundary(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        async with _notice_bench(
-            tmp_path, script={"turns": [{}, {"actions": []}]}, busy=True
-        ) as bench:
-            assert await bench.tell() is True
-            (held,) = await bench.system.held_prompts("c")
-            assert await bench.system.discard_held_prompt("c", held.held_prompt_id)
-            assert await bench.tell() is False
-            assert await bench.system.held_prompts("c") == ()
-            (discarded,) = await bench.notice_events()
-            assert discarded.kind.value == "prompt_discarded"
-            assert len(bench.requests("turn/start")) == 2  # original and busy turn only
-            with bench.connect() as conn:
-                inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                assert len(inspection.reservations) == 1
-                assert inspection.reservations[0].sender_message_id == held.sender_message_id
-                assert len(inspection.evidence) == 1
-                assert inspection.evidence[0].kind == "prompt_discarded"
-                assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
-
-    asyncio.run(asyncio.wait_for(exercise(), 15))
-
-
-def test_wire_effect_before_receipt_crash_remains_consumed_after_restart(
+def test_refused_notice_and_send_exception_allow_a_later_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def exercise() -> None:
-        async with _notice_bench(tmp_path, script={"turns": [{}, {"actions": []}]}) as bench:
-            receipt_write_reached = False
-
-            async def crash_before_receipt(*args: Any, **kwargs: Any) -> Any:
-                nonlocal receipt_write_reached
-                # This storage call follows the adapter's successful wire exchange.
-                receipt_write_reached = True
-                raise asyncio.CancelledError("synthetic crash before prompt receipt commit")
-
-            monkeypatch.setattr(bench.store, "append_delivered_prompt", crash_before_receipt)
-            with pytest.raises(asyncio.CancelledError):
-                await bench.tell()
-            assert receipt_write_reached
-            assert len(bench.requests("turn/start")) == 2
-            assert await bench.notice_events() == ()
+        async with _notice_bench(
+            tmp_path, script={"turns": [{}, {"respond": "error"}, {}]}
+        ) as bench:
+            assert await bench.tell() is False
             with bench.connect() as conn:
-                before = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
-                assert len(before.reservations) == 1
-                assert before.evidence == ()
-                assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
-            await bench.system.shutdown()
+                assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == (
+                    bench.ticket_id,
+                )
 
-            def refuse_child_launch(**kwargs: Any) -> CodexAppServerBackendChild:
-                raise AssertionError("Crash does not permit another automatic attempt")
+            async def send_error(*args: Any, **kwargs: Any) -> PromptDeliveryFate:
+                raise OSError("synthetic failure before send")
 
-            restarted = _ObservedConversationSystem(
-                store=ConversationStore(str(bench.db_path), integer_now=lambda: 101),
-                message_files=ConversationMessageFiles(str(bench.db_path)),
-                backend_child_factories={
-                    key: refuse_child_launch for key in ConversationBackendKey
-                },
-            )
-            bench.system = restarted
-            try:
+            with monkeypatch.context() as patch:
+                patch.setattr(bench.system, "send", send_error)
                 assert await bench.tell() is False
-                assert restarted.observed_sends == []
-                assert len(bench.requests("turn/start")) == 2
-                assert not await restarted.is_running("c")
-                with bench.connect() as conn:
-                    assert worker_memory.inspect_memory_notices(conn, bench.ticket_id) == before
-                    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
-            finally:
-                await restarted.shutdown()
-            # The script received a request before the injected crash. No durable
-            # prompt receipt, provider admission, model delivery, or answer is inferred.
+
+            assert await bench.tell() is True
+            assert await bench.tell() is False
+            events = await bench.notice_events()
+            assert [event.kind.value for event in events] == ["prompt_delivery_refused", "prompt"]
 
     asyncio.run(asyncio.wait_for(exercise(), 15))
