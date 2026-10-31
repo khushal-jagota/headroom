@@ -257,9 +257,13 @@ class VpsExecutor:
                     raise ValueError("live frame must not carry a recorded event")
                 if event.child.executor_incarnation != identity.executor_incarnation:
                     raise ValueError("live event incarnation conflicts with connection")
-                await self.conversations.receive_remote_live_backend_event(
-                    event.child, event.turn, decode_event_arguments(event)
-                )
+                child = self.runs.children.get(event.child.child_id)
+                if (
+                    child is not None
+                    and child.reference == event.child
+                    and child.event_sink is not None
+                ):
+                    await child.event_sink.report(event.turn, decode_event_arguments(event))
                 return
             elif message.kind is WireMessageKind.envelope:
                 envelope = type_adapter(QueuedEnvelope).validate_python(message.payload)

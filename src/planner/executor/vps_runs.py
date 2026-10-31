@@ -80,8 +80,8 @@ class MacRuns:
         del message_files
         if not ticket_id_of(resolved_start):
             raise BackendSpawnFailed("Mac runs require a Ticket Worker identity")
-        reference = self.assign_child(resolved_start, event_sink)
-        child = self._make_child(reference, initial_history_complete=True)
+        reference = self.assign_child(resolved_start)
+        child = self._make_child(reference, event_sink=event_sink, initial_history_complete=True)
         self.children[reference.child_id] = child
         return child
 
@@ -188,12 +188,9 @@ class MacRuns:
         finally:
             conn.close()
 
-    def assign_child(
-        self, start: ResolvedConversationStart, sink: BackendEventSink
-    ) -> ChildReference:
+    def assign_child(self, start: ResolvedConversationStart) -> ChildReference:
         if self.identity is None or not self.ready:
             raise BackendSpawnFailed("The Mac executor has no reconciled connection")
-        del sink  # Conversation owns event delivery; run control retains only the child.
         child = ChildReference(
             self.identity.executor_incarnation, str(uuid4()), start.conversation_id
         )
@@ -204,7 +201,11 @@ class MacRuns:
         return child
 
     def _make_child(
-        self, child: ChildReference, *, initial_history_complete: bool = False
+        self,
+        child: ChildReference,
+        *,
+        event_sink: BackendEventSink | None = None,
+        initial_history_complete: bool = False,
     ) -> MacRemoteChild:
         """Bind the retained identity without starting it or granting new authority."""
         return MacRemoteChild(
@@ -212,6 +213,7 @@ class MacRuns:
             self.send_new_command,
             self._read_skill_snapshot,
             self.cancel_initial_delivery,
+            event_sink=event_sink,
             initial_history_complete=initial_history_complete,
             retire_reference=self.retire_child,
             send_answer=self.queue_answer,

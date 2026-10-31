@@ -4296,24 +4296,6 @@ class SqliteProcessConversationSystem:
                 self._take_in_written_rows(state, result.written)
             return AcceptedEvent(result.result, result.taken)
 
-    async def receive_remote_live_backend_event(
-        self,
-        child_reference: ChildReference,
-        turn: TurnToken | None,
-        args: BackendEventValue,
-    ) -> None:
-        state = await self._conversation_state(child_reference.conversation_id)
-        if state is None or turn is None:
-            return
-        child = state.child
-        if not child_stops_outside_lock(child) or state.executor_child_reference != child_reference:
-            return
-        sink = state.child_event_sink
-        if not isinstance(sink, _CoreBackendEventSink):
-            return
-        if isinstance(args, (AgentMessageDelta, ModelThinkingHappened, ToolCallProgress)):
-            await sink.report(turn, args)
-
     async def take_backend_event(
         self,
         turn: TurnToken | None,
