@@ -1193,7 +1193,6 @@ def _run(browser, urls):
         )
         == 1
     )
-    assert model_picker.get_by_role("button", name="Use", exact=True).evaluate("button => button.tabIndex === 0")
     _settle_conversation_layout(page)
     page.mouse.move(0, 0)
     model_picker.locator('[data-conversation-picker-choice="sonnet"]').hover()
@@ -1207,7 +1206,6 @@ def _run(browser, urls):
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'"
     )
     model_picker.get_by_role("listbox").press("Enter")
-    model_picker.get_by_role("option", name="Provider default", exact=True).click()
     page.wait_for_function(
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')"
     )
@@ -1253,7 +1251,6 @@ def _run(browser, urls):
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'"
     )
     model_picker.get_by_role("listbox").press("Enter")
-    model_picker.get_by_role("option", name="Provider default", exact=True).click()
     page.wait_for_function(
         "document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')"
     )
@@ -1561,7 +1558,6 @@ def _run(browser, urls):
     # fallback is a queued message that explains it is waiting to apply that change.
     page.locator("[data-conversation-picker-model] [data-conversation-picker-trigger]").click()
     page.locator('[data-conversation-picker-choice="sonnet"]').click()
-    page.get_by_role("option", name="Provider default", exact=True).click()
     page.locator(INPUT).fill("steer with a run change")
     page.locator(INPUT).press("Enter")
     page.wait_for_function("window.__sentModes?.length === 3")
@@ -2842,14 +2838,6 @@ def _overlay_menu_bounds(browser, url):
                             picker.get_by_role('listbox').press('h')
                             picker.get_by_role('listbox').press('Enter')
                         proof['actions'].append([mode,'effort',method,'high'])
-                    else:
-                        default = picker.get_by_role('option', name='Provider default', exact=True)
-                        if method == 'pointer':
-                            hit(default)
-                            default.click()
-                        else:
-                            picker.get_by_role('listbox').press('Home')
-                            picker.get_by_role('listbox').press('Enter')
                     expect(trigger).to_have_attribute('aria-label', re.compile(model,re.I))
                     proof['actions'].append([mode,'model',method,model])
             for method in ('pointer','keyboard'):

@@ -1,7 +1,6 @@
 import { effortOptionsFor, modelDisplayName } from "./composer";
 import { resolvedModelPickerLabel } from "./modelPickerLabel";
 import {
-  CONVERSATION_BACKEND_KEYS,
   type BackendModel,
   type BackendSnapshot,
   type ConversationBackendKey
@@ -35,6 +34,8 @@ export type ModelPickerView = Readonly<{
   face: string;
   backends: readonly ModelPickerBackend[];
   models: readonly ModelPickerChoice[];
+  olderModels: readonly ModelPickerChoice[];
+  emptyReason: string | null;
   efforts: readonly ModelPickerChoice[];
   defaultModel: string | null;
   defaultReasoningEffort: string | null;
@@ -87,16 +88,25 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
   const modelValue = input.model ?? defaultModel ?? "";
   const modelName = modelDisplayName(catalogModels, modelValue === "" ? null : modelValue) ?? "";
   const modelFace = resolvedModelPickerLabel(catalogModels, modelValue);
-  const efforts = effortOptionsFor(
+  const efforts = input.backendKey === "hermes" ? [] : effortOptionsFor(
     catalogModels,
     modelValue === "" ? null : modelValue,
     backendEffortOptions
   );
   const defaultReasoningEffort =
     input.defaultReasoningEffort ?? snapshot?.default_reasoning_effort ?? null;
-  const reasoningEffort = input.reasoningEffort ?? "";
+  const reasoningEffort = input.backendKey === "hermes" ? "" : input.reasoningEffort ?? "";
   const name = backendName(input.backendKey);
 
+  const older = new Set(input.backendKey === "hermes" ? [] : models.filter(candidate => {
+    if (!candidate.selected_variant || !candidate.version?.length) return false;
+    return models.some(other => other.selected_variant === candidate.selected_variant
+      && compareVersions(other.version ?? [], candidate.version ?? []) > 0);
+  }));
+  const choice = (candidate: BackendModel): ModelPickerChoice => ({
+    value: candidate.model_id,
+    name: resolvedModelPickerLabel(catalogModels, candidate.model_id)
+  });
   return {
     backendKey: input.backendKey,
     backendLocked: input.backendLocked ?? false,
@@ -117,13 +127,22 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
         unavailableReason: lockedReason ?? snapshotUnavailableReason(candidate)
       };
     }),
-    models: models.map((candidate) => ({
-      value: candidate.model_id,
-      name: resolvedModelPickerLabel(catalogModels, candidate.model_id)
-    })),
+    models: models.filter(model => !older.has(model)).map(choice),
+    olderModels: models.filter(model => older.has(model)).map(choice),
+    emptyReason: models.length ? null : snapshot?.diagnoses[0]
+      ?? (snapshot ? `${name} offers no models on this machine.` : `${name} model list is unavailable.`),
     efforts: efforts.map((effort) => ({ value: effort, name: effort })),
     defaultModel,
     defaultReasoningEffort,
 
   };
+}
+
+/** A missing trailing component is zero: 6.1 outranks 6, while 6 equals 6.0. */
+function compareVersions(left: readonly number[], right: readonly number[]): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
 }

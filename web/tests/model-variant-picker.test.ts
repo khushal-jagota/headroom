@@ -81,3 +81,16 @@ describe("current model variants in the shared picker", () => {
     expect(view.models[0]).toEqual({ value: "opus", name: "Custom model" });
   });
 });
+
+it("offers the highest enabled version of each variant and keeps older exact choices reachable", () => {
+  const view = picker([
+    {model_id:"gpt-6-sol", display_name:"GPT-6 Sol", enabled:true, selected_variant:"sol", version:[6]},
+    {model_id:"gpt-6.1-sol", display_name:"GPT-6.1 Sol", enabled:true, selected_variant:"sol", version:[6,1]},
+    {model_id:"gpt-6-astra", display_name:"GPT-6 Astra", enabled:true, selected_variant:"astra", version:[6]},
+    {model_id:"gpt-7-sol", display_name:"GPT-7 Sol", enabled:false, selected_variant:"sol", version:[7]},
+    {model_id:"unversioned", display_name:"Next model", enabled:true, selected_variant:"sol", version:[]}
+  ], "gpt-6-sol");
+  expect(view.models.map(row => row.value)).toEqual(["gpt-6.1-sol", "gpt-6-astra", "unversioned"]);
+  expect(view.olderModels).toEqual([{value:"gpt-6-sol", name:"GPT-6 Sol"}]);
+  expect(view.modelValue).toBe("gpt-6-sol");
+});

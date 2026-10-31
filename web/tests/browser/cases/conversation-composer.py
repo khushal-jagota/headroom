@@ -9,7 +9,7 @@ def run(browser, urls):
     import os
     from pathlib import Path
 
-    from playwright.sync_api import expect
+    from playwright.sync_api import Route, expect
 
     INPUT = "[data-conversation-input]"
     ATTACHMENTS = "[data-chat-image-name], [data-chat-file-name]"
@@ -109,9 +109,10 @@ def run(browser, urls):
     page = browser.new_page(viewport={"width": 980, "height": 800})
     page.set_default_timeout(5000)
     errors = []
+    expected_console_errors = set()
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on(
-        "console", lambda message: errors.append(message.text) if message.type == "error" else None
+        "console", lambda message: errors.append(message.text) if message.type == "error" and message.text not in expected_console_errors else None
     )
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     # Local browser capability is enough to render the microphone; never record.
@@ -351,7 +352,7 @@ def run(browser, urls):
         expect(page.locator('.machine[aria-label="Runs on Mac"]')).to_have_text("Mac")
         picker = page.locator(".picker-proof > [data-conversation-model-picker]")
         trigger = picker.locator("[data-conversation-picker-trigger]")
-        assert trigger.inner_text() == "Opus 5 high"
+        assert trigger.inner_text() == "Opus 5.5 high"
         output = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
         if output:
             Path(output).mkdir(parents=True, exist_ok=True)
@@ -360,19 +361,21 @@ def run(browser, urls):
         assert picker.locator('[data-conversation-backend="claude"]').get_attribute("aria-pressed") == "true"
         assert picker.locator('[data-conversation-backend="codex"]').get_attribute("aria-pressed") == "false"
         options = picker.get_by_role("option")
-        assert options.first.locator(".model-picker-choice-name").inner_text() == "Opus 5"
-        assert options.nth(1).locator(".model-picker-choice-name").inner_text() == "Opus 5"
-        # Identical visible labels retain distinct submitted identities and row focus.
-        assert options.first.get_attribute("data-conversation-picker-choice") == "opus"
-        assert options.nth(1).get_attribute("data-conversation-picker-choice") == "claude-opus-5"
+        assert options.first.locator(".model-picker-choice-name").inner_text() == "Opus 5.5"
+        assert picker.get_by_role("option", name="Opus 5", exact=True).count() == 0
+        assert picker.get_by_role("textbox").count() == 0
+        assert picker.get_by_role("option", name="Provider default", exact=True).count() == 0
+        older = picker.get_by_role("option", name="Older models (1)", exact=False)
+        older.click()
+        expect(older).to_have_attribute("aria-expanded", "true")
+        assert picker.get_by_role("option", name="Opus 5", exact=True).is_visible()
         panel = picker.locator("[data-conversation-picker-panel]")
         bounds = panel.bounding_box()
         assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width
         assert bounds["y"] >= 0 and bounds["y"] + bounds["height"] <= 720
         if output:
             page.screenshot(path=str(Path(output) / f"canonical-picker-{width}.png"))
-        page.keyboard.press("ArrowDown")
-        page.keyboard.press("Enter")
+        picker.get_by_role("option", name="Opus 5", exact=True).click()
         picker.get_by_role("option", name="high", exact=True).click()
         assert page.evaluate("window.__pickerChoices") == [{"model": "claude-opus-5", "effort": "high"}]
         assert trigger.evaluate("e => e === document.activeElement")
@@ -382,31 +385,31 @@ def run(browser, urls):
         assert picker.get_by_role("listbox").evaluate("e => e === document.activeElement")
         picker.get_by_role("listbox").press("Escape")
         assert trigger.evaluate("e => e === document.activeElement")
-        trigger.press("ArrowDown")
-        page.keyboard.press("Enter")
-        picker.get_by_role("option", name="high", exact=True).click()
-        assert page.evaluate("window.__pickerChoices.at(-1)") == {"model": "opus", "effort": "high"}
+        # Models with no efforts finish immediately, and saved old choices open in place.
         trigger.click()
-        token = picker.get_by_role("textbox", name="Provider token", exact=True)
-        effort = picker.get_by_role("textbox", name="Provider effort", exact=True)
-        token.fill("provider-future[1m]")
-        effort.fill("future-effort")
-        picker.get_by_role("button", name="Use", exact=True).click()
-        assert page.evaluate("window.__pickerChoices.at(-1)") == {"model": "provider-future[1m]", "effort": "future-effort"}
+        picker.get_by_role("option", name="Sonnet 5.5", exact=True).click()
+        assert page.evaluate("window.__pickerChoices.at(-1)") == {"model":"claude-sonnet-5-5", "effort":None}
+        assert picker.get_by_role("listbox").count() == 0
+        page.evaluate("window.__pickerOld()")
+        expect(trigger).to_have_text("Opus 5 high")
         trigger.click()
-        token.fill("opus")
-        effort.fill("")
-        effort.press("Enter")
-        assert page.evaluate("window.__pickerChoices.at(-1)") == {"model": "opus", "effort": None}
+        expect(picker.get_by_role("option", name="Older models (1)", exact=False)).to_have_attribute("aria-expanded", "true")
+        expect(picker.get_by_role("option", name="Opus 5", exact=True)).to_have_attribute("aria-selected", "true")
+        picker.get_by_role("listbox").press("Escape")
+        page.evaluate("window.__pickerHermes()")
+        expect(trigger).to_have_text("Hermes model")
         trigger.click()
-        token.focus()
-        token.press("Escape")
-        assert trigger.evaluate("e => e === document.activeElement")
+        assert picker.get_by_role("option").count() == 2
+        assert picker.get_by_role("option", name="Older models", exact=False).count() == 0
+        assert picker.locator("[data-conversation-picker-reasoning]").count() == 0
+        picker.get_by_role("option", name="Hermes old", exact=True).click()
+        assert page.evaluate("window.__pickerChoices.at(-1)") == {"model":"hermes-old", "effort":None}
         # Exact owner transition: a new Sonnet choice remains visible while metadata is
         # empty, then through a stale Opus response; no observation confirms a UI choice.
         page.evaluate("window.__pickerPending()")
         expect(trigger).to_have_text("sonnet")
         trigger.click()
+        expect(picker.locator(".model-picker-summary")).to_have_text("Claude model list is unavailable.")
         assert "unobserved" not in picker.inner_text().lower()
         assert "unresolved" not in picker.inner_text().lower()
         if output:
@@ -427,6 +430,69 @@ def run(browser, urls):
         page.evaluate("window.__pickerAvailability()")
         expect(picker.locator(".model-picker-summary")).to_have_text("Claude is not installed on Mac.")
         expect(trigger).to_have_text("sonnet")
+    # The existing static host exercises the editor and a second mounted consumer of
+    # the Ticket list. Scripted endpoint replies only; no durable Ticket or agent runs.
+    reads = []
+    catalog_failure = False
+    catalog_name = "Sonnet 5.5"
+
+    def catalog(route: Route) -> None:
+        reads.append(route.request.post_data_json)
+        if catalog_failure:
+            route.fulfill(status=503, json={"detail":"The list is unavailable"})
+            return
+        models: list[dict[str, object]] = [
+            {"model_id":"claude-opus-5-5", "display_name":"Opus 5.5", "enabled":True, "reasoning_effort_options":["high"]},
+            {"model_id":"claude-sonnet-5-5", "display_name":catalog_name, "enabled":True, "reasoning_effort_options":[]},
+        ]
+        def snapshot(key: str, choices: list[dict[str, object]]) -> dict[str, object]:
+            return {"backend_key":key, "installed":True, "version":"fixture", "available_models":choices,
+                    "reasoning_effort_options":[], "cached_usage":None, "update_advisory":None, "diagnoses":[]}
+        route.fulfill(json={"backends":[snapshot("claude", models), snapshot("hermes", [])]})
+
+    page.route("**/api/conversation/backends*", catalog)
+    page.goto(urls[0] + "?editor", wait_until="domcontentloaded")
+    setup = page.locator("[data-employee-configuration-setup]")
+    setup_trigger = setup.locator("[data-conversation-picker-trigger]")
+    shared_picker = page.locator("[data-shared-picker]")
+    setup_trigger.click()
+    setup.get_by_role("option", name="Sonnet 5.5", exact=True).click()
+    expect(setup_trigger).to_have_text("Sonnet 5.5")
+    assert reads == [{"ticket_id":"fixture"}], reads
+    assert page.evaluate("window.__setupSaves.at(-1)") == {
+        "employee_backend":"claude", "employee_launch_model":"claude-sonnet-5-5", "employee_launch_reasoning_effort":None}
+    setup_trigger.click()
+    setup.locator('[data-conversation-backend="hermes"]').click()
+    expect(setup.locator(".model-picker-summary")).to_have_text("Hermes offers no models on this machine.")
+    assert setup.locator('[data-conversation-picker-reasoning]').count() == 0
+    setup.locator('[data-conversation-backend="claude"]').click()
+    expect(setup_trigger).to_have_text("Sonnet 5.5")
+    setup.get_by_role("listbox").press("Escape")
+    # Refresh from the other consumer updates setup too, without replacing its choice.
+    catalog_name = "Sonnet refreshed"
+    shared_picker.locator("[data-conversation-picker-trigger]").click()
+    shared_picker.locator("[data-conversation-picker-refresh]").click()
+    expect(shared_picker.get_by_role("option", name="Sonnet refreshed", exact=True)).to_be_visible()
+    expect(setup_trigger).to_have_text("Sonnet refreshed")
+    shared_picker.get_by_role("listbox").press("Escape")
+    # A refused save restores the saved row, while list failure retains that list and
+    # exposes Retry. A successful Retry clears the failure in both consumers.
+    page.evaluate("window.__setupFail = true")
+    setup_trigger.click()
+    setup.get_by_role("option", name="Opus 5.5", exact=True).click()
+    setup.get_by_role("option", name="high", exact=True).click()
+    expect(setup.locator("[data-employee-configuration-save-error]")).to_contain_text("Save refused")
+    expect(setup_trigger).to_have_text("Sonnet refreshed")
+    expected_console_errors.add("Failed to load resource: the server responded with a status of 503 (Service Unavailable)")
+    catalog_failure = True
+    setup_trigger.click()
+    setup.locator("[data-conversation-picker-refresh]").click()
+    expect(setup.locator("[data-employee-configuration-error]")).to_contain_text("The list is unavailable")
+    expect(setup.get_by_role("option", name="Sonnet refreshed", exact=True)).to_be_visible()
+    setup.get_by_role("listbox").press("Escape")
+    catalog_failure = False
+    setup.locator("[data-employee-configuration-retry]").click()
+    expect(setup.locator("[data-employee-configuration-error]")).to_have_count(0)
     assert not errors, errors
     pass  # Shared runner owns the browser lifecycle.
     print("conversation-composer-browser.test.mjs: all assertions passed")
