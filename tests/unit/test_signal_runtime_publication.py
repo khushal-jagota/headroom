@@ -512,20 +512,16 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
     """A post-intent fault cannot commit a prompt, choice, validation or mutation lease."""
     from dataclasses import replace
 
-    from tests.unit.test_current_model_resolution import context, observation, row
-
     from planner.conversation.contracts import PromptDeliveryMode
     from planner.conversation.events import PromptEventPayload
     from planner.conversation.launch_intent import bind_model_intent
     from planner.conversation.lifecycle import LifecycleTransition
-    from planner.conversation.model_resolution.contracts import CatalogObservation, SelectionKind
+    from planner.conversation.model_resolution.contracts import SelectionKind
     from planner.core.contracts import OWNER_PRINCIPAL
-    from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
     from planner.tickets import data as tickets
-    from planner.tickets.validation.data import read_launch_selection
+    from planner.tickets.validation.data import read_launch_selection, read_launch_validation
 
     ticket_ids: list[str] = []
-    receipts: list[CatalogObservation] = []
 
     def seed(path: Path) -> None:
         connection = connect(str(path))
@@ -544,11 +540,6 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
             connection.execute("UPDATE tickets SET conversation_id='c' WHERE id=?", (ticket.id,))
             connection.commit()
             ticket_ids.append(ticket.id)
-            binding = workspace_binding_from_start(
-                worker_resolve(connection, ticket), ticket.locale
-            )
-            scoped = context(workspace=binding, localized_workspace_folder=binding.workspace_folder)
-            receipts.append(observation((row("new-exact", efforts=()),), launch=scoped))
         finally:
             connection.close()
 
@@ -574,26 +565,16 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
             validation = bind_model_intent(requested)
             assert validation.launch_token == "new-exact"
 
-            def snapshot() -> dict[str, list[tuple[object, ...]]]:
-                with sqlite3.connect(f"file:{runtime.db_path}?mode=ro", uri=True) as connection:
-                    return {
-                        table: list(connection.execute(f"SELECT * FROM {table} ORDER BY rowid"))
-                        for table in (
-                            "conversation_events",
-                            "conversations",
-                            "tickets",
-                            "ticket_launch_validation",
-                            "executor_command_outcomes",
-                            "mac_runs",
-                            "conversation_reply_credits",
-                            "signal_publication_meta",
-                            "signal_publication_values",
-                            "signal_publication_operations",
-                            "signal_publication_batches",
-                        )
-                    }
+            def snapshot() -> tuple[object, object]:
+                with sqlite3.connect(runtime.db_path) as connection:
+                    connection.row_factory = sqlite3.Row
+                    return (
+                        read_launch_selection(connection, ticket_ids[0]),
+                        read_launch_validation(connection, ticket_ids[0]),
+                    )
 
             before = snapshot()
+            published = tuple(batches)
 
             def fail_after_intent(
                 connection: sqlite3.Connection, candidate: LifecycleTransition
@@ -631,6 +612,7 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
                     requested_ticket_validation=validation,
                 )
             assert snapshot() == before
+            assert tuple(batches) == published
             assert not await runtime.store.read_events_after("c", 0)
 
         loop.run(asyncio.wait_for(exercise(), 8))

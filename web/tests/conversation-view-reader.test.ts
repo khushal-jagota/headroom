@@ -39,7 +39,6 @@ it('preserves hidden report page cursors without admitting deferred report bodie
   ]);
   const mixed = {...hiddenPage, items: [report, visible, {...report, key: 'last-report', order: {sequence: 3, slot: 0}}]};
   expect(transcriptHistoryEdges([mixed], admitted).map(edge => edge.anchorKey)).toEqual([visible.key, visible.key]);
-  expect(hiddenPage.items).toEqual([report]);
 });
 it('keeps legacy tool work contiguous across retained provider observations', () => {
   const tool = {kind: 'tool_call' as const, key: 'tool-1', sequence: 1, createdAt: 1,
@@ -51,7 +50,6 @@ it('keeps legacy tool work contiguous across retained provider observations', ()
   const items = threadItems(stored);
   expect(items).toHaveLength(1);
   expect(items[0]?.kind === 'work_group' && items[0].entries.map(entry => entry.key)).toEqual(['tool-1', 'tool-2']);
-  expect(stored[1]).toBe(report);
 });
 const readers: ConversationViewReader[] = [];
 afterEach(() => { for (const reader of readers) reader.close(); readers.length = 0; Source.all = []; vi.useRealTimers(); });

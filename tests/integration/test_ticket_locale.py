@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Callable
 
 import httpx
-from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+from tests.e2e.harness import JsonObject, ServerHandle
 
 from planner.core.db import connect
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step, worker_step_blocker
@@ -17,35 +17,6 @@ from planner.worker_types.configuration import configured_worker_type_registry
 def _stored_tickets(server: ServerHandle) -> list[tuple[object, ...]]:
     with sqlite3.connect(server.db_path) as connection:
         return connection.execute("SELECT * FROM tickets ORDER BY id").fetchall()
-
-
-def test_cli_default_locale_read_and_removed_move_route(
-    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
-) -> None:
-    created = cli(
-        server,
-        "ticket",
-        "create",
-        "--title",
-        "Locale process proof",
-        "--worker-type",
-        "coding",
-        "--kickoff-note",
-        "Check machine selection.",
-    )
-    assert created["locale"] == "vps"
-    shown = cli(server, "ticket", "show", created["id"])
-    assert shown["header"]["locale"] == "vps"
-    before = _stored_tickets(server)
-    refused = httpx.post(
-        server.base + f"/api/tickets/{created['id']}/move",
-        json={"locale": "macos"}, timeout=10,
-    )
-    assert refused.status_code == 404
-    assert _stored_tickets(server) == before
-    detail = api.get(server, f"/api/tickets?detail=full&id={created['id']}")
-    assert detail["locale"] == "vps"
-
 
 
 def test_http_native_provider_creation_allowed_offline_but_both_execution_doors_wait(

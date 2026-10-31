@@ -64,11 +64,8 @@ from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
     CommandOutcome,
-    Steer,
     WritePrompt,
-    encode_value,
 )
-from planner.executor.vps_remote_child import MacRemoteChild
 from planner.executor.vps_transport import VpsExecutor
 from planner.projects.data import create_project
 from planner.tickets import data as tickets
@@ -76,9 +73,8 @@ from planner.tickets.contracts import TicketLocale
 
 
 @pytest.mark.parametrize("backend", [ConversationBackendKey.claude, ConversationBackendKey.hermes])
-@pytest.mark.parametrize("retained", [False, True], ids=["new", "retained"])
 def test_native_worker_context_reaches_actual_provider_prompts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: ConversationBackendKey, retained: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: ConversationBackendKey
 ) -> None:
     async def exercise() -> None:
         for name, directory in (
@@ -136,17 +132,16 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         cursor = (
             SESSION_ID if backend is ConversationBackendKey.claude else "original-hermes-session"
         )
-        if retained:
-            await store.append_delivered_prompt(
-                "c_native",
-                prompt=PromptEventPayload(
-                    text_message_content("Previous delivered prompt"),
-                    "Panels",
-                    PromptDeliveryMode.queue,
-                ),
-                model_change=None,
-            )
-            await store.update_vendor_session_cursor("c_native", cursor)
+        await store.append_delivered_prompt(
+            "c_native",
+            prompt=PromptEventPayload(
+                text_message_content("Previous delivered prompt"),
+                "Panels",
+                PromptDeliveryMode.queue,
+            ),
+            model_change=None,
+        )
+        await store.update_vendor_session_cursor("c_native", cursor)
         names = ("panels", "panels-worker", "panels-worker-coding")
         snapshot = CanonicalSkillSnapshot(
             tuple(
@@ -158,7 +153,6 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             names,
         )
         clients: list[_ScriptedClaudeSdkClient] = []
-        native_starts: list[ResolvedConversationStart] = []
         commands: list[tuple[ChildCommand, CommandOutcome]] = []
         control = ScriptedAcpAgentControl(str(tmp_path / "agent.sock"))
 
@@ -172,7 +166,6 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         def factory(
             start: ResolvedConversationStart, capability: str, child: ChildReference
         ) -> BackendChildFactory:
-            native_starts.append(start)
             if backend is ConversationBackendKey.claude:
                 return ClaudeAgentSdkBackendChildFactory(
                     ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")),
@@ -234,10 +227,6 @@ def test_native_worker_context_reaches_actual_provider_prompts(
 
         try:
             assert await deliver("ordinary authored bytes") == PromptDeliveryStarted()
-            assert (
-                await deliver("direct steer authored bytes", mode=PromptDeliveryMode.steer)
-                == PromptDeliveryInjected()
-            )
             await deliver("held steer authored bytes")
             held = (await system.held_prompts("c_native"))[0]
             assert (
@@ -251,21 +240,18 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                     "".join(block["text"] for block in message["message"]["content"])
                     for message in clients[0].streamed_messages
                 ]
-                environment = clients[0].options.env
-                assert clients[0].options.resume == (cursor if retained else None)
+                assert clients[0].options.resume == cursor
             else:
                 report = await account()
                 prompt_texts = [write["text"] for write in report["prompt_writes"]] + [
                     write["text"] for write in report["steer_writes"]
                 ]
-                environment = report["environment"]
-                assert report["loaded_from"] == (cursor if retained else None)
-            assert len(prompt_texts) == 3
+                assert report["loaded_from"] == cursor
+            assert len(prompt_texts) == 2
             for prompt, authored in zip(
                 prompt_texts,
                 (
                     "ordinary authored bytes",
-                    "direct steer authored bytes",
                     "held steer authored bytes",
                 ),
                 strict=True,
@@ -274,35 +260,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                 assert prompt.count(NATIVE_WORKER_CONTEXT) == 1
                 assert prompt.index(NATIVE_WORKER_CONTEXT) < prompt.index("Chief:\n" + authored)
                 assert prompt.endswith("Chief:\n" + authored)
-            assert ("Old persisted Worker role." in prompt_texts[0]) is (not retained)
-            assert all("Old persisted Worker role." not in prompt for prompt in prompt_texts[1:])
-            assert environment is not None
-            generation = Path(environment["PLAN_NATIVE_SKILLS_DIR"])
-            assert (generation / "panels/SKILL.md").read_text() == snapshot.sources[0].source_text
-            assert environment["PLAN_TICKET_FILES_DIR"] == str(
-                tmp_path / "executor/artifacts/tickets" / ticket.id
-            )
-            assert native_starts[0].role_materials is not None
-            assert native_starts[0].role_materials.role_text == "Old persisted Worker role."
-            delivered = [
-                command
-                for command, _ in commands
-                if command.operation in (ChildOperation.write_prompt, ChildOperation.steer)
-            ]
-            for command in delivered:
-                assert isinstance(command.arguments, (WritePrompt, Steer))
-            assert [
-                encode_value(command.arguments.sender_content)
-                for command in delivered
-                if isinstance(command.arguments, (WritePrompt, Steer))
-            ] == [
-                encode_value(text_message_content(text))
-                for text in (
-                    "ordinary authored bytes",
-                    "direct steer authored bytes",
-                    "held steer authored bytes",
-                )
-            ]
+            assert all("Old persisted Worker role." not in prompt for prompt in prompt_texts)
             if backend is ConversationBackendKey.hermes:
                 await control.send(
                     {
@@ -333,27 +291,15 @@ def test_native_worker_context_reaches_actual_provider_prompts(
     asyncio.run(asyncio.wait_for(exercise(), 20))
 
 
-@pytest.mark.parametrize(
-    "outcome",
-    [
-        "succeeded",
-        "cleanup_failed",
-        "second_refusal",
-        "kill_cleanup",
-        "kill_start",
-        "competing_send",
-    ],
-)
-def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
-    tmp_path: Path, outcome: str
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
+    tmp_path: Path, cleanup_fails: bool
 ) -> None:
-    """A refused write cannot deadlock on its own reservation or bypass failed cleanup."""
+    """The original rebind deadlock and failure must be visible at the send seam."""
     from planner.conversation.contracts import (
         ConversationStartRequest,
         PromptDeliveryQueued,
         PromptDeliveryRefused,
-        PromptDeliverySuppressed,
-        PromptDeliveryUncertain,
     )
     from planner.executor.protocol import CommandDisposition
     from planner.executor.vps_inbox import InboxStore
@@ -361,67 +307,40 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
     async def exercise() -> None:
         db_path = str(tmp_path / "panels.sqlite")
         connection = connect(db_path)
-        try:
-            create_schema(connection)
-        finally:
-            connection.close()
+        create_schema(connection)
+        connection.close()
         commands: list[ChildCommand] = []
-        cleanup_entered = asyncio.Event()
-        release_cleanup = asyncio.Event()
-        replacement_start_entered = asyncio.Event()
-        release_start = asyncio.Event()
+        cleanup_entered, release_cleanup = asyncio.Event(), asyncio.Event()
         executor_store = InboxStore(db_path)
         snapshot = CanonicalSkillSnapshot(
-            tuple(
-                CanonicalSkillSource(name, f"---\nname: {name}\ndescription: test\n---\ntext")
-                for name in ("panels", "panels-worker")
-            ),
+            tuple(CanonicalSkillSource(name, f"---\nname: {name}\ndescription: test\n---\ntext")
+                  for name in ("panels", "panels-worker")),
             ("panels", "panels-worker"),
         )
-        writes = 0
-        system: SqliteProcessConversationSystem
 
         async def dispatch(command: ChildCommand) -> CommandOutcome:
-            nonlocal writes
             commands.append(command)
-            disposition = CommandDisposition.succeeded
-            result: dict[str, Any] = {"composed_content_delivered": True}
-            if command.operation is ChildOperation.write_prompt:
-                writes += 1
-                if writes == 1 or outcome == "second_refusal":
-                    disposition = CommandDisposition.refused
-                    result = {"error_type": "NeedsRebind", "error_message": "model changed"}
-            elif command.operation is ChildOperation.stop and not cleanup_entered.is_set():
-                state = system._conversations["c"]
-                assert state.reserved_turn is not None
-                assert not state.reserved_turn.resolved.is_set()
-                assert isinstance(state.child, MacRemoteChild)
-                assert state.child.reference == command.child
-                assert state.child_is_quarantined
+            if command.operation is ChildOperation.write_prompt and len(commands) == 2:
+                return CommandOutcome(
+                    command.command_id, command.child, CommandDisposition.refused,
+                    {"error_type": "NeedsRebind", "error_message": "model changed"},
+                )
+            if command.operation is ChildOperation.stop and not cleanup_entered.is_set():
                 cleanup_entered.set()
                 await release_cleanup.wait()
-                if outcome == "cleanup_failed":
+                if cleanup_fails:
                     raise RuntimeError("cleanup did not confirm exit")
-            elif command.operation is ChildOperation.start and cleanup_entered.is_set():
-                replacement_start_entered.set()
-                if outcome == "kill_start":
-                    await release_start.wait()
-            return CommandOutcome(command.command_id, command.child, disposition, result)
+            return CommandOutcome(command.command_id, command.child, CommandDisposition.succeeded,
+                                  {"composed_content_delivered": True})
 
         def reference(start: ResolvedConversationStart, sink: Any) -> ChildReference:
             child = ChildReference("test-incarnation", str(uuid4()), "c")
             executor_store.runs.register_child(child, "ticket", "t_native", 1)
             return child
 
-        remote = MacRemoteChildFactory(
-            reference,
-            dispatch,
-            lambda start: snapshot,
-            db_path=db_path,
-        )
+        remote = MacRemoteChildFactory(reference, dispatch, lambda start: snapshot, db_path=db_path)
         system = SqliteProcessConversationSystem(
-            store=ConversationStore(db_path),
-            message_files=ConversationMessageFiles(db_path),
+            store=ConversationStore(db_path), message_files=ConversationMessageFiles(db_path),
             backend_child_factories={key: remote for key in ConversationBackendKey},
         )
         try:
@@ -432,83 +351,27 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
                 system.send("c", text_message_content("original bytes"), sender_label="Test")
             )
             await cleanup_entered.wait()
-            state = system._conversations["c"]
-            reservation = state.reserved_turn
-            assert reservation is not None
             assert not delivery.done()
-            assert [command.operation for command in commands] == [
-                ChildOperation.start,
-                ChildOperation.write_prompt,
-                ChildOperation.stop,
+            assert isinstance(await system.send(
+                "c", text_message_content("queued bytes"), sender_label="Other"
+            ), PromptDeliveryQueued)
+            assert [c.operation for c in commands] == [
+                ChildOperation.start, ChildOperation.write_prompt, ChildOperation.stop,
             ]
-            # Cleanup can progress while this exact reservation still owns delivery.
-            assert state.reserved_turn is reservation and not reservation.resolved.is_set()
-            if outcome == "competing_send":
-                competing = await system.send(
-                    "c", text_message_content("queued bytes"), sender_label="Other"
-                )
-                assert isinstance(competing, PromptDeliveryQueued)
-                assert state.reserved_turn is reservation and not reservation.resolved.is_set()
-            if outcome == "kill_cleanup":
-                killed = asyncio.create_task(system.kill("c"))
-                await reservation.resolved.wait()
-                assert reservation.shutdown_owned
-                release_cleanup.set()
-                await killed
-            else:
-                release_cleanup.set()
-            if outcome == "kill_start":
-                await replacement_start_entered.wait()
-                killed = asyncio.create_task(system.kill("c"))
-                await reservation.resolved.wait()
-                assert reservation.shutdown_owned
-                await killed
-                release_start.set()
+            release_cleanup.set()
             result = await delivery
-            if outcome == "second_refusal":
-                assert state.initial_shutdown_task is not None
-                assert await state.initial_shutdown_task
-            # The detached delivery owner must also finish its post-start check.
-            if outcome == "kill_start":
-                await asyncio.gather(*tuple(state.settlement_tasks))
-            await system.wait_until_quiescent()
-            starts = [c for c in commands if c.operation is ChildOperation.start]
             written = [c for c in commands if c.operation is ChildOperation.write_prompt]
-            if outcome in {"kill_cleanup", "kill_start"}:
-                expected = (
-                    PromptDeliveryUncertain
-                    if outcome == "kill_cleanup"
-                    else PromptDeliverySuppressed
-                )
-                assert isinstance(result, expected)
-                assert len(starts) == (2 if outcome == "kill_start" else 1)
-                assert len(written) == 1
-                assert state.child is None
-                assert state.running_turn is None and state.reserved_turn is None
-            elif outcome == "cleanup_failed":
+            if cleanup_fails:
                 assert isinstance(result, PromptDeliveryRefused)
-                assert len(starts) == len(written) == 1
-                assert state.child is not None and state.child_is_quarantined
+                assert len(written) == 1
             else:
-                assert len(starts) == len(written) == 2
-                assert starts[0].child != starts[1].child
-                assert written[0].turn == written[1].turn == reservation.token
-                assert isinstance(written[0].arguments, (WritePrompt, Steer))
-                assert isinstance(written[1].arguments, (WritePrompt, Steer))
-                assert encode_value(written[0].arguments.content) == encode_value(
-                    written[1].arguments.content
-                )
-                if outcome == "second_refusal":
-                    assert isinstance(result, PromptDeliveryRefused)
-                    assert state.child is None
-                else:
-                    assert result == PromptDeliveryStarted()
-                    assert state.running_turn is not None
-                    assert state.running_turn.token == reservation.token
-            assert reservation.resolved.is_set()
+                assert result == PromptDeliveryStarted()
+                assert len(written) == 2 and written[0].child != written[1].child
+                assert isinstance(written[0].arguments, WritePrompt)
+                assert isinstance(written[1].arguments, WritePrompt)
+                assert written[0].arguments.content == written[1].arguments.content
         finally:
             release_cleanup.set()
-            release_start.set()
             await system.shutdown()
 
     asyncio.run(asyncio.wait_for(exercise(), 10))

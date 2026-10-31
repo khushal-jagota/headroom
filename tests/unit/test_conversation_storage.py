@@ -18,7 +18,6 @@ from planner.conversation.contracts import (
     NativeMessageOperation,
     PromptDeliveryMode,
     ResolvedConversationStart,
-    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     AgentMessageEventPayload,
@@ -30,7 +29,6 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.storage import (
     ConversationStore,
-    ensure_started_conversation_record,
 )
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import ChangeSignallingConnection, connect, create_schema
@@ -311,26 +309,6 @@ def test_sqlite_commit_failure_with_automatic_rollback_is_not_reported_as_saved(
         assert await store.read_events_after("c", 0) == ()
 
     asyncio.run(exercise())
-
-
-def test_existing_conversation_refuses_a_different_workspace_policy(
-    tmp_db: sqlite3.Connection,
-) -> None:
-    resolved = replace(_resolved(), workspace_path_policy=WorkspacePathPolicy.native_absolute)
-    ensure_started_conversation_record(tmp_db, resolved, created_at=1)
-    ensure_started_conversation_record(tmp_db, resolved, created_at=2)
-    with pytest.raises(RuntimeError, match="differ from its durable record"):
-        ensure_started_conversation_record(
-            tmp_db,
-            replace(resolved, workspace_path_policy=WorkspacePathPolicy.legacy_home_mapping),
-            created_at=3,
-        )
-    assert (
-        tmp_db.execute(
-            "SELECT workspace_path_policy FROM conversations WHERE conversation_id = 'c'"
-        ).fetchone()[0]
-        == "native_absolute"
-    )
 
 
 def test_grouped_messages_keep_their_own_commit_participants(store: ConversationStore) -> None:

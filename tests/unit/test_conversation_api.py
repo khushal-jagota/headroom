@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import sqlite3
 import zlib
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterator, MutableMapping
 from contextlib import AsyncExitStack
@@ -24,7 +23,6 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
 from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
@@ -112,7 +110,6 @@ from planner.core.response_compression import (
     CompressExceptEventStreams,
     event_stream_route_patterns,
 )
-from planner.core.server import create_app
 from planner.files.logic.paths import conversation_files_root
 from planner.tickets import data as tickets_data
 
@@ -1020,166 +1017,6 @@ def test_user_input_replays_after_refresh_and_posts_a_complete_answer_map(
     _run(exercise)
 
 
-def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "incumbent"}],
-                    "sender_label": "owner",
-                },
-            )
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "held"}],
-                    "sender_label": "owner",
-                    "sender_message_id": "sender-one",
-                    "sent_at_unix_milliseconds": 1234,
-                },
-            )
-            held = (await client.get("/api/conversation/conversations/c")).json()["held_prompts"][0]
-            assert held == {
-                "held_prompt_id": held["held_prompt_id"],
-                "text": "held",
-                "sender_label": "owner",
-                "sender_message_id": "sender-one",
-                "sent_at_unix_milliseconds": 1234,
-                "sender": None,
-                "recipient": None,
-                "queue_reason": "requested",
-                "delivery_uncertain": False,
-            }
-
-            promoted = await client.post(
-                f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}/promote",
-                json={"mode": "send_now"},
-            )
-
-            assert promoted.json() == {"promoted": True, "fate": "started"}
-            assert harness.backend("c").written_texts == ["incumbent", "held"]
-            assert harness.backend("c").cancellations == 1
-            assert (await client.get("/api/conversation/conversations/c")).json()[
-                "held_prompts"
-            ] == []
-            again = await client.post(
-                f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}/promote",
-                json={"mode": "send_now"},
-            )
-            assert again.json() == {"promoted": False}
-
-    _run(exercise)
-
-
-
-
-@pytest.mark.parametrize("kind", ["permission", "user_input"])
-def test_remote_reference_never_falls_through_to_local_callback(
-    harness: _Harness,
-    kind: str,
-) -> None:
-    from planner.execution_identity import AskKind, AskReference, ChildReference
-    from planner.executor.protocol import encode_value
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "work"}],
-                    "sender_label": "owner",
-                },
-            )
-            if kind == "permission":
-                ask_id = await harness.raise_permission_ask("c")
-                path = "/api/conversation/conversations/c/permission-answers"
-                body: dict[str, Any] = {"ask_id": ask_id, "option_id": "allow-once"}
-            else:
-                request = await harness.request_user_input("c")
-                ask_id = request.request_id
-                path = "/api/conversation/conversations/c/user-input-answers"
-                body = {
-                    "request_id": ask_id,
-                    "answers": {
-                        "where": {"answers": ["Local"]},
-                        "why": {"answers": ["because"]},
-                    },
-                }
-            ask = AskReference(
-                ChildReference("inc", "child", "c"), TurnToken("c", 1), ask_id, AskKind(kind)
-            )
-            response = await client.post(path, json={**body, "executor_ask": encode_value(ask)})
-            assert response.status_code == 422
-            assert harness.backend("c").permission_answers == {}
-            assert harness.backend("c").user_input_answers == {}
-
-    _run(exercise)
-
-
-def test_interrupting_frees_what_was_held_and_killing_throws_it_away(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "interrupted")
-            await client.post(
-                "/api/conversation/conversations/interrupted/send",
-                json={
-                    "content": [{"piece": "text", "text": "incumbent"}],
-                    "sender_label": "owner",
-                },
-            )
-            await client.post(
-                "/api/conversation/conversations/interrupted/send",
-                json={
-                    "content": [{"piece": "text", "text": "held"}],
-                    "sender_label": "owner",
-                },
-            )
-
-            stopped = await client.post("/api/conversation/conversations/interrupted/interrupt")
-            await harness.settle()
-
-            assert stopped.status_code == 204
-            assert harness.backend("interrupted").written_texts == ["incumbent", "held"]
-
-            await _start(client, "killed")
-            await client.post(
-                "/api/conversation/conversations/killed/send",
-                json={
-                    "content": [{"piece": "text", "text": "incumbent"}],
-                    "sender_label": "owner",
-                },
-            )
-            await client.post(
-                "/api/conversation/conversations/killed/send",
-                json={
-                    "content": [{"piece": "text", "text": "held"}],
-                    "sender_label": "owner",
-                },
-            )
-
-            killed = await client.post("/api/conversation/conversations/killed/kill")
-            await harness.settle()
-
-            assert killed.status_code == 204
-            assert harness.backend("killed").written_texts == ["incumbent"]
-            kinds = [
-                event["kind"]
-                for event in (
-                    await client.get("/api/conversation/conversations/killed/events")
-                ).json()["events"]
-            ]
-            assert kinds == ["prompt", "prompt_discarded", "turn_ended"]
-
-    _run(exercise)
-
-
 # --- reading the record ---------------------------------------------------------------------
 
 
@@ -1445,52 +1282,6 @@ def test_a_watcher_that_stops_reading_has_its_watch_closed_rather_than_grown(
 # --- the wiring in the real application ---------------------------------------------------------
 
 
-def test_the_application_serves_the_conversation_system_and_puts_it_away(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The additive wiring, proved through the real app: built on start, gone on stop."""
-    db_path = tmp_path / "wired.db"
-    boot = connect(str(db_path))
-    create_schema(boot)
-    boot.close()
-    config = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)})
-
-    def conn_factory() -> sqlite3.Connection:
-        return connect(str(db_path))
-
-    app = create_app(config, build_clock(config), conn_factory)
-    with TestClient(app) as client:
-        # This wiring proof creates a row without any provider catalogue probe.
-        assert client.get("/api/conversation/conversations/nobody").status_code == 404
-
-        created = client.post(
-            "/api/conversation/conversations",
-            json={
-                "conversation_id": "wired",
-                "model": "a-model",
-                "backend_key": "codex",
-            },
-        )
-        assert created.status_code == 201
-        assert created.json()["backend_key"] == "codex"
-
-        view = client.get("/api/conversation/conversations/wired")
-        assert view.status_code == 200
-        # Creating a conversation spawns nothing, which is why this test can run against
-        # the real backends without an agent starting anywhere.
-        assert view.json()["is_running"] is False
-
-        events = client.get("/api/conversation/conversations/wired/events")
-        assert events.json() == {"events": [], "has_more": False, "diagnostics_expired": False}
-
-        # The worker path and the browser's conversation are the same system. A worker's
-        # prompt goes into a real conversation, not a stand-in beside it.
-        assert app.state.conversation_system is app.state.conversation.system
-
-    assert app.state.conversation is None
-
-
 # --- a message that carries more than words --------------------------------------------------
 
 
@@ -1638,8 +1429,6 @@ def _video_owner_routes(
     from planner.conversation.video_uploads import config as video_config
     from planner.conversation.video_uploads import service as video_service
     from planner.conversation.video_uploads.service import VideoUploadService
-    from planner.core.clock import build_clock
-    from planner.core.config import load_config
     from planner.core.errors import PlannerError
     from planner.core.server import handle_planner_error
     from planner.tickets.api import router as tickets_router

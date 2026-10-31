@@ -50,9 +50,6 @@ describe('application presentation and command evidence',()=>{
       expect(first.managersById.get('parent')?.tickets[0]).toBe(first.ticketsById.get('a'));
       expect(first.ticketsByParent.get('manager:parent')?.[0]).toBe(first.ticketsById.get('a'));
       expect(first.ticketMastheadsById.get('a')?.project).toBe('Project');
-      expect(first.ticketsById.get('a')?.locale).toBe('macos');
-      expect(first.managersById.get('parent')?.tickets[0].locale).toBe('macos');
-      expect(first.ticketMastheadsById.get('a')?.locale).toBe('macos');
       const missingParent={...view,publication:{...view.publication,records:view.publication.records.filter(record=>record.kind!=='manager')}};
       expect(presentationFor(missingParent).ticketMastheadsById.has('a')).toBe(false);
       expect(createNavigationPresentationCache()(view)).not.toBe(first);

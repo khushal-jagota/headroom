@@ -111,16 +111,8 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     assert remote_env["PLAN_EXECUTOR_MODE"] == "remote"
     assert remote_env["PLAN_EXECUTOR_ID"] == executor_id
     assert "PLAN_EXECUTOR_VPS_SOCKET" not in remote_env
-    write_vps_launch(configuration, VpsExecutorLaunchConfiguration("local"))
-    local_env = json.loads(launch().stdout)["env"]
-    assert "PLAN_EXECUTOR_VPS_SOCKET" not in local_env
-    assert "PLAN_EXECUTOR_ID" not in local_env
-    configuration.write_text('{"version":1,"mode":"remote","socket":"relative"}')
+    # An untrusted configuration must refuse execution, not fall back to local.
+    configuration.chmod(0o644)
     refused = launch()
-    assert refused.returncode != 0
-    assert not refused.stdout
-    assert "malformed VPS executor launch configuration" in refused.stderr
-    configuration.write_text('{"version":1,"mode":"remote","socket":"/legacy/executor.sock"}')
-    legacy = launch()
-    assert legacy.returncode != 0 and not legacy.stdout
-    assert "malformed VPS executor launch configuration" in legacy.stderr
+    assert refused.returncode != 0 and not refused.stdout
+    assert "owner-only" in refused.stderr

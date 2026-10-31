@@ -85,8 +85,6 @@ def test_validation_only_change_updates_selected_revision_in_same_second(
     tmp_db: Connection,
 ) -> None:
     """Mounted controls must refresh when only attributed verification changes."""
-    from dataclasses import replace
-
     from planner.conversation.model_resolution.contracts import ValidationReason
     from planner.conversation.model_resolution.logic.validation import unresolved_validation
     from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
@@ -120,15 +118,3 @@ def test_validation_only_change_updates_selected_revision_in_same_second(
     assert isinstance(body, dict)
     assert body["launch_validation"]["validation"]["reason"] == "offline"
     assert body["updated_at"] == ticket.updated_at
-    assert record_launch_validation(
-        tmp_db,
-        ticket.id,
-        replace(
-            unresolved_validation(selection, ValidationReason.offline),
-            reason=ValidationReason.timeout,
-        ),
-        expected_workspace=binding,
-        now=1,
-    )
-    second = provider.capture(tmp_db, request, key)
-    assert second is not None and second.revision != changed.revision

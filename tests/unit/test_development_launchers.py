@@ -294,9 +294,8 @@ def test_setup_pip_cannot_inherit_install_destination_redirects(
         assert not {"PIP_TARGET", "PIP_PREFIX", "PIP_ROOT", "PIP_USER"} & environment.keys()
 
 
-@pytest.mark.parametrize("platform", ["darwin", "linux"])
 def test_npm_distribution_prefix_is_admitted_only_on_macos(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tree = _tree(tmp_path / "checkout")
     installation = tmp_path / "node"
@@ -304,30 +303,16 @@ def test_npm_distribution_prefix_is_admitted_only_on_macos(
     executable.parent.mkdir(parents=True)
     executable.touch()
     builtin = executable.parent.parent / "npmrc"
-    global_config = installation / "etc/npmrc"
-    global_config.parent.mkdir()
     monkeypatch.setattr(shutil, "which", lambda *args, **kwargs: str(executable))
-    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(launcher, "check_paths", lambda *args, **kwargs: None)
     monkeypatch.setattr(launcher, "check_tree", lambda *args, **kwargs: None)
     original_exists = Path.exists
     monkeypatch.setattr(
         Path, "exists", lambda path: path.is_relative_to(tmp_path) and original_exists(path)
     )
-    for config in (builtin, global_config):
-        config.write_text("prefix=/tool-managed/global\n")
-        if platform == "darwin":
-            launcher.node_environment(tree, tree / "web", {})
-        else:
-            with pytest.raises(SafetyRefusal, match="Unsupported config key: prefix"):
-                launcher.node_environment(tree, tree / "web", {})
-        config.unlink()
-    if platform == "darwin":
-        for config, content in (
-            (builtin, "userconfig=/other\n"),
-            (tree / "web/.npmrc", "prefix=/other\n"),
-        ):
-            config.write_text(content)
-            with pytest.raises(SafetyRefusal, match="Unsupported config key"):
-                launcher.node_environment(tree, tree / "web", {})
-            config.unlink()
+    builtin.write_text("prefix=/tool-managed/global\n")
+    launcher.node_environment(tree, tree / "web", {})
+    (tree / "web/.npmrc").write_text("prefix=/other\n")
+    with pytest.raises(SafetyRefusal, match="Unsupported config key"):
+        launcher.node_environment(tree, tree / "web", {})

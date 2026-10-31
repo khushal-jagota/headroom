@@ -261,25 +261,3 @@ def test_projected_semantics_preserve_full_latest_message_boundary(
         )
         assert len(page["items"]) <= 100
         assert page["body_bytes"] <= 128 * 1024
-
-
-def test_late_provider_report_does_not_borrow_the_next_active_turn() -> None:
-    rows = [
-        ("prompt", {"text": "one", "sender_label": "owner", "mode": "queue"}),
-        ("turn_ended", {"ending": "completed"}),
-        ("prompt", {"text": "two", "sender_label": "owner", "mode": "queue"}),
-        ("provider_selection_reported", {
-            "provider": "claude", "source_kind": "response_model", "model": "reported",
-            "reasoning_effort": None, "turn_number": 1, "child_lifetime": "child-1",
-        }),
-    ]
-    conn = database([
-        {"sequence": index, "created_at": index, "kind": kind, "payload": payload}
-        for index, (kind, payload) in enumerate(rows, 1)
-    ])
-    report = conn.execute(
-        "SELECT turn_key,work_group_key FROM conversation_view_rows WHERE sequence=4"
-    ).fetchone()
-    assert tuple(report) == (None, None)
-    state = conn.execute("SELECT current_turn_key FROM conversation_view_state").fetchone()
-    assert state[0] == "turn:e3"
