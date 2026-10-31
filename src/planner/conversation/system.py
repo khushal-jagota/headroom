@@ -269,7 +269,7 @@ class _ReservedTurn:
     prompt_accepted: bool = False
     shutdown_owned: bool = False
     shutdown_fate: PromptDeliveryFate | None = None
-    messages: tuple[_HeldPrompt, ...] = ()
+    messages: tuple[_Message, ...] = ()
     mode: PromptDeliveryMode = PromptDeliveryMode.queue
 
 
@@ -319,8 +319,8 @@ class _AdmittedSenderMessage:
 
 
 @dataclass(frozen=True, slots=True)
-class _HeldPrompt:
-    """A message waiting for the agent to free up, with the change it carries.
+class _Message:
+    """One admitted message, whether sent immediately or held for a later turn.
 
     The sender's own id and send instant wait here with it: a held message is delivered,
     refused or discarded long after the caller has gone, and whichever row it becomes has
@@ -350,6 +350,17 @@ class _HeldPrompt:
 
     reasoning_effort_is_set: bool = False
 
+    def same_message_as(self, other: object) -> bool:
+        """Compare the identity facts retained at the other message's stage.
+
+        Stored outcomes and in-flight receipts retain the address and content. A held
+        message also retains the requested model and effort until it is delivered.
+        """
+        fields = ("content", "sender_label", "sender", "recipient", "recovery_references")
+        if isinstance(other, _Message):
+            fields += ("model_change", "reasoning_effort_change", "reasoning_effort_is_set")
+        return all(getattr(self, name) == getattr(other, name, None) for name in fields)
+
 
 @dataclass(frozen=True, slots=True)
 class _PromptDeliveryAttempt:
@@ -364,7 +375,7 @@ class _PromptDeliveryAttempt:
     composed_content_delivered: bool = True
     refusal_detail: str | None = None
     suppression_reason: str | None = None
-    messages: tuple[_HeldPrompt, ...] = ()
+    messages: tuple[_Message, ...] = ()
     automatic_notice: bool = False
 
 
@@ -383,7 +394,7 @@ class _ConversationState:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     phase: _ConversationPhase = _ConversationPhase.idle
     phase_settled: asyncio.Event = field(default_factory=asyncio.Event)
-    held_prompts: deque[_HeldPrompt] = field(default_factory=deque)
+    held_prompts: deque[_Message] = field(default_factory=deque)
     admitted_sender_messages: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
     sender_messages_being_delivered: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
@@ -1464,7 +1475,7 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
 
         await self._acquire_settled(state)
-        held: _HeldPrompt | None = None
+        held: _Message | None = None
         reservation: _ReservedTurn | None = None
         steer_child: BackendChild | None = None
         steer_turn_token: TurnToken | None = None
@@ -2253,7 +2264,7 @@ class SqliteProcessConversationSystem:
         native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryQueued:
         """Put one admitted message at the tail. The conversation lock must be held."""
-        held = _HeldPrompt(
+        held = _Message(
             reasoning_effort_is_set=reasoning_effort_is_set,
             held_prompt_id=f"held_{uuid4().hex}",
             content=content,
@@ -2281,7 +2292,7 @@ class SqliteProcessConversationSystem:
         return PromptDeliveryQueued(queue_position=len(state.held_prompts))
 
     def _begin_held_deliveries(
-        self, state: _ConversationState, held_prompts: tuple[_HeldPrompt, ...]
+        self, state: _ConversationState, held_prompts: tuple[_Message, ...]
     ) -> None:
         """Keep sender identities visible after dequeue and before their durable outcome."""
         for held in held_prompts:
@@ -2300,7 +2311,7 @@ class SqliteProcessConversationSystem:
 
     @staticmethod
     def _settle_held_deliveries(
-        state: _ConversationState, held_prompts: tuple[_HeldPrompt, ...]
+        state: _ConversationState, held_prompts: tuple[_Message, ...]
     ) -> None:
         """Release duplicate callers after each dequeued message has a durable outcome."""
         for held in held_prompts:
@@ -2602,7 +2613,7 @@ class SqliteProcessConversationSystem:
         messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
             state,
             (
-                _HeldPrompt(
+                _Message(
                     reasoning_effort_is_set=reasoning_effort_is_set,
                     held_prompt_id="",
                     content=content,
@@ -2786,7 +2797,7 @@ class SqliteProcessConversationSystem:
         self,
         state: _ConversationState,
         reservation: _ReservedTurn,
-        messages: tuple[_HeldPrompt, ...],
+        messages: tuple[_Message, ...],
     ) -> None:
         """Keep the reservation and child owned while recording possible emission."""
         async with state.lock:
@@ -2839,7 +2850,7 @@ class SqliteProcessConversationSystem:
         native_message_operation: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         reservation.messages = (
-            _HeldPrompt(
+            _Message(
                 reasoning_effort_is_set=reasoning_effort_is_set,
                 held_prompt_id="",
                 content=content,
@@ -2879,7 +2890,7 @@ class SqliteProcessConversationSystem:
                 reasoning_effort_change=reasoning_effort_change,
                 automatic_compaction=reservation.automatic_compaction,
                 messages=(
-                    _HeldPrompt(
+                    _Message(
                         reasoning_effort_is_set=reasoning_effort_is_set,
                         held_prompt_id="",
                         content=content,
@@ -2985,7 +2996,7 @@ class SqliteProcessConversationSystem:
         )
 
     @staticmethod
-    def _reply_senders(messages: tuple[_HeldPrompt, ...]) -> tuple[Principal, ...]:
+    def _reply_senders(messages: tuple[_Message, ...]) -> tuple[Principal, ...]:
         return tuple(
             dict.fromkeys(
                 message.sender
@@ -2999,10 +3010,10 @@ class SqliteProcessConversationSystem:
     async def _admit_dispatch_messages(
         self,
         state: _ConversationState,
-        messages: tuple[_HeldPrompt, ...],
+        messages: tuple[_Message, ...],
         *,
         lifecycle_if_all_suppressed: tuple[LifecycleFact, ...] = (),
-    ) -> tuple[tuple[_HeldPrompt, ...], str | None, bool]:
+    ) -> tuple[tuple[_Message, ...], str | None, bool]:
         """Keep sender envelopes intact until the final transactional dispatch decision."""
         async with state.lock:
             decisions = await self._persist(
@@ -3148,7 +3159,7 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
         reply_senders: tuple[Principal, ...] = (),
-        messages: tuple[_HeldPrompt, ...] = (),
+        messages: tuple[_Message, ...] = (),
         reasoning_effort_is_set: bool = False,
     ) -> _PromptDeliveryAttempt:
         """Get the message onto a live child's wire, or name why that was impossible.
@@ -3311,7 +3322,7 @@ class SqliteProcessConversationSystem:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
-        messages: tuple[_HeldPrompt, ...] = (),
+        messages: tuple[_Message, ...] = (),
         interruption_notice: str | None = None,
         reasoning_effort_is_set: bool = False,
     ) -> _PromptDeliveryAttempt:
@@ -3476,7 +3487,7 @@ class SqliteProcessConversationSystem:
         refusal_detail: str | None = None,
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
-        also_delivered: tuple[_HeldPrompt, ...] = (),
+        also_delivered: tuple[_Message, ...] = (),
         owner_read_through_sequence: int | None = None,
         acknowledge_owner_on_failure: bool = True,
         reasoning_effort_is_set: bool = False,
@@ -3924,7 +3935,7 @@ class SqliteProcessConversationSystem:
                 return
 
     def _quarantine_uncertain_held_batch(
-        self, state: _ConversationState, batch: tuple[_HeldPrompt, ...]
+        self, state: _ConversationState, batch: tuple[_Message, ...]
     ) -> None:
         # The canonical dispatching marker predates the native attempt. Preserve
         # its bytes and identity; transport loss supplies no terminal outcome.
