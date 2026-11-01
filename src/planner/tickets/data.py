@@ -49,6 +49,7 @@ from planner.tickets.contracts import (
     TicketLocale,
     WorkerStepClaim,
 )
+from planner.tickets.integrity import TicketIntegrityError
 from planner.tickets.locale_configuration import require_locale_backend_compatibility
 from planner.tickets.logic import (
     admission,
@@ -71,6 +72,7 @@ from planner.worker_types.configuration import (
     configured_worker_type_registry,
 )
 from planner.worker_types.contracts import BRIEF_FIELD_ID, TicketTypeMigration, WorkerTypeDefinition
+from planner.worker_types.registry import WorkerTypeRegistry
 
 
 class _WorkerStepReadinessCheck(Protocol):
@@ -353,9 +355,13 @@ def resolve_ticket_creation_context(
     return context
 
 
-def _row_to_ticket(row: sqlite3.Row) -> Ticket:
+def _row_to_ticket(
+    row: sqlite3.Row, *, worker_type_definition: WorkerTypeDefinition | None = None
+) -> Ticket:
     worker_type = str(row["worker_type"])
-    worker_type_definition = configured_worker_type_registry().require(worker_type)
+    worker_type_definition = worker_type_definition or configured_worker_type_registry().require(
+        worker_type
+    )
     stage = str(row["stage"])
     worker_type_definition.validate_ticket_position(
         stage, str(row["ceiling"]), allow_historical_terminal_ceiling=True
@@ -458,12 +464,27 @@ def _load_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
 
 
 def _load_ticket_and_worker_type_definition_for_write(
-    conn: sqlite3.Connection, ticket_id: str
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    worker_type_registry: WorkerTypeRegistry | None = None,
+    startup_audit: bool = False,
 ) -> tuple[Ticket, WorkerTypeDefinition]:
     row = _ticket_row(conn, ticket_id)
-    worker_type_definition = configured_worker_type_registry().require(str(row["worker_type"]))
-    worker_type_definition.validate_ticket_position(str(row["stage"]), str(row["ceiling"]))
-    ticket = _row_to_ticket(row)
+    if not startup_audit:
+        from planner.tickets.integrity import issue_for_ticket
+
+        issue = issue_for_ticket(conn, ticket_id)
+        if issue is not None:
+            raise issue
+    registry = worker_type_registry or configured_worker_type_registry()
+    worker_type_definition = registry.require(str(row["worker_type"]))
+    worker_type_definition.validate_ticket_position(
+        str(row["stage"]),
+        str(row["ceiling"]),
+        allow_historical_terminal_ceiling=startup_audit,
+    )
+    ticket = _row_to_ticket(row, worker_type_definition=worker_type_definition)
     _validate_ceiling_holder(conn, ticket.ceiling_holder, ticket_id=ticket.id)
     fields_codec.validate_state(
         ticket.field_values,
@@ -1122,12 +1143,33 @@ def create_ticket(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
-    """Validate saved values and the one pending proposal before background work starts."""
-    for row in conn.execute("SELECT id FROM tickets ORDER BY id"):
+def audit_ticket_registry_integrity(
+    conn: sqlite3.Connection,
+    *,
+    worker_type_registry: WorkerTypeRegistry | None = None,
+    worker_type: str | None = None,
+    startup: bool = False,
+) -> list[TicketIntegrityError]:
+    """Validate strict write state against the supplied or current registry.
+
+    A definition save can validate only its own Tickets against the uncommitted registry.
+    Update admission remains strict. Only server startup marks faulty Tickets and continues.
+    """
+    if startup:
+        if worker_type_registry is not None or worker_type is not None:
+            raise ValueError("startup audit cannot use a replacement registry or Worker filter")
+        from planner.tickets.integrity import mark_faults
+
+        return mark_faults(conn)
+    rows = (
+        conn.execute("SELECT id FROM tickets WHERE worker_type = ? ORDER BY id", (worker_type,))
+        if worker_type is not None
+        else conn.execute("SELECT id FROM tickets ORDER BY id")
+    )
+    for row in rows:
         try:
             ticket, _definition = _load_ticket_and_worker_type_definition_for_write(
-                conn, str(row["id"])
+                conn, str(row["id"]), worker_type_registry=worker_type_registry
             )
             require_conversation_backend_key(ticket.employee_backend)
         except (
@@ -1140,6 +1182,7 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
             raise RuntimeError(
                 f"ticket integrity audit failed: id={row['id']} reason={exc}"
             ) from exc
+    return []
 
 
 def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
@@ -2117,6 +2160,7 @@ def apply_worker_type_migrations(
     migrations: tuple[TicketTypeMigration, ...],
     *,
     definition: WorkerTypeDefinition,
+    previous_definition: WorkerTypeDefinition | None,
     now: int,
 ) -> None:
     """Apply an already validated amendment without settling fields or changing authority."""
@@ -2138,3 +2182,28 @@ def apply_worker_type_migrations(
             )
             revision_feedback.discard(conn, migration.ticket_id)
         capture_ticket_attention(conn, migration.ticket_id, now, worker_type_definition=definition)
+
+    # Step context is one-use state, not history. Inspect every Ticket of this type:
+    # stale rows can refer to a removed Stage even when the Ticket itself did not move.
+    changed_steps = (
+        tuple(
+            stage.id
+            for stage in previous_definition.stages
+            if definition.is_known_stage(stage.id)
+            and (
+                stage.gating_field != definition.gating_field(stage.id)
+                or stage.ownership_mode != definition.stage_definition(stage.id).ownership_mode
+            )
+        )
+        if previous_definition is not None
+        else ()
+    )
+    changed_placeholders = ",".join("?" for _ in changed_steps)
+    for table in ("ticket_paired_stage_openers", "ticket_revision_feedback"):
+        changed_clause = f" OR {table}.stage IN ({changed_placeholders})" if changed_steps else ""
+        conn.execute(
+            f"DELETE FROM {table} WHERE EXISTS ("
+            f"SELECT 1 FROM tickets t WHERE t.id = {table}.ticket_id "
+            f"AND t.worker_type = ? AND ({table}.stage != t.stage{changed_clause}))",
+            (definition.worker_type, *changed_steps),
+        )

@@ -33,7 +33,9 @@ def test_selected_ticket_preserves_controls_without_closed_bodies(tmp_db: Connec
     tmp_db.execute("UPDATE tickets SET field_values=? WHERE id=?", (json.dumps(values), ticket.id))
     tmp_db.commit()
     full = views.ticket_detail(tmp_db, ticket.id, 1)
-    compact = workspace_ticket(tmp_db, ticket.id)
+    response = workspace_ticket(tmp_db, ticket.id)
+    assert "integrity_error" not in response
+    compact = response
     for key in (
         "id",
         "worker_type",

@@ -60,8 +60,13 @@ Artifact links in stage text and in the conversation open in the Ticket viewer w
 
 A shared file link can also open at `#/preview`. Inline preview on the Ticket keeps the Ticket’s address.
 
+If the startup audit finds an invalid Ticket, it records a structural reason in the dedicated nullable error field. The audit clears that field when the Ticket validates. The recap and Worker claim remain unchanged. Other Tickets remain usable, and Chief receives a system notice when the audit first records the fault.
+
+This isolation applies to builds that contain the fix. Earlier builds retain their original startup behavior, and failed notice delivery does not block startup or create an automatic retry workflow.
+
+
 ## Pointers
 
 `src/planner/tickets/` holds the record, the derived status, and the writers. Stage ladders live in `src/planner/worker_types/shipped_worker_types.json`. Locale checks live in `src/planner/tickets/locale_configuration.py`. The Ticket screen is `web/src/routes/TicketRoute.svelte`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-01._

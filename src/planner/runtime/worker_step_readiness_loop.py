@@ -63,7 +63,9 @@ _log = logging.getLogger(__name__)
 
 LOOP_SENDER_LABEL: Final = "loop"
 
-_CANDIDATE_SQL = "SELECT t.id FROM tickets t ORDER BY t.updated_at, t.id"
+_CANDIDATE_SQL = (
+    "SELECT t.id FROM tickets t WHERE integrity_error_reason IS NULL ORDER BY t.updated_at, t.id"
+)
 
 
 type WorkerStepDeliveryFate = Literal[

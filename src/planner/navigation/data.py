@@ -127,9 +127,12 @@ def _priority_source_shape(conn: sqlite3.Connection) -> bool:
 
 def _install_source_triggers(conn: sqlite3.Connection) -> None:
     for table, (column, update_columns) in SOURCES.items():
-        if table == "goals" and not conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goals'"
-        ).fetchone():
+        if (
+            table == "goals"
+            and not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goals'"
+            ).fetchone()
+        ):
             continue
         for operation in ("INSERT", "UPDATE", "DELETE"):
             conn.execute(f"DROP TRIGGER IF EXISTS navigation_{table}_{operation.lower()}")
@@ -388,6 +391,23 @@ def _derive(
         )
         deps.add(("ticket_blocks", identity))
         deps.update(("tickets", b["id"]) for b in blockers)
+        if version >= PREPARED_SCHEMA_VERSION:
+            # Only the startup audit detects faults. Navigation displays its saved mark.
+            from planner.tickets.integrity import diagnostic_projection, issue_for_ticket
+
+            issue = issue_for_ticket(conn, identity)
+            if issue is not None:
+                diagnostic = dict(diagnostic_projection(conn, identity, issue))
+                diagnostic.update(
+                    deadline=t["deadline"],
+                    locale=t["locale"],
+                    recap_preview=recap_preview(str(t["recap"])),
+                    integrity_error={"reason": issue.reason},
+                )
+                for extra in ("id", "manager_title", "project"):
+                    diagnostic.pop(extra, None)
+                records.append(_record(kind, identity, diagnostic))
+                return records, deps
         # Preserve historical v1/v2 backfill before the accepted retirement rewrite.
         # Current source contains no cancelled Tickets after that migration succeeds.
         blocker_predicate = (

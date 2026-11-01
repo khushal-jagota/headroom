@@ -44,6 +44,29 @@ export interface TicketValue {
   locale: string;
 }
 
+export interface NavigationTicketIntegrityIssue {
+  reason: string;
+}
+
+export interface BrokenTicketValue {
+  title: string;
+  recap: string;
+  recap_preview: string;
+  worker_type: string;
+  stage: string;
+  ticket_status: "errored";
+  integrity_error: NavigationTicketIntegrityIssue;
+  deadline: string | null;
+  project_id: string | null;
+  manager_kind: string;
+  manager_id: string | null;
+  conversation_id: string | null;
+  locale: string;
+  updated_at: number;
+  created_at: number;
+  is_backlogged: boolean;
+}
+
 export interface ManagerValue {
   updated_at: number;
   title: string;
@@ -163,7 +186,7 @@ export interface ProjectValue {
 export interface TicketRecord {
   kind: "ticket";
   id: string;
-  value: TicketValue;
+  value: TicketValue | BrokenTicketValue;
 }
 
 export interface ManagerRecord {
@@ -414,6 +437,26 @@ export interface ViewTicketValue {
   recap_reference: ViewContentReference | null;
 }
 
+export interface ViewBrokenTicketValue {
+  title: string;
+  recap: string;
+  recap_preview: string;
+  worker_type: string;
+  stage: string;
+  ticket_status: "errored";
+  integrity_error: NavigationTicketIntegrityIssue;
+  deadline: string | null;
+  project_id: string | null;
+  manager_kind: string;
+  manager_id: string | null;
+  conversation_id: string | null;
+  locale: string;
+  updated_at: number;
+  created_at: number;
+  is_backlogged: boolean;
+  recap_reference: ViewContentReference | null;
+}
+
 export interface ViewManagerValue {
   updated_at: number;
   title: string;
@@ -444,7 +487,7 @@ export interface ViewConversationValue {
 export interface ViewTicketRecord {
   kind: "ticket";
   id: string;
-  value: ViewTicketValue;
+  value: ViewTicketValue | ViewBrokenTicketValue;
 }
 
 export interface ViewManagerRecord {
@@ -813,6 +856,95 @@ export const wireDescriptors: Record<string, unknown> = {
       }
     }
   },
+  "NavigationTicketIntegrityIssue": {
+    "object": {
+      "reason": {
+        "primitive": "string"
+      }
+    }
+  },
+  "BrokenTicketValue": {
+    "object": {
+      "title": {
+        "primitive": "string"
+      },
+      "recap": {
+        "primitive": "string"
+      },
+      "recap_preview": {
+        "primitive": "string"
+      },
+      "worker_type": {
+        "primitive": "string"
+      },
+      "stage": {
+        "primitive": "string"
+      },
+      "ticket_status": {
+        "literal": [
+          "errored"
+        ]
+      },
+      "integrity_error": {
+        "ref": "NavigationTicketIntegrityIssue"
+      },
+      "deadline": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "project_id": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "manager_kind": {
+        "primitive": "string"
+      },
+      "manager_id": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "conversation_id": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "locale": {
+        "primitive": "string"
+      },
+      "updated_at": {
+        "primitive": "integer"
+      },
+      "created_at": {
+        "primitive": "integer"
+      },
+      "is_backlogged": {
+        "primitive": "boolean"
+      }
+    }
+  },
   "ManagerValue": {
     "object": {
       "updated_at": {
@@ -1152,7 +1284,14 @@ export const wireDescriptors: Record<string, unknown> = {
         "primitive": "string"
       },
       "value": {
-        "ref": "TicketValue"
+        "union": [
+          {
+            "ref": "TicketValue"
+          },
+          {
+            "ref": "BrokenTicketValue"
+          }
+        ]
       }
     }
   },
@@ -2025,6 +2164,98 @@ export const wireDescriptors: Record<string, unknown> = {
       }
     }
   },
+  "ViewBrokenTicketValue": {
+    "object": {
+      "title": {
+        "primitive": "string"
+      },
+      "recap": {
+        "primitive": "string"
+      },
+      "recap_preview": {
+        "primitive": "string"
+      },
+      "worker_type": {
+        "primitive": "string"
+      },
+      "stage": {
+        "primitive": "string"
+      },
+      "ticket_status": {
+        "literal": [
+          "errored"
+        ]
+      },
+      "integrity_error": {
+        "ref": "NavigationTicketIntegrityIssue"
+      },
+      "deadline": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "project_id": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "manager_kind": {
+        "primitive": "string"
+      },
+      "manager_id": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "conversation_id": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "locale": {
+        "primitive": "string"
+      },
+      "updated_at": {
+        "primitive": "integer"
+      },
+      "created_at": {
+        "primitive": "integer"
+      },
+      "is_backlogged": {
+        "primitive": "boolean"
+      },
+      "recap_reference": {
+        "union": [
+          {
+            "ref": "ViewContentReference"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      }
+    }
+  },
   "ViewManagerValue": {
     "object": {
       "updated_at": {
@@ -2132,7 +2363,14 @@ export const wireDescriptors: Record<string, unknown> = {
         "primitive": "string"
       },
       "value": {
-        "ref": "ViewTicketValue"
+        "union": [
+          {
+            "ref": "ViewTicketValue"
+          },
+          {
+            "ref": "ViewBrokenTicketValue"
+          }
+        ]
       }
     }
   },
