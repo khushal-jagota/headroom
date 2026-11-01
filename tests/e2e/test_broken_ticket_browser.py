@@ -7,13 +7,13 @@ and browser for one connected case. No models or additional server fixtures are 
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, expect
-from test_containment.admission import requested_containment
 from tests.e2e.harness import WAIT_MS, ServerHandle
 
 from planner.core.db import connect
@@ -55,8 +55,13 @@ def test_broken_ticket_diagnostic_and_healthy_navigation(
     expect(diagnostic.get_by_role("heading", name="Broken Ticket example")).to_be_visible()
     expect(diagnostic.locator(".error-message")).to_contain_text("removed_worker", timeout=WAIT_MS)
     expect(diagnostic.get_by_role("button")).to_have_count(0)
-    boundary = requested_containment()
-    reports = boundary.scratch_root / "reports" if boundary else tmp_path
+    # Admission already ran before browser sockets opened. Export screenshots through
+    # the runner's report directory without repeating its inherited-descriptor check.
+    reports = (
+        Path(os.environ["XDG_CACHE_HOME"]).parent / "reports"
+        if os.environ.get("PANELS_REQUIRE_TEST_CONTAINMENT") == "1"
+        else tmp_path
+    )
     page.screenshot(path=str(reports / "broken-ticket-desktop.png"), full_page=True)
     page.set_viewport_size({"width": 430, "height": 900})
     page.screenshot(path=str(reports / "broken-ticket-mobile.png"), full_page=True)
