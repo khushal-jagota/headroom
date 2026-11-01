@@ -2,7 +2,7 @@
 
 A Worker type is a way of paying attention. Coding, research, debugging, and designing a flow do not want the same stages or the same moments of human judgment. The type is chosen when the Ticket is created and does not change afterward. It declares the ladder, which stages the Worker fills and which stages open a collaborative turn, the specialist skill, and the backend, model, and reasoning a new Ticket copies as its starting setup.
 
-The Ticket then owns its launch setup. Later edits to launch defaults affect future Tickets. They do not rewrite an existing Ticket’s launch setup or locale. A change to the type’s ladder also applies to its unfinished Tickets, under the migration rules below.
+The Ticket then owns its launch setup. Later edits to launch defaults affect future Tickets. They do not rewrite an existing Ticket’s launch setup or locale. A change to the type’s ladder applies to all its Tickets, under the migration rules below.
 
 ## The ladder every type shares
 
@@ -18,9 +18,9 @@ Launch defaults below are what a fresh database copies onto a new Ticket. The ow
 
 A Worker type save can remove stages and fields even when unfinished Tickets use them. A Ticket on a removed stage moves to the nearest earlier stage that survives, using the old order. A ceiling on a removed stage follows the same rule. Its holder stays the same. For example, a Ticket at What Changes with a Plan ceiling gets a What Changes ceiling when Plan disappears. The save never grants Implementation by accident.
 
-The save preserves stored text in removed fields. It does not invent field values or accept proposals. Finished Tickets remain unchanged, including historical ceilings that name removed stages. Those ceilings remain readable but cannot authorize a new write. A Ticket whose current stage survives stays there.
+The save preserves stored text in removed fields. It does not invent field values or accept proposals. Finished Tickets stay finished. Their ceilings follow the same backward rule, so no Ticket retains a ceiling outside the replacement ladder. Stored text and approval evidence remain intact. A Ticket whose current stage survives stays there.
 
-The definition and all Ticket migrations save in one transaction. If a Ticket has no earlier destination, an incompatible proposal, or dispatched work whose step or authority changes, the save refuses and names it. Unsafe changes to stage order also refuse. Any failure leaves the definition and Tickets unchanged.
+The definition and all Ticket migrations save in one transaction. If a Ticket has no earlier destination, an incompatible proposal, or dispatched work whose step or authority changes, the save refuses and names it. Unsafe changes to stage order also refuse. The save checks every affected Ticket against the replacement definition before commit, with the same strict rules as startup. Any failure leaves the definition and Tickets unchanged. Obsolete paired-stage openers and revision feedback disappear when their step changes. This also covers a change to the gate or owner of a stage whose name stays the same.
 
 The save result contains each affected Ticket’s title, old and new stage, and old and new ceiling. Field-only effects also appear, even when both positions stay the same. The CLI prints the mapping, and JSON output preserves it. The caller must retain that result in the amendment’s evidence. Migration records do not enter Ticket guidance, which remains instructions for the Worker.
 
