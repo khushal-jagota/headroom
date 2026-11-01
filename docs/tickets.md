@@ -60,7 +60,7 @@ Artifact links in stage text and in the conversation open in the Ticket viewer w
 
 A shared file link can also open at `#/preview`. Inline preview on the Ticket keeps the Ticket’s address.
 
-If the startup audit finds an invalid Ticket, it records the reason in the recap and marks its existing claim as errored. Other Tickets remain usable, and Chief receives a system notice when the audit first records the fault.
+If the startup audit finds an invalid Ticket, it records a structural reason in the dedicated nullable error field. The audit clears that field when the Ticket validates. The recap and Worker claim remain unchanged. Other Tickets remain usable, and Chief receives a system notice when the audit first records the fault.
 
 This isolation applies to builds that contain the fix. Earlier builds retain their original startup behavior, and failed notice delivery does not block startup or create an automatic retry workflow.
 

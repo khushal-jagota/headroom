@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import cast
 
@@ -10,36 +11,71 @@ from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.tickets.contracts import BrokenTicketProjection
 
+# All displayed reasons are fixed structural descriptions. Neither exception text nor
+# arbitrary detail values cross this boundary.
+_STRUCTURAL_REASONS = {
+    "unknown worker type": "PlannerError: unknown worker type (worker_type)",
+    "stage outside the linear order": "PlannerError: stage outside the linear order (stage)",
+    "ceiling outside the type's range": "PlannerError: ceiling outside the type's range (ceiling)",
+    "ceiling holder does not exist": "PlannerError: ceiling holder does not exist (ceiling_holder)",
+    "a Ticket cannot hold its own ceiling": (
+        "PlannerError: a Ticket cannot hold its own ceiling (ceiling_holder)"
+    ),
+    "corrupt ticket field state": "PlannerError: corrupt ticket field state (fields or proposal)",
+    "unknown agent backend": "PlannerError: unknown agent backend (employee_backend)",
+}
+_GENERIC_REASONS = {
+    "PlannerError": "PlannerError: invalid stored Ticket structure",
+    "JSONDecodeError": "JSONDecodeError: malformed stored JSON",
+    "KeyError": "KeyError: missing stored Ticket member",
+    "TypeError": "TypeError: invalid stored Ticket member type",
+    "ValueError": "ValueError: invalid stored Ticket member value",
+}
+_FALLBACK_REASON = "TicketIntegrityError: structural fault reason unavailable"
+_SAFE_REASONS = frozenset(
+    (*_STRUCTURAL_REASONS.values(), *_GENERIC_REASONS.values(), _FALLBACK_REASON)
+)
+
+
+def safe_reason(cause: Exception | str) -> str:
+    if isinstance(cause, str):
+        return cause if cause in _SAFE_REASONS else _FALLBACK_REASON
+    if isinstance(cause, PlannerError):
+        return _STRUCTURAL_REASONS.get(cause.message, _GENERIC_REASONS["PlannerError"])
+    if isinstance(cause, json.JSONDecodeError):
+        return _GENERIC_REASONS["JSONDecodeError"]
+    if isinstance(cause, KeyError):
+        return _GENERIC_REASONS["KeyError"]
+    if isinstance(cause, TypeError):
+        return _GENERIC_REASONS["TypeError"]
+    return _GENERIC_REASONS["ValueError"]
+
 
 class TicketIntegrityError(PlannerError):
     def __init__(self, ticket_id: str, cause: Exception | str) -> None:
-        reason = cause if isinstance(cause, str) else f"{type(cause).__name__}: {cause}"
-        if isinstance(cause, PlannerError) and cause.detail:
-            reason += f" ({cause.detail})"
+        reason = safe_reason(cause)
         super().__init__(
             ErrorCode.validation,
             "Ticket integrity failure",
-            {
-                "ticket_id": ticket_id,
-                "reason": reason,
-            },
+            {"ticket_id": ticket_id, "reason": reason},
         )
         self.ticket_id = ticket_id
         self.reason = reason
 
 
 def issue_for_ticket(conn: sqlite3.Connection, ticket_id: str) -> TicketIntegrityError | None:
-    """Read only the startup audit's stored mark; this is not another validator."""
+    """Read the startup audit's nullable reason; never interpret human Ticket text."""
+    # Historical migrations rebuild navigation before the new column exists.
+    if "integrity_error_reason" not in {
+        str(column[1]) for column in conn.execute("PRAGMA table_info(tickets)")
+    }:
+        return None
     row = conn.execute(
-        "SELECT recap,worker_step_claim FROM tickets WHERE id=?", (ticket_id,)
+        "SELECT integrity_error_reason FROM tickets WHERE id=?", (ticket_id,)
     ).fetchone()
-    if row is None or row["worker_step_claim"] != "errored":
+    if row is None or row["integrity_error_reason"] is None:
         return None
-    recap = str(row["recap"])
-    if not recap.startswith(ERROR_PREFIX):
-        return None
-    reason = recap[len(ERROR_PREFIX) :].split(RECAP_SEPARATOR, 1)[0]
-    return TicketIntegrityError(ticket_id, reason)
+    return TicketIntegrityError(ticket_id, str(row["integrity_error_reason"]))
 
 
 def diagnostic_projection(
@@ -47,6 +83,7 @@ def diagnostic_projection(
     ticket_id: str,
     error: TicketIntegrityError | None = None,
 ) -> BrokenTicketProjection:
+    # data imports the error/read helper; this raw projection reuses its row loader.
     from planner.tickets import data
 
     row = data._ticket_row(conn, ticket_id)
@@ -74,20 +111,18 @@ def diagnostic_projection(
     return cast(BrokenTicketProjection, result)
 
 
-ERROR_PREFIX = "Ticket integrity failure: "
-RECAP_SEPARATOR = "\n\nPrevious recap:\n"
-
-
 def mark_faults(conn: sqlite3.Connection) -> list[TicketIntegrityError]:
-    """The startup audit records faults using the Ticket's existing error state."""
+    """Only startup validates and sets or clears the Ticket's dedicated error reason."""
+    # data imports the error/read helper for write admission; the audit uses its loader.
     from planner.tickets import data
 
     observed: list[TicketIntegrityError] = []
     with data._txn(conn):
         for row in conn.execute(
-            "SELECT id,recap,worker_step_claim FROM tickets ORDER BY id"
+            "SELECT id,integrity_error_reason FROM tickets ORDER BY id"
         ).fetchall():
             ticket_id = str(row["id"])
+            issue: TicketIntegrityError | None
             try:
                 ticket, _definition = data._load_ticket_and_worker_type_definition_for_write(
                     conn,
@@ -97,24 +132,17 @@ def mark_faults(conn: sqlite3.Connection) -> list[TicketIntegrityError]:
                 require_conversation_backend_key(ticket.employee_backend)
             except (PlannerError, KeyError, TypeError, ValueError) as error:
                 issue = TicketIntegrityError(ticket_id, error)
+                reason: str | None = issue.reason
             else:
+                issue = None
+                reason = None
+            if row["integrity_error_reason"] == reason:
                 continue
-            recap = str(row["recap"])
-            prefix = ERROR_PREFIX + issue.reason
-            if (
-                row["worker_step_claim"] == "errored"
-                and recap.split(RECAP_SEPARATOR, 1)[0] == prefix
-            ):
-                continue
-            if recap.startswith(ERROR_PREFIX):
-                recap = recap.split(RECAP_SEPARATOR, 1)[1] if RECAP_SEPARATOR in recap else ""
-            recorded = prefix + (RECAP_SEPARATOR + recap if recap else "")
             conn.execute(
-                "UPDATE tickets SET worker_step_claim='errored',"
-                "worker_step_claim_revision=worker_step_claim_revision+1,recap=? WHERE id=?",
-                (recorded, ticket_id),
+                "UPDATE tickets SET integrity_error_reason=? WHERE id=?", (reason, ticket_id)
             )
-            observed.append(issue)
+            if issue is not None:
+                observed.append(issue)
     return observed
 
 
