@@ -53,7 +53,10 @@ def test_broken_ticket_diagnostic_and_healthy_navigation(
     page.set_viewport_size({"width": 1100, "height": 900})
     diagnostic = page.locator("[data-broken-ticket]")
     expect(diagnostic.get_by_role("heading", name="Broken Ticket example")).to_be_visible()
-    expect(diagnostic.locator(".error-message")).to_contain_text("removed_worker", timeout=WAIT_MS)
+    expect(diagnostic.locator(".error-message")).to_contain_text(
+        "unknown worker type", timeout=WAIT_MS
+    )
+    expect(diagnostic.locator(".error-message")).not_to_contain_text("removed_worker")
     expect(diagnostic.get_by_role("button")).to_have_count(0)
     # Admission already ran before browser sockets opened. Export screenshots through
     # the runner's report directory without repeating its inherited-descriptor check.

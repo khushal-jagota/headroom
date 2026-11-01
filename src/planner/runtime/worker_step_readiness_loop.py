@@ -56,7 +56,6 @@ from planner.skill_versions import (
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
-from planner.tickets.integrity import ERROR_PREFIX
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -65,8 +64,7 @@ _log = logging.getLogger(__name__)
 LOOP_SENDER_LABEL: Final = "loop"
 
 _CANDIDATE_SQL = (
-    "SELECT t.id FROM tickets t WHERE NOT "
-    "(t.worker_step_claim='errored' AND instr(t.recap,?)=1) ORDER BY t.updated_at, t.id"
+    "SELECT t.id FROM tickets t WHERE integrity_error_reason IS NULL ORDER BY t.updated_at, t.id"
 )
 
 
@@ -463,7 +461,7 @@ class WorkerStepReadinessLoop:
     def _ready_ticket_ids(self) -> list[str]:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
-            rows = conn.execute(_CANDIDATE_SQL, (ERROR_PREFIX,)).fetchall()
+            rows = conn.execute(_CANDIDATE_SQL).fetchall()
             ready_ticket_ids: list[str] = []
             registry = configured_worker_type_registry()
             for row in rows:
