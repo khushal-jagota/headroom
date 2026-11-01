@@ -1,4 +1,4 @@
-import type { TicketRecord } from './navigation/contracts';
+import type { TicketRecord, TicketValue } from './navigation/contracts';
 import type { EffectiveNavigationView } from './navigation/knowledge';
 import type { NavigationPublication } from './navigation/collection';
 import type { TicketDetail } from './types';
@@ -9,7 +9,7 @@ import { agentHoldsTicket } from './workAttentionPresentation';
 import type { FieldStageVisualState } from './ui';
 
 export type TicketSection = {
-  readonly record: TicketRecord;
+  readonly record: Omit<TicketRecord,'value'> & {value:TicketValue};
   readonly detail: TicketDetail;
   readonly lifecycle: Lifecycle;
   readonly publication: NavigationPublication;
@@ -17,7 +17,7 @@ export type TicketSection = {
 
 /** Configuration describes controls; the stored row supplies category and current gate. */
 export function ticketSectionConfigurationMatches(record:TicketRecord,configuration:WorkerTypeManifest | undefined):boolean {
-  if(!configuration || configuration.worker_type!==record.value.worker_type) return false;
+  if('integrity_error' in record.value || !configuration || configuration.worker_type!==record.value.worker_type) return false;
   const row=record.value;
   const stage=configuration.stages.find(stage=>stage.id===row.stage);
   return stage!==undefined && stage.gating_field===row.gating_field
@@ -28,6 +28,7 @@ export function ticketSectionConfigurationMatches(record:TicketRecord,configurat
 /** Public identity/control admission does not promise a hash of private field bodies. */
 export function ticketSectionDetailMatches(record:TicketRecord,detail:TicketDetail):boolean {
   const row=record.value;
+  if('integrity_error' in row) return false;
   if(detail.id!==record.id || detail.worker_type!==row.worker_type || detail.stage!==row.stage
     || detail.ticket_status!==row.ticket_status || detail.ceiling!==row.ceiling
     || detail.ceiling_holder.kind!==row.ceiling_holder.kind || detail.ceiling_holder.id!==row.ceiling_holder.id
@@ -40,9 +41,9 @@ export function ticketSectionDetailMatches(record:TicketRecord,detail:TicketDeta
 
 export function admitTicketSection(view:EffectiveNavigationView | null | undefined,record:TicketRecord | undefined,
   detail:TicketDetail | undefined,configuration:WorkerTypeManifest | undefined):TicketSection | undefined {
-  if(!view || !record || !detail || !configuration || !ticketSectionDetailMatches(record,detail)
+  if(!view || !record || 'integrity_error' in record.value || !detail || !configuration || !ticketSectionDetailMatches(record,detail)
     || !ticketSectionConfigurationMatches(record,configuration)) return undefined;
-  return {record,detail,lifecycle:buildLifecycle(configuration),publication:view.publication};
+  return {record: record as TicketSection['record'],detail,lifecycle:buildLifecycle(configuration),publication:view.publication};
 }
 
 /** The metadata/body pair stays intact, while exact conversation facts always reproject. */

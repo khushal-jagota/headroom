@@ -65,3 +65,7 @@ A shared file link can also open at `#/preview`. Inline preview on the Ticket ke
 `src/planner/tickets/` holds the record, the derived status, and the writers. Stage ladders live in `src/planner/worker_types/shipped_worker_types.json`. Locale checks live in `src/planner/tickets/locale_configuration.py`. The Ticket screen is `web/src/routes/TicketRoute.svelte`.
 
 _Last verified: 2026-10-30._
+
+If the startup audit finds an invalid Ticket, it records the reason in the recap and marks its existing claim as errored. Other Tickets remain usable, and Chief receives a system notice when the audit first records the fault.
+
+This isolation applies to builds that contain the fix. Earlier builds retain their original startup behavior, and failed notice delivery does not block startup or create an automatic retry workflow.

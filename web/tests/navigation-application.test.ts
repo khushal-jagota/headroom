@@ -10,7 +10,7 @@ import { workspaceHoverImpact,managerChildrenImpact,workspaceRailImpact } from '
 import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 import { runtimeCountImpact,reviewBadgeImpact } from '../src/lib/reviewNavigationImpact';
 
-const ticket:TicketRecord={kind:'ticket',id:'a',value:{title:'A',recap:'',recap_preview:'',worker_type:'coding',stage:'needs_plan',ticket_status:'empty',blocked:false,created_at:1,updated_at:1,worker_step_claim_out:false,deadline:null,project_id:'p',manager_kind:'manager',manager_id:'parent',conversation_id:'a-conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'test'}};
+const ticket:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'a',value:{title:'A',recap:'',recap_preview:'',worker_type:'coding',stage:'needs_plan',ticket_status:'empty',blocked:false,created_at:1,updated_at:1,worker_step_claim_out:false,deadline:null,project_id:'p',manager_kind:'manager',manager_id:'parent',conversation_id:'a-conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'test'}};
 const records:NavigationRecord[]=[ticket,conversation('a-conversation'),{kind:'manager',id:'parent',value:{title:'Parent',recap:'',recap_preview:'',created_at:1,updated_at:1,project_id:'p',settled:false,conversation_id:null}},{kind:'project',id:'p',value:{name:'Project'}}];
 const titleImpact:RecordImpact={kind:'ticket',id:'a',fields:['title','updated_at']};
 const fence={...continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic'};
@@ -18,7 +18,7 @@ const fence={...continuity,version:1,coverage:'complete',witnesses:['a'.repeat(6
 describe('application presentation and command evidence',()=>{
   it('excludes a backlogged proposal loaded by a child view and restores it after backlog clears',()=>{
     const collection=createNavigationCollection(),knowledge=createNavigationKnowledge(),presentationFor=createNavigationPresentationCache();
-    const pending:TicketRecord={...ticket,value:{...ticket.value,ticket_status:'awaiting_approval',
+    const pending:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={...ticket,value:{...ticket.value,ticket_status:'awaiting_approval',
       proposal_field:'plan',proposal_revision:1,proposal_created_at:1,is_backlogged:true}};
     try {
       collection.publishSnapshot(currentSnapshot({...continuity,records:records.map(row=>row===ticket?pending:row)}),'base');
@@ -87,7 +87,7 @@ describe('application presentation and command evidence',()=>{
       expect(workspaceHoverImpact(backlogImpact,'manager','parent',null,first,true)).toBe(true);
       expect(workspaceHoverImpact(backlogImpact,'manager','parent',null,first,false)).toBe(false);
       expect(workspaceHoverImpact(backlogImpact,'manager','other',null,first,true)).toBe(false);
-      const chiefView={...view,publication:{...view.publication,records:records.map(record=>record.kind==='ticket'
+      const chiefView={...view,publication:{...view.publication,records:records.map(record=>record.kind==='ticket' && !('integrity_error' in record.value)
         ? {...record,value:{...record.value,manager_kind:'chief' as const,manager_id:null}} : record)}};
       const chiefPresentation=presentationFor(chiefView);
       expect(workspaceHoverImpact(backlogImpact,'chief','chief',null,chiefPresentation,true)).toBe(true);
@@ -95,7 +95,7 @@ describe('application presentation and command evidence',()=>{
 
       // Settled messages retain historical done/blocked Tickets, even when the
       // Ticket has no current conversation pointer and is absent from groups.
-      const historicalRecords:NavigationRecord[]=[...records.map(record=>record.kind==='ticket'
+      const historicalRecords:NavigationRecord[]=[...records.map(record=>record.kind==='ticket' && !('integrity_error' in record.value)
         ? {...record,value:{...record.value,stage:'done',terminal:true,blocked:true,conversation_id:null}}
         : record.kind==='manager' ? {...record,value:{...record.value,settled:true}} : record),
         conversation('history'),{kind:'address',id:'historical-address',value:{owner_kind:'ticket',owner_id:'a',
@@ -267,7 +267,7 @@ describe('application presentation and command evidence',()=>{
 describe('mixed review presentation',()=>{
   it('uses oldest unread time, canonical addresses and historical owner context without proposal priority',()=>{
     const collection=createNavigationCollection(),knowledge=createNavigationKnowledge(),presentationFor=createNavigationPresentationCache();
-    const pending:TicketRecord={...ticket,value:{...ticket.value,ticket_status:'awaiting_approval',
+    const pending:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={...ticket,value:{...ticket.value,ticket_status:'awaiting_approval',
       recap:'Worker recap',proposal_field:'plan',proposal_revision:1,proposal_created_at:2}};
     const historical=conversation('historical');historical.value.first_unread_owner_message_at=2;
     const current=conversation('a-conversation');current.value.first_unread_owner_message_at=1;
@@ -294,13 +294,13 @@ describe('mixed review presentation',()=>{
       expect(liveChild.review.items[0]).toMatchObject({ticket_id:'a',messages:[{conversation_id:'a-conversation'}]});
       // The settled canonical Manager must not fall back to the historical Ticket.
       expect(liveChild.messages.some(message=>message.conversationId==='historical')).toBe(true);
-      const backlogged=settled.map(row=>row.kind==='ticket' ? {...row,value:{...row.value,is_backlogged:true}} : row);
+      const backlogged=settled.map(row=>row.kind==='ticket' && !('integrity_error' in row.value) ? {...row,value:{...row.value,is_backlogged:true}} : row);
       const excluded=presentationFor(knowledge.accept({...initial,records:backlogged}));
       expect(excluded.review.items).toEqual([]);
       expect(excluded.messages.map(message=>message.conversationId)).toContain('a-conversation');
-      const done=settled.map(row=>row.kind==='ticket' ? {...row,value:{...row.value,stage:'done',ticket_status:'empty' as const}} : row);
+      const done=settled.map(row=>row.kind==='ticket' && !('integrity_error' in row.value) ? {...row,value:{...row.value,stage:'done',ticket_status:'empty' as const}} : row);
       expect(presentationFor(knowledge.accept({...initial,records:done})).review.items).toEqual([]);
-      const messageOnly=settled.map(row=>row.kind==='ticket' ? {...row,value:{...row.value,ticket_status:'empty' as const,proposal_field:null,proposal_created_at:null}} : row);
+      const messageOnly=settled.map(row=>row.kind==='ticket' && !('integrity_error' in row.value) ? {...row,value:{...row.value,ticket_status:'empty' as const,proposal_field:null,proposal_created_at:null}} : row);
       expect(presentationFor(knowledge.accept({...initial,records:messageOnly})).review.items).toMatchObject([{review_item_type:'ticket',ticket_id:'a',proposal:null,messages:[{conversation_id:'a-conversation'}]}]);
       knowledge.accept({...initial,records:source.filter(row=>row.id!=='current-manager')});
       const lost=knowledge.loseRuntime()!;

@@ -361,3 +361,16 @@ class ReviewTransferNotice:
     new_holder_name: str
     notify_previous_holder: bool
     mover_name: str | None
+
+
+class TicketIntegrityIssue(TypedDict):
+    reason: str
+
+
+class BrokenTicketProjection(TypedDict):
+    id: str
+    title: str
+    worker_type: str
+    stage: str
+    ticket_status: Literal["errored"]
+    integrity_error: TicketIntegrityIssue

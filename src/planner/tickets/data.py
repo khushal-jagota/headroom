@@ -52,6 +52,7 @@ from planner.tickets.contracts import (
     TicketLocale,
     WorkerStepClaim,
 )
+from planner.tickets.integrity import TicketIntegrityError
 from planner.tickets.locale_configuration import require_locale_backend_compatibility
 from planner.tickets.logic import (
     admission,
@@ -457,11 +458,21 @@ def _load_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
 
 
 def _load_ticket_and_worker_type_definition_for_write(
-    conn: sqlite3.Connection, ticket_id: str
+    conn: sqlite3.Connection, ticket_id: str, *, startup_audit: bool = False
 ) -> tuple[Ticket, WorkerTypeDefinition]:
     row = _ticket_row(conn, ticket_id)
+    if not startup_audit:
+        from planner.tickets.integrity import issue_for_ticket
+
+        issue = issue_for_ticket(conn, ticket_id)
+        if issue is not None:
+            raise issue
     worker_type_definition = configured_worker_type_registry().require(str(row["worker_type"]))
-    worker_type_definition.validate_ticket_position(str(row["stage"]), str(row["ceiling"]))
+    worker_type_definition.validate_ticket_position(
+        str(row["stage"]),
+        str(row["ceiling"]),
+        allow_historical_terminal_ceiling=startup_audit,
+    )
     ticket = _row_to_ticket(row)
     _validate_ceiling_holder(conn, ticket.ceiling_holder, ticket_id=ticket.id)
     fields_codec.validate_state(
@@ -1131,24 +1142,11 @@ def create_ticket(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
-    """Validate saved values and the one pending proposal before background work starts."""
-    for row in conn.execute("SELECT id FROM tickets ORDER BY id"):
-        try:
-            ticket, _definition = _load_ticket_and_worker_type_definition_for_write(
-                conn, str(row["id"])
-            )
-            require_conversation_backend_key(ticket.employee_backend)
-        except (
-            PlannerError,
-            json.JSONDecodeError,
-            KeyError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            raise RuntimeError(
-                f"ticket integrity audit failed: id={row['id']} reason={exc}"
-            ) from exc
+def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> list[TicketIntegrityError]:
+    """Record row-local faults without turning them into a server startup failure."""
+    from planner.tickets.integrity import mark_faults
+
+    return mark_faults(conn)
 
 
 def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:

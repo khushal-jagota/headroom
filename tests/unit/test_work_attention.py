@@ -12,6 +12,7 @@ from tests.support.principals import OWNER_PRINCIPAL
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationStore
 from planner.core.clock import RealClock
+from planner.core.contracts import JsonDict
 from planner.core.db import connect, create_schema
 from planner.managers import data as managers_data
 from planner.tickets import data as tickets_data
@@ -154,3 +155,62 @@ class _ConversationWaitingOnAnAnswer:
 
     async def has_pending_user_input(self, conversation_id: str) -> bool:
         return False
+
+
+def test_broken_child_does_not_hide_healthy_attention_or_manager_rollup(tmp_path: Path) -> None:
+    """The shared attention layer must not parse invalid holders or require missing types."""
+    from planner.work_attention import add_work_attention
+
+    db_path = tmp_path / "broken_attention.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    seed_test_model_catalogue(conn)
+    item = managers_data.create_manager(
+        conn, title="Fault isolation", project_id="project_vylo", clock=RealClock()
+    )
+    healthy, broken = [
+        tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title=title,
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            manager_id=item.id,
+        )
+        for title in ("Healthy approval", "Broken child")
+    ]
+    conn.execute(
+        "UPDATE tickets SET pending_proposal=? WHERE id=?",
+        (proposal_to_json(PendingTicketProposal("brief", "Review this.", "worker", 2)), healthy.id),
+    )
+    conn.execute("BEGIN")
+    conn.execute(
+        "UPDATE tickets SET worker_type='missing_type',ceiling_holder=? WHERE id=?",
+        (json.dumps({"kind": "ticket", "id": "missing_holder"}), broken.id),
+    )
+    import sqlite3
+
+    sqlite3.Connection.commit(conn)
+    tickets_data.audit_ticket_registry_integrity(conn, startup=True)
+    ticket_rows: list[JsonDict] = [{"id": healthy.id}, {"id": broken.id}]
+    manager_rows: list[JsonDict] = [{"id": item.id}]
+    asyncio.run(
+        add_work_attention(
+            conn,
+            cast(ConversationSystem, _ConversationFacts()),
+            ConversationStore(str(db_path)),
+            tickets=ticket_rows,
+            managers=manager_rows,
+        )
+    )
+    assert ticket_rows[0]["awaiting_approval"] is True
+    assert ticket_rows[1]["agent_state"] == "errored"
+    assert ticket_rows[1]["assigned"] is False
+    assert ticket_rows[1]["awaiting_approval"] is False
+    assert manager_rows[0]["ticket_rollup"]["awaiting_approval"] is True
+    assert manager_rows[0]["ticket_rollup"]["agent_state"] == "errored"
+    assert conn.execute("SELECT ceiling_holder FROM tickets WHERE id=?", (broken.id,)).fetchone()[
+        0
+    ] == ("invalid JSON")
+    conn.close()

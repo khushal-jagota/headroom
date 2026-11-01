@@ -23,7 +23,7 @@ export interface WorkspaceFieldSummary {
   revision: string;
 }
 
-export interface WorkspaceTicket {
+export interface ValidWorkspaceTicket {
   id: string;
   title: string;
   worker_type: string;
@@ -57,7 +57,7 @@ export interface WorkspaceTicket {
 }
 
 export interface Principal {
-  kind: "owner" | "chief" | "manager" | "ticket";
+  kind: "owner" | "chief" | "manager" | "goal" | "ticket";
   id: string;
 }
 
@@ -73,3 +73,18 @@ export interface WorkspaceFieldBody {
   value: string;
   revision: string;
 }
+
+export interface BrokenTicketProjection {
+  id: string;
+  title: string;
+  worker_type: string;
+  stage: string;
+  ticket_status: "errored";
+  integrity_error: TicketIntegrityIssue;
+}
+
+export interface TicketIntegrityIssue {
+  reason: string;
+}
+
+export type WorkspaceTicket = ValidWorkspaceTicket | BrokenTicketProjection;

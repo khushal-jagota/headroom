@@ -275,7 +275,9 @@ def create_app(
             ) as conversation:
                 audit_conn = conn_factory()
                 try:
-                    tickets_data.audit_ticket_registry_integrity(audit_conn)
+                    ticket_integrity_faults = tickets_data.audit_ticket_registry_integrity(
+                        audit_conn
+                    )
                     reconcile_managed_skill_versions(audit_conn)
                     reconcile_provisional_worker_step_bindings(audit_conn)
                 finally:
@@ -330,6 +332,19 @@ def create_app(
                     async def recover_conversations() -> None:
                         with conversation.system.workspace_admission.operation() as admitted:
                             if admitted:
+                                if ticket_integrity_faults:
+                                    from planner.tickets.integrity import notify_chief
+
+                                    notice_conn = conn_factory()
+                                    try:
+                                        await notify_chief(
+                                            notice_conn,
+                                            app.state.conversation_system,
+                                            clock,
+                                            ticket_integrity_faults,
+                                        )
+                                    finally:
+                                        notice_conn.close()
                                 await run_automatic_recovery(
                                     conversation.system, conversation.store
                                 )

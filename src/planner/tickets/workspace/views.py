@@ -8,6 +8,7 @@ from typing import cast
 from planner.core import ticket_blocks
 from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets import data
+from planner.tickets.integrity import diagnostic_projection, issue_for_ticket
 from planner.tickets.views import _coherent_read, blocker_summary_json, ticket_json
 from planner.tickets.workspace.contracts import WorkspaceFieldBody, WorkspaceTicket
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -15,6 +16,9 @@ from planner.worker_types.configuration import configured_worker_type_registry
 
 def workspace_ticket(conn: sqlite3.Connection, ticket_id: str) -> WorkspaceTicket:
     with _coherent_read(conn):
+        issue = issue_for_ticket(conn, ticket_id)
+        if issue is not None:
+            return diagnostic_projection(conn, ticket_id, issue)
         ticket = data.read_ticket(conn, ticket_id)
         definition = configured_worker_type_registry().require(ticket.worker_type)
         gate = definition.gating_field(ticket.stage)

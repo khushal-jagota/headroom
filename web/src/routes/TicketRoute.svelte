@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isBrokenTicket } from "../lib/ticketIntegrity";
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
@@ -87,6 +88,8 @@
   let masthead=$derived(heldMasthead ? {...heldMasthead,
     conversation_signal:navigationConversationSignal(currentView,heldMasthead.conversation_id)} : undefined);
   const ticket = createQuery(() => queries.workspaceTicket(stableId));
+  let brokenTicket = $derived(isBrokenTicket(ticket.data) ? ticket.data : undefined);
+  let healthyTicket = $derived(ticket.data && !isBrokenTicket(ticket.data) ? ticket.data : undefined);
   // What a conversation for this Ticket's worker would start on, asked of the server
   // because the server is what resolves it: the Worker type's launch defaults and
   // whatever this Ticket last ran on, through the same code that will create it.
@@ -102,26 +105,26 @@
 
   // Conversation labels use configuration. The section below admits its controls
   // against the stored canonical Stage, gate, and ownership before display.
-  let conversationLifecycle = $derived(lifecycleFor(manifest.data, ticket.data?.worker_type));
+  let conversationLifecycle = $derived(lifecycleFor(manifest.data, healthyTicket?.worker_type));
   let manifestMissingWorkerType = $derived(
     Boolean(
-      ticket.data &&
+      healthyTicket &&
         manifest.data &&
-        !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
+        !manifest.data.worker_types.some((item) => item.worker_type === healthyTicket?.worker_type)
     )
   );
   let canonicalTicket=$derived(currentView ? navigation.presentationFor(currentView).rawTicketsById.get(stableId) : undefined);
   let sectionConfiguration=$derived(manifest.data?.worker_types.find(item=>item.worker_type===canonicalTicket?.value.worker_type));
-  let admittedSection=$derived(admitTicketSection(currentView,canonicalTicket,ticket.data,sectionConfiguration));
+  let admittedSection=$derived(admitTicketSection(currentView,canonicalTicket,healthyTicket,sectionConfiguration));
   let section=$state.raw<TicketSection | undefined>(undefined);
-  $effect(()=>{if(admittedSection) section=admittedSection;});
+  $effect(()=>{if(brokenTicket) section=undefined; else if(admittedSection) section=admittedSection;});
   let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
   // A changed public control tuple needs its matching exact detail/configuration.
   // One request per mismatch avoids a repeated refetch for an incompatible manifest.
   let refreshedMismatch='';
   $effect(()=>{
-    if(!canonicalTicket || admittedSection || !ticket.data || !manifest.data) return;
-    const key=JSON.stringify([canonicalTicket.value,ticket.data.record_sha256,sectionConfiguration]);
+    if(!canonicalTicket || admittedSection || !healthyTicket || !manifest.data) return;
+    const key=JSON.stringify([canonicalTicket.value,healthyTicket.record_sha256,sectionConfiguration]);
     if(key===refreshedMismatch) return;
     refreshedMismatch=key;
     void ticket.refetch();
@@ -132,8 +135,8 @@
     // Runtime uncertainty does not change structural action authority.
     const view = navigation.state.effective;
     const record = view ? navigation.presentationFor(view).rawTicketsById.get(stableId) : undefined;
-    if(!section || !record || !ticketSectionDetailMatches(record,section.detail) || !admitTicketSection(view,record,ticket.data,
-      manifest.data?.worker_types.find(item=>item.worker_type===ticket.data?.worker_type))) {
+    if(!section || !record || !ticketSectionDetailMatches(record,section.detail) || !admitTicketSection(view,record,healthyTicket,
+      manifest.data?.worker_types.find(item=>item.worker_type===healthyTicket?.worker_type))) {
       throw {code:'validation',message:'the Ticket changed; read it again before this action'};
     }
   }
@@ -195,7 +198,7 @@
    */
   let seededConversationStateFromStatus = false;
   $effect(() => {
-    const ownership = canonicalTicket?.value.stage_ownership;
+    const ownership = canonicalTicket && 'stage_ownership' in canonicalTicket.value ? canonicalTicket.value.stage_ownership : undefined;
     if (ownership === undefined || seededConversationStateFromStatus) return;
     seededConversationStateFromStatus = true;
     conversationState = requestedConversationId ? "opened" : initialTicketConversationState(ownership);
@@ -372,7 +375,7 @@
     const view = currentView;
     const source = canonicalTicket;
     const root = screenElement;
-    const detail = ticket.data;
+    const detail = healthyTicket;
     const shown = section;
     const pointer = shownConversationId;
     const generation = navigation.state.generation;
@@ -439,15 +442,26 @@
   data-stage={section?.record.value.stage}
   onclick={artifact.claimPress}
 >
-  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(ticket.data && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
-    {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
+  {#if brokenTicket}
+    <div class="ticket-page" data-broken-ticket>
+      <main class="ticket-doc">
+        <header class="ticket-head">
+          <p class="worker-eyebrow">Broken Ticket</p>
+          <h1 class="ticket-title">{brokenTicket.title}</h1>
+        </header>
+        <ErrorLine error={{message:brokenTicket.integrity_error.reason}} />
+      </main>
+    </div>
+  {:else}
+  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(healthyTicket && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
+    {#if healthyTicket && (manifest.error || manifestMissingWorkerType)}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
-          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${ticket.data.worker_type}"` }}
+          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${healthyTicket.worker_type}"` }}
         />
       </div>
-    {:else if ticket.data && masthead}
-      {@const detail = ticket.data}
+    {:else if healthyTicket && masthead}
+      {@const detail = healthyTicket}
       <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
       <main class="ticket-doc">
@@ -619,6 +633,7 @@
     </div>
     {/if}
   </ResourceState>
+  {/if}
 </section>
 
 <style>
