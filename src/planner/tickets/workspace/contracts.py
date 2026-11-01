@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TypedDict
 
 from planner.core.contracts import Principal
-from planner.tickets.contracts import TicketFieldApproval, TicketLocale
+from planner.tickets.contracts import BrokenTicketProjection, TicketFieldApproval, TicketLocale
 
 
 class WorkspaceProposal(TypedDict):
@@ -32,7 +32,7 @@ class WorkspaceFieldSummary(TypedDict):
     revision: str
 
 
-class WorkspaceTicket(TypedDict):
+class ValidWorkspaceTicket(TypedDict):
     id: str
     title: str
     worker_type: str
@@ -71,3 +71,6 @@ class WorkspaceFieldBody(TypedDict):
     field: str
     value: str
     revision: str
+
+
+type WorkspaceTicket = ValidWorkspaceTicket | BrokenTicketProjection

@@ -6,6 +6,7 @@ stop through one callback after source invalidation and before conversation drai
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 
@@ -32,6 +33,7 @@ async def application_runtime(
     navigation_delivery: DeliveryRuntime,
     shutdown_dependents: Callable[[], Awaitable[None]],
     defer_view_cleanup: bool = False,
+    startup_audit: Callable[[sqlite3.Connection], None] | None = None,
 ) -> AsyncIterator[ConversationRuntime]:
     """Enter phases synchronously, then yield one fully installed runtime.
 
@@ -44,7 +46,7 @@ async def application_runtime(
             try:
                 composition = SignalRuntimeComposition(db_path, db_busy_timeout_ms)
                 cleanup.callback(composition.close)
-                composition.bootstrap()
+                composition.bootstrap(startup_audit=startup_audit)
                 binding = SignalNavigationBinding(composition.coordinator, navigation_delivery)
                 cleanup.callback(binding.close)
                 conversation = build_conversation_runtime(

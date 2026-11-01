@@ -146,10 +146,12 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
             for row in current["records"]
             if row["kind"] == "ticket" and row["id"] == "t_historical"
         )
-        assert record["value"]["ticket_status"] == "awaiting_approval"
-        assert record["value"]["worker_step_claim_out"] is True
-        assert record["value"]["is_backlogged"] is True
-        assert record["value"]["blocked"] is False
+        assert "integrity_error" not in record["value"]
+        healthy = record["value"]
+        assert healthy["ticket_status"] == "awaiting_approval"
+        assert healthy["worker_step_claim_out"] is True
+        assert healthy["is_backlogged"] is True
+        assert healthy["blocked"] is False
         # Deliberate writes after the backup establish exactly what restoration loses.
         connection.execute("BEGIN IMMEDIATE")
         connection.execute(

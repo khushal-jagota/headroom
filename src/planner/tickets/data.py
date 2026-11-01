@@ -49,6 +49,7 @@ from planner.tickets.contracts import (
     TicketLocale,
     WorkerStepClaim,
 )
+from planner.tickets.integrity import TicketIntegrityError
 from planner.tickets.locale_configuration import require_locale_backend_compatibility
 from planner.tickets.logic import (
     admission,
@@ -467,11 +468,22 @@ def _load_ticket_and_worker_type_definition_for_write(
     ticket_id: str,
     *,
     worker_type_registry: WorkerTypeRegistry | None = None,
+    startup_audit: bool = False,
 ) -> tuple[Ticket, WorkerTypeDefinition]:
     row = _ticket_row(conn, ticket_id)
+    if not startup_audit:
+        from planner.tickets.integrity import issue_for_ticket
+
+        issue = issue_for_ticket(conn, ticket_id)
+        if issue is not None:
+            raise issue
     registry = worker_type_registry or configured_worker_type_registry()
     worker_type_definition = registry.require(str(row["worker_type"]))
-    worker_type_definition.validate_ticket_position(str(row["stage"]), str(row["ceiling"]))
+    worker_type_definition.validate_ticket_position(
+        str(row["stage"]),
+        str(row["ceiling"]),
+        allow_historical_terminal_ceiling=startup_audit,
+    )
     ticket = _row_to_ticket(row, worker_type_definition=worker_type_definition)
     _validate_ceiling_holder(conn, ticket.ceiling_holder, ticket_id=ticket.id)
     fields_codec.validate_state(
@@ -1136,12 +1148,19 @@ def audit_ticket_registry_integrity(
     *,
     worker_type_registry: WorkerTypeRegistry | None = None,
     worker_type: str | None = None,
-) -> None:
+    startup: bool = False,
+) -> list[TicketIntegrityError]:
     """Validate strict write state against the supplied or current registry.
 
     A definition save can validate only its own Tickets against the uncommitted registry.
-    Startup and update admission validate every Ticket with the same rules.
+    Update admission remains strict. Only server startup marks faulty Tickets and continues.
     """
+    if startup:
+        if worker_type_registry is not None or worker_type is not None:
+            raise ValueError("startup audit cannot use a replacement registry or Worker filter")
+        from planner.tickets.integrity import mark_faults
+
+        return mark_faults(conn)
     rows = (
         conn.execute("SELECT id FROM tickets WHERE worker_type = ? ORDER BY id", (worker_type,))
         if worker_type is not None
@@ -1163,6 +1182,7 @@ def audit_ticket_registry_integrity(
             raise RuntimeError(
                 f"ticket integrity audit failed: id={row['id']} reason={exc}"
             ) from exc
+    return []
 
 
 def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:

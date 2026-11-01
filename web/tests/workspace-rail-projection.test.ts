@@ -408,7 +408,7 @@ import { navigationWorkspacePresentation, navigationTicketMasthead, navigationRe
 import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
-const sourceTicket:TicketRecord={kind:'ticket',id:'source-ticket',value:{
+const sourceTicket:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'source-ticket',value:{
   title:'Source Ticket',recap:'Full source recap.\n'+'Body continues. '.repeat(20),recap_preview:'Source recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
   updated_at:11,worker_step_claim_out:false,deadline:null,project_id:'project',manager_kind:'manager',
   manager_id:'item',conversation_id:'conversation',is_backlogged:false,ceiling:'needs_implementation',
@@ -521,7 +521,7 @@ describe('canonical navigation workspace presentation',()=>{
 describe('shared Review and runtime counts',()=>{
   it('keeps canonical queue ordering, current-pointer union and all outclaims independent through atomic loss and replacement',()=>{
     const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
-    const ask=(id:string,stamp:number,changes:Partial<TicketRecord['value']>={}):TicketRecord=>({kind:'ticket',id,value:{...sourceTicket.value,
+    const ask=(id:string,stamp:number,changes:Partial<import('../src/lib/navigation/contracts').TicketValue>={}):(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})=>({kind:'ticket',id,value:{...sourceTicket.value,
       ticket_status:'awaiting_approval',proposal_field:'plan',gating_field:'implementation',proposal_created_at:stamp,proposal_revision:1,...changes}});
     const records:NavigationRecord[]=[ask('b',2,{is_backlogged:true,blocked:true,terminal:true,worker_step_claim_out:true}),
       ask('c',2),ask('a',2),ask('earliest',1),ask('manager',0,{ceiling_holder:{kind:'chief',id:'chief'}}),

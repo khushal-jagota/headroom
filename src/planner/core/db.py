@@ -615,7 +615,12 @@ def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
     return conn
 
 
-def create_schema(conn: sqlite3.Connection, *, migration_admission: object | None = None) -> None:
+def create_schema(
+    conn: sqlite3.Connection,
+    *,
+    migration_admission: object | None = None,
+    startup_audit: Callable[[sqlite3.Connection], None] | None = None,
+) -> None:
     """Bring the connected database up to the current schema and seed default projects.
 
     Safe to call on every open: a new database is built, a current one is left alone.
@@ -624,12 +629,19 @@ def create_schema(conn: sqlite3.Connection, *, migration_admission: object | Non
         if not isinstance(conn, ChangeSignallingConnection):
             raise TypeError("scoped schema admission needs a managed connection")
         with bind_transaction_admission(conn, migration_admission):
-            _create_schema(conn, migration_admission=migration_admission)
+            _create_schema(
+                conn, migration_admission=migration_admission, startup_audit=startup_audit
+            )
     else:
-        _create_schema(conn)
+        _create_schema(conn, startup_audit=startup_audit)
 
 
-def _create_schema(conn: sqlite3.Connection, *, migration_admission: object | None = None) -> None:
+def _create_schema(
+    conn: sqlite3.Connection,
+    *,
+    migration_admission: object | None = None,
+    startup_audit: Callable[[sqlite3.Connection], None] | None = None,
+) -> None:
     # Seeding is the only thing here that knows a domain, and domains open connections
     # through this module — so these are imported where they are used, leaving this module
     # importable on its own.
@@ -648,6 +660,30 @@ def _create_schema(conn: sqlite3.Connection, *, migration_admission: object | No
     _upgrade_to_current_schema(
         _main_database_path(conn), _busy_timeout_ms(conn), admission=migration_admission
     )
+    if startup_audit is not None:
+        # Startup must mark invalid Tickets before any ordinary seed commit asks the
+        # shared projections to interpret them. A new database needs its registry first.
+        notification_schema_exists = (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='notification_web_push_identity'"
+            ).fetchone()
+            is not None
+        )
+        with conn:
+            projects_data.seed_default_projects(conn)
+            if worker_types_table_exists(conn):
+                seed_packaged_skills(conn)
+                seed_shipped_worker_types(conn)
+                seed_chief_settings(conn)
+                notifications_data.seed_shipped_notification_preferences(conn)
+                load_worker_runtime_definitions(conn)
+            startup_audit(conn)
+        if notification_schema_exists:
+            notifications_data.get_or_create_web_push_identity(conn, 0)
+        if worker_types_table_exists(conn):
+            write_skill_home(conn, Path(_main_database_path(conn)).parent)
+        return
     with conn:
         projects_data.seed_default_projects(conn)
     # Migration-unit fixtures deliberately replace the tree with a historical

@@ -12,7 +12,7 @@ describe('TanStack source publication', () => {
   it('publishes masked status and independent blockers together for the accepted rail classifier', () => {
     // Amendment/classifier boundary only: synthetic attention facts do not prove Signal parity.
     const adapter = createNavigationCollection();
-    const record: TicketRecord = {kind:'ticket',id:'t',value:{
+    const record: (TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue}) = {kind:'ticket',id:'t',value:{
       title:'Ticket',recap:'Ticket recap',recap_preview:'Ticket recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',
       blocked:false,created_at:1,updated_at:10,worker_step_claim_out:false,deadline:null,
       project_id:null,manager_kind:'chief',manager_id:null,conversation_id:null,
@@ -26,6 +26,7 @@ describe('TanStack source publication', () => {
     const observed: Array<[string,boolean,boolean]> = [];
     adapter.subscribe(publication => {
       const current = publication.records.find((r): r is TicketRecord => r.kind === 'ticket')!;
+      if('integrity_error' in current.value) throw new Error('expected normal fixture');
       const {ticket_status,blocked} = current.value;
       observed.push([ticket_status,blocked,railTicketEligible({...known,ticket_status,blocked})]);
     });

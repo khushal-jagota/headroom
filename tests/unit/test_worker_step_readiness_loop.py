@@ -36,6 +36,7 @@ from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
+from planner.database_modules import attach
 from planner.runtime import worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
@@ -929,6 +930,14 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
     ready_one = world.ready_ticket(title="One")
     ready_two = world.ready_ticket(title="Two")
     off_day = world.ready_ticket(title="No Day membership")
+    broken = world.ready_ticket(title="Audit-marked invalid Ticket")
+    with closing(sqlite3.connect(world.db_path)) as raw:
+        attach(raw)
+        raw.execute("BEGIN")
+        raw.execute("UPDATE tickets SET worker_type='removed_worker' WHERE id=?", (broken,))
+        raw.commit()
+    with closing(world.connect()) as conn:
+        tickets_data.audit_ticket_registry_integrity(conn, startup=True)
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
     try:
         scheduled = readiness_loop.poll_once()
