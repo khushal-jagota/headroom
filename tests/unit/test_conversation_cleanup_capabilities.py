@@ -277,7 +277,7 @@ def test_early_runtime_failure_outlives_registered_cleanup_failure(
         def __init__(self, *_args: object) -> None:
             pass
 
-        def bootstrap(self) -> None:
+        def bootstrap(self, *, startup_audit: object = None) -> None:
             raise startup_error
 
         def close(self) -> None:
