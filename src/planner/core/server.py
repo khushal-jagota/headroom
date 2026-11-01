@@ -278,6 +278,15 @@ def create_app(
             }
         app.state.executor_endpoint = executor_endpoint
         with register_workspace_root(config.db_path, config.workspace_root):
+            from planner.tickets.integrity import TicketIntegrityError
+
+            ticket_integrity_faults: list[TicketIntegrityError] = []
+
+            def audit_startup_tickets(connection: sqlite3.Connection) -> None:
+                ticket_integrity_faults.extend(
+                    tickets_data.audit_ticket_registry_integrity(connection, startup=True)
+                )
+
             async with application_runtime(
                 db_path=config.db_path,
                 db_busy_timeout_ms=config.db_busy_timeout_ms,
@@ -287,6 +296,7 @@ def create_app(
                 navigation_delivery=navigation_delivery,
                 shutdown_dependents=shutdown_dependents,
                 defer_view_cleanup=True,
+                startup_audit=audit_startup_tickets,
             ) as conversation:
                 audit_conn = conn_factory()
                 try:
@@ -294,9 +304,6 @@ def create_app(
 
                     ExecutorStore.interrupt_after_restart(audit_conn)
                     audit_conn.commit()
-                    ticket_integrity_faults = tickets_data.audit_ticket_registry_integrity(
-                        audit_conn, startup=True
-                    )
                     reconcile_managed_skill_versions(audit_conn)
                     reconcile_provisional_worker_step_bindings(audit_conn)
                 finally:

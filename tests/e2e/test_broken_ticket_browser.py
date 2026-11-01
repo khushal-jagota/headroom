@@ -17,6 +17,7 @@ from test_containment.admission import requested_containment
 from tests.e2e.harness import WAIT_MS, ServerHandle
 
 from planner.core.db import connect
+from planner.database_modules import attach
 
 
 def test_broken_ticket_diagnostic_and_healthy_navigation(
@@ -33,11 +34,13 @@ def test_broken_ticket_diagnostic_and_healthy_navigation(
                 "'needs_brief','needs_brief','{}',1,1)",
                 (("broken", "Broken Ticket example"), ("healthy", "Healthy Ticket example")),
             )
-            # Plant an old invalid row without asking the ordinary commit projector
-            # to interpret it before the server's startup audit can mark it.
-            conn.execute("BEGIN")
-            conn.execute("UPDATE tickets SET worker_type='removed_worker' WHERE id='broken'")
-            sqlite3.Connection.commit(conn)
+        # Seed preexisting corruption through a separate raw connection. The running
+        # server must record its mark before ordinary projections read this row.
+        with closing(sqlite3.connect(database)) as raw:
+            attach(raw)
+            raw.execute("BEGIN")
+            raw.execute("UPDATE tickets SET worker_type='removed_worker' WHERE id='broken'")
+            raw.commit()
 
     server = server_factory(seed_db=seed)
     broken, healthy = "broken", "healthy"
@@ -50,7 +53,7 @@ def test_broken_ticket_diagnostic_and_healthy_navigation(
     page.set_viewport_size({"width": 1100, "height": 900})
     diagnostic = page.locator("[data-broken-ticket]")
     expect(diagnostic.get_by_role("heading", name="Broken Ticket example")).to_be_visible()
-    expect(diagnostic.get_by_role("alert")).to_contain_text("removed_worker", timeout=WAIT_MS)
+    expect(diagnostic.locator(".error-message")).to_contain_text("removed_worker", timeout=WAIT_MS)
     expect(diagnostic.get_by_role("button")).to_have_count(0)
     boundary = requested_containment()
     reports = boundary.scratch_root / "reports" if boundary else tmp_path

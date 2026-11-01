@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import cast
 
-from planner.conversation.contracts import ConversationSystem
+from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.tickets.contracts import BrokenTicketProjection
@@ -94,7 +94,7 @@ def mark_faults(conn: sqlite3.Connection) -> list[TicketIntegrityError]:
                     ticket_id,
                     startup_audit=True,
                 )
-                data.require_conversation_backend_key(ticket.employee_backend)
+                require_conversation_backend_key(ticket.employee_backend)
             except (PlannerError, KeyError, TypeError, ValueError) as error:
                 issue = TicketIntegrityError(ticket_id, error)
             else:

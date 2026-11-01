@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -13,6 +15,7 @@ from planner.conversation.storage import ConversationStore
 from planner.core.clock import RealClock
 from planner.core.contracts import JsonDict
 from planner.core.db import connect, create_schema
+from planner.database_modules import attach
 from planner.managers import data as managers_data
 from planner.tickets import data as tickets_data
 from planner.tickets.api import add_conversation_row_signals
@@ -163,7 +166,6 @@ def test_broken_child_does_not_hide_healthy_attention_or_manager_rollup(tmp_path
     db_path = tmp_path / "broken_attention.db"
     conn = connect(str(db_path))
     create_schema(conn)
-    seed_test_model_catalogue(conn)
     item = managers_data.create_manager(
         conn, title="Fault isolation", project_id="project_vylo", clock=RealClock()
     )
@@ -183,14 +185,14 @@ def test_broken_child_does_not_hide_healthy_attention_or_manager_rollup(tmp_path
         "UPDATE tickets SET pending_proposal=? WHERE id=?",
         (proposal_to_json(PendingTicketProposal("brief", "Review this.", "worker", 2)), healthy.id),
     )
-    conn.execute("BEGIN")
-    conn.execute(
-        "UPDATE tickets SET worker_type='missing_type',ceiling_holder=? WHERE id=?",
-        (json.dumps({"kind": "ticket", "id": "missing_holder"}), broken.id),
-    )
-    import sqlite3
-
-    sqlite3.Connection.commit(conn)
+    with closing(sqlite3.connect(db_path)) as raw:
+        attach(raw)
+        raw.execute("BEGIN")
+        raw.execute(
+            "UPDATE tickets SET worker_type='missing_type',ceiling_holder=? WHERE id=?",
+            (json.dumps({"kind": "ticket", "id": "missing_holder"}), broken.id),
+        )
+        raw.commit()
     tickets_data.audit_ticket_registry_integrity(conn, startup=True)
     ticket_rows: list[JsonDict] = [{"id": healthy.id}, {"id": broken.id}]
     manager_rows: list[JsonDict] = [{"id": item.id}]
@@ -211,5 +213,5 @@ def test_broken_child_does_not_hide_healthy_attention_or_manager_rollup(tmp_path
     assert manager_rows[0]["ticket_rollup"]["agent_state"] == "errored"
     assert conn.execute("SELECT ceiling_holder FROM tickets WHERE id=?", (broken.id,)).fetchone()[
         0
-    ] == ("invalid JSON")
+    ] == json.dumps({"kind": "ticket", "id": "missing_holder"})
     conn.close()

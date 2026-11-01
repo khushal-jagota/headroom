@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, closing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -96,7 +96,11 @@ class SignalRuntimeComposition:
     def connect(self) -> ChangeSignallingConnection:
         return _managed(connect(self.db_path, self.busy_timeout_ms))
 
-    def bootstrap(self) -> None:
+    def bootstrap(
+        self,
+        *,
+        startup_audit: Callable[[sqlite3.Connection], None] | None = None,
+    ) -> None:
         if self.ownership is not None or self._closed:
             raise RuntimeError("Signal bootstrap is single use")
         self.ownership = acquire_runtime_ownership(self.db_path)
@@ -118,7 +122,9 @@ class SignalRuntimeComposition:
             )
             with self.coordinator.bootstrap_authority(self.ownership) as bootstrap:
                 with closing(self.connect()) as connection:
-                    create_schema(connection, migration_admission=bootstrap)
+                    create_schema(
+                        connection, migration_admission=bootstrap, startup_audit=startup_audit
+                    )
                     with bind_admission(connection, bootstrap):
                         connection.execute("BEGIN IMMEDIATE")
                         try:

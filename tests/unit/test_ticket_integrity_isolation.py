@@ -13,6 +13,7 @@ from planner.conversation.contracts import PromptDeliveryStarted
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
+from planner.database_modules import attach
 from planner.tickets import data, integrity, views
 from planner.tickets.contracts import TITLE_MAX_CHARS
 from planner.tickets.workspace.views import workspace_ticket
@@ -22,7 +23,12 @@ from planner.tickets.workspace.views import workspace_ticket
     ("column", "value"),
     [
         ("worker_type", "missing_type"),
+        ("stage", "removed_stage"),
         ("ceiling", "removed_stage"),
+        ("ceiling_holder", '{"kind":"ticket","id":"missing_ticket"}'),
+        ("field_values", "{broken"),
+        ("pending_proposal", "{broken"),
+        ("employee_backend", "missing_backend"),
     ],
 )
 def test_audit_records_one_fault_and_preserves_other_tickets(
@@ -40,9 +46,18 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
             (("broken", "Broken Ticket"), ("healthy", "Healthy Ticket")),
         )
         # Emulate a preexisting corrupt row without the ordinary commit projector.
-        conn.execute("BEGIN")
-        conn.execute(f"UPDATE tickets SET {column}=? WHERE id='broken'", (value,))
-        sqlite3.Connection.commit(conn)
+        with closing(sqlite3.connect(tmp_path / "tickets.db")) as raw:
+            # Older/corrupt storage can predate current projection triggers. Suspend
+            # those triggers only for fixture injection, then restore them unchanged.
+            triggers = raw.execute(
+                "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name='tickets'"
+            ).fetchall()
+            for name, _sql in triggers:
+                raw.execute('DROP TRIGGER "' + str(name).replace('"', '""') + '"')
+            raw.execute(f"UPDATE tickets SET {column}=? WHERE id='broken'", (value,))
+            for _name, sql in triggers:
+                raw.execute(sql)
+            raw.commit()
         assert integrity.issue_for_ticket(conn, "broken") is None
         faults = data.audit_ticket_registry_integrity(conn, startup=True)
         assert len(faults) == 1
@@ -102,12 +117,14 @@ def test_database_failure_still_stops_the_audit_and_notice_failure_does_not(
             data.audit_ticket_registry_integrity(conn, startup=True)
     with closing(connect(str(tmp_path / "valid.db"))) as conn:
         create_schema(conn)
-        conn.execute("BEGIN")
-        conn.execute(
-            "INSERT INTO tickets(id,title,worker_type,stage,ceiling,created_at,updated_at) "
-            "VALUES ('broken','Broken Ticket','missing','missing','missing',1,1)"
-        )
-        sqlite3.Connection.commit(conn)
+        with closing(sqlite3.connect(tmp_path / "valid.db")) as raw:
+            attach(raw)
+            raw.execute(
+                "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
+                "field_values,created_at,updated_at) VALUES "
+                "('broken','Broken Ticket','missing','codex','missing','missing','{}',1,1)"
+            )
+            raw.commit()
         faults = data.audit_ticket_registry_integrity(conn, startup=True)
 
         async def fail(*args, **kwargs):
@@ -116,3 +133,21 @@ def test_database_failure_still_stops_the_audit_and_notice_failure_does_not(
         monkeypatch.setattr("planner.message_delivery.service.send_message", fail)
         asyncio.run(integrity.notify_chief(conn, None, RealClock(), faults))
         assert conn.execute("SELECT worker_step_claim FROM tickets").fetchone()[0] == "errored"
+
+
+def test_startup_preserves_historical_terminal_ceiling_without_weakening_strict_audit(
+    tmp_path: Path,
+) -> None:
+    with closing(connect(str(tmp_path / "historical.db"))) as conn:
+        create_schema(conn)
+        conn.execute(
+            "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
+            "field_values,recap,created_at,updated_at) VALUES "
+            "('historical','Finished Ticket','coding','codex','done','retired_stage','{}',"
+            "'Original recap',1,1)"
+        )
+        assert data.audit_ticket_registry_integrity(conn, startup=True) == []
+        row = conn.execute("SELECT ceiling,recap,worker_step_claim FROM tickets").fetchone()
+        assert tuple(row) == ("retired_stage", "Original recap", "none")
+        with pytest.raises(RuntimeError, match="ceiling outside the type's range"):
+            data.audit_ticket_registry_integrity(conn)
