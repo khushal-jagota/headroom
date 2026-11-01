@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -11,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.conversation.contracts import ConversationSystem
+from planner.core.db import connect, create_schema
 from planner.environments.app import AppManifest
 from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_api import router
@@ -62,11 +64,15 @@ class OwnerUpdatesFixture:
         self.activity = ActivityProbe()
         self.current_sha = "a" * 40
         self.store = FileUpdateRequestStore(Path(self.directory.name) / "request.json")
+        database_path = Path(self.directory.name) / "planner.db"
+        with closing(connect(str(database_path))) as connection:
+            create_schema(connection)
         self.service = UpdateService(
             self.provider,
             self.store,
             lambda: cast(ConversationSystem, self.activity),
-            self.current_sha,
+            connection_factory=lambda: connect(str(database_path)),
+            current_app_sha=self.current_sha,
         )
         app = FastAPI()
         app.state.updates = self.service
