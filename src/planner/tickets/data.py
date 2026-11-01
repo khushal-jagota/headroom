@@ -409,8 +409,7 @@ def _row_to_ticket(
     )
 
 
-# Historical columns stay stored, but active reads and the stale-write guard only
-# select the Ticket record the application still uses.
+# Historical columns stay stored, while active reads select the Ticket projection.
 _TICKET_STORED_COLUMNS = (
     "id",
     "title",
@@ -439,6 +438,8 @@ _TICKET_STORED_COLUMNS = (
     "locale",
 )
 _TICKET_STORED_SELECT = ", ".join(f"tickets.{column}" for column in _TICKET_STORED_COLUMNS)
+# Integrity is separate from the canonical Ticket, but changes its usability and display.
+_TICKET_FINGERPRINT_SELECT = f"{_TICKET_STORED_SELECT}, tickets.integrity_error_reason"
 
 
 def _ticket_row(conn: sqlite3.Connection, ticket_id: str) -> sqlite3.Row:
@@ -2108,9 +2109,9 @@ def unclassify_ticket(
 
 
 def ticket_record_sha256(conn: sqlite3.Connection, ticket_id: str) -> str:
-    """Fingerprint every active stored column, including same-second changes."""
+    """Fingerprint the stored Ticket and integrity state, including same-second changes."""
     row = conn.execute(
-        f"SELECT {_TICKET_STORED_SELECT} FROM tickets WHERE id=?", (ticket_id,)
+        f"SELECT {_TICKET_FINGERPRINT_SELECT} FROM tickets WHERE id=?", (ticket_id,)
     ).fetchone()
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})

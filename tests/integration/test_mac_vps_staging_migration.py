@@ -22,7 +22,7 @@ from tests.integration.test_navigation_cumulative_migration import (
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "executor_default_workspace"
+FINAL_HEAD = "ticket_integrity_reason"
 SENTINELS: dict[str, tuple[object, ...]] = {
     "mac_inbox_positions": (
         "sender",
@@ -205,6 +205,11 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                 )
             ]
             rows = {name: list(conn.execute(f'SELECT * FROM "{name}"')) for name in tables}
+            ticket_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(tickets)"))
+            assert [row[0] for row in conn.execute("SELECT id FROM tickets ORDER BY id")] == [
+                "alias", "blocker", "held",
+            ]
+            refresh_rows = {("tickets", "alias"), ("tickets", "blocker"), ("tickets", "held")}
             schema = list(
                 conn.execute(
                     "SELECT name,sql FROM sqlite_master WHERE type IN ('index','trigger') "
@@ -213,7 +218,22 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
             )
             command.upgrade(config, "head")
             for name, before in rows.items():
-                assert list(conn.execute(f'SELECT * FROM "{name}"')) == before, name
+                current = list(conn.execute(f'SELECT * FROM "{name}"'))
+                if name == "navigation_dirty":
+                    # The integrity migration queues exactly these existing Tickets
+                    # for a later projection refresh. Every prior dirty row survives.
+                    expected = set(before) | refresh_rows
+                    assert len(current) == len(expected), name
+                    assert set(current) == expected, name
+                elif name == "tickets":
+                    # Keep every old column exact and prove the sole added column is
+                    # nullable, rather than excluding the Ticket table from comparison.
+                    assert tuple(
+                        row[1] for row in conn.execute("PRAGMA table_info(tickets)")
+                    ) == (*ticket_columns, "integrity_error_reason")
+                    assert current == [(*row, None) for row in before], name
+                else:
+                    assert current == before, name
             assert (
                 list(
                     conn.execute(
