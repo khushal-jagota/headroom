@@ -147,6 +147,12 @@ def test_removed_stage_and_ceiling_move_back_and_discard_only_stage_feedback(
         message="Revise Beta",
         now=1,
     )
+    # A stale opener at the destination must not become valid after a backward move.
+    database.execute(
+        "INSERT INTO ticket_paired_stage_openers (ticket_id, stage, opened_at) "
+        "VALUES (?, 'needs_alpha', 1)",
+        (ticket_id,),
+    )
     before = _row(database, ticket_id)
     result = write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "beta"), now=2)
     after = _row(database, ticket_id)
@@ -160,12 +166,18 @@ def test_removed_stage_and_ceiling_move_back_and_discard_only_stage_feedback(
         ).fetchone()
         is None
     )
+    assert (
+        database.execute(
+            "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ?", (ticket_id,)
+        ).fetchone()
+        is None
+    )
     assert [
         (item.old_stage, item.new_stage, item.old_ceiling, item.new_ceiling) for item in result
     ] == [("needs_beta", "needs_alpha", "needs_beta", "needs_alpha")]
 
 
-def test_finished_ticket_retains_removed_ceiling_and_text_as_readable_history(
+def test_finished_ticket_migrates_removed_ceiling_and_preserves_history(
     database: sqlite3.Connection,
 ) -> None:
     _probe_database(database)
@@ -176,18 +188,22 @@ def test_finished_ticket_retains_removed_ceiling_and_text_as_readable_history(
     )
     before = _row(database, ticket_id)
     result = write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha"), now=2)
-    assert _row(database, ticket_id) == before
-    assert result == ()
+    after = _row(database, ticket_id)
+    assert after["stage"] == "done"
+    assert after["ceiling"] == "needs_brief"
+    assert after["field_values"] == before["field_values"]
+    assert after["field_approvals"] == before["field_approvals"]
+    assert after["ceiling_holder"] == before["ceiling_holder"]
+    assert [
+        (item.old_stage, item.new_stage, item.old_ceiling, item.new_ceiling) for item in result
+    ] == [("done", "done", "needs_alpha", "needs_brief")]
+    # Saving cannot publish an uncommitted replacement into the runtime registry.
+    assert configured_worker_type_registry().require("probe") == PROBE_WORKER_TYPE_DEFINITION
     load_worker_runtime_definitions(database)
+    tickets_data.audit_ticket_registry_integrity(database)
     historical = tickets_data.read_ticket(database, ticket_id)
     assert historical.stage == "done"
-    assert historical.ceiling == "needs_alpha"
-    # Read tolerance cannot grant a new unfinished position or bypass canonical writes.
-    definition = read_definition(database, "probe")
-    with pytest.raises(PlannerError):
-        definition.validate_ticket_position("needs_beta", "needs_alpha")
-    with pytest.raises(PlannerError):
-        definition.validate_ticket_position("done", "needs_alpha")
+    assert historical.ceiling == "needs_brief"
 
 
 def test_no_earlier_destination_refuses_without_advancing(database: sqlite3.Connection) -> None:
@@ -223,6 +239,7 @@ def test_incompatible_proposal_refuses_without_losing_body(database: sqlite3.Con
     with pytest.raises(PlannerError) as raised:
         write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha"), now=2)
     assert ticket_id in raised.value.detail["tickets"]
+    assert raised.value.detail["failures"][0]["field"] == "pending_proposal"
     assert _row(database, ticket_id) == before
 
 
@@ -425,3 +442,82 @@ def test_failed_commit_rolls_back_definition_and_ticket_position(
         tuple(database.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
         == before
     )
+
+
+def test_finished_ceiling_without_backward_destination_refuses_entire_save(
+    database: sqlite3.Connection,
+) -> None:
+    _probe_database(database)
+    ticket_id = _probe_ticket(database, "done")
+    database.execute("UPDATE tickets SET ceiling = 'needs_brief' WHERE id = ?", (ticket_id,))
+    before = _row(database, ticket_id)
+    with pytest.raises(PlannerError) as raised:
+        write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "brief"), now=2)
+    assert raised.value.detail["failures"] == [
+        {
+            "ticket_id": ticket_id,
+            "title": before["title"],
+            "field": "ceiling",
+            "reason": "removed reference has no earlier surviving Stage",
+        }
+    ]
+    assert _row(database, ticket_id) == before
+    assert read_definition(database, "probe") == PROBE_WORKER_TYPE_DEFINITION
+
+
+def test_post_migration_audit_rolls_back_trigger_created_invalid_ceiling(
+    database: sqlite3.Connection,
+) -> None:
+    _probe_database(database)
+    ticket_id = _probe_ticket(database, "needs_beta")
+    before = _row(database, ticket_id)
+    database.execute(
+        "CREATE TRIGGER corrupt_migrated_ceiling AFTER UPDATE OF stage ON tickets "
+        "BEGIN UPDATE tickets SET ceiling = 'removed_stage' WHERE id = NEW.id; END"
+    )
+    with pytest.raises(PlannerError, match="Ticket integrity check") as raised:
+        write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "beta"), now=2)
+    assert ticket_id in raised.value.detail["reason"]
+    assert "ceiling outside the type's range" in raised.value.detail["reason"]
+    assert _row(database, ticket_id) == before
+    assert read_definition(database, "probe") == PROBE_WORKER_TYPE_DEFINITION
+    assert configured_worker_type_registry().require("probe") == PROBE_WORKER_TYPE_DEFINITION
+
+
+@pytest.mark.parametrize("same_stage", [False, True])
+def test_amendment_discards_obsolete_step_context_without_losing_other_ticket_context(
+    database: sqlite3.Connection,
+    same_stage: bool,
+) -> None:
+    from planner.tickets import revision_feedback
+
+    _probe_database(database)
+    ticket_id = _probe_ticket(database, "needs_alpha")
+    untouched_id = _probe_ticket(database, "needs_landing")
+    for current_id, stage in ((ticket_id, "needs_alpha"), (untouched_id, "needs_landing")):
+        database.execute(
+            "INSERT INTO ticket_paired_stage_openers (ticket_id, stage, opened_at) "
+            "VALUES (?, ?, 1)",
+            (current_id, stage),
+        )
+        revision_feedback.set_feedback(
+            database, current_id, stage=stage, sender=OWNER_PRINCIPAL, message="Feedback", now=1
+        )
+    if same_stage:
+        replacement = replace(
+            PROBE_WORKER_TYPE_DEFINITION,
+            stages=tuple(
+                replace(stage, ownership_mode=StageOwnershipMode.user)
+                if stage.id == "needs_alpha"
+                else stage
+                for stage in PROBE_WORKER_TYPE_DEFINITION.stages
+            ),
+        )
+    else:
+        # The Ticket stays at Beta but auxiliary context still points at removed Alpha.
+        database.execute("UPDATE tickets SET stage = 'needs_beta' WHERE id = ?", (ticket_id,))
+        replacement = _without(PROBE_WORKER_TYPE_DEFINITION, "alpha")
+    write_definition(database, replacement, now=2)
+    for table in ("ticket_paired_stage_openers", "ticket_revision_feedback"):
+        assert database.execute(f"SELECT ticket_id FROM {table}").fetchall()[0][0] == untouched_id
+        assert database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 1

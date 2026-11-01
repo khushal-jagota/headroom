@@ -98,7 +98,7 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
             "pending_proposal=NULL WHERE id=?",
             (finished.id,),
         )
-        finished_before = tuple(
+        finished_before = dict(
             conn.execute("SELECT * FROM tickets WHERE id=?", (finished.id,)).fetchone()
         )
     finally:
@@ -116,16 +116,29 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
     response = test_client.post("/api/worker-types", json=without_implementation)
 
     assert response.status_code == 200, response.text
-    assert response.json()["migrations"] == [
-        {
-            "ticket_id": ticket.id,
-            "title": "Mid flight",
-            "old_stage": "needs_implementation",
-            "new_stage": "needs_what_changes",
-            "old_ceiling": "needs_brief",
-            "new_ceiling": "needs_brief",
-        }
-    ]
+    assert sorted(
+        response.json()["migrations"], key=lambda migration: migration["ticket_id"]
+    ) == sorted(
+        [
+            {
+                "ticket_id": ticket.id,
+                "title": "Mid flight",
+                "old_stage": "needs_implementation",
+                "new_stage": "needs_what_changes",
+                "old_ceiling": "needs_brief",
+                "new_ceiling": "needs_brief",
+            },
+            {
+                "ticket_id": finished.id,
+                "title": "Historical Implementation ceiling",
+                "old_stage": "done",
+                "new_stage": "done",
+                "old_ceiling": "needs_implementation",
+                "new_ceiling": "needs_what_changes",
+            },
+        ],
+        key=lambda migration: migration["ticket_id"],
+    )
     assert test_client.get("/api/worker-types/coding").json() == without_implementation
     assert configured_worker_type_registry().require("coding").stage_ids() == tuple(
         stage["id"] for stage in without_implementation["stages"]
@@ -137,15 +150,19 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
     historical = test_client.get(f"/api/tickets?detail=full&id={finished.id}")
     assert historical.status_code == 200, historical.text
     assert historical.json()["stage"] == "done"
-    assert historical.json()["ceiling"] == "needs_implementation"
+    assert historical.json()["ceiling"] == "needs_what_changes"
     listing = test_client.get("/api/tickets?detail=full")
     assert listing.status_code == 200, listing.text
     assert finished.id in {row["id"] for row in listing.json()["tickets"]}
     with closing(connect(str(db_path))) as conn:
-        assert (
-            tuple(conn.execute("SELECT * FROM tickets WHERE id=?", (finished.id,)).fetchone())
-            == finished_before
+        finished_after = dict(
+            conn.execute("SELECT * FROM tickets WHERE id=?", (finished.id,)).fetchone()
         )
+        assert finished_after["stage"] == finished_before["stage"] == "done"
+        assert finished_after["ceiling"] == "needs_what_changes"
+        for key in ("field_values", "field_approvals", "ceiling_holder", "guidance"):
+            assert finished_after[key] == finished_before[key]
+        tickets_data.audit_ticket_registry_integrity(conn)
 
 
 def test_failed_bundled_amendment_preserves_skill_definition_and_runtime(

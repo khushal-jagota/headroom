@@ -225,17 +225,24 @@ def _plan_migrations(
         (previous.worker_type,),
     ):
         stage, ceiling = str(row["stage"]), str(row["ceiling"])
+        field = "stage"
         try:
-            if previous.is_terminal(stage):
+            terminal = previous.is_terminal(stage)
+            if terminal:
                 if not replacement.is_known_stage(stage) or not replacement.is_terminal(stage):
                     raise _fail("finished Ticket Stage must remain terminal", {})
-                continue
-            new_stage = map_reference(stage, previous, replacement)
+                new_stage = stage
+            else:
+                new_stage = map_reference(stage, previous, replacement)
+            field = "ceiling"
             new_ceiling = map_reference(ceiling, previous, replacement)
             replacement.validate_ticket_position(new_stage, new_ceiling)
-            if replacement.is_terminal(new_stage):
+            field = "stage"
+            if not terminal and replacement.is_terminal(new_stage):
                 raise _fail("migration cannot finish a Ticket", {})
+            field = "field_values"
             values = fields_codec.values_from_json(row["field_values"], replacement.field_ids())
+            field = "pending_proposal"
             proposal = fields_codec.proposal_from_json(row["pending_proposal"])
             fields_codec.validate_state(
                 values, proposal, new_stage, worker_type_definition=replacement
@@ -248,6 +255,7 @@ def _plan_migrations(
                 or old_step.gating_field != new_step.gating_field
                 or old_step.ownership_mode != new_step.ownership_mode
             )
+            field = "worker_step_claim"
             if row["worker_step_claim"] == "out" and changed_step:
                 raise _fail("dispatched Worker must release its step before migration", {})
             historical = fields_codec.stored_values_from_json(row["field_values"])
@@ -257,9 +265,14 @@ def _plan_migrations(
                         str(row["id"]), str(row["title"]), stage, new_stage, ceiling, new_ceiling
                     )
                 )
-        except PlannerError as exc:
+        except (PlannerError, ValueError, TypeError, KeyError) as exc:
             failures.append(
-                {"ticket_id": str(row["id"]), "title": str(row["title"]), "reason": str(exc)}
+                {
+                    "ticket_id": str(row["id"]),
+                    "title": str(row["title"]),
+                    "field": field,
+                    "reason": str(exc),
+                }
             )
     if failures:
         raise _fail(
@@ -283,7 +296,7 @@ def write_definition(
 
     The outer transaction owner publishes the validated runtime registry after commit.
     """
-    from planner.tickets.data import apply_worker_type_migrations
+    from planner.tickets.data import apply_worker_type_migrations, audit_ticket_registry_integrity
     from planner.worker_types.configuration import build_worker_runtime_definitions
 
     with definition_transaction(conn):
@@ -296,13 +309,10 @@ def write_definition(
             "SELECT definition_json FROM worker_types WHERE worker_type = ?",
             (definition.worker_type,),
         ).fetchone()
-        migrations = (
-            ()
-            if existing is None
-            else _plan_migrations(
-                conn, definition_from_json(str(existing["definition_json"])), definition
-            )
+        previous = (
+            definition_from_json(str(existing["definition_json"])) if existing is not None else None
         )
+        migrations = () if previous is None else _plan_migrations(conn, previous, definition)
         next_position = conn.execute(
             "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM worker_types"
         ).fetchone()["next"]
@@ -313,8 +323,21 @@ def write_definition(
             "updated_at = excluded.updated_at",
             (definition.worker_type, int(next_position), definition_to_json(definition), now),
         )
-        build_worker_runtime_definitions(
+        replacement_runtime = build_worker_runtime_definitions(
             worker_type_definitions=read_definitions(conn), known_skills=skill_names(conn)
         )
-        apply_worker_type_migrations(conn, migrations, definition=definition, now=now)
+        apply_worker_type_migrations(
+            conn, migrations, definition=definition, previous_definition=previous, now=now
+        )
+        try:
+            audit_ticket_registry_integrity(
+                conn,
+                worker_type_registry=replacement_runtime.worker_type_registry,
+                worker_type=definition.worker_type,
+            )
+        except RuntimeError as exc:
+            raise _fail(
+                "Worker type amendment failed the Ticket integrity check",
+                {"worker_type": definition.worker_type, "reason": str(exc)},
+            ) from exc
     return migrations

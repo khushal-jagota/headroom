@@ -520,6 +520,7 @@ def create_app(
         GitHubUpdateProvider.configured(),
         update_request_store,
         lambda: app.state.conversation_system,
+        connection_factory=conn_factory,
         current_app_sha=config.app_sha,
         availability_path=deployment_lifecycle_path.with_name("owner-update-availability.json"),
         can_refresh=lambda: not app.state.update_startup_pending,
