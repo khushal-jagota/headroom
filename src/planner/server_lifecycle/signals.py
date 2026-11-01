@@ -28,7 +28,6 @@ class SupervisorSignals:
         self._thread: threading.Thread | None = None
         self._previous_mask: set[int] = set()
         self._previous_handlers: dict[int, signal._HANDLER] = {}
-        self._linux = sys.platform == "linux"
 
     @property
     def child_signal_mask(self) -> set[int]:
@@ -40,19 +39,20 @@ class SupervisorSignals:
             or threading.active_count() != 1
         ):
             raise ServerLifecycleError("Supervisor signal setup requires a single main thread.")
-        if self._linux and len(list(Path("/proc/self/task").iterdir())) != 1:
+        if sys.platform == "linux" and len(list(Path("/proc/self/task").iterdir())) != 1:
             raise ServerLifecycleError("Supervisor signal setup requires one native thread.")
         self._previous_handlers = {item: signal.getsignal(item) for item in WATCHED_SIGNALS}
         self._previous_mask = signal.pthread_sigmask(
-            signal.SIG_BLOCK, WATCHED_SIGNALS if self._linux else set()
+            signal.SIG_BLOCK, WATCHED_SIGNALS if sys.platform == "linux" else set()
         )
         try:
-            self.read_fd, self._write_fd = (
-                os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC) if self._linux else os.pipe()
-            )
+            if sys.platform == "linux":
+                self.read_fd, self._write_fd = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+            else:
+                self.read_fd, self._write_fd = os.pipe()
             os.set_blocking(self.read_fd, False)
             os.set_blocking(self._write_fd, False)
-            if self._linux:
+            if sys.platform == "linux":
                 self._thread = threading.Thread(
                     target=self._wait, name="supervisor-signals", daemon=True
                 )
@@ -65,7 +65,7 @@ class SupervisorSignals:
             for descriptor in (self.read_fd, self._write_fd):
                 if descriptor >= 0:
                     os.close(descriptor)
-            if self._linux:
+            if sys.platform == "linux":
                 for item in WATCHED_SIGNALS:
                     signal.signal(item, signal.SIG_IGN)
                 signal.pthread_sigmask(signal.SIG_SETMASK, self._previous_mask)
@@ -84,6 +84,8 @@ class SupervisorSignals:
             pass  # The readable pipe already guarantees a selector wakeup.
 
     def _wait(self) -> None:
+        if sys.platform != "linux":
+            return
         while not self._stop.is_set():
             with self._capture_lock:
                 while self._drain_requested.is_set() and not self._stop.is_set():
@@ -102,7 +104,7 @@ class SupervisorSignals:
         self._drain_requested.set()
         with self._capture_lock:
             try:
-                if self._linux:
+                if sys.platform == "linux":
                     while (info := signal.sigtimedwait(WATCHED_SIGNALS, 0)) is not None:
                         self._events.put((info.si_signo, info.si_pid))
                 return self._drain_notifications()
@@ -129,7 +131,7 @@ class SupervisorSignals:
             self._capture_lock.notify_all()
         if self._thread is not None:
             self._thread.join()
-        if self._linux:
+        if sys.platform == "linux":
             # Keep signals blocked while collecting the last kernel-pending events.
             while (info := signal.sigtimedwait(WATCHED_SIGNALS, 0)) is not None:
                 self._notify(info.si_signo, info.si_pid)
@@ -138,7 +140,7 @@ class SupervisorSignals:
             for item in WATCHED_SIGNALS:
                 signal.signal(item, signal.SIG_IGN)
         events = self.drain()
-        if self._linux:
+        if sys.platform == "linux":
             signal.pthread_sigmask(signal.SIG_SETMASK, self._previous_mask)
         for item, handler in self._previous_handlers.items():
             signal.signal(item, handler)

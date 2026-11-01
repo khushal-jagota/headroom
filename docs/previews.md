@@ -6,6 +6,8 @@ A preview is one link Khushal can open to an application a Worker is running on 
 
 The dev server stays on loopback. Headroom proxies that generation through the existing tailnet HTTPS origin. A code change or a Ticket approval does not publish the route. The release that contains previews has to be installed, and Tailscale ingress has to be configured. With no ingress configuration, there are no previews.
 
+Previews are unavailable for Tickets set to run on the Mac. All `panels preview` commands refuse for those Tickets. Existing preview addresses expire when the Ticket moves to the Mac; they never forward to the Mac or fall back to a VPS process.
+
 ## Why the content has to be trusted
 
 Preview JavaScript runs in Headroom’s browser origin. It can call Headroom’s APIs and read its storage. Cookie paths do not contain hostile script. Never put a vendor demo, a downloaded sample, or a page that embeds third-party scripts behind a preview. The application already runs as the same Unix user as Headroom. The registration checks prove that an observed process is listening from the reserved Ticket worktree. They do not prove who wrote the program, and they do not contain a malicious program running as that user.

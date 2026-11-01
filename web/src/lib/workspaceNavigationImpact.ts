@@ -16,7 +16,7 @@ export function workspaceRailImpact(impact:RecordImpact,presentation:NavigationP
   const visibleTickets=groupedTickets;
   if(impact.kind==='ticket') {
     if(touches(impact,['is_backlogged','blocked','stage','ticket_status','manager_kind','manager_id'])) return true;
-    return visibleTickets.has(impact.id) && touches(impact,['title','recap_preview','worker_type','updated_at','project_id','conversation_id','ceiling_holder','gating_field','stage_ownership']);
+    return visibleTickets.has(impact.id) && touches(impact,['title','locale','recap_preview','worker_type','updated_at','project_id','conversation_id','ceiling_holder','gating_field','stage_ownership']);
   }
   if(impact.kind==='manager') return touches(impact,['settled']) || settledOpen && touches(impact,['updated_at']) || items.some(item=>item.id===impact.id)
     && touches(impact,['title','created_at','updated_at','project_id','conversation_id']);
@@ -32,7 +32,7 @@ export function workspaceRailImpact(impact:RecordImpact,presentation:NavigationP
 }
 export function workspaceHoverImpact(impact:RecordImpact,kind:'ticket'|'manager'|'chief',id:string,
   conversationId:string | null | undefined,presentation:NavigationPresentation | undefined,showsFallbackCount=false):boolean {
-  if(impact.kind===kind && impact.id===id) return impact.fields==='*' || touches(impact,['title','recap','worker_type','stage','ticket_status','blocked','conversation_id','gating_field','stage_ownership','ceiling_holder']);
+  if(impact.kind===kind && impact.id===id) return impact.fields==='*' || touches(impact,['title','locale','recap','worker_type','stage','ticket_status','blocked','conversation_id','gating_field','stage_ownership','ceiling_holder']);
   if(impact.kind==='conversation') return impact.id===conversationId && touches(impact,['attention']);
   if(showsFallbackCount && kind!=='ticket' && impact.kind==='ticket') {
     if(touches(impact,['manager_kind','manager_id'])) return true;
@@ -64,7 +64,7 @@ export function managerChildrenImpact(impact:RecordImpact,principal:ManagerPrinc
     if(!selected.has(impact.id)) return false;
     if(touches(impact,['ticket_status','blocked','ceiling_holder','gating_field','stage_ownership','conversation_id'])) return true;
     const visible=groups.some(group=>(open[group.key] ?? managerGroupDefaultOpen(group.key)) && group.tickets.some(ticket=>ticket.id===impact.id));
-    return visible && touches(impact,['title','updated_at']);
+    return visible && touches(impact,['title','locale','updated_at']);
   }
   return impact.kind==='conversation' && (Boolean(presentation?.globalCounts) || rows.some(ticket=>ticket.conversation_id===impact.id)) && touches(impact,['attention']);
 }

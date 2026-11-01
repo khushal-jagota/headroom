@@ -198,7 +198,8 @@
             <div class="status-base">{@render cardBody(card)}</div>
           {/if}
         {/if}
-        {#if (displayedWord === "owner-update" || displayedWord === "Problem") && updates.data}
+        <!-- Update eligibility belongs to UpdateActions, independent of the notice label. -->
+        {#if updates.data}
           <UpdateActions status={updates.data} now={clock} />
         {/if}
         {#if displayedHealth}

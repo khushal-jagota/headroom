@@ -10,7 +10,8 @@
   import ToolCallRow from '../ToolCallRow.svelte';
   import type { BackendModel } from '../../../lib/conversation/wire';
   import type { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  let { item, reader, models, ownSenderLabel, openRows, wholeDetails, onEmptyEnding }: {
+  let { activityUncertain = false, item, reader, models, ownSenderLabel, openRows, wholeDetails, onEmptyEnding }: {
+      activityUncertain?: boolean;
       item: ConversationViewRow;
       reader: ConversationViewReader;
       models: readonly BackendModel[];
@@ -58,12 +59,12 @@
 </script>
 <SkeletonRegion shape="block" loading={row === null && !error} loadingText="Loading conversation detail…">
 {#if row?.kind==='tool_call' && reader.lens==='full'}
-  <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
+  <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow {activityUncertain} row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
 {:else if row?.kind==='credential_request'}
   <ConversationCredentialRequestCard request={row.request}/>
 {:else if row!==null}
   {#key presentationAttempt}
-  <ConversationTranscript rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
+  <ConversationTranscript {activityUncertain} rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
   {/key}
 {:else}
   <div aria-busy={!error} role="status">{error ?? ""}</div>

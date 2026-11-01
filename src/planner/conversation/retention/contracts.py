@@ -42,6 +42,7 @@ class ConversationRetentionInput:
     error_acknowledged_through_sequence: int
     linked_ticket_ids: tuple[str, ...]
     lifecycle_facts: tuple[LifecycleFact, ...]
+    native_execution_unresolved: bool = False
 
 
 @dataclass(frozen=True, slots=True)

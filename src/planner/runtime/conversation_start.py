@@ -39,11 +39,14 @@ from planner.conversation.contracts import (
     ConversationMessageContent,
     ConversationStartRequest,
     ConversationSystem,
+    NativeMessageOperation,
     PromptDeliveryFate,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
+    WorkspacePathPolicy,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -65,7 +68,7 @@ from planner.runtime.logic.conversation_start_resolution import (
 from planner.runtime.workspaces import workspace_root_for_connection
 from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
-from planner.tickets.contracts import Ticket
+from planner.tickets.contracts import Ticket, TicketLocale
 from planner.worker_settings.service import (
     read_chief_settings,
     read_worker_launch_defaults_for_ticket_creation,
@@ -139,6 +142,7 @@ def worker_resolve(
     if registry is None:
         registry = configured_worker_type_registry()
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(registry, ticket.worker_type)
+    selected_workspace, workspace_policy = _worker_workspace(conn, ticket, workspace_folder)
     values = resolve_worker_conversation_start(
         ticket_id=ticket.id,
         worker_type_launch_defaults=ConversationStartConfiguration(
@@ -156,23 +160,48 @@ def worker_resolve(
             )
         ),
         overrides=overrides,
-        workspace_folder=_worker_workspace_folder(conn, ticket, workspace_folder),
+        workspace_folder=selected_workspace,
+        workspace_path_policy=workspace_policy,
+    )
+    locale_configuration.require_locale_backend_compatibility(
+        ticket.locale, values.backend_key.value
     )
     if ticket.employee_launch_model is None or overrides.model is not None:
         require_enabled_model(conn, values.backend_key, values.model)
     return values
 
 
-def _worker_workspace_folder(
+def _worker_workspace(
     conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
-) -> Path:
+) -> tuple[Path, WorkspacePathPolicy]:
+    return workspace_for_project(conn, ticket.locale, ticket.project_id, explicit=explicit)
+
+
+def workspace_for_project(
+    conn: sqlite3.Connection,
+    locale: TicketLocale,
+    project_id: str | None,
+    *,
+    explicit: Path | None = None,
+) -> tuple[Path, WorkspacePathPolicy]:
+    """Use the existing project localization policy for both drafts and real starts."""
+    policy = (
+        WorkspacePathPolicy.absolute
+        if locale == TicketLocale.macos
+        else WorkspacePathPolicy.home_relative
+    )
     if explicit is not None:
-        return explicit
-    if ticket.project_id is not None:
-        project_folder = projects_data.read_project(conn, ticket.project_id).folder_path
-        if project_folder is not None and project_folder.is_dir():
-            return project_folder.resolve(strict=False)
-    return _default_workspace_folder(conn)
+        return explicit, policy
+    if project_id is not None:
+        project_folder = projects_data.read_project(conn, project_id).folder_path
+        if project_folder is not None:
+            if locale == TicketLocale.macos:
+                return project_folder, policy
+            if project_folder.is_dir():
+                return project_folder.resolve(strict=False), policy
+    if locale == TicketLocale.macos:
+        return Path("/"), WorkspacePathPolicy.executor_default
+    return _default_workspace_folder(conn), WorkspacePathPolicy.home_relative
 
 
 def agent_resolve(
@@ -268,6 +297,7 @@ async def start_ticket_conversation(
         reasoning_effort=values.reasoning_effort,
         role_materials=values.role_materials,
         workspace_folder=values.workspace_folder,
+        workspace_path_policy=values.workspace_path_policy,
         access=values.access,
     )
     await system.start_conversation(request)
@@ -330,6 +360,7 @@ async def _send_with_addressed_receipt(
     mode: PromptDeliveryMode,
     model_change: str | None = None,
     reasoning_effort_change: str | None = None,
+    reasoning_effort_is_set: bool = False,
     owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
@@ -337,6 +368,7 @@ async def _send_with_addressed_receipt(
     recipient: Principal | None,
     reply_requested: bool,
     record_refusal: bool = False,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> AddressedPromptDeliveryReceipt:
     """Keep recipient attribution and freshness for caller-authored and system sends."""
     if recipient is not None:
@@ -347,6 +379,7 @@ async def _send_with_addressed_receipt(
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            reasoning_effort_is_set=reasoning_effort_is_set,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -354,6 +387,7 @@ async def _send_with_addressed_receipt(
             recipient=recipient,
             reply_requested=reply_requested,
             record_refusal=record_refusal,
+            recording_receipt=recording_receipt,
         )
     fate = await system.send(
         conversation_id,
@@ -362,9 +396,11 @@ async def _send_with_addressed_receipt(
         mode=mode,
         model_change=model_change,
         reasoning_effort_change=reasoning_effort_change,
+        reasoning_effort_is_set=reasoning_effort_is_set,
         owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+        recording_receipt=recording_receipt,
     )
     return AddressedPromptDeliveryReceipt(
         fate=fate,
@@ -390,7 +426,9 @@ async def send_to_ticket_conversation(
     recipient: Principal | None = None,
     reply_requested: bool = True,
     worker_type_registry: WorkerTypeRegistry | None = None,
+    retain_backend_start_failure: bool = False,
     now: int,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Send a message into this Ticket's conversation, making one if there is none yet.
 
@@ -421,6 +459,8 @@ async def send_to_ticket_conversation(
 
     Creating and delivering are one act. If the delivery does not land, the conversation
     goes with it and the Ticket is left with none, which is the state it was in before.
+    Automatic Worker attempts can opt into retaining a definite backend start failure
+    for explicit recovery. This does not retain other refusals or raised exceptions.
 
     A message carrying a change also updates the Ticket's last-chosen columns, but only
     when the delivery started. A held message applies its change when it later runs, and a
@@ -435,7 +475,7 @@ async def send_to_ticket_conversation(
     # machinery would refuse: deliver and hold, do not start. This guard only protects
     # local execution. The general runtime fix must decide whether it subsumes this
     # refusal so that separate admission mechanisms do not disagree.
-    if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
+    if not locale_configuration.can_execute_locale(conn, ticket.locale):
         raise PlannerError(
             ErrorCode.validation,
             f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
@@ -453,6 +493,7 @@ async def send_to_ticket_conversation(
             ticket,
             content,
             created_conversation_id=created_conversation_id,
+            retain_backend_start_failure=retain_backend_start_failure,
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
@@ -464,6 +505,7 @@ async def send_to_ticket_conversation(
             reply_requested=reply_requested,
             worker_type_registry=worker_type_registry,
             now=now,
+            recording_receipt=recording_receipt,
         )
     # The sender had none but the Ticket has gained one — the readiness loop starts
     # conversations too. The message joins it rather than making a second, and what it says
@@ -491,6 +533,7 @@ async def send_to_ticket_conversation(
         recipient=recipient,
         reply_requested=reply_requested,
         now=now,
+        recording_receipt=recording_receipt,
     )
 
 
@@ -511,6 +554,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
     recipient: Principal | None,
     reply_requested: bool,
     now: int,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Deliver into a conversation that is already there, carrying what it changes.
 
@@ -525,8 +569,6 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
-    captured_ticket = tickets_data.read_ticket(conn, ticket_id)
-    expected_configuration = tickets_data.employee_launch_configuration(captured_ticket)
     receipt = await _send_with_addressed_receipt(
         system,
         sending_into,
@@ -535,26 +577,30 @@ async def _send_into_the_conversation_the_ticket_is_in(
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        reasoning_effort_is_set=runs_under.reasoning_effort_is_set,
         owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
         reply_requested=reply_requested,
+        recording_receipt=recording_receipt,
     )
     fate = receipt.fate
-    carries_a_change = runs_under.model is not None or runs_under.reasoning_effort is not None
-    if carries_a_change and isinstance(fate, PromptDeliveryStarted):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
+    if isinstance(fate, PromptDeliveryStarted) and (
+        runs_under.model is not None
+        or runs_under.reasoning_effort is not None
+        or runs_under.reasoning_effort_is_set
+    ):
+        current = tickets_data.read_ticket(conn, ticket_id)
         tickets_data.write_ticket_last_chosen_configuration(
             conn,
             ticket_id,
             expected_conversation_id=sending_into,
-            expected_configuration=expected_configuration,
-            model=(ticket.employee_launch_model if runs_under.model is None else runs_under.model),
+            model=current.employee_launch_model if runs_under.model is None else runs_under.model,
             reasoning_effort=(
-                ticket.employee_launch_reasoning_effort
-                if runs_under.reasoning_effort is None
+                current.employee_launch_reasoning_effort
+                if runs_under.reasoning_effort is None and not runs_under.reasoning_effort_is_set
                 else runs_under.reasoning_effort
             ),
             now=now,
@@ -583,7 +629,9 @@ async def _make_a_conversation_and_send_into_it(
     recipient: Principal | None,
     reply_requested: bool,
     worker_type_registry: WorkerTypeRegistry | None,
+    retain_backend_start_failure: bool = False,
     now: int,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Bring a conversation into being with the message that is its first, or neither.
 
@@ -598,11 +646,12 @@ async def _make_a_conversation_and_send_into_it(
     So the undo is on the way out, not on the answer.
     """
     making = created_conversation_id or new_conversation_id()
+    values = worker_resolve(conn, ticket, runs_under, worker_type_registry=worker_type_registry)
     linked = await start_ticket_conversation(
         system,
         conn,
         ticket,
-        worker_resolve(conn, ticket, runs_under, worker_type_registry=worker_type_registry),
+        values,
         conversation_id=making,
         now=now,
     )
@@ -632,6 +681,7 @@ async def _make_a_conversation_and_send_into_it(
             recipient=recipient,
             reply_requested=reply_requested,
             now=now,
+            recording_receipt=recording_receipt,
         )
     # From here the conversation is this call's own: it was made here, on the values this
     # message says it runs under, so the message has nothing to change and carries none.
@@ -642,19 +692,47 @@ async def _make_a_conversation_and_send_into_it(
             await _message_content_for(content, making),
             sender_label=sender_label,
             mode=mode,
+            model_change=runs_under.model,
+            reasoning_effort_change=runs_under.reasoning_effort,
+            reasoning_effort_is_set=runs_under.reasoning_effort_is_set,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recording_receipt=recording_receipt,
         )
         fate = receipt.fate
+        if isinstance(fate, PromptDeliveryStarted):
+            tickets_data.write_ticket_last_chosen_configuration(
+                conn,
+                ticket.id,
+                expected_conversation_id=making,
+                employee_backend=values.backend_key.value,
+                model=values.model,
+                reasoning_effort=values.reasoning_effort,
+                now=now,
+            )
+    except asyncio.CancelledError:
+        # The conversation core owns the shielded exchange and its recording.
+        # A departing caller cannot retire that source while acknowledgment is pending.
+        raise
     except BaseException:
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now
         )
         raise
+    if (
+        isinstance(fate, PromptDeliveryRefused)
+        and retain_backend_start_failure
+        and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
+    ):
+        # This exact conversation holds the refusal for explicit recovery. Do not
+        # relink it: a concurrent reset can already have selected a newer one.
+        return DeliveredMessage(
+            conversation_id=making, fate=fate, newly_accepted=receipt.newly_accepted
+        )
     if isinstance(fate, PromptDeliveryRefused):
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now
@@ -789,6 +867,7 @@ async def start_agent_conversation(
             reasoning_effort=values.reasoning_effort,
             role_materials=values.role_materials,
             workspace_folder=values.workspace_folder,
+            workspace_path_policy=values.workspace_path_policy,
             access=values.access,
         )
     )
@@ -858,6 +937,7 @@ async def send_to_agent_conversation(
     required_manager_id: str | None = None,
     required_goal_id: str | None = None,
     retain_created_conversation: bool = False,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
 
@@ -906,6 +986,7 @@ async def send_to_agent_conversation(
                     recipient=recipient,
                     reply_requested=reply_requested,
                     record_refusal=retain_created_conversation,
+                    recording_receipt=recording_receipt,
                 )
                 fate = receipt.fate
             except BaseException:
@@ -945,6 +1026,7 @@ async def send_to_agent_conversation(
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        reasoning_effort_is_set=runs_under.reasoning_effort_is_set,
         owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -952,6 +1034,7 @@ async def send_to_agent_conversation(
         recipient=recipient,
         reply_requested=reply_requested,
         record_refusal=retain_created_conversation,
+        recording_receipt=recording_receipt,
     )
     return DeliveredMessage(
         conversation_id=sending_into,

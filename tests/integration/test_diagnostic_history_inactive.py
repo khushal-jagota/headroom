@@ -60,7 +60,11 @@ def test_startup_restart_and_background_loops_never_expire_and_reconcile_offline
         assert conn.execute("SELECT conversation_id FROM signal_publication_dirty").fetchall() == [
             ("history",)
         ]
-        controls = conn.execute("SELECT * FROM conversations").fetchall()
+        controls_cursor = conn.execute("SELECT * FROM conversations")
+        controls = controls_cursor.fetchall()
+        # Preserve every pre-existing control across the upgrade. The Mac
+        # migration adds workspace_path_policy to this historical schema.
+        controls_columns = ",".join(f'"{column[0]}"' for column in controls_cursor.description)
     with TestClient(make_app(offline_path, test_mode=False)) as client:
         assert client.get("/api/meta").status_code == 200
         assert _events(database) == retained
@@ -69,4 +73,9 @@ def test_startup_restart_and_background_loops_never_expire_and_reconcile_offline
                 (head_revision(),)
             ]
             assert conn.execute("SELECT * FROM signal_publication_dirty").fetchall() == []
-            assert conn.execute("SELECT * FROM conversations").fetchall() == controls
+            assert (
+                conn.execute(f"SELECT {controls_columns} FROM conversations").fetchall() == controls
+            )
+            assert conn.execute(
+                "SELECT workspace_path_policy FROM conversations"
+            ).fetchall() == [("home_relative",)]

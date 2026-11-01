@@ -1721,21 +1721,53 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         assert page.evaluate("document === window.__navigationDocument")
         navigation_seconds = time.perf_counter() - health_started
         if not problem_only:
-            # A live connection must still disclose an expired runner record. Then the
-            # normal update controls return through the existing contentless change signal.
+            # Notice priority must not hide an eligible update or reset an owner decision.
+            # Reuse the mounted shell and real update routes, without another host.
             recovery = "Installation is unconfirmed. Work remains paused. Chief review is required."
             deployment.update(state="unknown", detail=recovery, installation_confirmed=False)
             signal()
             expect(card.locator(".deployment-detail")).to_have_text(recovery)
             expect(card.locator(".deployment-detail")).to_have_count(1)
             expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_be_visible()
+            expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
+            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
             page.screenshot(path=str(evidence / "installation-unconfirmed.png"))
+            # Unknown notices do not weaken release eligibility.
+            for unavailable in (None, replace(offered, expires_at="2000-01-01T00:00:00Z")):
+                backend.provider.offered = unavailable
+                backend.service.refresh_available(force=True)
+                signal()
+                expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
+                expect(card.get_by_role("button", name="Update when idle", exact=True)).to_have_count(0)
+                expect(card.locator(".deployment-detail")).to_have_text(recovery)
+            backend.provider.offered = offered
+            backend.service.refresh_available(force=True)
+            backend.service.provider = None
+            signal()
+            expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
+            backend.service.provider = backend.provider
+            signal()
+            before_notice_posts = len(posts)
+            card.get_by_role("button", name="Start update", exact=True).click()
+            expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+            for state in ("preparing", "restarting"):
+                deployment.update(state=state, valid_until="2000-01-01T00:00:00Z")
+                signal()
+                expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_be_visible()
+                expect(card.locator(".deployment-detail")).to_be_visible()
+                expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+            assert len(posts) == before_notice_posts
+            page.screenshot(path=str(evidence / "expired-notice-with-confirmation.png"))
+            deployment.update(state="unknown")
             installed = "The requested app is installed and available. Its final report is unconfirmed. No action is needed from you."
             deployment.update(installation_confirmed=True, detail=installed,
                               unknown_display_until="2099-01-01T00:00:00Z")
             signal()
             expect(card.locator(".deployment-detail")).to_have_text(installed)
             expect(card.locator(".deployment-detail")).to_have_count(1)
+            expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+            card.get_by_role("button", name="Go back", exact=True).click()
+            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
             page.screenshot(path=str(evidence / "installed-report-unconfirmed.png"))
             deployment.update(unknown_display_until="2020-01-01T00:00:00Z")
             signal()

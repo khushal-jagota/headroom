@@ -62,6 +62,8 @@ def _enable_child_reaping() -> None:
 
 def _foreign_child_is_unsignalable(pid: int, identity: str) -> bool:
     """Only a stable, proved foreign-UID child can remain under runner ownership."""
+    if sys.platform != "linux":
+        raise RuntimeError("Deployment descendant ownership requires Linux pidfds.")
     try:
         status = Path(f"/proc/{pid}/status").read_text()
         uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
@@ -156,6 +158,8 @@ def _reap_exited_adopted_children(excluded: set[int]) -> None:
 
 
 def _signal_adopted_child(pid: int, identity: str, signum: signal.Signals) -> None:
+    if sys.platform != "linux":
+        raise RuntimeError("Deployment descendant signals require Linux pidfds.")
     try:
         descriptor = os.pidfd_open(pid)
     except ProcessLookupError:

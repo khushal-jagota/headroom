@@ -13,6 +13,7 @@ from planner.core.config import HOST, load_config
 from planner.core.db import connect
 from planner.core.server import create_app
 from planner.core.sse import close_open_change_streams
+from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.previews import config as preview_limits
 from planner.server_lifecycle.supervisor import resolve_planner_launch_root
 
@@ -49,7 +50,8 @@ def run_application_process() -> None:
             app,
             fd=int(listener_fd),
             ws="websockets",
-            ws_max_size=preview_limits.WEBSOCKET_MESSAGE_BYTES,
+            ws_per_message_deflate=False,
+            ws_max_size=max(MAX_ENVELOPE_BYTES, preview_limits.WEBSOCKET_MESSAGE_BYTES),
             ws_max_queue=preview_limits.WEBSOCKET_QUEUE_DEPTH,
             ws_ping_interval=preview_limits.WEBSOCKET_PING_SECONDS,
             ws_ping_timeout=preview_limits.WEBSOCKET_PONG_SECONDS,
@@ -60,7 +62,8 @@ def run_application_process() -> None:
             host=HOST,
             port=config.port,
             ws="websockets",
-            ws_max_size=preview_limits.WEBSOCKET_MESSAGE_BYTES,
+            ws_per_message_deflate=False,
+            ws_max_size=max(MAX_ENVELOPE_BYTES, preview_limits.WEBSOCKET_MESSAGE_BYTES),
             ws_max_queue=preview_limits.WEBSOCKET_QUEUE_DEPTH,
             ws_ping_interval=preview_limits.WEBSOCKET_PING_SECONDS,
             ws_ping_timeout=preview_limits.WEBSOCKET_PONG_SECONDS,

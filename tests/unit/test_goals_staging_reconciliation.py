@@ -69,7 +69,10 @@ def _seed_staging(conn: sqlite3.Connection) -> tuple[str, ...]:
 
 
 @pytest.mark.parametrize(
-    "previous_head", [None, "ticket_application_previews", "scalar_observation_coverage"]
+    "previous_head", [
+        None, "ticket_application_previews", "scalar_observation_coverage",
+        "goals_staging_reconciliation",
+    ]
 )
 def test_combined_schema_preserves_fresh_and_each_accepted_branch(
     tmp_path: Path,
@@ -84,9 +87,9 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
         conn.execute("""INSERT INTO projects(id,name,created_at,updated_at)
             VALUES('retained-project','Retained project',1,1)""")
         tables: tuple[str, ...] = ("projects",)
-        if previous_head == "scalar_observation_coverage":
+        if previous_head in {"scalar_observation_coverage", "goals_staging_reconciliation"}:
             tables += _seed_goals(conn)
-        elif previous_head == "ticket_application_previews":
+        if previous_head in {"ticket_application_previews", "goals_staging_reconciliation"}:
             tables += _seed_staging(conn)
         before = {
             table: [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
@@ -97,7 +100,7 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
         db.create_schema(conn)
         assert {
             str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")
-        } == {"goals_staging_reconciliation"}
+        } == {"executor_default_workspace"}
         assert {
             "goals",
             "measure_sources",

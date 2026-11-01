@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -217,6 +218,7 @@ def test_standard_npm_lifecycle_paths_are_admitted(
     )
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Linux dependency storage check needs /proc")
 def test_real_scanner_blocks_shared_dependencies_before_npm_exec(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -290,3 +292,27 @@ def test_setup_pip_cannot_inherit_install_destination_redirects(
         assert environment["PIP_CONFIG_FILE"] == os.devnull
         assert environment["PIP_INDEX_URL"] == "https://registry.example/simple"
         assert not {"PIP_TARGET", "PIP_PREFIX", "PIP_ROOT", "PIP_USER"} & environment.keys()
+
+
+def test_npm_distribution_prefix_is_admitted_only_on_macos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = _tree(tmp_path / "checkout")
+    installation = tmp_path / "node"
+    executable = installation / "lib/node_modules/npm/bin/npm-cli.js"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    builtin = executable.parent.parent / "npmrc"
+    monkeypatch.setattr(shutil, "which", lambda *args, **kwargs: str(executable))
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(launcher, "check_paths", lambda *args, **kwargs: None)
+    monkeypatch.setattr(launcher, "check_tree", lambda *args, **kwargs: None)
+    original_exists = Path.exists
+    monkeypatch.setattr(
+        Path, "exists", lambda path: path.is_relative_to(tmp_path) and original_exists(path)
+    )
+    builtin.write_text("prefix=/tool-managed/global\n")
+    launcher.node_environment(tree, tree / "web", {})
+    (tree / "web/.npmrc").write_text("prefix=/other\n")
+    with pytest.raises(SafetyRefusal, match="Unsupported config key"):
+        launcher.node_environment(tree, tree / "web", {})

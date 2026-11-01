@@ -27,7 +27,7 @@ export interface ValidWorkspaceTicket {
   id: string;
   title: string;
   worker_type: string;
-  locale: string;
+  locale: "vps" | "macos";
   employee_backend: string;
   employee_launch_model: string | null;
   employee_launch_reasoning_effort: string | null;

@@ -1,8 +1,11 @@
 <script lang="ts">
-  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import MachineActivityMark from "./machines/MachineActivityMark.svelte";
+  import MachineIdentity from "./machines/MachineIdentity.svelte";
+  import type { TicketLocale } from "../lib/ticketMachines";
   import type { ConversationSignal } from "../lib/conversationSignal";
 
   let {
+    locale, machine = true,
     title,
     signal = undefined,
     conversationId = null,
@@ -13,6 +16,8 @@
     class: extraClass = "",
     ...rest
   }: {
+    locale?: TicketLocale;
+    machine?: boolean;
     title: string;
     signal?: Partial<ConversationSignal>;
     conversationId?: string | null;
@@ -26,8 +31,9 @@
 </script>
 
 {#snippet content()}
+  {#if locale && machine}<MachineIdentity {locale} />{/if}
   <span class="ticket-row-title">{title}</span>
-  <ConversationSignalMark {signal} {conversationId} />
+  <MachineActivityMark {locale} {signal} {conversationId} completed={quiet} />
 
 {/snippet}
 

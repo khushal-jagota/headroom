@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 from collections.abc import Callable
@@ -13,6 +14,7 @@ from uuid import uuid4
 
 from planner.conversation.contracts import ConversationSystem
 from planner.core import change_signal
+from planner.core.errors import PlannerError
 from planner.environments.deployment_lifecycle import _atomic_write
 from planner.environments.update_configuration import UPDATE_AVAILABILITY_REFRESH_SECONDS
 from planner.environments.update_contracts import (
@@ -25,6 +27,10 @@ from planner.environments.update_contracts import (
     UpdateStatus,
 )
 from planner.environments.update_requests import UpdateConflict, parse_release
+from planner.managed_skills import skill_names
+from planner.tickets.data import audit_ticket_registry_integrity
+from planner.worker_types.configuration import build_worker_runtime_definitions
+from planner.worker_types.store import read_definitions
 
 
 class UpdateService:
@@ -33,12 +39,15 @@ class UpdateService:
         provider: UpdateProvider | None,
         store: UpdateRequestStore,
         conversation: Callable[[], ConversationSystem | None],
+        *,
+        connection_factory: Callable[[], sqlite3.Connection],
         current_app_sha: str | None = None,
         availability_path: Path | None = None,
         can_refresh: Callable[[], bool] = lambda: True,
         now: Callable[[], float] = time.time,
     ) -> None:
         self.provider, self.store, self.conversation = provider, store, conversation
+        self._connection_factory = connection_factory
         self.current_app_sha = current_app_sha
         self._availability_path = availability_path
         self._can_refresh, self._now = can_refresh, now
@@ -185,7 +194,39 @@ class UpdateService:
 
         def claim() -> None:
             nonlocal claimed
-            claimed = self.store.transition(request_id, frozenset({"dispatched"}), "applying")
+            try:
+                connection = self._connection_factory()
+                try:
+                    # Audit the stored definition and Tickets in one writer-locked snapshot.
+                    # Never publish a temporary registry into the running application.
+                    connection.execute("BEGIN IMMEDIATE")
+                    definitions = build_worker_runtime_definitions(
+                        worker_type_definitions=read_definitions(connection),
+                        known_skills=skill_names(connection),
+                    )
+                    audit_ticket_registry_integrity(
+                        connection, worker_type_registry=definitions.worker_type_registry
+                    )
+                    claimed = self.store.transition(
+                        request_id, frozenset({"dispatched"}), "applying"
+                    )
+                finally:
+                    try:
+                        if connection.in_transaction:
+                            connection.rollback()
+                    finally:
+                        connection.close()
+            except UpdateConflict:
+                raise
+            except (PlannerError, RuntimeError, ValueError, sqlite3.Error) as exc:
+                detail = (
+                    "Ticket integrity check refused the update before service shutdown. "
+                    f"Resolve the saved Ticket or Worker type error before retry: {exc}"
+                )
+                self.store.transition(
+                    request_id, frozenset({"dispatched"}), "failed", detail=detail
+                )
+                raise UpdateConflict(detail) from exc
 
         admitted = await system.run_with_workspace_admission(
             claim, require_idle=request.mode == "idle" or not request.confirm_activity

@@ -317,7 +317,7 @@ def test_gate_refuses_changed_proof_before_service_or_backup(
     if change != "first-copy":
         _app(current / "app", SHA_B if change == "same-base" else SHA_A, "old")
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
-    (current / "data").mkdir(parents=True)
+    (current / "data").mkdir(parents=True, mode=0o700)
     database = current / "data" / "planning.db"
     database.write_text("db")
     if change == "first-copy":

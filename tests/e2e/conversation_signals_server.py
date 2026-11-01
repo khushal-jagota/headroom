@@ -13,16 +13,19 @@ from unittest.mock import patch
 
 import uvicorn
 from fastapi import FastAPI
-from tests.support.model_catalogue import seed_test_model_catalogue
 
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPromptAccepted,
+    BackendPromptRejected,
     BackendSteerAccepted,
     BackendUserInputRequest,
+    TurnEnded,
     TurnToken,
+    UserInputRequested,
 )
 from planner.conversation.contracts import (
+    AnswerFate,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
@@ -52,6 +55,7 @@ class ScriptedChild:
         self.token: TurnToken | None = None
         self.answers: dict[str, tuple[UserInputAnswer, ...]] = {}
         self.delivered_text: list[str] = []
+        self.reject_next_prompt = False
 
     async def start(self, *args: Any, **kwargs: Any) -> None:
         pass
@@ -59,6 +63,9 @@ class ScriptedChild:
     async def write_prompt(
         self, turn_token: TurnToken, content: MessageContent, *args: Any, **kwargs: Any,
     ) -> BackendPromptAccepted:
+        if self.reject_next_prompt:
+            self.reject_next_prompt = False
+            raise BackendPromptRejected("Synthetic provider refused this prompt.")
         self.token = turn_token
         self.delivered_text.append("\n".join(
             piece.text for piece in content if isinstance(piece, MessageText)
@@ -71,48 +78,76 @@ class ScriptedChild:
     async def cancel_running_turn(self) -> None:
         self.token = None
 
-    async def answer_permission_ask(self, *args: Any, **kwargs: Any) -> None:
+    async def answer_permission_ask(self, *args: Any, **kwargs: Any) -> AnswerFate:
         pass
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...],
-    ) -> None:
+        self, request_id: str, answers: tuple[UserInputAnswer, ...], **kwargs: object
+    ) -> AnswerFate:
         self.answers[request_id] = answers
+        return AnswerFate.applied
 
     async def request_questions(self) -> None:
         assert self.token is not None
-        await self.sink.user_input_requested(self.token, BackendUserInputRequest(
-            request_id="input-1",
-            questions=(
-                UserInputQuestion(
-                    question_id="scope", header="Scope",
-                    question="Which surfaces should change?",
-                    options=(
-                        UserInputOption(label="Composer", description="The live composer"),
-                        UserInputOption(label="Transcript", description="Durable history"),
+        await self.sink.report(
+            self.token,
+            UserInputRequested(
+                request=BackendUserInputRequest(
+                    request_id="input-1",
+                    questions=(
+                        UserInputQuestion(
+                            question_id="scope",
+                            header="Scope",
+                            question="Which surfaces should change?",
+                            options=(
+                                UserInputOption(label="Composer", description="The live composer"),
+                                UserInputOption(label="Transcript", description="Durable history"),
+                            ),
+                            multi_select=True,
+                            allow_other=True,
+                        ),
+                        UserInputQuestion(
+                            question_id="proof",
+                            header="Proof",
+                            question="What proof should be required?",
+                            options=(
+                                UserInputOption(
+                                    label="Browser test",
+                                    description="Exercise the full flow",
+                                ),
+                            ),
+                            multi_select=False,
+                            allow_other=True,
+                        ),
                     ),
-                    multi_select=True, allow_other=True,
-                ),
-                UserInputQuestion(
-                    question_id="proof", header="Proof",
-                    question="What proof should be required?",
-                    options=(UserInputOption(
-                        label="Browser test", description="Exercise the full flow",
-                    ),),
-                    multi_select=False, allow_other=True,
-                ),
+                )
             ),
-        ))
+        )
         await asyncio.sleep(0)
+
+    @property
+    def stop_outside_lock(self) -> bool:
+        return False
+
+    async def withdraw_delivery(self) -> bool:
+        return True
+
+    async def detach(self) -> None:
+        await self.stop()
 
     async def stop(self) -> None:
         self.token = None
 
     async def finish(self) -> None:
         assert self.token is not None
-        await self.sink.turn_ended(
-            self.token, ending=ConversationTurnEnding.completed,
-            error_summary=None, standard_error_tail=None,
+        await self.sink.report(
+            self.token,
+            TurnEnded(
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            ),
         )
         self.token = None
         # The sink queues backend news. Yield so normal core processing can run.
@@ -133,7 +168,7 @@ def build_app(config: Config) -> FastAPI:
     assert config.test_mode
     with closing(connect(config.db_path)) as conn:
         create_schema(conn)
-        seed_test_model_catalogue(conn)
+
     children: dict[str, ScriptedChild] = {}
     delivered_text: dict[str, list[str]] = {}
 
@@ -167,6 +202,9 @@ def build_app(config: Config) -> FastAPI:
         ),
     )
     install_connected_controls(app, config.db_path)
+    from tests.e2e.ticket_model_controls import install_ticket_model_controls
+
+    install_ticket_model_controls(app)
 
     @app.post("/api/test/signals/{conversation_id}/start")
     async def start(
@@ -243,6 +281,11 @@ def build_app(config: Config) -> FastAPI:
             request_id: {answer.question_id: {"answers": list(answer.answers)} for answer in values}
             for request_id, values in children[conversation_id].answers.items()
         }
+
+    @app.post("/api/test/signals/{conversation_id}/reject-next-prompt")
+    async def reject_next_prompt(conversation_id: str) -> dict[str, bool]:
+        children[conversation_id].reject_next_prompt = True
+        return {"ok": True}
 
     @app.get("/api/test/signals/{conversation_id}/delivered")
     async def delivered(conversation_id: str) -> dict[str, list[str]]:

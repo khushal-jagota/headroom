@@ -5,8 +5,29 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import assert_never
 
-from planner.conversation.message_content import MessageContent, MessageText
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageText,
+    prefix_message_content_text,
+)
 from planner.core.contracts import Principal, PrincipalKind
+
+_AUTHENTICATED_REPLY_HEADER = "[Authenticated Panels reply requirement]\n"
+
+
+def with_runtime_prompt_context(content: MessageContent, context: str) -> MessageContent:
+    """Add host instructions while preserving the leading authenticated directive.
+
+    That directive is a separate first text piece on the composed wire. The test
+    only determines where to insert context; it grants no sender authority.
+    """
+    if (
+        content
+        and isinstance(content[0], MessageText)
+        and content[0].text.startswith(_AUTHENTICATED_REPLY_HEADER)
+    ):
+        return (content[0], *prefix_message_content_text(content[1:], context, "\n\n"))
+    return prefix_message_content_text(content, context, "\n\n")
 
 
 def send_message_target(principal: Principal) -> str:
@@ -38,8 +59,8 @@ def with_authenticated_reply_directive(
         for sender in distinct_senders
     )
     directive = (
-        "[Authenticated Panels reply requirement]\n"
-        "When this requirement exists, it starts the entire prompt with nothing before it, "
+        _AUTHENTICATED_REPLY_HEADER
+        + "When this requirement exists, it starts the entire prompt with nothing before it, "
         "and every sender-authored byte follows its authenticated sender label.\n"
         "Before you complete this turn, send one explicit reply to each addressed sender.\n"
         "Use each exact target once:\n"

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from tests.unit.test_conversation_api import _FakeBackend, _FakeBackendChild
 from tests.unit.test_sprint_item_supervisors import _app
 
-from planner.conversation.backends.contracts import BackendEventSink, BackendSpawnFailed
+from planner.conversation.backends.contracts import BackendEventSink, BackendSpawnFailed, TurnEnded
 from planner.conversation.contracts import (
     ConversationBackendKey,
     PromptDeliveryMode,
@@ -98,7 +98,7 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
         # The configured alias and its concrete catalogue resolution are distinct.
         assert (record.backend_key, record.model, record.reasoning_effort) == (
             defaults.employee_backend,
-            "gpt-5.6-sol",
+            "sol",
             defaults.employee_launch_reasoning_effort,
         )
         identity = dict(record.identity_environment_variables)
@@ -114,11 +114,13 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
 
         async def complete_turn() -> None:
             assert backend.sink is not None and backend.live_turn_token is not None
-            await backend.sink.turn_ended(
+            await backend.sink.report(
                 backend.live_turn_token,
-                ending=ConversationTurnEnding.completed,
-                error_summary=None,
-                standard_error_tail=None,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
             )
 
         client.portal.call(complete_turn)

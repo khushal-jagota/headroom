@@ -21,6 +21,8 @@ export type ComposerDraft = Readonly<{
   pendingVideos?: readonly PendingVideo[];
   pickedModel: string | null;
   pickedReasoningEffort: string | null;
+  pickedBackend?: RunValues["backendKey"];
+  effortIsSet?: boolean;
   compositionRevision: number;
 }>;
 
@@ -47,6 +49,8 @@ function snapshotDraft(draft: ComposerDraft): ComposerDraft {
     pendingVideos: [...(draft.pendingVideos ?? [])],
     pickedModel: draft.pickedModel,
     pickedReasoningEffort: draft.pickedReasoningEffort,
+    ...(draft.pickedBackend === undefined ? {} : {pickedBackend: draft.pickedBackend}),
+    effortIsSet: draft.effortIsSet,
     compositionRevision: draft.compositionRevision
   };
 }
@@ -89,6 +93,8 @@ function draftEquals(one: ComposerDraft, other: ComposerDraft): boolean {
     && (one.pendingVideos ?? []).every((video, index) => video === other.pendingVideos?.[index])
     && one.pickedModel === other.pickedModel
     && one.pickedReasoningEffort === other.pickedReasoningEffort
+    && one.pickedBackend === other.pickedBackend
+    && one.effortIsSet === other.effortIsSet
   );
 }
 
@@ -121,6 +127,7 @@ export function beginComposerSend(
     pendingFiles: [],
     pendingVideos: [],
     pickedModel: null,
+    ...(draftBeforeSend.pickedBackend === undefined ? {} : {pickedBackend: null}),
     pickedReasoningEffort: null,
     compositionRevision: draftBeforeSend.compositionRevision
   };
@@ -166,6 +173,8 @@ export function restoreRefusedComposerSend(
       pendingVideos: attempt.draftBeforeSend.pendingVideos ?? [],
       pickedModel: attempt.draftBeforeSend.pickedModel,
       pickedReasoningEffort: attempt.draftBeforeSend.pickedReasoningEffort,
+      ...(attempt.draftBeforeSend.pickedBackend === undefined ? {} : {pickedBackend: attempt.draftBeforeSend.pickedBackend}),
+      effortIsSet: attempt.draftBeforeSend.effortIsSet,
       compositionRevision: attempt.draftAfterSend.compositionRevision
     },
     nextImageId: restoredImages.nextId,

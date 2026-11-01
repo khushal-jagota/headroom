@@ -257,6 +257,7 @@ async def _send_to_manager(
         ),
         model=body.model,
         reasoning_effort=body.reasoning_effort,
+        reasoning_effort_is_set="reasoning_effort" in body.model_fields_set,
     )
     current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
     if (

@@ -35,6 +35,7 @@ from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
+    WorkspacePathPolicy,
 )
 from planner.core.contracts import ErrorCode, PlannerError
 
@@ -86,6 +87,7 @@ class ConversationStartOverrides:
     backend_key: ConversationBackendKey | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+    reasoning_effort_is_set: bool = False
 
 
 NO_CONVERSATION_START_OVERRIDES: Final = ConversationStartOverrides()
@@ -105,6 +107,7 @@ class ConversationStartValues:
     role_materials: ConversationRoleMaterials
     workspace_folder: Path
     access: ConversationAccess
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
 
 
 def worker_conversation_role_materials(ticket_id: str) -> ConversationRoleMaterials:
@@ -181,7 +184,7 @@ def _with_overrides(
         model=base.model if overrides.model is None else overrides.model,
         reasoning_effort=(
             base.reasoning_effort
-            if overrides.reasoning_effort is None
+            if overrides.reasoning_effort is None and not overrides.reasoning_effort_is_set
             else overrides.reasoning_effort
         ),
     )
@@ -194,6 +197,7 @@ def resolve_worker_conversation_start(
     ticket_last_chosen: ConversationStartConfiguration | None,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     workspace_folder: Path,
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative,
 ) -> ConversationStartValues:
     """Resolve what a Ticket's worker conversation starts on.
 
@@ -212,6 +216,7 @@ def resolve_worker_conversation_start(
         reasoning_effort=resolved.reasoning_effort,
         role_materials=worker_conversation_role_materials(ticket_id),
         workspace_folder=workspace_folder,
+        workspace_path_policy=workspace_path_policy,
         access=FLOOR_DEFAULT_ACCESS,
     )
 

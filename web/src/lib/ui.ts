@@ -7,7 +7,7 @@ export type FieldStageVisualState =
   | "errored"
   | "upcoming"
   | "reply-seen"
-  // A worker waiting on a permission ask only the user can answer: the pure white dot.
+  // A pending ask contributes ranked attention. The white mark denotes an unread reply.
   | "needs-me";
 
 export function stageLabel(value: string): string {

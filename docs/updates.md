@@ -30,6 +30,8 @@ Update actions use the owner principal check. Chief, Managers, and Ticket Worker
 
 The operator supplies `PLAN_UPDATE_REPOSITORY` as `owner/repository` and `PLAN_UPDATE_TOKEN_FILE` as a protected file holding the dispatch credential. Without them, Headroom says owner updates are unavailable. It does not invent a release. The dispatch credential is separate from the runner’s read-only workflow token. Only the manual adoption operation on `main`, without the rehearsal flag, selects the production runner. Pushes run publication on hosted machines.
 
+Before final admission, the running server applies the same strict Ticket integrity check as startup. The check uses stored Worker definitions and Tickets from one database snapshot. If a Ticket fails, the request reports the error and fails before service shutdown. Ordinary work remains available. This check does not prove that every candidate release can start.
+
 The supported schema floor is `video_upload_ledger`. Adoption refuses an unknown ancestry, or a database older than that floor, before it stops the service. The floor is not a promise that every historical database is safe to migrate. Cancelled-Ticket recovery in [Deployment](deployment.md) still applies. New candidates also need the runtime contract in [Archive runtime](archive-runtime.md). A legacy installed app can remain the fallback. A legacy candidate without the contract cannot be installed. It has to be republished.
 
 ## If the runner is lost

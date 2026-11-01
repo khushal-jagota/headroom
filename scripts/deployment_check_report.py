@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -42,6 +43,8 @@ def check_pytest(report: Path, selected: list[str]) -> None:
         ):
             raise ValueError(f"selected file collected no tests: {path}")
     executed = 0
+    provider_opt_ins = 0
+    unavailable_macos_proofs = 0
     for case in cases:
         name = case.get("classname", "")
         if case.find("failure") is not None or case.find("error") is not None:
@@ -51,15 +54,28 @@ def check_pytest(report: Path, selected: list[str]) -> None:
             executed += 1
             continue
         reason = skip.get("message", "")
+        if (
+            sys.platform == "linux"
+            and name == "tests.unit.test_skill_guard_macos"
+            and case.get("name")
+            == "test_macos_directory_descriptor_resolves_private_and_protected_paths"
+            and reason == "macOS F_GETPATH descriptor proof"
+        ):
+            # F_GETPATH is Mac-only. This exact Linux skip supplies no executed proof.
+            unavailable_macos_proofs += 1
+            print(f"Mac proof unavailable on Linux: {name}.{case.get('name')}: {reason}")
+            continue
         if not any(
             (name == module or name.startswith(module + ".")) and reason == expected
             for module, expected in PROVIDER_SKIPS.items()
         ):
             raise ValueError(f"unexpected required skip: {name}: {reason}")
+        provider_opt_ins += 1
         print(f"Provider opt-in excluded from default coverage: {name}: {reason}")
     if not executed:
         raise ValueError("selected pytest suite supplied no default coverage")
-    print(f"Required pytest proof: {executed} executed, {len(cases) - executed} provider opt-ins")
+    print(f"Required pytest proof: {executed} executed, {provider_opt_ins} provider opt-ins, "
+          f"{unavailable_macos_proofs} unavailable Mac proofs")
 
 
 def check_vitest(report: Path, selected: list[str]) -> None:

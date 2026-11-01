@@ -24,7 +24,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.server import BOOT_BUDGET_S, REPO_ROOT
 from tests.support.server_fixtures import _free_port, _scrubbed_env
 
@@ -86,7 +85,7 @@ def _environment(root: Path, port: int, control_socket: Path) -> dict[str, str]:
     database = root / "planning.db"
     with closing(connect(str(database))) as connection:
         create_schema(connection)
-        seed_test_model_catalogue(connection)
+
     config = root / "config.yaml"
     config.write_text("{}\n")
     # env -i also removes all variables inherited from the user systemd manager.

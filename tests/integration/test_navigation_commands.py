@@ -252,9 +252,9 @@ def test_real_application_command_families_and_store_writes(
             ),
             commits=False,
         )
-        accepted(
-            client.post(f"/api/tickets/{ticket['id']}/move", json={"locale": "vps"}), commits=False
-        )
+        assert client.post(
+            f"/api/tickets/{ticket['id']}/move", json={"locale": "vps"}
+        ).status_code == 404
         accepted(client.delete(f"/api/tickets/{ticket['id']}"))
         # Real conversation routes use the runtime's actual store, not the injected
         # worker facade. Creation and owner-read use shielded thread writes.

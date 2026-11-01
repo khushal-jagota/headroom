@@ -132,6 +132,7 @@ export type TranscriptRow =
       state: PermissionAskState;
       deadReason: PermissionAskDeadReason | null;
       answeredOptionLabel: string | null;
+      answerFate?: "saved" | "applied" | "unconfirmed";
     }
   | {
       key: string;
@@ -144,6 +145,7 @@ export type TranscriptRow =
       deadReason: PermissionAskDeadReason | null;
       answers: UserInputAnswers | null;
       failureDetail: string | null;
+      answerFate?: "saved" | "applied" | "unconfirmed";
     }
   | {
       key: string;
@@ -188,6 +190,7 @@ export type TranscriptRow =
 const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   no_such_conversation: "there is no such conversation to send to",
   model_resolution_failed: "the selected model could not be resolved",
+  backend_rejected_prompt: "the provider rejected this prompt",
   backend_did_not_start: "the backend would not start",
   session_did_not_load: "the backend's session would not load",
   write_to_backend_failed: "the write to the backend did not succeed",
@@ -325,7 +328,7 @@ export function transcriptRows(
           senderLabel: event.payload.sender_label,
           senderMessageId: event.payload.sender_message_id ?? null,
           mode: event.payload.mode,
-          sentAtUnixMilliseconds: sentAtUnixMilliseconds(event.payload, createdAt)
+          sentAtUnixMilliseconds: sentAtUnixMilliseconds(event.payload, createdAt),
         });
         break;
       case "prompt_delivery_refused":
@@ -338,7 +341,7 @@ export function transcriptRows(
           senderLabel: event.payload.sender_label,
           senderMessageId: event.payload.sender_message_id ?? null,
           reason: event.payload.refusal_reason,
-          sentence: refusalSentence(event.payload.refusal_reason, event.payload.refusal_detail)
+          sentence: refusalSentence(event.payload.refusal_reason, event.payload.refusal_detail),
         });
         break;
       case "prompt_delivery_uncertain":

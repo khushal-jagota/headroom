@@ -7,48 +7,44 @@ and browser for one connected case. No models or additional server fixtures are 
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, expect
 from test_containment.admission import requested_containment
-from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
-from tests.support.server_fixtures import rail_server  # noqa: F401
+from tests.e2e.harness import WAIT_MS, ServerHandle
 
 from planner.core.db import connect
 
 
 def test_broken_ticket_diagnostic_and_healthy_navigation(
-    rail_server: ServerHandle,  # noqa: F811
+    server_factory: Callable[..., ServerHandle],
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    api: ApiHelper,
     tmp_path: Path,
 ) -> None:
-    server = rail_server
-    manager = api.direct_post(
-        server, "/api/items", {"title": "Ticket isolation proof", "project_id": "project_panels"}
-    )
-    tickets = [
-        api.direct_post(
-            server,
-            "/api/tickets",
-            {
-                "title": title,
-                "worker_type": "coding",
-                "orchestrator": {"kind": "sprint_item", "id": manager["id"]},
-            },
-        )
-        for title in ("Broken Ticket example", "Healthy Ticket example")
-    ]
-    broken, healthy = (str(ticket["id"]) for ticket in tickets)
-    with closing(connect(str(server.db_path))) as conn:
-        conn.execute("UPDATE tickets SET worker_type='removed_worker' WHERE id=?", (broken,))
+    def seed(database: Path) -> None:
+        with closing(connect(str(database))) as conn:
+            conn.executemany(
+                "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
+                "field_values,created_at,updated_at) VALUES (?,?,'coding','codex',"
+                "'needs_brief','needs_brief','{}',1,1)",
+                (("broken", "Broken Ticket example"), ("healthy", "Healthy Ticket example")),
+            )
+            # Plant an old invalid row without asking the ordinary commit projector
+            # to interpret it before the server's startup audit can mark it.
+            conn.execute("BEGIN")
+            conn.execute("UPDATE tickets SET worker_type='removed_worker' WHERE id='broken'")
+            sqlite3.Connection.commit(conn)
+
+    server = server_factory(seed_db=seed)
+    broken, healthy = "broken", "healthy"
     page = open_page(
         context_factory(),
         server,
-        f"#/workspace/item/{manager['id']}/{broken}",
+        f"#/workspace/{broken}",
         "[data-broken-ticket]",
     )
     page.set_viewport_size({"width": 1100, "height": 900})
@@ -61,7 +57,7 @@ def test_broken_ticket_diagnostic_and_healthy_navigation(
     page.screenshot(path=str(reports / "broken-ticket-desktop.png"), full_page=True)
     page.set_viewport_size({"width": 430, "height": 900})
     page.screenshot(path=str(reports / "broken-ticket-mobile.png"), full_page=True)
-    page.goto(server.base + f"/#/workspace/item/{manager['id']}/{healthy}")
+    page.goto(server.base + f"/#/workspace/{healthy}")
     expect(page.locator('[data-screen="ticket"]')).to_be_visible(timeout=WAIT_MS)
     expect(page.locator("[data-broken-ticket]")).to_have_count(0)
     expect(

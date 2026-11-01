@@ -15,7 +15,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.unit.test_conversation_api import _Harness
 from tests.unit.test_conversation_system import _link_test_ticket_to_conversation
 
@@ -101,7 +100,6 @@ def host(tmp_path: Path) -> Iterator[_Harness]:
     db = tmp_path / "requests.db"
     conn = connect(str(db))
     create_schema(conn)
-    seed_test_model_catalogue(conn)
     conn.close()
     built = build(db)
     yield built
@@ -589,7 +587,6 @@ def test_request_transaction_and_receipt_companions_use_production_signal_admiss
         binding.attach()
         signal.coordinator.admit_runtime()
         conn = signal.connect()
-        seed_test_model_catalogue(conn)
         conn.close()
         try:
             await start(host, busy=True)

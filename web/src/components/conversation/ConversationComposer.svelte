@@ -105,7 +105,13 @@
     ask = null,
     userInput = null,
     askNote = null,
+    userInputNote = null,
+    permissionAvailable = true,
+    userInputAvailable = true,
     current = { model: null, reasoningEffort: null },
+    readError = null,
+    onRetryModelChoices,
+    onPreviewRunSelection,
     models = [],
     backends = $bindable([]),
     effortOptions = [],
@@ -152,8 +158,14 @@
       questions: readonly UserInputQuestion[];
     } | null;
     askNote?: string | null;
+    userInputNote?: string | null;
+    permissionAvailable?: boolean;
+    userInputAvailable?: boolean;
     current?: RunValues;
     /** What this conversation's own backend offers. */
+    readError?: string | null;
+    onRetryModelChoices?: () => Promise<void>;
+    onPreviewRunSelection?: (selection: ComposerRunSelection, backend?: ConversationBackendKey) => void;
     models?: readonly BackendModel[];
     /** Every backend this machine reported, each with its own catalog. What the rail
      *  chooses from before a conversation exists; empty is a caller that has not read
@@ -213,6 +225,15 @@
     pickedBackend: null,
     pickedModel: null,
     pickedReasoningEffort: null
+  });
+  let providerSelections: Partial<Record<ConversationBackendKey, ComposerRunSelection>> = {};
+  let runSelectionDraftKey = untrack(() => draftKey);
+  $effect(() => {
+    const key = draftKey;
+    if (key === untrack(() => runSelectionDraftKey)) return;
+    runSelectionDraftKey = key;
+    providerSelections = {};
+    runSelection = {pickedBackend: null, pickedModel: null, pickedReasoningEffort: null};
   });
   let inputElement = $state<HTMLTextAreaElement | null>(null);
   // Counted rather than flagged: the box stays typeable through a send, so a second
@@ -367,6 +388,7 @@
 
   let runControlsInput = $derived<ComposerRunControlsInput>({
     selection: runSelection,
+    readError,
     backendKey,
     conversationExists,
     running,
@@ -382,6 +404,10 @@
     deliveryMode
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
+  $effect(() => {
+    const selection = runSelection;
+    if (onPreviewRunSelection) untrack(() => onPreviewRunSelection?.(selection));
+  });
   /** A retained page must not reload while this composer owns work or a user decision. */
   let compositionActive = $derived(
     text !== ""
@@ -396,6 +422,7 @@
     || runSelection.pickedBackend !== null
     || runSelection.pickedModel !== null
     || runSelection.pickedReasoningEffort !== null
+    || runSelection.effortIsSet === true
     || deliveryMode !== "steer"
   );
 
@@ -477,6 +504,7 @@
       one.pickedBackend === other.pickedBackend
       && one.pickedModel === other.pickedModel
       && one.pickedReasoningEffort === other.pickedReasoningEffort
+      && one.effortIsSet === other.effortIsSet
     );
   }
 
@@ -498,6 +526,8 @@
       attachmentOrder,
       pickedModel: runSelection.pickedModel,
       pickedReasoningEffort: runSelection.pickedReasoningEffort,
+      pickedBackend: runSelection.pickedBackend,
+      effortIsSet: runSelection.effortIsSet,
       compositionRevision
     };
   }
@@ -512,13 +542,21 @@
     runSelection = {
       ...runSelection,
       pickedModel: draft.pickedModel,
-      pickedReasoningEffort: draft.pickedReasoningEffort
+      pickedBackend: draft.pickedBackend ?? null,
+      pickedReasoningEffort: draft.pickedReasoningEffort,
+      effortIsSet: draft.effortIsSet
     };
     compositionRevision = draft.compositionRevision;
   }
 
   function applyRunSelectionIntent(intent: ComposerRunSelectionIntent): void {
-    const next = applyComposerRunSelectionIntent(runControlsInput, intent);
+    let next = applyComposerRunSelectionIntent(runControlsInput, intent);
+    if (intent.intent === "choose_backend" && !conversationExists) {
+      const previousBackend = runSelection.pickedBackend ?? backendKey;
+      if (previousBackend) providerSelections[previousBackend] = { ...runSelection };
+      next = providerSelections[intent.backendKey] ?? next;
+      next = {...next, pickedBackend: intent.backendKey};
+    }
     const changed = !sameRunSelection(runSelection, next);
     if (changed) {
       runSelection = next;
@@ -572,8 +610,9 @@
   }
 
   const runControlIntents: ComposerRunControlIntents = {
-    chooseBackend: (backendKey) =>
-      applyRunSelectionIntent({ intent: "choose_backend", backendKey }),
+    chooseBackend: (backendKey) => {
+      applyRunSelectionIntent({ intent: "choose_backend", backendKey });
+    },
     chooseModel: (model, reasoningEffort) =>
       applyRunSelectionIntent({ intent: "choose_model", model, reasoningEffort }),
     chooseReasoningEffort: (reasoningEffort) => applyRunSelectionIntent({
@@ -1113,13 +1152,15 @@
         <UserInputQuestionPanel
           request={userInput}
           busy={disabled}
-          note={askNote}
+          answerAvailable={userInputAvailable}
+          note={userInputNote}
           onSubmit={(answers) => onSubmitUserInput?.(answers)}
           onCancelTurn={() => onCancelTurn?.()}
         />
       {:else if takenOver && ask}
         <PermissionAskCard
           ask={ask}
+          answerAvailable={permissionAvailable}
           busy={disabled}
           note={askNote}
           onAnswer={(optionId) => onAnswer?.(optionId)}
@@ -1243,6 +1284,7 @@
         {#if takenOver && ask}
           <PermissionAskActions
             ask={ask}
+            answerAvailable={permissionAvailable}
             busy={disabled}
             onAnswer={(optionId) => onAnswer?.(optionId)}
             onCancelTurn={() => onCancelTurn?.()}
@@ -1426,6 +1468,7 @@
           {#if showRunPicker}
             <ComposerRunControls
               view={runControlsView}
+              onRetry={onRetryModelChoices}
               intents={runControlIntents}
               bind:snapshots={backends}
               beforeSubmit={microphone}

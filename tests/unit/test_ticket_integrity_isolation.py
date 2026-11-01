@@ -44,7 +44,7 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
         conn.execute(f"UPDATE tickets SET {column}=? WHERE id='broken'", (value,))
         sqlite3.Connection.commit(conn)
         assert integrity.issue_for_ticket(conn, "broken") is None
-        faults = data.audit_ticket_registry_integrity(conn)
+        faults = data.audit_ticket_registry_integrity(conn, startup=True)
         assert len(faults) == 1
         stored = conn.execute("SELECT * FROM tickets WHERE id='broken'").fetchone()
         assert stored[column] == value
@@ -63,7 +63,7 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
                 manager_id=None,
             )
         } == {"healthy", "broken"}
-        assert data.audit_ticket_registry_integrity(conn) == []
+        assert data.audit_ticket_registry_integrity(conn, startup=True) == []
         assert (
             conn.execute("SELECT recap FROM tickets WHERE id='broken'").fetchone()[0]
             == stored["recap"]
@@ -87,7 +87,7 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
         asyncio.run(integrity.notify_chief(conn, None, RealClock(), faults))
         asyncio.run(
             integrity.notify_chief(
-                conn, None, RealClock(), data.audit_ticket_registry_integrity(conn)
+                conn, None, RealClock(), data.audit_ticket_registry_integrity(conn, startup=True)
             )
         )
         assert len(sent) == 1
@@ -99,7 +99,7 @@ def test_database_failure_still_stops_the_audit_and_notice_failure_does_not(
 ) -> None:
     with closing(sqlite3.connect(tmp_path / "missing.db")) as conn:
         with pytest.raises(sqlite3.OperationalError):
-            data.audit_ticket_registry_integrity(conn)
+            data.audit_ticket_registry_integrity(conn, startup=True)
     with closing(connect(str(tmp_path / "valid.db"))) as conn:
         create_schema(conn)
         conn.execute("BEGIN")
@@ -108,7 +108,7 @@ def test_database_failure_still_stops_the_audit_and_notice_failure_does_not(
             "VALUES ('broken','Broken Ticket','missing','missing','missing',1,1)"
         )
         sqlite3.Connection.commit(conn)
-        faults = data.audit_ticket_registry_integrity(conn)
+        faults = data.audit_ticket_registry_integrity(conn, startup=True)
 
         async def fail(*args, **kwargs):
             raise RuntimeError("Chief is unavailable")

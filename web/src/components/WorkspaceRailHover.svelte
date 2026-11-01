@@ -1,5 +1,8 @@
 <script lang="ts">
-  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import MachineActivityMark from "./machines/MachineActivityMark.svelte";
+  import MachineIdentity from "./machines/MachineIdentity.svelte";
+  import { macActivityKnown } from "../lib/ticketMachines";
+  import { MACHINE_ACTIVITY_UNKNOWN } from "../lib/machines/config";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -24,7 +27,9 @@
   } = $props();
   const manifests = createQuery(() => queries.workerTypeManifests());
   let currentWorker = $derived(worker);
-  let stageSentence = $derived(currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
+  const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
+  let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
+  let stageSentence = $derived(unknownMac ? MACHINE_ACTIVITY_UNKNOWN : currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
   let recapIdentity = $derived(recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null);
   let pointerVisit = $state<{ target: HTMLElement | null; recapIdentity: string | null } | null>(null);
@@ -105,8 +110,8 @@
     const moved = event.relatedTarget as Node | null;
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
-  <div class="kicker">{kicker}</div>
-  <div class="title"><span>{currentWorker?.title ?? title}</span><ConversationSignalMark signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span>{kicker}</span></div>
+  <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
@@ -119,16 +124,17 @@
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
     </div>
   {/if}
-  {#if worker && stageSentence}<div class="doing">{stageSentence}</div>{/if}
+  {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
   .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(340px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-4); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-2); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
-  .kicker { font-size:12px; color:var(--text-faintest); margin-bottom:5px; }
+  .kicker { display:flex; align-items:center; gap:var(--space-2); font-size:12px; color:var(--text-faintest); margin-bottom:5px; }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
   .title { font-size:var(--type-md); font-weight:600; line-height:1.4; color:var(--text-strong); overflow-wrap:anywhere; }
+  .title-text { flex:1; min-width:0; }
   .recap { margin-top:var(--space-3); padding:var(--space-3); background:var(--surface-recessed); border-radius:var(--radius-md); font-size:12.5px; line-height:1.5; color:var(--text-default); }
   .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
