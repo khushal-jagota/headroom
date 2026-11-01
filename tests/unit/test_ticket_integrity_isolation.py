@@ -5,17 +5,19 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import PromptDeliveryStarted
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.database_modules import attach
 from planner.tickets import data, integrity, views
-from planner.tickets.contracts import TITLE_MAX_CHARS
+from planner.tickets.contracts import TITLE_MAX_CHARS, BrokenTicketProjection
 from planner.tickets.workspace.views import workspace_ticket
 
 
@@ -33,7 +35,7 @@ from planner.tickets.workspace.views import workspace_ticket
 )
 def test_audit_records_one_fault_and_preserves_other_tickets(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     column: str,
     value: str,
 ) -> None:
@@ -66,7 +68,9 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
         assert stored["worker_step_claim"] == "errored"
         assert stored["recap"].startswith(integrity.ERROR_PREFIX)
         assert stored["recap"].endswith("Original recap")
-        assert workspace_ticket(conn, "broken")["integrity_error"]["reason"]
+        workspace = workspace_ticket(conn, "broken")
+        assert "integrity_error" in workspace
+        assert cast(BrokenTicketProjection, workspace)["integrity_error"]["reason"]
         assert data.read_ticket(conn, "healthy").title == "Healthy Ticket"
         assert {
             row["id"]
@@ -92,17 +96,21 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
                 now=2,
                 title_max_chars=TITLE_MAX_CHARS,
             )
-        sent = []
+        sent: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        conversations = InMemoryConversationSystem()
 
-        async def send(*args, **kwargs):
+        async def send(*args: object, **kwargs: object) -> SimpleNamespace:
             sent.append((args, kwargs))
             return SimpleNamespace(fate=PromptDeliveryStarted())
 
         monkeypatch.setattr("planner.message_delivery.service.send_message", send)
-        asyncio.run(integrity.notify_chief(conn, None, RealClock(), faults))
+        asyncio.run(integrity.notify_chief(conn, conversations, RealClock(), faults))
         asyncio.run(
             integrity.notify_chief(
-                conn, None, RealClock(), data.audit_ticket_registry_integrity(conn, startup=True)
+                conn,
+                conversations,
+                RealClock(),
+                data.audit_ticket_registry_integrity(conn, startup=True),
             )
         )
         assert len(sent) == 1
@@ -110,7 +118,7 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
 
 
 def test_database_failure_still_stops_the_audit_and_notice_failure_does_not(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with closing(sqlite3.connect(tmp_path / "missing.db")) as conn:
         with pytest.raises(sqlite3.OperationalError):
@@ -127,11 +135,11 @@ def test_database_failure_still_stops_the_audit_and_notice_failure_does_not(
             raw.commit()
         faults = data.audit_ticket_registry_integrity(conn, startup=True)
 
-        async def fail(*args, **kwargs):
+        async def fail(*args: object, **kwargs: object) -> None:
             raise RuntimeError("Chief is unavailable")
 
         monkeypatch.setattr("planner.message_delivery.service.send_message", fail)
-        asyncio.run(integrity.notify_chief(conn, None, RealClock(), faults))
+        asyncio.run(integrity.notify_chief(conn, InMemoryConversationSystem(), RealClock(), faults))
         assert conn.execute("SELECT worker_step_claim FROM tickets").fetchone()[0] == "errored"
 
 
