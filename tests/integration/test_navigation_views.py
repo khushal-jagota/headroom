@@ -133,9 +133,11 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     _, content = read_content(conn, query, current=True)
     for row in content["records"]:
         if row["kind"] == "ticket" and row["id"] in ("t", "chief-ticket"):
-            assert row["value"]["blocked"] is True
-            assert row["value"]["ticket_status"] == "agent"
-            assert row["value"]["ceiling_holder"] == {"kind": "owner", "id": "owner"}
+            assert "integrity_error" not in row["value"]
+            healthy = row["value"]
+            assert healthy["blocked"] is True
+            assert healthy["ticket_status"] == "agent"
+            assert healthy["ceiling_holder"] == {"kind": "owner", "id": "owner"}
     writer = host.mutation(Turn(), "blocked-working")
     writer.commit()
     memberships()
