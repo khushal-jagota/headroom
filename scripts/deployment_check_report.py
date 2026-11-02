@@ -11,6 +11,8 @@ from xml.etree import ElementTree
 # Only these exact paid-provider module/reason pairs can skip default coverage.
 # Missing local tools and other required skips still fail the gate.
 PROVIDER_SKIPS = {
+    "tests.unit.test_manager_first_model":
+        "set PANELS_REAL_CODEX_TESTS=1 for the isolated real-account Manager smoke",
     "tests.unit.test_conversation_claude_agent_sdk":
         "set PANELS_REAL_CLAUDE_TESTS=1 with claude installed to run this",
     "tests.unit.test_conversation_claude_real_cli":
