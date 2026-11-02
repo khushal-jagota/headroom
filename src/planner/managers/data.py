@@ -96,6 +96,7 @@ def _row_to_manager(row: sqlite3.Row) -> Manager:
                 else None
             ),
         ),
+        launch_configuration_is_explicit=bool(row["launch_configuration_is_explicit"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -139,6 +140,9 @@ def update_launch_defaults(
             ErrorCode.agent_forbidden, "Only the owner or Chief can change Manager defaults"
         )
     with _tx(conn):
+        from planner.managers.launch_settings import validate_launch_configuration
+
+        validate_launch_configuration(conn, configuration)
         conn.execute(
             "UPDATE manager_launch_defaults SET employee_backend=?,employee_launch_model=?,"
             "employee_launch_reasoning_effort=? WHERE singleton=1",
@@ -199,8 +203,9 @@ def update_manager_launch_configuration(
     principal: Principal,
     clock: Clock,
     expected_configuration: ManagerLaunchConfiguration | None = None,
+    explicit_choice: bool = False,
 ) -> Manager:
-    """Save the complete configuration that an accepted Manager message used."""
+    """Save a Manager choice, and distinguish explicit intent from historical metadata."""
     require_above(conn, principal, authority.manager(item_id))
     _load_manager(conn, item_id)
     with _tx(conn):
@@ -211,12 +216,15 @@ def update_manager_launch_configuration(
             return _load_manager(conn, item_id)
         conn.execute(
             "UPDATE managers SET manager_backend=?, manager_model=?, "
-            "manager_reasoning_effort=?, updated_at=? WHERE id=?",
+            "manager_reasoning_effort=?, updated_at=?, "
+            "launch_configuration_is_explicit=CASE WHEN ? THEN 1 "
+            "ELSE launch_configuration_is_explicit END WHERE id=?",
             (
                 configuration.employee_backend.value,
                 configuration.employee_launch_model,
                 configuration.employee_launch_reasoning_effort,
                 clock.now_unix(),
+                int(explicit_choice),
                 item_id,
             ),
         )

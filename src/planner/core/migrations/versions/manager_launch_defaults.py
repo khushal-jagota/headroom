@@ -10,6 +10,10 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute(
+        "ALTER TABLE managers ADD COLUMN launch_configuration_is_explicit "
+        "INTEGER NOT NULL DEFAULT 0 CHECK(launch_configuration_is_explicit IN (0,1))"
+    )
+    op.execute(
         "CREATE TABLE manager_launch_defaults ("
         "singleton INTEGER PRIMARY KEY CHECK(singleton=1), "
         "employee_backend TEXT NOT NULL, employee_launch_model TEXT NOT NULL, "
@@ -19,4 +23,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE manager_launch_defaults")
+    raise NotImplementedError("Panels migrations are forward-only")

@@ -252,12 +252,6 @@ def manager_resolve(
         ),
     )
 
-    from planner.managers.contracts import ManagerLaunchConfiguration
-    from planner.managers.launch_settings import validate_launch_configuration
-
-    validate_launch_configuration(
-        conn, ManagerLaunchConfiguration(values.backend_key, values.model, values.reasoning_effort)
-    )
     return values
 
 
@@ -960,6 +954,18 @@ async def send_to_agent_conversation(
     configuration to start it.
     """
     in_now = read_agent_conversation(conn, agent_key)
+    if required_manager_id is not None and in_now is not None:
+        from planner.managers.launch_settings import manager_reuse_overrides
+
+        runs_under = manager_reuse_overrides(
+            conn,
+            required_manager_id,
+            values,
+            runs_under,
+            steer_current_turn=(
+                mode is PromptDeliveryMode.steer and await system.is_running(in_now)
+            ),
+        )
     if conversation_id is None and in_now is None:
         if values is None:
             raise PlannerError(

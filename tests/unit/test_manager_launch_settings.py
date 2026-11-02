@@ -9,8 +9,17 @@ from sqlite3 import Connection
 
 import pytest
 
-from planner.conversation.contracts import ConversationBackendKey as Backend
+from planner.conversation.contracts import (
+    ConversationBackendKey as Backend,
+)
+from planner.conversation.contracts import (
+    PromptDeliveryInjected,
+    PromptDeliveryMode,
+    PromptDeliveryQueued,
+    PromptDeliveryStarted,
+)
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
@@ -19,6 +28,7 @@ from planner.managers import api, data
 from planner.managers.contracts import ManagerLaunchConfiguration
 from planner.message_delivery.service import send_message
 from planner.runtime import conversation_start
+from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
 
 
 def test_defaults_are_prospective_and_chief_can_save_without_a_turn(tmp_db: Connection) -> None:
@@ -76,6 +86,20 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
             == first.conversation_id
         )
         assert system.observations(first.conversation_id) == before
+        steered = await send_message(
+            system,
+            tmp_db,
+            clock,
+            owner,
+            recipient,
+            "Steer current work",
+            mode=PromptDeliveryMode.steer,
+        )
+        assert isinstance(steered.fate, PromptDeliveryInjected)
+        assert system.backend_prompt_writes(first.conversation_id)[-1].text.endswith(
+            "Steer current work"
+        )
+        assert system.backend_model(first.conversation_id) == "gpt-6.1-sol"
         other_backend = {**saved, "employee_backend": "claude"}
         with pytest.raises(PlannerError, match="cannot change backend"):
             await api.put_manager_launch_configuration(item.id, other_backend, tmp_db, owner, clock)
@@ -87,6 +111,60 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
         system.complete_running_turn(first.conversation_id)
         assert system.backend_model(first.conversation_id) == "exact-custom-model"
         assert system.backend_reasoning_effort(first.conversation_id) is None
+        # An owner can choose another model while this turn remains active. Its
+        # accepted queued intent must outlive that one held prompt.
+        queued = await send_message(
+            system,
+            tmp_db,
+            clock,
+            owner,
+            recipient,
+            "Picker change",
+            runs_under=ConversationStartOverrides(model="second-custom-model"),
+        )
+        assert isinstance(queued.fate, PromptDeliveryQueued)
+        latest = data.read_manager(tmp_db, item.id).item
+        assert latest.launch_configuration_is_explicit
+        assert latest.manager_launch_configuration.employee_launch_model == "second-custom-model"
+        assert system.backend_model(first.conversation_id) == "exact-custom-model"
+        system.complete_running_turn(first.conversation_id)
+        assert system.backend_model(first.conversation_id) == "second-custom-model"
+        system.complete_running_turn(first.conversation_id)
+        # Wakes and review notices use this same helper, with no caller overrides.
+        notice = await conversation_start.send_to_agent_conversation(
+            system,
+            tmp_db,
+            latest.manager_agent_key,
+            text_message_content("Next wake"),
+            conversation_start.manager_resolve(tmp_db, latest),
+            conversation_id=first.conversation_id,
+            sender_label="Panels",
+            reply_requested=False,
+            required_manager_id=item.id,
+        )
+        assert notice.conversation_id == first.conversation_id
+        assert system.backend_model(first.conversation_id) == "second-custom-model"
+        system.complete_running_turn(first.conversation_id)
+        await api.put_manager_launch_configuration(
+            item.id,
+            {**saved, "employee_launch_model": "idle-steer-model"},
+            tmp_db,
+            RequestContext(CHIEF_PRINCIPAL),
+            clock,
+        )
+        idle_steer = await send_message(
+            system,
+            tmp_db,
+            clock,
+            owner,
+            recipient,
+            "Steer while idle",
+            mode=PromptDeliveryMode.steer,
+        )
+        assert isinstance(idle_steer.fate, PromptDeliveryStarted)
+        assert system.backend_model(first.conversation_id) == "idle-steer-model"
+        system.complete_running_turn(first.conversation_id)
+        latest = data.read_manager(tmp_db, item.id).item
 
     asyncio.run(exercise())
 

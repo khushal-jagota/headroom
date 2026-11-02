@@ -36,6 +36,8 @@ class Manager:  # §3.2
     created_at: int = 0
     updated_at: int = 0
 
+    launch_configuration_is_explicit: bool = field(default=False, kw_only=True)
+
     stored_agent_key: str | None = field(default=None, kw_only=True, repr=False)
 
     @property

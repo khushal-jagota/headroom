@@ -352,6 +352,11 @@ class CodexAppServerBackendChild:
         message_files: ConversationMessageFiles,
         remembered_login_rejection: CodexLoginRejectionMemory,
     ) -> None:
+        if resolved_start.model == "sol":
+            raise BackendSpawnFailed(
+                'The legacy Codex model "sol" cannot run. Choose an explicit Codex model '
+                "in the model settings before you retry."
+            )
         self._launch = launch
         self._resolved_start = resolved_start
         self._sink = event_sink

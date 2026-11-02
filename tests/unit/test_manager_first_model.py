@@ -102,9 +102,8 @@ def test_legacy_manager_sol_fails_before_codex_with_repair_action(tmp_path: Path
                 "sender_label": "owner",
             },
         )
-        assert response.status_code == 400, response.text
-        assert "model" in response.text.lower()
-        assert "choose" in response.text.lower()
+        assert response.status_code == 200, response.text
+        assert response.json()["fate"] == "refused"
         assert _turns(transcript) == []
         with connect(str(db_path)) as conn:
             assert (
@@ -114,6 +113,12 @@ def test_legacy_manager_sol_fails_before_codex_with_repair_action(tmp_path: Path
                 ).fetchone()[0]
                 is None
             )
+            refusal = conn.execute(
+                "SELECT payload FROM conversation_events "
+                "WHERE kind='prompt_delivery_refused' ORDER BY sequence DESC LIMIT 1",
+            ).fetchone()
+            assert refusal is not None
+            assert "explicit" in refusal[0].lower()
         saved = client.put(
             f"/api/managers/{manager['id']}/launch-defaults",
             json={

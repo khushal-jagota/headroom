@@ -112,8 +112,8 @@ async def put_manager_launch_configuration(
 ) -> JsonDict:
     require_above(conn, ctx.principal, authority.manager(item_id))
     configuration = parse_launch_configuration(raw)
-    validate_launch_configuration(conn, configuration)
     async with managers_service.manager_lifecycle_lock(item_id):
+        validate_launch_configuration(conn, configuration)
         item = managers_data.read_manager(conn, item_id).item
         current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
         if current is not None and (
@@ -125,7 +125,7 @@ async def put_manager_launch_configuration(
                 "Start a new conversation before you choose another backend.",
             )
         saved = managers_data.update_manager_launch_configuration(
-            conn, item_id, configuration, principal=ctx.principal, clock=clk
+            conn, item_id, configuration, principal=ctx.principal, clock=clk, explicit_choice=True
         )
     return launch_configuration_json(saved.manager_launch_configuration)
 
