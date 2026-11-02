@@ -33,6 +33,8 @@ def test_pytest_report_requires_each_selected_module_and_executed_proof(tmp_path
 def test_pytest_provider_opt_in_cannot_excuse_required_skip(tmp_path: Path) -> None:
     report = tmp_path / "pytest.xml"
     opt_ins = {
+        "tests.unit.test_manager_first_model":
+            "set PANELS_REAL_CODEX_TESTS=1 for the isolated real-account Manager smoke",
         "tests.unit.test_conversation_claude_agent_sdk":
             "set PANELS_REAL_CLAUDE_TESTS=1 with claude installed to run this",
         "tests.unit.test_conversation_claude_real_cli":
@@ -65,6 +67,9 @@ def test_pytest_provider_opt_in_cannot_excuse_required_skip(tmp_path: Path) -> N
 
     # Module and reason must both match. Prefix collisions and missing tools stay fatal.
     for module, reason in (
+        ("tests.unit.test_manager_first_model", "a different skip reason"),
+        ("tests.unit.test_manager_first_model_extra",
+         opt_ins["tests.unit.test_manager_first_model"]),
         ("tests.unit.test_skipped", opt_ins["tests.unit.test_conversation_codex_real_cli"]),
         ("tests.unit.test_conversation_codex_real_cli_extra",
          opt_ins["tests.unit.test_conversation_codex_real_cli"]),
