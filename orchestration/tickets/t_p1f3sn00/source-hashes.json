@@ -1,0 +1,9 @@
+{
+  "revision": "6621efe8efef8fa4274cabb42d9e71eb735189cf",
+  "sha256": {
+    "web/tests/browser/support/state_barriers.py": "f768776f3218d9256be0eb035b5269e448bc8bd35a54189593f4748e0d1e7bad",
+    "web/tests/browser/cases/workspace-utility-pane.py": "ef85b4b509192046bb013af06b6663afc295bc44f22befe61686679775a1af8e",
+    "web/tests/browser/cases/workspace-utility-pane.mjs": "1d8a7caf8b3a1f2ec0401b765212623dc0a0f40058af042fb73fcb958c2c71da",
+    "web/tests/browser/cases/conversation-pane.py": "ebbe79ccfb6600fcb7d7f3c2f35440057f1b9bf4e56e78a49895bec4904c42ee"
+  }
+}

@@ -133,3 +133,24 @@ private struct AccessibleSegmentedPicker: ViewModifier {
 extension View {
     func accessibleSegmentedPicker() -> some View { modifier(AccessibleSegmentedPicker()) }
 }
+
+struct TicketMachineLabel: View {
+    let locale: String?
+    var body: some View {
+        if let name = TicketMachine.name(locale) {
+            Label(name, systemImage: locale == "macos" ? "laptopcomputer" : "server.rack")
+                .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                .accessibilityLabel("Runs on \(name)")
+        }
+    }
+}
+struct TicketActivityMark: View {
+    let locale: String?
+    let signal: ConversationSignal?
+    var completed = false
+    @Environment(AppStore.self) private var store
+    var body: some View {
+        ConversationSignalMark(signal: TicketMachine.signal(signal, locale: locale, health: store.executorHealth, completed: completed))
+
+    }
+}

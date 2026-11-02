@@ -2,6 +2,14 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ConversationTests: XCTestCase {
+    func testRemoteAnswerEvidenceDoesNotClaimApplicationWhilePending() throws {
+        for (fate, text) in [("saved", "delivery to Mac is pending"), ("applied", "applied on Mac"), ("unconfirmed", "Application is unconfirmed")] {
+            let json = "{\"kind\":\"permission_ask\",\"title\":\"Approve command\",\"state\":\"answered\",\"answer_fate\":\"\(fate)\"}"
+            let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(json.utf8))
+            XCTAssertTrue(body.answerSentence?.contains(text) == true)
+        }
+    }
+
     func testLatestRequiresDistanceAndDoesNotFlickerAtThreshold() {
         var policy = ConversationScrollPolicy()
         policy.beginGesture()

@@ -31,6 +31,7 @@ def create_ticket(
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     employee_launch_reasoning_effort: str | None = None,
+    reasoning_effort_is_set: bool = False,
     model_source_is_historical: bool = False,
     brief: str | None = "",
     project_id: str | None = None,
@@ -57,6 +58,7 @@ def create_ticket(
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
         employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+        reasoning_effort_is_set=reasoning_effort_is_set,
         model_source_is_historical=model_source_is_historical,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         stated_ceiling=stated_ceiling,
@@ -76,16 +78,10 @@ def add_ticket_block(
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with tickets_data._txn(conn):
         if admit is not None:
             admit()
         ticket_blocks.add_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
-    else:
-        conn.execute("COMMIT")
 
 
 def remove_ticket_block(
@@ -100,16 +96,10 @@ def remove_ticket_block(
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with tickets_data._txn(conn):
         if admit is not None:
             admit()
         ticket_blocks.remove_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
-    else:
-        conn.execute("COMMIT")
 
 
 def file_current_proposal(

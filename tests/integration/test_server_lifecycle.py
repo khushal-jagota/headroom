@@ -213,3 +213,77 @@ def test_unexpected_child_exit_wins_over_accepted_restart_with_open_client(
     assert not server.control_socket_path.exists()
     assert not _process_exists(application_pid)
     assert _nothing_listens(server.port)
+
+
+@pytest.mark.parametrize("pythonpath", [None, "", "first path::second/π:$literal"])
+def test_real_application_spawn_preserves_environment_and_listener(
+    tmp_path: Path,
+    pythonpath: str | None,
+) -> None:
+    """Popen must preserve caller bytes and pass the actual listener descriptor."""
+    import json
+    import sys
+
+    from planner.server_lifecycle.supervisor import (
+        PortScopedServerLifecycleLease,
+        ServerSupervisor,
+    )
+
+    root = tmp_path / "launch-root"
+    root.mkdir()
+    output = tmp_path / "child.json"
+    probe = tmp_path / "probe-python"
+    probe.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, socket\n"
+        "from pathlib import Path\n"
+        "fd = int(os.environ['PLAN_SERVER_LISTENER_FD'])\n"
+        "with socket.socket(fileno=fd) as listener:\n"
+        "    address = listener.getsockname()\n"
+        f"Path({str(output)!r}).write_text(json.dumps(dict(\n"
+        "    pythonpath=os.environ.get('PYTHONPATH'), cwd=os.getcwd(),\n"
+        "    control=os.environ['PLAN_SERVER_CONTROL_SOCKET'],\n"
+        "    address=address, session=os.getsid(0), pid=os.getpid())))\n"
+    )
+    probe.chmod(0o700)
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "PYTHONPATH" and not key.startswith(("PLAN_", "PANELS_"))
+    }
+    if pythonpath is not None:
+        environment["PYTHONPATH"] = pythonpath
+    control = tmp_path / "control.sock"
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        environment["PLAN_SERVER_LISTENER_FD"] = str(listener.fileno())
+        supervisor = ServerSupervisor(
+            launch_root=root,
+            interpreter=str(probe),
+            environ=environment,
+            control_socket_path=control,
+            lease=PortScopedServerLifecycleLease(tmp_path / "unused.lock", 0),
+        )
+        supervisor._spawn_application_child()
+        child = supervisor._application_child
+        assert child is not None
+        try:
+            assert child.wait(timeout=10) == 0
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+        data = json.loads(output.read_text())
+        assert data["pythonpath"] == pythonpath
+        assert data["cwd"] == str(root)
+        assert data["control"] == str(control)
+        assert data["address"] == list(listener.getsockname())
+        assert data["session"] == data["pid"]
+        assert environment.get("PYTHONPATH") == pythonpath
+
+
+def test_editable_startup_without_pythonpath_from_unrelated_directory(tmp_path: Path) -> None:
+    from tests.support.lifecycle_startup import assert_lifecycle_startup
+
+    assert_lifecycle_startup(REPO_ROOT, tmp_path / "editable", packaged=False)

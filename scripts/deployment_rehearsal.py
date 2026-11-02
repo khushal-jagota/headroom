@@ -1,13 +1,16 @@
 """Disposable hosted-runner setup around the real deployment workflow."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
+import sysconfig
 import time
 import urllib.error
 import urllib.request
@@ -137,6 +140,7 @@ def start() -> None:
                     body = json.load(response)
                 if body.get("app_sha") == baseline and body.get("ready") is True:
                     (root / "gate/baseline-health.json").write_text(json.dumps(body) + "\n")
+                    seed_synthetic_state(current, url)
                     append_environment({"PANELS_HEALTH_URL": url})
                     return
             except (OSError, ValueError):
@@ -149,6 +153,53 @@ def start() -> None:
         ).stdout
         if "address already in use" not in journal.lower() or attempt == 2:
             raise RuntimeError("baseline did not become healthy:\n" + journal[-6000:])
+
+
+def seed_synthetic_state(current: Path, health_url: str) -> None:
+    """Create only disposable records and excluded files on the hosted runner."""
+    require_rehearsal()
+    url = health_url.removesuffix("/api/health") + "/api/projects"
+    request = urllib.request.Request(url, data=json.dumps({
+        "name": "Publication rehearsal", "summary": "Synthetic upgrade sentinel",
+    }).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(request, timeout=5) as response:
+        record = json.load(response)
+    gate = Path(os.environ["PANELS_GATE_DIR"])
+    (gate / "synthetic-record-before.json").write_text(json.dumps(record) + "\n")
+    capture_schema(current, gate / "schema-before.json")
+    hashes = {}
+    for relative in ("video-uploads/rehearsal-sentinel.txt",
+                     "tickets/t_rehearsal/artifacts/sentinel.txt"):
+        path = current / "data/files" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = ("Disposable publication proof: " + relative).encode()
+        path.write_bytes(content)
+        hashes[relative] = hashlib.sha256(content).hexdigest()
+    (gate / "excluded-files-before.json").write_text(json.dumps(hashes) + "\n")
+
+
+def capture_schema(current: Path, output: Path) -> None:
+    with sqlite3.connect(f"file:{current / 'data/planner.db'}?mode=ro", uri=True) as conn:
+        revisions = [row[0] for row in conn.execute("SELECT version_num FROM alembic_version")]
+    output.write_text(json.dumps({"revisions": sorted(revisions)}) + "\n")
+
+
+def capture_synthetic_state(current: Path, health_url: str, gate: Path) -> None:
+    capture_schema(current, gate / "schema-after.json")
+    record = json.loads((gate / "synthetic-record-before.json").read_text())
+    url = (health_url.removesuffix("/api/health") + "/api/projects?detail=full&id="
+           + record["id"])
+    with urllib.request.urlopen(url, timeout=5) as response:
+        after = json.load(response)
+    (gate / "synthetic-record-after.json").write_text(json.dumps(after) + "\n")
+    if any(after.get(key) != record.get(key) for key in ("id", "name", "summary")):
+        raise ValueError("synthetic record changed across the upgrade")
+    before = json.loads((gate / "excluded-files-before.json").read_text())
+    hashes = {relative: hashlib.sha256((current / "data/files" / relative).read_bytes()).hexdigest()
+              for relative in before}
+    (gate / "excluded-files-after.json").write_text(json.dumps(hashes) + "\n")
+    if hashes != before:
+        raise ValueError("excluded upload or ticket artifact changed across the upgrade")
 
 
 def check_selection() -> None:
@@ -217,12 +268,55 @@ def capture() -> None:
     except (OSError, ValueError) as exc:
         (gate / "final-health-error.txt").write_text(str(exc))
     if os.environ.get("PANELS_REHEARSAL_JOB_STATUS") == "success":
+        capture_synthetic_state(current, os.environ["PANELS_HEALTH_URL"], gate)
         verify_proof(gate, os.environ["PANELS_BASELINE_SHA"], os.environ["PANELS_REQUESTED_SHA"])
+
+
+def validate_cleanup(environment: dict[str, str]) -> None:
+    """Preserve finalizer execution files and evidence before any destructive action."""
+    root = Path(environment["PANELS_TEMP_ROOT"]).resolve()
+    checkout = Path(__file__).resolve().parents[1]
+    protected = (
+        checkout, Path(sys.executable).resolve(),
+        Path(sysconfig.get_path("stdlib")).resolve(),
+        Path(sysconfig.get_path("platstdlib")).resolve(),
+    )
+    targets = [root, Path(environment["PANELS_CANDIDATE_SOURCE"]).resolve()]
+    if environment.get("PANELS_REHEARSAL") == "true":
+        targets.append((root / "baseline-source").resolve())
+        if environment.get("PANELS_REHEARSAL_HERMES_ROOT"):
+            targets.append(Path(environment["PANELS_REHEARSAL_HERMES_ROOT"]).resolve())
+    for target in targets:
+        for execution_path in protected:
+            if target.is_relative_to(execution_path) or execution_path.is_relative_to(target):
+                raise ValueError(
+                    f"Cleanup refused: {target} overlaps finalizer execution path "
+                    f"{execution_path}. No service action or deletion occurred."
+                )
+    if environment.get("PANELS_REHEARSAL") != "true":
+        return
+    # Suites share this helper but never start a synthetic deployment lifecycle.
+    if environment.get("PANELS_PROOF_RETENTION_OUTCOME") != "success":
+        raise ValueError("Cleanup refused: publication diagnostics are not retained.")
+    lifecycle_path = Path(environment["PANELS_LIFECYCLE_PATH"])
+    start_outcome = environment.get("PANELS_LIFECYCLE_START_OUTCOME", "")
+    if lifecycle_path.exists() or start_outcome not in {"", "skipped"}:
+        try:
+            record = json.loads(lifecycle_path.read_text())
+            terminal = record["phase"] in {
+                "succeeded", "failed", "rolled_back", "cancelled", "unknown"
+            }
+            same_attempt = record["deployment_id"] == environment["PANELS_DEPLOYMENT_ID"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ValueError("Cleanup refused: lifecycle evidence is unavailable.") from exc
+        if not terminal or not same_attempt:
+            raise ValueError("Cleanup refused: this attempt has no terminal lifecycle outcome.")
 
 
 def cleanup() -> None:
     if "PANELS_TEMP_ROOT" not in os.environ:
         return
+    validate_cleanup(dict(os.environ))
     root = Path(os.environ["PANELS_TEMP_ROOT"])
     if os.environ.get("PANELS_REHEARSAL") == "true":
         require_rehearsal()

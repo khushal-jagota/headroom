@@ -63,6 +63,7 @@
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./routes/SettingsRoute.svelte"));
       case "backends": return cachedImport("./BackendsRoute.svelte", () => import("./routes/BackendsRoute.svelte"));
       case "preview": return cachedImport("./FilePreviewRoute.svelte", () => import("./routes/FilePreviewRoute.svelte"));
+      case "dev": return cachedImport("./DevGoalComponentsRoute.svelte", () => import("./routes/DevGoalComponentsRoute.svelte"));
       default: return null;
     }
   });
@@ -249,7 +250,7 @@
         {/each}
       </div>
     {/if}
-    <ShellStatus connectionState={$connectionStatus} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} />
     <div class="compact-bar-row">
       <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined} use:observeReviewLink={"review"}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
@@ -264,7 +265,7 @@
 
 {#snippet foot()}
   <div class="rail-foot" bind:this={desktopFoot}>
-    <ShellStatus connectionState={$connectionStatus} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} />
     <nav class="rail-utilities workspace-utility-nav" aria-label="Destinations">
       {#each SHELL_DESTINATIONS as destination}
         {#if destination.key === "feedback"}
@@ -301,6 +302,8 @@
           {#await import("./routes/FilePreviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "vps"}
           <VpsPage />
+        {:else if route.name === "dev"}
+          {#await import("./routes/DevGoalComponentsRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else}<div class="quiet-line">no such screen</div>{/if}
       {/snippet}
       {#if routeModule}<LazyRegion promise={routeModule} shape={routeShape} layout="fill">{@render selectedRoute()}</LazyRegion>{:else}{@render selectedRoute()}{/if}

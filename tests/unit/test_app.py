@@ -42,6 +42,8 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
             "PLAN_DB_PATH": "/state/db",
             "PLAN_GROQ_API_KEY": "groq-secret",
             "PLAN_CLAUDE_EXECUTABLE": "/operator/claude",
+            "PLAN_UPDATE_REPOSITORY": "owner/panels",
+            "PLAN_UPDATE_TOKEN_FILE": "/operator/update-token",
             "SECRET": "no",
         },
     )
@@ -51,11 +53,11 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
         "PLAN_DB_PATH": "/state/db",
         "PLAN_GROQ_API_KEY": "groq-secret",
         "PLAN_CLAUDE_EXECUTABLE": "/operator/claude",
+        "PLAN_UPDATE_REPOSITORY": "owner/panels",
+        "PLAN_UPDATE_TOKEN_FILE": "/operator/update-token",
         "PLAN_APP_SHA": SHA,
         "PLAN_APP_ROOT": str(app),
     }
-
-
 
 
 def test_exported_cli_is_relocatable_and_preserves_caller_context(
@@ -69,8 +71,8 @@ def test_exported_cli_is_relocatable_and_preserves_caller_context(
     python.parent.mkdir(parents=True)
     python.write_text(
         "#!/bin/sh\n"
-        "printf '%s\\n' \"$PLAN_APP_ROOT\" \"$PLAN_APP_SHA\" \"$PLAN_SERVER_URL\" "
-        "\"$PLAN_TICKET_ID\" \"$PLAN_ACTOR\" \"$PYTHONPATH\" \"$@\"\n"
+        'printf \'%s\\n\' "$PLAN_APP_ROOT" "$PLAN_APP_SHA" "$PLAN_SERVER_URL" '
+        '"$PLAN_TICKET_ID" "$PLAN_ACTOR" "$PYTHONPATH" "$@"\n'
         "exit 23\n",
         encoding="utf-8",
     )

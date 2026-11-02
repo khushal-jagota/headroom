@@ -1,3 +1,5 @@
+import { mutationHeaders } from "./releaseMonitor";
+
 export type JsonValue =
   | null
   | boolean
@@ -40,7 +42,15 @@ function makePlannerError(envelope: JsonObject, status: number): PlannerFetchErr
 }
 
 export async function fetchJson<T = unknown>(path: string, options: FetchOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { ...(options.headers || {}) };
+  let headers: Record<string, string> = { ...(options.headers || {}) };
+  const method = (options.method || "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    try {
+      headers = await mutationHeaders(headers);
+    } catch (cause) {
+      throw new PlannerFetchError(cause instanceof Error ? cause.message : "Refresh page before making changes", "page_version_unconfirmed");
+    }
+  }
   const init: RequestInit = {
     method: options.method || "GET",
     headers,

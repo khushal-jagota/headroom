@@ -4,11 +4,12 @@ import { parseFence } from './validation';
 import type { RenderObserver, VisibilityResult } from './visibility';
 
 /** Local command footprint; keys come from the generated canonical record values. */
+type KeysOfUnion<Value> = Value extends unknown ? keyof Value : never;
 export type RecordImpact = {
   [Kind in NavigationRecord['kind']]: {
     readonly kind: Kind;
     readonly id: string;
-    readonly fields: '*' | readonly (keyof Extract<NavigationRecord,{kind:Kind}>['value'])[];
+    readonly fields: '*' | readonly KeysOfUnion<Extract<NavigationRecord,{kind:Kind}>['value']>[];
   }
 }[NavigationRecord['kind']];
 export function recordImpactTouches(impact:RecordImpact,fields:readonly string[]):boolean {

@@ -1,0 +1,104 @@
+{
+  "outcome": "failed",
+  "cases": [
+    {
+      "id": "feedback-inbox",
+      "entry": "shell-feedback",
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/web/tests/browser/execute.py\", line 59, in main\n    module.run(browser, case[\"urls\"])\n    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/web/tests/browser/cases/feedback-inbox.py\", line 432, in run\n    assert all(abs(current[\"height\"] - previous[\"height\"]) < 8\n           ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n               for previous, current in zip(entering, entering[1:], strict=False)), entering\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: [{'ms': 3, 'height': 0, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 792, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 18, 'height': 0, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 792, 'closing': False, 'effects': 1, 'heightEffects': 0}, {'ms': 34, 'height': 0.28, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 791.72, 'closing': False, 'effects': 1, 'heightEffects': 0}, {'ms': 51, 'height': 1.08, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 790.92, 'closing': False, 'effects': 1, 'heightEffects': 0}, {'ms': 66, 'height': 2.56, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 789.44, 'closing': False, 'effects': 1, 'heightEffects': 0}, {'ms': 82, 'height': 5, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 787, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 98, 'height': 5, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 787, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 114, 'height': 5.34, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 786.66, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 130, 'height': 6.31, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 785.69, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 147, 'height': 8.13, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 783.88, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 162, 'height': 11.08, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 780.92, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 178, 'height': 15.5, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 776.5, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 194, 'height': 21.19, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 770.81, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 210, 'height': 21.19, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 770.81, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 226, 'height': 32.16, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 759.84, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 243, 'height': 36.28, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 755.72, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 258, 'height': 36.28, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 755.72, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 274, 'height': 39.52, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 752.48, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 290, 'height': 42.08, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 749.92, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 306, 'height': 44.09, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 747.91, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 323, 'height': 45.7, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 746.3, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 339, 'height': 46.97, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 745.03, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 354, 'height': 47.95, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 744.05, 'closing': False, 'effects': 2, 'heightEffects': 1}, {'ms': 370, 'height': 48.7, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 743.3, 'closing': False, 'effects': 1, 'heightEffects': 1}, {'ms': 386, 'height': 49.25, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742.75, 'closing': False, 'effects': 1, 'heightEffects': 1}, {'ms': 402, 'height': 49.64, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742.36, 'closing': False, 'effects': 1, 'heightEffects': 1}, {'ms': 418, 'height': 49.88, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742.13, 'closing': False, 'effects': 1, 'heightEffects': 1}, {'ms': 434, 'height': 49.98, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742.02, 'closing': False, 'effects': 1, 'heightEffects': 1}, {'ms': 450, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 466, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 482, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 498, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 515, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 530, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 546, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 562, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 578, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 594, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 610, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 626, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 642, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 658, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 674, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 690, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 706, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 722, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 738, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 754, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 771, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 786, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 802, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 818, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 834, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 850, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 866, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 882, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 898, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 914, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 930, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 946, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 962, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 978, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 994, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1010, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1026, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1042, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1058, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1074, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1090, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1106, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1123, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1138, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1154, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1171, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1186, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}, {'ms': 1202, 'height': 50, 'slotBottom': 800, 'utilitiesTop': 800, 'footTop': 742, 'closing': False, 'effects': 0, 'heightEffects': 0}]\n",
+      "seconds": 15.705952194985002,
+      "timing": {
+        "navigationSeconds": 1.1730727920075879,
+        "screenshotSeconds": 0.7109802460763603,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 2,
+        "screenshots": 18,
+        "fixedWaits": 0,
+        "unattributedSeconds": 13.821899156901054
+      }
+    },
+    {
+      "id": "workspace-utility-pane",
+      "entry": "shell-feedback",
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/web/tests/browser/execute.py\", line 59, in main\n    module.run(browser, case[\"urls\"])\n    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/web/tests/browser/cases/workspace-utility-pane.py\", line 321, in run\n    assert not errors, errors\n           ^^^^^^^^^^\nAssertionError: ['Navigation snapshot request failed: 503', 'Navigation snapshot request failed: 503', 'Navigation snapshot request failed: 503', 'Navigation snapshot request failed: 503']\n",
+      "seconds": 93.13769146101549,
+      "timing": {
+        "navigationSeconds": 1.1515623552259058,
+        "screenshotSeconds": 1.9711383441463113,
+        "fixedWaitSeconds": 27.80991505808197,
+        "fixedWaitRequestedSeconds": 27.61000000000001,
+        "navigations": 15,
+        "screenshots": 43,
+        "fixedWaits": 97,
+        "unattributedSeconds": 62.205075703561306
+      }
+    },
+    {
+      "id": "conversation-pane",
+      "entry": "conversation",
+      "status": "passed",
+      "seconds": 181.0577062149532,
+      "timing": {
+        "navigationSeconds": 8.215604552533478,
+        "screenshotSeconds": 2.604927971144207,
+        "fixedWaitSeconds": 20.723046866129152,
+        "fixedWaitRequestedSeconds": 20.480000000000015,
+        "navigations": 79,
+        "screenshots": 44,
+        "fixedWaits": 110,
+        "unattributedSeconds": 149.51412682514638
+      }
+    },
+    {
+      "id": "live-conversation-switch",
+      "entry": "conversation",
+      "status": "passed",
+      "seconds": 1.9129445389844477,
+      "timing": {
+        "navigationSeconds": 0.02849816402886063,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.7613253039307892,
+        "fixedWaitRequestedSeconds": 0.7500000000000071,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 7,
+        "unattributedSeconds": 1.1231210710247979
+      }
+    },
+    {
+      "id": "live-conversation-unanswered-send",
+      "entry": "conversation",
+      "status": "passed",
+      "seconds": 49.589231580961496,
+      "timing": {
+        "navigationSeconds": 0.30033414415083826,
+        "screenshotSeconds": 0.2794656939804554,
+        "fixedWaitSeconds": 30.905312531045638,
+        "fixedWaitRequestedSeconds": 30.704999999999856,
+        "navigations": 14,
+        "screenshots": 5,
+        "fixedWaits": 115,
+        "unattributedSeconds": 18.104119211784564
+      }
+    }
+  ],
+  "companion": null,
+  "schema": 1,
+  "revision": "ea3e1ac48bd73e1f3ac78b6bf2fc46ca973a01d0",
+  "invocationId": "a3c46e9b-8bec-4865-a7ba-daeed50b8191",
+  "selected": [
+    "web/tests/shell-feedback-browser.test.mjs",
+    "web/tests/conversation-browser.test.mjs"
+  ],
+  "timing": {
+    "companionSeconds": 0.0000024040000000127294,
+    "prepareSeconds": 0.011371887000000015,
+    "sharedBuildSeconds": 8.137116694,
+    "sharedServerSeconds": 0.0051261900000008605,
+    "browserStartupSeconds": 0.07838999899104238,
+    "teardownSeconds": 0.010013990000006743,
+    "invocationSeconds": 351.380134149
+  }
+}

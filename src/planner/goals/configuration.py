@@ -1,0 +1,6 @@
+"""Operational limits for dated goal expectation projections."""
+
+MAX_SCALAR_PROJECTION_DATES = 3_660
+MAX_PROJECTED_CHART_DATES = 50_000
+MAX_DEMANDED_MEASURE_DATES = 50_000
+DEFAULT_PROJECTION_DATES = 30

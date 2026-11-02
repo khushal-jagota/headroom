@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from contextlib import nullcontext
 from time import monotonic
 
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.notifications import apns_data, data
@@ -24,10 +26,12 @@ class NotificationLoop:
         *,
         canonical_origin: str | None,
         busy_timeout_ms: int = 5000,
+        workspace_admission: WorkspaceAdmission | None = None,
         adapter: WebPushAdapter | None = None,
         apns_config: APNsConfig | None = None,
         apns_adapter: APNsAdapter | None = None,
     ) -> None:
+        self._workspace_admission = workspace_admission
         self._db_path = db_path
         self._clock = clock
         self._busy_timeout_ms = busy_timeout_ms
@@ -50,40 +54,47 @@ class NotificationLoop:
             conn.close()
 
     def poll_once(self) -> int:
-        conn = connect(self._db_path, self._busy_timeout_ms)
-        try:
-            now = self._clock.now_unix()
-            data.queue_deliveries(conn, now)
-            identity = data.read_web_push_identity(conn)
-            deliveries = data.pending_deliveries(conn, now)
-            for delivery in deliveries:
-                result = self._adapter.send(
-                    delivery.subscription,
-                    delivery.intent,
-                    identity,
-                    subject=self._subject,
-                )
-                data.record_delivery_result(
-                    conn,
-                    delivery,
-                    now=now,
-                    delivered=result.delivered,
-                    expired=result.expired,
-                    error=result.error,
-                )
-            native_deliveries = apns_data.pending_deliveries(conn, now)
-            if self._apns is not None and self._apns_origin is not None:
-                for native_delivery in native_deliveries:
-                    native_result = self._apns.send(
-                        native_delivery,
-                        server_url=self._apns_origin,
-                        now=now,
+        with (
+            self._workspace_admission.operation()
+            if self._workspace_admission
+            else nullcontext(True) as admitted
+        ):
+            if not admitted:
+                return 0
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            try:
+                now = self._clock.now_unix()
+                data.queue_deliveries(conn, now)
+                identity = data.read_web_push_identity(conn)
+                deliveries = data.pending_deliveries(conn, now)
+                for delivery in deliveries:
+                    result = self._adapter.send(
+                        delivery.subscription,
+                        delivery.intent,
+                        identity,
+                        subject=self._subject,
                     )
-                    apns_data.record_result(conn, native_delivery, native_result, now)
-                return len(deliveries) + len(native_deliveries)
-            return len(deliveries)
-        finally:
-            conn.close()
+                    data.record_delivery_result(
+                        conn,
+                        delivery,
+                        now=now,
+                        delivered=result.delivered,
+                        expired=result.expired,
+                        error=result.error,
+                    )
+                native_deliveries = apns_data.pending_deliveries(conn, now)
+                if self._apns is not None and self._apns_origin is not None:
+                    for native_delivery in native_deliveries:
+                        native_result = self._apns.send(
+                            native_delivery,
+                            server_url=self._apns_origin,
+                            now=now,
+                        )
+                        apns_data.record_result(conn, native_delivery, native_result, now)
+                    return len(deliveries) + len(native_deliveries)
+                return len(deliveries)
+            finally:
+                conn.close()
 
     def start(self, interval: int) -> None:
         if self._thread is not None:

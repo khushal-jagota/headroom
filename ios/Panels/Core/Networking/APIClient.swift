@@ -9,7 +9,7 @@ struct APIError: LocalizedError, Sendable {
     var errorDescription: String? { isChangedProposal ? "This changed, review again" : message }
 }
 
-/// All endpoint paths are confined to this adapter. No calls mark conversations read.
+/// Shared reads and Ticket machine catalogue transport.
 struct APIClient: Sendable {
     static let defaultBaseURL = URL(string: "https://panels-vps.tail687c57.ts.net")!
     let baseURL: URL
@@ -78,7 +78,10 @@ struct APIClient: Sendable {
         }
         return try await get("/api/tickets", query: query)
     }
-    func ticket(_ id: String) async throws -> TicketDetail { try await get("/api/tickets", query: [.init(name: "detail", value: "full"), .init(name: "id", value: id)]) }
+    func ticket(_ id: String) async throws -> TicketDetail {
+        let result: TicketRead = try await get("/api/tickets", query: [.init(name: "detail", value: "full"), .init(name: "id", value: id)])
+        return result.detail
+    }
     func ticketField(_ id: String, field: String) async throws -> TicketFieldBody { try await get("/api/tickets/\(id)/workspace/fields/\(field)") }
     func manager(_ id: String) async throws -> ManagerDetail { try await get("/api/managers/\(id)/workspace") }
     func chief() async throws -> ChiefDetail { try await get("/api/workers/chief-of-staff/settings") }
@@ -134,4 +137,23 @@ extension APIClient {
     @MainActor func cachedTicket(_ id: String) -> TicketDetail? {
         cached("/api/tickets", query: [.init(name: "detail", value: "full"), .init(name: "id", value: id)])
     }
+}
+
+extension APIClient {
+    func conversationBackends(owner: ConversationOwner) async throws -> TicketBackendCatalog {
+        guard case .ticket(let id) = owner else { return try await get("/api/conversation/backends") }
+        struct Body: Encodable { let ticketId: String }
+        var request = URLRequest(url: try url("/api/conversation/backends"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        request.httpBody = try encoder.encode(Body(ticketId: id))
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response, data: data)
+        return try Self.decoder().decode(TicketBackendCatalog.self, from: data)
+    }
+}
+
+extension APIClient {
+    func executorHealth() async throws -> ExecutorHealth { try await get("/api/executor/health") }
 }

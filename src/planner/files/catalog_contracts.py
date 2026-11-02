@@ -1,7 +1,7 @@
 """Bounded managed artifact directory pages, independent of Ticket control data."""
 from typing import Literal, TypedDict
 
-ArtifactOwnerKind = Literal["ticket", "manager"]
+ArtifactOwnerKind = Literal["ticket", "manager", "goal"]
 
 class ArtifactCatalogEntry(TypedDict):
     key: str

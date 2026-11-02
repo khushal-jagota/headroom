@@ -75,6 +75,7 @@ export function workspaceGroups(cards: readonly WorkspaceTicket[]): WorkspaceTic
 }
 
 export function railTicketEligible(card: WorkItemTicketFacts): boolean {
+  if(card.integrity_error) return true;
   return !card.is_backlogged && !card.blocked && card.ticket_status !== "blocked"
     && card.stage !== "done";
 }

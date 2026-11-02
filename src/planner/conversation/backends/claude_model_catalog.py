@@ -113,16 +113,16 @@ async def probe_claude_model_catalog(claude_executable: str) -> ClaudeModelCatal
             default_resolves_to = resolved
             continue
         raw_efforts = entry.get("supportedEffortLevels")
-        efforts = tuple(
-            effort for effort in (raw_efforts or ()) if isinstance(effort, str)
-        )
+        efforts = tuple(effort for effort in (raw_efforts or ()) if isinstance(effort, str))
         for effort in efforts:
             if effort not in efforts_in_listed_order:
                 efforts_in_listed_order.append(effort)
+        if any(model.model_id == resolved for model in models):
+            continue
         models.append(
             ClaudeModel(
-                model_id=value,
-                display_name=versioned_display_name(resolved),
+                model_id=resolved,
+                display_name=entry.get("displayName") or versioned_display_name(resolved),
                 resolved_model_id=resolved,
                 reasoning_effort_options=efforts,
             )

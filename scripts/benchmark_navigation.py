@@ -170,7 +170,7 @@ def seed(db: Path) -> dict[str, Any]:
             proposal = (
                 json.dumps(
                     {
-                        "field": "success_condition",
+                        "field": "what_changes",
                         "body": "Synthetic proposal",
                         "proposed_by": "worker",
                         "created_at": 1,
@@ -184,8 +184,8 @@ def seed(db: Path) -> dict[str, Any]:
                 "employee_launch_model,stage,"
                 "ceiling,project_id,manager_id,manager_kind,field_values,created_at,updated_at,"
                 "conversation_id,pending_proposal,pending_proposal_revision) "
-                "VALUES (?,?,'coding','codex','gpt-5.6-sol','needs_success_condition',"
-                "'needs_success_condition','project_other',?,'manager','{}',1,1,?,?,?)",
+                "VALUES (?,?,'coding','codex','gpt-5.6-sol','needs_what_changes',"
+                "'needs_what_changes','project_other',?,'manager','{}',1,1,?,?,?)",
                 (
                     f"t_benchmark_{i:04d}",
                     f"Synthetic ticket {i}",
@@ -323,7 +323,7 @@ def mutate_fanout(conn: sqlite3.Connection, index: int) -> None:
         ).fetchone()
         definition = json.loads(row[0])
         stage = next(
-            item for item in definition["stages"] if item["id"] == "needs_success_condition"
+            item for item in definition["stages"] if item["id"] == "needs_what_changes"
         )
         stage["ownership_mode"] = "user"
         conn.execute(

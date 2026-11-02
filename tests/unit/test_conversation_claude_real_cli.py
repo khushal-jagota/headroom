@@ -86,6 +86,7 @@ def _real_child(
 
 
 
+@pytest.mark.real_provider_homes
 @real_claude_only
 def test_a_steer_the_real_claude_folds_into_its_turn_still_lets_it_end(
     tmp_path: Path,

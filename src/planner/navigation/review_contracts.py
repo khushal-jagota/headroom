@@ -24,7 +24,7 @@ class ReviewMessageItem(TypedDict):
     review_item_type: Literal["message"]
     conversation_id: str
     address_id: str
-    owner_kind: Literal["ticket", "manager", "chief"]
+    owner_kind: Literal["ticket", "manager", "chief", "goal"]
     owner_id: str
     title: str
     waiting_since: int

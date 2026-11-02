@@ -24,7 +24,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.server import BOOT_BUDGET_S, REPO_ROOT
 from tests.support.server_fixtures import _free_port, _scrubbed_env
 
@@ -86,7 +85,7 @@ def _environment(root: Path, port: int, control_socket: Path) -> dict[str, str]:
     database = root / "planning.db"
     with closing(connect(str(database))) as connection:
         create_schema(connection)
-        seed_test_model_catalogue(connection)
+
     config = root / "config.yaml"
     config.write_text("{}\n")
     # env -i also removes all variables inherited from the user systemd manager.
@@ -142,14 +141,19 @@ def guarded_unit(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[Fix
     if manager.returncode:
         pytest.skip("requires an accessible real systemd user manager")
     nonce = uuid.uuid4().hex
-    # The user manager has a separate /tmp mount on some hosts. Use a private,
-    # nonce-owned directory in the real home, visible from both mount namespaces.
+    # The user manager can have a separate /tmp mount. Keep fixture payloads in
+    # nonce-owned repository storage that both mount namespaces can access.
     runtime = REPO_ROOT / "data" / "lifecycle-proofs"
     runtime.mkdir(parents=True, exist_ok=True)
     directory = tempfile.TemporaryDirectory(prefix=nonce + "-", dir=runtime)
     tmp_path = Path(directory.name)
-    socket_root = Path.home() / ".cache"
-    socket_root.mkdir(exist_ok=True)
+    # The user runtime directory is shared with the real manager and stays short
+    # when pytest supplies a deeply nested private HOME. mkdtemp creates a private
+    # mode-0700 nonce directory; cleanup removes only that owned directory.
+    socket_root = Path(f"/run/user/{os.getuid()}")
+    socket_metadata = socket_root.stat()
+    assert socket_root.is_dir() and socket_metadata.st_uid == os.getuid()
+    assert socket_metadata.st_mode & 0o077 == 0, "user runtime directory must be private"
     socket_directory = tempfile.TemporaryDirectory(prefix="panels-lifecycle-", dir=socket_root)
     unit = f"panels-lifecycle-proof-{nonce}.service"
     # The normal CLI stays the supervisor. Only its bootstrap command is test-specific.

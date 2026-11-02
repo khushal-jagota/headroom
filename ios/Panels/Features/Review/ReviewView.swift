@@ -197,7 +197,7 @@ private struct ReviewProposalView: View {
     private enum ReviewSheet: String, Identifiable { case approve; var id: String { rawValue } }
     private var fieldLabel: String { decision.manifest?.fields.first(where: { $0.id == item.field })?.label ?? item.field.capitalized }
     private var reviewer: String {
-        switch decision.ticket?.ceilingHolder.kind { case "chief": "Chief"; case "manager": "Manager"; case "ticket": "Worker"; default: "User" }
+        switch decision.ticket?.ceilingHolder.kind { case "chief": "Chief"; case "manager": "Manager"; case "ticket": "Worker"; case "goal": "Goal"; default: "User" }
     }
 
     var body: some View {
@@ -211,6 +211,7 @@ private struct ReviewProposalView: View {
                         .accessibilityHint("Opens ticket for review")
                         .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = decision.ticket?.title ?? item.title; renaming = true } }
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
+                        TicketMachineLabel(locale: decision.ticket?.locale)
                         if let recap = decision.ticket?.recap, !recap.isEmpty {
                             Button { withAnimation(.easeOut(duration: PanelsTheme.Motion.base)) { recapExpanded.toggle() } } label: {
                                 Text((try? AttributedString(markdown: recap)) ?? AttributedString(recap))
@@ -435,6 +436,9 @@ private struct ReviewApprovalSheet: View {
         var values = [("User", Principal(kind: "owner", id: "owner"))]
         if let id = decision.ticket?.managerId { values.append(("Manager", Principal(kind: "manager", id: id))) }
         values.append(("Chief", Principal(kind: "chief", id: "chief")))
+        if let current = decision.ticket?.ceilingHolder, !values.contains(where: { $0.1 == current }) {
+            values.append((current.kind == "goal" ? "Goal · " + current.id : "Worker · " + current.id, current))
+        }
         return values
     }
     private var selectedLabel: String { decision.approvalStages.first(where: { $0.id == ceiling })?.label ?? "…" }

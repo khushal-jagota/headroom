@@ -12,7 +12,7 @@ struct MoreView: View {
                             .foregroundStyle(state == .problem ? PanelsTheme.error : PanelsTheme.accent)
                         VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
                             Text("Panels server").foregroundStyle(PanelsTheme.strong)
-                            Text([state?.rawValue ?? "Up to date", store.deployment?.detail, store.deployment?.deployedSha.map { "Running \(String($0.prefix(7)))" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                            Text([state?.rawValue ?? "Up to date", DeploymentStatusPresentation.detail(store.deployment, state: state), store.deployment?.deployedSha.map { "Running \(String($0.prefix(7)))" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                                 .font(PanelsTheme.TypeScale.small)
                                 .foregroundStyle(state == .problem ? PanelsTheme.error : PanelsTheme.faint)
                         }

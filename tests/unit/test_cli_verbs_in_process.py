@@ -296,7 +296,7 @@ def test_structured_ticket_create_keeps_the_brief(
     if scoped:
         assert detail["field_values"]["brief"] == body["brief"]
         assert detail["pending_proposal"] is None
-        assert detail["stage"] == "needs_success_condition"
+        assert detail["stage"] == "needs_what_changes"
     else:
         assert detail["pending_proposal"]["field"] == "brief"
         assert detail["pending_proposal"]["body"] == body["brief"]

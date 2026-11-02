@@ -26,6 +26,7 @@ export function validateContent(content:ViewContent,mode:'current'|'degraded') {
     if(row.kind==='conversation' && (mode==='current') !== (row.value.attention.current!==null)) throw new NavigationProtocolError('Contradictory attention profile');
     if(row.kind==='conversation' && row.value.attention.current && (row.value.attention.current.signal.message_for_owner!==row.value.attention.durable.message_for_owner || row.value.attention.current.last_turn_failed!==row.value.attention.durable.last_turn_failed)) throw new NavigationProtocolError('Contradictory durable attention');
   }
+  if(content.review_summary.skipped<0 || content.review_summary.new<0 || mode==='current' && content.review_summary.skipped+content.review_summary.new!==content.counts.review)throw new NavigationProtocolError('Invalid review summary');
   const contexts=new Set<string>();
   if(content.review_context.length>256)throw new NavigationProtocolError('Review context budget exceeded');
   for(const context of content.review_context) {
@@ -62,7 +63,7 @@ export function applyFrame(previous:ViewSnapshot | undefined,frame:ViewFrame):Vi
   const touched=new Set<string>();
   for(const key of frame.evictions) {const id=recordKey(key);if(touched.has(id)||!records.has(id))throw new NavigationProtocolError('Invalid view eviction');touched.add(id);records.delete(id);}
   for(const row of frame.upserts) {const id=recordKey(row);if(touched.has(id))throw new NavigationProtocolError('Duplicate view operation');touched.add(id);records.set(id,row);}
-  const content={records:[...records.values()],windows:frame.windows,counts:frame.counts,review_context:frame.review_context};
+  const content={records:[...records.values()],windows:frame.windows,counts:frame.counts,review_context:frame.review_context,review_summary:frame.review_summary};
   validateContent(content,'current');
   return {...previous,coverage:frame.coverage,content_version:frame.content_version,content};
 }

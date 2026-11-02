@@ -1,4 +1,4 @@
-import type { TicketValue, TicketRecord, ManagerRecord, ProjectRecord, AddressRecord, ViewWindow, ViewCounts, ViewContentReference, ViewSettledManagerRecord } from './contracts';
+import type { TicketValue, TicketRecord, GoalRecord, ManagerRecord, ProjectRecord, AddressRecord, ViewWindow, ViewCounts, ViewContentReference, ViewSettledManagerRecord } from './contracts';
 import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
 import type { AgentState } from '../types';
 import type { WorkspaceTicket, WorkspaceManager, WorkspaceSettledManager, WorkspaceChief } from '../workspaceRail';
@@ -32,6 +32,7 @@ function agentState(status: string | null, stage: string | null, knowledge: Conv
 export function navigationWorkspacePresentation(view: EffectiveNavigationView): NavigationPresentation {
   const records=view.publication.records;
   const conversationSignals=new Map([...view.conversations].map(([id,knowledge])=>[id,signal(knowledge)]));
+  const rawGoalsById=new Map<string,GoalRecord>();
   const rawTicketsById=new Map<string,TicketRecord>();
   const rawManagersById=new Map<string,ManagerRecord>();
   const rawSettledManagersById=new Map<string,ViewSettledManagerRecord>();
@@ -43,13 +44,13 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   let exactOutClaimCount=0;
   let chiefRecord:Extract<(typeof records)[number],{kind:'chief'}> | undefined;
   for(const record of records) {
-    if(record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') {
+    if(record.kind==='ticket' || record.kind==='manager' || record.kind==='chief' || record.kind==='goal') {
       if(record.value.conversation_id!==null) currentConversationIds.add(record.value.conversation_id);
     }
     if(record.kind==='ticket') {
       const row=record.value;
-      if(row.worker_step_claim_out) exactOutClaimCount+=1;
-      if(!row.is_backlogged && row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
+      if('worker_step_claim_out' in row && row.worker_step_claim_out) exactOutClaimCount+=1;
+      if(!('integrity_error' in row) && !row.is_backlogged && row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
         && row.gating_field!==null && row.proposal_field!==null && row.proposal_created_at!==null) {
         const proposal:import('../types').NavigationReviewProposalItem={review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
           title:row.title,waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision};
@@ -63,19 +64,31 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     }
     else if(record.kind==='project') rawProjectsById.set(record.id,record);
     else if(record.kind==='chief') chiefRecord=record;
+    else if(record.kind==='goal') rawGoalsById.set(record.id,record);
     else if(record.kind==='address') {const addresses=addressesByConversation.get(record.value.conversation_id) ?? [];addresses.push(record);addressesByConversation.set(record.value.conversation_id,addresses);}
   }
   const projects=new Map([...rawProjectsById].map(([id,record])=>[id,record.value]));
   const managerRecords=[...rawManagersById.values()];
   const managersById=new Map([...managerRecords,...rawSettledManagersById.values()].map(record=>[record.id,record.value]));
-  const tickets: NavigationTicket[]=[...rawTicketsById.values()].flatMap(record=>{
+  const tickets: NavigationTicket[]=[...rawTicketsById.values()].flatMap<NavigationTicket>(record=>{
     if(record.kind!=='ticket') return [];
     const row=record.value;
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
+    if('integrity_error' in row) {
+      const parent=row.manager_kind==='chief' ? null : row.manager_id;
+      return [{id:record.id,locale:row.locale === 'macos' ? 'macos' as const : 'vps' as const,created_at:row.created_at,terminal:false,title:row.title,stage:row.stage,worker_type:row.worker_type,
+        ticket_status:'errored',is_backlogged:row.is_backlogged,blocked:false,integrity_error:row.integrity_error,
+        activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
+        awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
+        awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:'errored',waiting_to_closeout:false,
+        gating_field:null,recap:row.recap,recap_preview:row.recap_preview,
+        manager:parent===null ? {kind:'chief',id:'chief'} : {kind:'manager',id:parent},
+        manager_id:parent,manager_title:parent===null ? null : managersById.get(parent)?.title ?? null}];
+    }
     const owner=row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner';
     const parked=row.ticket_status==='awaiting_approval';
     const parent=row.manager_kind==='chief' ? null : row.manager_id;
-    return [{id:record.id,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,worker_type:row.worker_type,
+    return [{id:record.id,locale:row.locale === "macos" ? "macos" as const : "vps" as const,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,worker_type:row.worker_type,
       ticket_status:row.ticket_status,is_backlogged:row.is_backlogged,blocked:row.blocked,
       activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
@@ -97,7 +110,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(raw.manager_id!==null && !parent) continue;
     const projectId=raw.manager_id===null ? raw.project_id : parent!.value.project_id;
     if(projectId!==null && !rawProjectsById.has(projectId)) continue;
-    ticketMastheadsById.set(ticket.id,{id:ticket.id,title:raw.title,worker_type:raw.worker_type,
+    ticketMastheadsById.set(ticket.id,{id:ticket.id,locale:ticket.locale ?? "vps",title:raw.title,worker_type:raw.worker_type,
       project:projectId===null ? null : rawProjectsById.get(projectId)!.value.name,
       conversation_id:raw.conversation_id,conversation_signal:signal(raw.conversation_id===null ? undefined : view.conversations.get(raw.conversation_id))});
   }
@@ -137,7 +150,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const ticket=byTicket.get(address.owner_id), item=managersById.get(address.owner_id);
     const parentId=address.parent_kind==='chief' ? 'chief' : address.parent_id;
     const parent=parentId === null ? undefined : managersById.get(parentId);
-    const title=address.owner_kind==='ticket' ? ticket?.title : address.owner_kind==='manager' ? item?.title : chief?.label;
+    const title=address.owner_kind==='ticket' ? ticket?.title : address.owner_kind==='manager' ? item?.title : address.owner_kind==='goal' ? rawGoalsById.get(address.owner_id)?.value.title : chief?.label;
     if(title===undefined) continue;
     seen.add(key);
     messages.push({kind:address.owner_kind==='manager' ? 'manager' : address.owner_kind,
@@ -157,7 +170,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     // to a former owner when the canonical owner is excluded.
     reviewConversations.add(address.conversation_id);
     const owner=address.owner_kind==='ticket' ? rawTicketsById.get(address.owner_id)?.value
-      : address.owner_kind==='manager' ? managersById.get(address.owner_id) : chiefRecord?.value;
+      : address.owner_kind==='manager' ? managersById.get(address.owner_id) : address.owner_kind==='goal' ? rawGoalsById.get(address.owner_id)?.value : chiefRecord?.value;
     if(!owner)continue;
     if(address.owner_kind==='ticket' && ('stage' in owner && owner.stage==='done' || 'is_backlogged' in owner && owner.is_backlogged))continue;
     if(address.owner_kind==='manager' && 'settled' in owner && owner.settled)continue;
@@ -189,7 +202,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     }
     unreadConversationIdsByWindow.set(window.window_id,ids);
   }
-  return {tickets,managers,settledManagers,chief,messages,conversationSignals,rawTicketsById,rawManagersById,rawProjectsById,
+  return {tickets,managers,settledManagers,chief,messages,conversationSignals,rawGoalsById,rawTicketsById,rawManagersById,rawProjectsById,
     ticketsById:byTicket,managersById:new Map(managers.map(item=>[item.id,item])),
     ticketsByParent,ticketMastheadsById,addressesByConversation,
     unreadConversationIdsByWindow,
@@ -226,7 +239,7 @@ export function navigationWorkingAgentCount(view:EffectiveNavigationView | null 
   if(counts)return counts.running_conversations;
   const pointers=new Set<string>();
   for(const record of view.publication.records) {
-    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') && record.value.conversation_id!==null) {
+    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief' || record.kind==='goal') && record.value.conversation_id!==null) {
       pointers.add(record.value.conversation_id);
     }
   }
@@ -257,6 +270,7 @@ export function navigationConversationSignal(view:EffectiveNavigationView | null
 
 /** Masthead facts never become an actionable TicketDetail. */
 export type NavigationTicketMasthead = {
+  readonly locale:import("../ticketMachines").TicketLocale;
   readonly id:string;
   readonly title:string;
   readonly worker_type:string;
@@ -269,6 +283,7 @@ export function navigationTicketMasthead(view:EffectiveNavigationView,id:string)
 }
 
 export type NavigationPresentationIndexes = {
+  readonly rawGoalsById: ReadonlyMap<string,GoalRecord>;
   readonly unreadConversationIdsByWindow:ReadonlyMap<string,ReadonlySet<string>>;
   readonly addressesByConversation:ReadonlyMap<string,readonly AddressRecord[]>;
   readonly rawTicketsById:ReadonlyMap<string,TicketRecord>;

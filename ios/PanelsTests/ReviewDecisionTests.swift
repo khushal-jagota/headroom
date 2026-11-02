@@ -14,7 +14,7 @@ import XCTest
         }
         XCTAssertNil(visible(status("idle")))
         XCTAssertEqual(visible(status("preparing")), .deploying)
-        XCTAssertEqual(visible(status("preparing", expiry: nil)), .reconnecting)
+        XCTAssertEqual(visible(status("preparing", expiry: nil)), .unknown)
         XCTAssertEqual(visible(status("back_up")), .deployed)
         XCTAssertNil(visible(status("back_up"), at: now.addingTimeInterval(201)))
         XCTAssertEqual(visible(status("back_up"), connected: false), .reconnecting)

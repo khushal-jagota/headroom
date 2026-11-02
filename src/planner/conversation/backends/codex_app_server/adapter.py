@@ -77,29 +77,47 @@ from planner.conversation.backends.codex_app_server.login import (
     read_stored_codex_login,
 )
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    AgentMessageDelta,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
+    BackendPromptRejected,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    ComposerCatalogReported,
+    ContextCompacted,
+    ModelThinkingHappened,
     PermissionAnswerWriteFailed,
+    PermissionAskRaised,
+    PlanUpdated,
     PromptWriteFailed,
     SessionLoadFailed,
+    TokenUsageReported,
+    ToolCallFinished,
+    ToolCallProgress,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
     UserInputAnswerWriteFailed,
+    UserInputFailed,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
@@ -317,6 +335,9 @@ class _TurnInFlight:
     # It is what a cancel waits on, so the turn after it is not written into the middle of
     # codex still stopping this one.
     ended: asyncio.Event = field(default_factory=asyncio.Event)
+    pending_notifications: list[tuple[str, BaseModel]] = field(default_factory=list)
+    pending_requests: list[tuple[str, Any, BaseModel]] = field(default_factory=list)
+    awaiting_start_response: bool = False
 
 
 class CodexAppServerBackendChild:
@@ -350,7 +371,7 @@ class CodexAppServerBackendChild:
         self._standard_error_the_next_turn_starts_from = 0
         self._asks_raised = 0
         self._catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
-        self._published_catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
+        self._published_catalog_entries: tuple[ComposerCatalogEntry, ...] | None = None
         self._catalog_publish_lock = asyncio.Lock()
         self._catalog_coordinator = CatalogCoordinator(
             read_skills=lambda: self._read_skills(str(self._resolved_start.workspace_folder)),
@@ -369,16 +390,19 @@ class CodexAppServerBackendChild:
         vendor_session_cursor: str | None,
     ) -> None:
         """Spawn codex, shake hands, and bind the thread this conversation runs in."""
+        if resolved_start.workspace_path_policy == WorkspacePathPolicy.executor_default:
+            raise BackendSpawnFailed("executor workspace requires native resolution")
         self._resolved_start = resolved_start
         self._model = resolved_start.model
         self._reasoning_effort = resolved_start.reasoning_effort
+        environment = child_environment(
+            overrides=self._launch.environment_overrides,
+            identity=self._identity_environment(resolved_start),
+        )
         try:
             await self._client.start(
                 argv=self._launch.argv,
-                environment=child_environment(
-                    overrides=self._launch.environment_overrides,
-                    identity=self._identity_environment(resolved_start),
-                ),
+                environment=environment,
                 working_directory=resolved_start.workspace_folder,
             )
         except CodexChildWouldNotStart as would_not_spawn:
@@ -410,6 +434,7 @@ class CodexAppServerBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Start a turn with this message, on these values, and return when codex has it.
 
@@ -417,11 +442,14 @@ class CodexAppServerBackendChild:
         no Codex wire field and does not alter the turn. Native commands and automatic
         maintenance still use their dedicated routes without rewritten command text.
         """
+
         del mode
         thread_id = self._bound_thread()
         model = self._model if model_change is None else model_change
         reasoning_effort = (
-            self._reasoning_effort if reasoning_effort_change is None else reasoning_effort_change
+            self._reasoning_effort
+            if reasoning_effort_change is None and not reasoning_effort_is_set
+            else reasoning_effort_change
         )
         turn = _TurnInFlight(
             token=turn_token,
@@ -469,18 +497,19 @@ class CodexAppServerBackendChild:
             if native_command:
                 assert invocation is not None
                 turn.turn_id = await self._start_native_command(
-                    thread_id=thread_id, invocation=invocation, turn=turn
+                    thread_id=thread_id,
+                    invocation=invocation,
+                    turn=turn,
                 )
             else:
                 parameters = self._turn_start_parameters(
                     thread_id=thread_id,
                     content=content,
                     model=model,
-                    reasoning_effort=reasoning_effort,
                     invocation=invocation,
                 )
-                turn.turn_id = await self._start_the_turn(parameters, turn)
-        except PromptWriteFailed:
+                turn.turn_id = await self._start_the_turn(parameters, turn, reasoning_effort)
+        except (PromptWriteFailed, BackendPromptRejected):
             # No turn started, so there is no ending to report and nothing to settle: the
             # core hears one refusal and the conversation is idle again.
             if self._turn is turn:
@@ -490,7 +519,9 @@ class CodexAppServerBackendChild:
         if not native_command:
             self._model = model
             self._reasoning_effort = reasoning_effort
-        return BackendPromptAccepted(composed_content_delivered=not native_command)
+        return BackendPromptAccepted(
+            composed_content_delivered=not native_command,
+        )
 
     async def steer(
         self,
@@ -568,7 +599,9 @@ class CodexAppServerBackendChild:
             return BackendSteerUncertain()
         if response.turnId != captured_native_turn_id:
             return BackendSteerUncertain()
-        return BackendSteerAccepted(composed_content_delivered=True)
+        return BackendSteerAccepted(
+            composed_content_delivered=True,
+        )
 
     async def cancel_running_turn(self) -> None:
         """Stop the running turn, and return once codex says it has stopped.
@@ -588,6 +621,15 @@ class CodexAppServerBackendChild:
         if turn is None:
             return
         interrupt_turn_id = turn.interrupt_turn_id or turn.turn_id
+        if interrupt_turn_id is None and turn.awaiting_start_response:
+            try:
+                interrupt_turn_id = await asyncio.wait_for(
+                    asyncio.shield(turn.started), CANCEL_SETTLING_TIMEOUT_SECONDS
+                )
+            except TimeoutError as unknown_start:
+                raise PromptWriteFailed(
+                    "codex start remains unknown during cancellation"
+                ) from unknown_start
         if interrupt_turn_id is None:
             return
         thread_id = self._bound_thread()
@@ -604,7 +646,14 @@ class CodexAppServerBackendChild:
                 self._resolved_start.conversation_id,
             )
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self,
+        ask_id: str,
+        option_id: str,
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give codex the option a person chose, as the answer to the request it is holding."""
         turn = self._turn
         parked = None if turn is None else turn.parked_asks.pop(ask_id, None)
@@ -623,10 +672,16 @@ class CodexAppServerBackendChild:
             # The answer has not landed, so the ask is still waiting for one.
             turn.parked_asks[ask_id] = parked
             raise PermissionAnswerWriteFailed(str(did_not_reach)) from did_not_reach
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Return every answer to the Codex request that is still held open."""
         turn = self._turn
         parked = None if turn is None else turn.parked_user_inputs.pop(request_id, None)
@@ -644,6 +699,17 @@ class CodexAppServerBackendChild:
         except CodexAppServerError as did_not_reach:
             turn.parked_user_inputs[request_id] = parked
             raise UserInputAnswerWriteFailed(str(did_not_reach)) from did_not_reach
+        return AnswerFate.applied
+
+    @property
+    def stop_outside_lock(self) -> bool:
+        return False
+
+    async def withdraw_delivery(self) -> bool:
+        return True
+
+    async def detach(self) -> None:
+        await self.stop()
 
     async def stop(self) -> None:
         """Shut the child down for good."""
@@ -678,7 +744,10 @@ class CodexAppServerBackendChild:
             # is no live backend to write to — which is what a spawn failure names.
             raise BackendSpawnFailed(str(would_not_come_up)) from would_not_come_up
 
-    async def _start_thread(self, resolved_start: ResolvedConversationStart) -> None:
+    async def _start_thread(
+        self,
+        resolved_start: ResolvedConversationStart,
+    ) -> None:
         parameters = bindings.ThreadStartParams(
             cwd=str(resolved_start.workspace_folder),
             model=resolved_start.model,
@@ -692,10 +761,14 @@ class CodexAppServerBackendChild:
         )
         self._thread_id = started.thread.id
         self._thread_is_ephemeral = started.thread.ephemeral
-        await self._sink.vendor_session_cursor_rebound(started.thread.id)
+        await self._sink.report(
+            None, VendorSessionCursorRebound(vendor_session_cursor=started.thread.id)
+        )
 
     async def _resume_thread(
-        self, resolved_start: ResolvedConversationStart, vendor_session_cursor: str
+        self,
+        resolved_start: ResolvedConversationStart,
+        vendor_session_cursor: str,
     ) -> None:
         """Pick the conversation's thread back up, or say plainly that it did not.
 
@@ -714,7 +787,9 @@ class CodexAppServerBackendChild:
             developerInstructions=_role_text(resolved_start),
         )
         resumed = await self._ask_about_the_thread(
-            "thread/resume", parameters, bindings.ThreadResumeResponse
+            "thread/resume",
+            parameters,
+            bindings.ThreadResumeResponse,
         )
         if resumed.thread.id != vendor_session_cursor:
             raise SessionLoadFailed(
@@ -726,7 +801,10 @@ class CodexAppServerBackendChild:
         self._thread_is_ephemeral = resumed.thread.ephemeral
 
     async def _ask_about_the_thread[ResponseT: BaseModel](
-        self, method: str, parameters: BaseModel, response_model: type[ResponseT]
+        self,
+        method: str,
+        parameters: BaseModel,
+        response_model: type[ResponseT],
     ) -> ResponseT:
         try:
             result = await self._client.request(method, _wire(parameters))
@@ -752,11 +830,16 @@ class CodexAppServerBackendChild:
                 tuple(app for _, app in coordinator.metadata.values() if app is not None),
                 coordinator.plugins,
             )
-            self._catalog_snapshot = snapshot
-            if snapshot == self._published_catalog_snapshot:
+            if snapshot.entries == self._published_catalog_entries:
+                # Invocation paths can change without any visible catalogue change.
+                self._catalog_snapshot = snapshot
                 return
-            await self._sink.composer_catalog_reported(snapshot.entries)
-            self._published_catalog_snapshot = snapshot
+            # Admission failure retains the last published snapshot and retries later.
+            await self._sink.report(
+                None, ComposerCatalogReported(composer_catalog=snapshot.entries)
+            )
+            self._catalog_snapshot = snapshot
+            self._published_catalog_entries = snapshot.entries
 
     async def _read_skills(self, workspace: str) -> bindings.SkillsListResponse:
         result = await self._catalog_request(
@@ -886,7 +969,6 @@ class CodexAppServerBackendChild:
         thread_id: str,
         content: MessageContent,
         model: str | None,
-        reasoning_effort: str | None,
         invocation: _CatalogInvocation | None = None,
     ) -> bindings.TurnStartParams:
         access = self._resolved_start.access
@@ -894,7 +976,7 @@ class CodexAppServerBackendChild:
             threadId=thread_id,
             input=self._turn_input(content, invocation),
             model=model,
-            effort=None if reasoning_effort is None else bindings.ReasoningEffort(reasoning_effort),
+            effort=None,
             approvalPolicy=_approval_policy(access),
             approvalsReviewer=_approvals_reviewer(access),
             sandboxPolicy=_turn_sandbox_policy(access),
@@ -967,19 +1049,25 @@ class CodexAppServerBackendChild:
         except (CodexAppServerError, ValidationError) as failed:
             raise PromptWriteFailed(str(failed)) from failed
 
-        await self._sink.agent_message_completed(turn.token, text_message_content(message))
+        await self._sink.report(
+            turn.token, AgentMessageCompleted(content=text_message_content(message))
+        )
         if self._turn is turn:
             self._turn = None
-        await self._sink.turn_ended(
+        await self._sink.report(
             turn.token,
-            ending=ConversationTurnEnding.completed,
-            error_summary=None,
-            standard_error_tail=None,
+            TurnEnded(
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            ),
         )
         turn.ended.set()
 
     async def _start_compaction(
-        self, parameters: bindings.ThreadCompactStartParams, turn: _TurnInFlight
+        self,
+        parameters: bindings.ThreadCompactStartParams,
+        turn: _TurnInFlight,
     ) -> str | None:
         """Accept compaction on its immediate response or its standard turn notification."""
         try:
@@ -1004,7 +1092,9 @@ class CodexAppServerBackendChild:
         return turn.turn_id
 
     async def _start_review(
-        self, parameters: bindings.ReviewStartParams, turn: _TurnInFlight
+        self,
+        parameters: bindings.ReviewStartParams,
+        turn: _TurnInFlight,
     ) -> str | None:
         """Keep the parent review id and the nested interrupt id distinct."""
         try:
@@ -1049,39 +1139,50 @@ class CodexAppServerBackendChild:
             turn.interrupt_turn_id = turn_id
 
     async def _start_the_turn(
-        self, parameters: bindings.TurnStartParams, turn: _TurnInFlight
+        self,
+        parameters: bindings.TurnStartParams,
+        turn: _TurnInFlight,
+        effort: str | None,
     ) -> str:
-        """Put ``turn/start`` on the wire and return the turn's id once codex has taken it.
-
-        Codex says it has taken the turn in two ways — the response, and the ``turn/started``
-        notification — and either one is enough. Waiting for both would mean waiting on
-        whichever is slower for no more certainty, and waiting for the turn itself would
-        mean a send that returns when the agent has finished.
-        """
+        """Accept only the correlated response; notifications cannot identify a request."""
+        turn.awaiting_start_response = True
         try:
-            answer = await self._client.begin_request("turn/start", _wire(parameters))
-        except CodexAppServerError as did_not_reach:
-            raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
-        accepted = asyncio.create_task(
-            self._client.finish_request("turn/start", answer),
-            name=f"planner.conversation.codex.turn.{turn.token.conversation_id}",
-        )
-        await asyncio.wait({accepted, turn.started}, return_when=asyncio.FIRST_COMPLETED)
-        if turn.started.done() and not turn.started.cancelled():
-            # The turn is running. Its response is still on its way and says nothing more
-            # than that, so it is read for its failures and let go.
-            self._forget(accepted, "turn/start")
-            return turn.started.result()
+            payload = _wire(parameters)
+            # The generated enum describes this pin, not all provider-supported values.
+            # Explicit null must reach Codex instead of inheriting the previous effort.
+            payload["effort"] = effort
+            answer = await self._client.begin_request("turn/start", payload)
+            result = await self._client.finish_request("turn/start", answer)
+        except CodexRequestRejected as rejected:
+            # Activity can contradict non-admission. Keep ownership uncertain in that case.
+            if turn.pending_notifications or turn.pending_requests:
+                raise PromptWriteFailed(
+                    "codex rejected start after provisional activity"
+                ) from rejected
+            raise BackendPromptRejected(str(rejected)) from rejected
+        except CodexAppServerError as failed:
+            raise PromptWriteFailed(str(failed)) from failed
         try:
-            result = await accepted
-        except CodexAppServerError as would_not_start:
-            raise PromptWriteFailed(str(would_not_start)) from would_not_start
-        try:
-            return bindings.TurnStartResponse.model_validate(result).turn.id
-        except ValidationError as would_not_decode:
-            raise PromptWriteFailed(
-                f"codex answered turn/start with something this cannot read: {would_not_decode}"
-            ) from would_not_decode
+            turn_id = bindings.TurnStartResponse.model_validate(result).turn.id
+            if not turn_id:
+                raise ValueError("missing turn id")
+        except (ValidationError, ValueError) as invalid:
+            raise PromptWriteFailed("codex returned an invalid turn/start response") from invalid
+        turn.turn_id = turn_id
+        turn.interrupt_turn_id = turn_id
+        turn.awaiting_start_response = False
+        if not turn.started.done():
+            turn.started.set_result(turn_id)
+        pending = turn.pending_notifications
+        turn.pending_notifications = []
+        for method, notification in pending:
+            # Once the response names the turn, normal handlers exclude stale turn IDs.
+            await self._on_notification(method, notification)
+        requests = turn.pending_requests
+        turn.pending_requests = []
+        for method, request_id, params in requests:
+            await self._on_server_request(method, request_id, params)
+        return turn_id
 
     def _bound_thread(self) -> str:
         thread_id = self._thread_id
@@ -1128,14 +1229,14 @@ class CodexAppServerBackendChild:
             error_summary = self._read_the_login_in(turn, error_summary)
         elif ending is ConversationTurnEnding.completed:
             self._login_completed_a_turn(turn)
-        await self._sink.turn_ended(
+        await self._sink.report(
             turn.token,
-            ending=ending,
-            error_summary=error_summary,
-            standard_error_tail=(
-                self._client.standard_error_tail()
+            TurnEnded(
+                ending=ending,
+                error_summary=error_summary,
+                standard_error_tail=self._client.standard_error_tail()
                 if ending is ConversationTurnEnding.failed
-                else None
+                else None,
             ),
         )
         # Last, so that a cancel waiting here returns to a child with nothing of this turn
@@ -1182,8 +1283,8 @@ class CodexAppServerBackendChild:
         """Finish anything the agent was part way through saying when the turn stopped."""
         for texts in list(turn.agent_message_texts.values()):
             if texts:
-                await self._sink.agent_message_completed(
-                    turn.token, text_message_content("".join(texts))
+                await self._sink.report(
+                    turn.token, AgentMessageCompleted(content=text_message_content("".join(texts)))
                 )
         turn.agent_message_texts.clear()
 
@@ -1233,6 +1334,13 @@ class CodexAppServerBackendChild:
     # --- what codex says ------------------------------------------------------------------
 
     async def _on_notification(self, method: str, notification: BaseModel) -> None:
+        thread_id = getattr(notification, "threadId", None)
+        if thread_id is not None and thread_id != self._thread_id:
+            return
+        turn = self._turn
+        if turn is not None and turn.awaiting_start_response and thread_id is not None:
+            turn.pending_notifications.append((method, notification))
+            return
         match notification:
             case bindings.TurnStartedNotification():
                 self._on_turn_started(notification)
@@ -1272,7 +1380,7 @@ class CodexAppServerBackendChild:
 
     def _on_turn_started(self, notification: bindings.TurnStartedNotification) -> None:
         turn = self._turn
-        if turn is None:
+        if turn is None or notification.threadId != self._thread_id:
             return
         if turn.kind == "review":
             turn.interrupt_turn_id = notification.turn.id
@@ -1310,7 +1418,7 @@ class CodexAppServerBackendChild:
         if turn is None:
             return
         turn.agent_message_texts.setdefault(notification.itemId, []).append(notification.delta)
-        await self._sink.agent_message_delta(turn.token, notification.delta)
+        await self._sink.report(turn.token, AgentMessageDelta(text_delta=notification.delta))
 
     async def _on_tool_call_progress(self, turn_id: str, item_id: str, detail: str) -> None:
         """A tool call that has started is getting on with it.
@@ -1322,7 +1430,7 @@ class CodexAppServerBackendChild:
         turn = self._turn_this_is_about(turn_id)
         if turn is None or not detail:
             return
-        await self._sink.tool_call_progress(turn.token, tool_call_id=item_id, detail=detail)
+        await self._sink.report(turn.token, ToolCallProgress(tool_call_id=item_id, detail=detail))
 
     async def _on_model_thinking(self, turn_id: str) -> None:
         """Codex streamed some private reasoning.
@@ -1334,7 +1442,7 @@ class CodexAppServerBackendChild:
         turn = self._turn_this_is_about(turn_id)
         if turn is None:
             return
-        await self._sink.model_thinking_happened(turn.token)
+        await self._sink.report(turn.token, ModelThinkingHappened())
 
     async def _on_plan_updated(self, notification: bindings.TurnPlanUpdatedNotification) -> None:
         """The turn's plan, whole, as codex now has it.
@@ -1346,7 +1454,7 @@ class CodexAppServerBackendChild:
         turn = self._turn_this_is_about(notification.turnId)
         if turn is None:
             return
-        await self._sink.plan_updated(turn.token, _plan_entries(notification.plan))
+        await self._sink.report(turn.token, PlanUpdated(entries=_plan_entries(notification.plan)))
 
     async def _on_token_usage_updated(
         self, notification: bindings.ThreadTokenUsageUpdatedNotification
@@ -1371,12 +1479,14 @@ class CodexAppServerBackendChild:
         if turn is None:
             return
         spent_so_far = notification.tokenUsage.total
-        await self._sink.token_usage_reported(
+        await self._sink.report(
             turn.token,
-            input_tokens=spent_so_far.inputTokens,
-            output_tokens=spent_so_far.outputTokens,
-            cached_input_tokens=spent_so_far.cachedInputTokens,
-            cost_usd=None,
+            TokenUsageReported(
+                input_tokens=spent_so_far.inputTokens,
+                output_tokens=spent_so_far.outputTokens,
+                cached_input_tokens=spent_so_far.cachedInputTokens,
+                cost_usd=None,
+            ),
         )
 
     async def _on_item_started(self, notification: bindings.ItemStartedNotification) -> None:
@@ -1386,19 +1496,18 @@ class CodexAppServerBackendChild:
         if isinstance(notification.item, bindings.ReasoningThreadItem):
             # What it reasoned is dropped where it arrives. That it began reasoning is the
             # earliest sign codex gives that the model is working, and it is passed on.
-            await self._sink.model_thinking_happened(turn.token)
+            await self._sink.report(turn.token, ModelThinkingHappened())
             return
         started = _tool_call_started(notification.item)
         if started is None:
             # The rest of codex's items are things a conversation's record has no row for.
             return
         title, tool_kind, detail = started
-        await self._sink.tool_call_started(
+        await self._sink.report(
             turn.token,
-            tool_call_id=notification.item.id,
-            title=title,
-            tool_kind=tool_kind,
-            detail=detail,
+            ToolCallStarted(
+                tool_call_id=notification.item.id, title=title, tool_kind=tool_kind, detail=detail
+            ),
         )
 
     async def _on_item_completed(self, notification: bindings.ItemCompletedNotification) -> None:
@@ -1408,21 +1517,24 @@ class CodexAppServerBackendChild:
         item = notification.item
         if isinstance(item, bindings.AgentMessageThreadItem):
             turn.agent_message_texts.pop(item.id, None)
-            await self._sink.agent_message_completed(turn.token, text_message_content(item.text))
+            await self._sink.report(
+                turn.token, AgentMessageCompleted(content=text_message_content(item.text))
+            )
             return
         if isinstance(item, bindings.ContextCompactionThreadItem):
             # Codex summarised the conversation so far and dropped what it summarised. It
             # sends the compaction as an item like any other — started, then completed —
             # and the finish is the one read here, because that is where the item is codex's
             # settled account of itself and reading both would write the row twice.
-            await self._sink.context_compacted(turn.token)
+            await self._sink.report(turn.token, ContextCompacted())
             return
         finished = _tool_call_finished(item)
         if finished is None:
             return
         status, detail = finished
-        await self._sink.tool_call_finished(
-            turn.token, tool_call_id=item.id, tool_call_status=status, detail=detail
+        await self._sink.report(
+            turn.token,
+            ToolCallFinished(tool_call_id=item.id, tool_call_status=status, detail=detail),
         )
 
     def _on_error(self, notification: bindings.ErrorNotification) -> None:
@@ -1438,6 +1550,15 @@ class CodexAppServerBackendChild:
 
     async def _on_server_request(self, method: str, request_id: Any, params: BaseModel) -> None:
         """Hold Codex's permission or user-input request until its turn resolves it."""
+        if getattr(params, "threadId", self._thread_id) != self._thread_id:
+            await self._client.respond_with_error(
+                request_id, code=-32600, message="request names another thread"
+            )
+            return
+        turn = self._turn
+        if turn is not None and turn.awaiting_start_response:
+            turn.pending_requests.append((method, request_id, params))
+            return
         if isinstance(params, bindings.ToolRequestUserInputParams):
             await self._on_user_input_request(request_id, params)
             return
@@ -1458,10 +1579,12 @@ class CodexAppServerBackendChild:
         self._asks_raised += 1
         ask_id = f"{turn_id}:{self._asks_raised}"
         turn.parked_asks[ask_id] = _ParkedPermissionAsk(request_id=request_id, method=method)
-        await self._sink.permission_ask_raised(
+        await self._sink.report(
             turn.token,
-            BackendPermissionAsk(
-                ask_id=ask_id, title=title, detail=detail, options=PERMISSION_ASK_OPTIONS
+            PermissionAskRaised(
+                ask=BackendPermissionAsk(
+                    ask_id=ask_id, title=title, detail=detail, options=PERMISSION_ASK_OPTIONS
+                )
             ),
         )
 
@@ -1479,17 +1602,19 @@ class CodexAppServerBackendChild:
         try:
             questions = _user_input_questions(params.questions)
         except ValueError as malformed:
-            await self._sink.user_input_failed(
-                turn.token, request_id=request_id, detail=str(malformed)
+            await self._sink.report(
+                turn.token, UserInputFailed(request_id=request_id, detail=str(malformed))
             )
             with suppress(CodexAppServerError, ValidationError):
                 await self._client.respond(wire_request_id, _user_input_answer(()))
             return
 
         turn.parked_user_inputs[request_id] = _ParkedUserInput(request_id=wire_request_id)
-        await self._sink.user_input_requested(
+        await self._sink.report(
             turn.token,
-            BackendUserInputRequest(request_id=request_id, questions=questions),
+            UserInputRequested(
+                request=BackendUserInputRequest(request_id=request_id, questions=questions)
+            ),
         )
 
     async def _on_child_ended(self) -> None:
@@ -1507,13 +1632,15 @@ class CodexAppServerBackendChild:
         turn.parked_asks.clear()
         turn.parked_user_inputs.clear()
         await self._complete_agent_messages(turn)
-        await self._sink.turn_ended(
+        await self._sink.report(
             turn.token,
-            ending=ConversationTurnEnding.failed,
-            error_summary=self._read_the_login_in(
-                turn, "the codex process ended while the turn was running"
+            TurnEnded(
+                ending=ConversationTurnEnding.failed,
+                error_summary=self._read_the_login_in(
+                    turn, "the codex process ended while the turn was running"
+                ),
+                standard_error_tail=self._client.standard_error_tail(),
             ),
-            standard_error_tail=self._client.standard_error_tail(),
         )
         turn.ended.set()
 

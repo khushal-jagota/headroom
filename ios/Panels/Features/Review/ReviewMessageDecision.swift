@@ -70,7 +70,12 @@ extension APIClient {
         do {
             let configuration = try await api.conversationConfiguration(owner, id: id)
             let messages = try await api.reviewMessages(id, after: configuration.ownerReadThroughSequence ?? 0)
-            let current = try await api.currentConversation(owner)
+            let current: String?
+            if case .ticket(let ticketID) = owner {
+                let ticket = try await api.ticket(ticketID)
+                current = ticket.conversationId
+                composer.machineLocale = ticket.locale
+            } else { current = try await api.currentConversation(owner) }
             try Task.checkCancellation()
             events = messages; historical = current != id
             composer.applyConfiguration(configuration)

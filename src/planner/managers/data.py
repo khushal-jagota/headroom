@@ -250,6 +250,17 @@ def update_manager(
 
 def _require_manager_can_delete(conn: sqlite3.Connection, item_id: str) -> Manager:
     item = _load_manager(conn, item_id)
+    if (
+        conn.execute(
+            "SELECT 1 FROM measure_sources WHERE responsible_kind='manager' "
+            "AND responsible_manager_id=? LIMIT 1",
+            (item_id,),
+        ).fetchone()
+        is not None
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "Manager is responsible for measure sources; reassign them first"
+        )
     ticket_ids = [
         str(row["id"])
         for row in conn.execute(
@@ -318,23 +329,3 @@ def set_manager_settled(
             (int(settled), clock.now_unix(), item_id),
         )
     return _load_manager(conn, item_id)
-
-
-def correct_manager_model(
-    conn: sqlite3.Connection,
-    item_id: str,
-    *,
-    backend: str,
-    old_model: str,
-    reasoning_effort: str | None,
-    new_model: str,
-    now: int,
-) -> bool:
-    """Correct only a model after the service authorizes and resolves its variant."""
-    updated = conn.execute(
-        "UPDATE managers SET manager_model=?, updated_at=? "
-        "WHERE id=? AND manager_backend=? AND manager_model=? "
-        "AND manager_reasoning_effort IS ?",
-        (new_model, now, item_id, backend, old_model, reasoning_effort),
-    )
-    return updated.rowcount == 1

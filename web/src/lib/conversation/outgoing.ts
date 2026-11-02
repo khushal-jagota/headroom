@@ -64,6 +64,8 @@ export type OutgoingMessage = {
    *  for. Absent means nothing was picked, which is what an ordinary send says. */
   pickedModel?: string | null;
   pickedReasoningEffort?: string | null;
+  effortIsSet?: boolean;
+  pickedBackend?: import("./wire").ConversationBackendKey | null;
 };
 
 const outgoingImageReservations = new Map<string, number>();
@@ -170,6 +172,8 @@ export function mintOutgoingMessage(input: {
   sentAtUnixMilliseconds?: number;
   pickedModel?: string | null;
   pickedReasoningEffort?: string | null;
+  effortIsSet?: boolean;
+  pickedBackend?: import("./wire").ConversationBackendKey | null;
 }): OutgoingMessage {
   const sentAtUnixMilliseconds = input.sentAtUnixMilliseconds ?? Date.now();
   return {
@@ -180,7 +184,9 @@ export function mintOutgoingMessage(input: {
     sentAtUnixMilliseconds,
     knownFate: "nothing_yet",
     ...(input.pickedModel == null ? {} : { pickedModel: input.pickedModel }),
-    ...(input.pickedReasoningEffort == null
+    ...(input.effortIsSet === undefined ? {} : {effortIsSet: input.effortIsSet}),
+    ...(input.pickedBackend == null ? {} : {pickedBackend: input.pickedBackend}),
+    ...(input.pickedReasoningEffort == null && !input.effortIsSet
       ? {}
       : { pickedReasoningEffort: input.pickedReasoningEffort })
   };
@@ -683,6 +689,12 @@ function includeRememberedMessagesInReservations(): void {
   try {
     for (let index = 0; index < window.sessionStorage.length; index += 1) {
       const key = window.sessionStorage.key(index);
+      if (key?.startsWith("panels:composer-local-sends:") && !key.startsWith("panels:composer-local-sends:video:")) {
+        for (const reservation of localComposerReservations(safelyReadSessionValue(key))) {
+          outgoingImageReservations.set(reservation.message_id, reservation.image_bytes);
+          outgoingFileReservations.set(reservation.message_id, reservation.file_bytes);
+        }
+      }
       if (key === null || !key.startsWith(`${REMEMBERED_OUTGOING_MESSAGES}.`)) continue;
       for (const reservation of rememberedReservationsFromStored(window.sessionStorage.getItem(key))) {
         outgoingImageReservations.set(reservation.message_id, reservation.image_bytes);
@@ -694,10 +706,24 @@ function includeRememberedMessagesInReservations(): void {
   }
 }
 
+function localComposerReservations(stored: string | null): RememberedMessageReservation[] {
+  try {
+    const entries: unknown = JSON.parse(stored ?? "[]");
+    if (!Array.isArray(entries)) return [];
+    return entries.flatMap(entry => {
+      if (typeof entry?.context?.messageId !== "string" || !Array.isArray(entry?.attempt?.content)) return [];
+      const pieces = entry.attempt.content.flatMap((value: unknown) => { const piece = sentMessagePieceFrom(value); return piece ? [piece] : []; });
+      const message = mintOutgoingMessage({content: pieces, senderLabel: "owner", mode: "queue"});
+      return [{message_id: entry.context.messageId, image_bytes: outgoingMessageImageBytes(message), file_bytes: outgoingMessageFileBytes(message)}];
+    });
+  } catch { return []; }
+}
+
 function messageIsRememberedAnywhere(messageId: string): boolean {
   try {
     for (let index = 0; index < window.sessionStorage.length; index += 1) {
       const key = window.sessionStorage.key(index);
+      if (key?.startsWith("panels:composer-local-sends:") && localComposerReservations(safelyReadSessionValue(key)).some(entry => entry.message_id === messageId)) return true;
       if (key === null || !key.startsWith(`${REMEMBERED_OUTGOING_MESSAGES}.`)) continue;
       if (rememberedReservationsFromStored(window.sessionStorage.getItem(key))
         .some((reservation) => reservation.message_id === messageId)) {
@@ -769,13 +795,18 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
     sentAtUnixMilliseconds,
     knownFate: knownFate as OutgoingMessageKnownFate,
     ...(pickedModel === null ? {} : { pickedModel }),
-    ...(pickedReasoningEffort === null ? {} : { pickedReasoningEffort })
+    ...(typeof held.effortIsSet === "boolean" ? {effortIsSet: held.effortIsSet} : {}),
+    ...(held.pickedBackend === "claude" || held.pickedBackend === "codex" || held.pickedBackend === "hermes" ? {pickedBackend: held.pickedBackend} : {}),
+    ...(pickedReasoningEffort === null && held.effortIsSet !== true ? {} : { pickedReasoningEffort })
   };
 }
 
 function sentMessagePieceFrom(value: unknown): SentMessagePiece | null {
   if (value === null || typeof value !== "object") return null;
   const piece = value as Record<string, unknown>;
+  if (piece.piece === "video_upload" && typeof piece.upload_id === "string" && piece.upload_id !== "") {
+    return { piece: "video_upload", upload_id: piece.upload_id };
+  }
   if (piece.piece === "text") {
     return typeof piece.text === "string" ? { piece: "text", text: piece.text } : null;
   }

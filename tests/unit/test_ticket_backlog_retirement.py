@@ -48,7 +48,7 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
         next_ceiling="needs_implementation",
         next_holder=OWNER_PRINCIPAL,
     )
-    assert advanced.is_backlogged and advanced.stage == "needs_success_condition"
+    assert advanced.is_backlogged and advanced.stage == "needs_what_changes"
     assert (
         data.claim_ticket_for_worker_step(
             tmp_db, tid, readiness_check=is_ready_for_worker_step, now=22
@@ -99,7 +99,7 @@ def test_hash_guard_detects_same_second_changes_and_authority_is_unchanged(
 
 
 
-def ready_ticket(conn: Connection, *, ceiling: str = "needs_success_condition") -> Ticket:
+def ready_ticket(conn: Connection, *, ceiling: str = "needs_what_changes") -> Ticket:
     tid = create(conn)
     return data.accept_proposal(
         conn,
@@ -188,7 +188,7 @@ def test_resume_preserves_pending_approval_and_live_blocker(tmp_db: Connection) 
 
 def test_resume_keeps_ceiling_and_parks_new_proposal_at_its_gate(tmp_db: Connection) -> None:
     ticket = ready_ticket(tmp_db)
-    assert ticket.stage == ticket.ceiling == "needs_success_condition"
+    assert ticket.stage == ticket.ceiling == "needs_what_changes"
     backlog(tmp_db, ticket.id)
     resumed = backlog(tmp_db, ticket.id, False)
     assert resumed.stage == ticket.stage and resumed.ceiling == ticket.ceiling
@@ -210,6 +210,6 @@ def test_resume_keeps_ceiling_and_parks_new_proposal_at_its_gate(tmp_db: Connect
     )
     assert proposed.stage == ticket.stage and proposed.ceiling == ticket.ceiling
     assert proposed.pending_proposal is not None
-    assert proposed.pending_proposal.field == "success_condition"
+    assert proposed.pending_proposal.field == "what_changes"
     assert proposed.pending_proposal.body == "Observable result"
-    assert "success_condition" not in proposed.field_values
+    assert "what_changes" not in proposed.field_values

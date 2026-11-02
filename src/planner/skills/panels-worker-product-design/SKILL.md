@@ -7,6 +7,12 @@ description: "Stage-by-stage guidance for holistic product-design Tickets."
 
 Design how the product works before polishing how it looks. Optimize above all for usability: guide people toward the intended actions with effective hierarchy, make the product and its behavior understandable, and let the design reflect its purpose. Simplicity can help, but is not the definition of usability.
 
+## Use Anthropic design craft when necessary
+
+Use `frontend-design` as necessary for hierarchy, rhythm, restraint, and interface craft. Preserve the approved direction and the house style.
+
+`assets/tokens.css` takes precedence over `frontend-design` guidance for every color, radius, duration, spacing step, border width, size, and font value.
+
 ## Experience the work, at every Stage
 
 Inspecting the repository tells you what exists. It does not tell you how the thing feels, and feel is what you are designing. Open the real surface, use it, and watch it — before you write the Brief, before you build options, and before you refine the chosen one.

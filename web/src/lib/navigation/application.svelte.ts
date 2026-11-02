@@ -1,5 +1,5 @@
 import { getContext, onDestroy, onMount, setContext } from 'svelte';
-import type { NavigationOwnerState } from './owner';
+import type { ScopedNavigationOwnerState } from './owner';
 import { createScopedNavigationOwner } from './views/owner';
 import { createCommandEvidence } from './commandEvidence';
 import { navigationConfiguration } from './configuration';
@@ -11,7 +11,7 @@ const applicationContext = Symbol('navigation application');
 /** One bounded view belongs to the application, above every route and conversation pane. */
 export function provideNavigationApplication() {
   const owner = createScopedNavigationOwner();
-  let state = $state.raw<NavigationOwnerState>(owner.getState());
+  let state = $state.raw<ScopedNavigationOwnerState>(owner.getState());
   const unsubscribe = owner.subscribe((next) => { state = next; });
   const selectors = {
     get publication(){return state.publication ?? null;},

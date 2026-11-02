@@ -16,6 +16,7 @@ import XCTest
         let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: URLSession(configuration: config))
         await store.refresh()
         XCTAssertTrue(store.errors.isEmpty)
+        XCTAssertTrue(store.executorHealth?.activityKnown == true)
         XCTAssertEqual(store.chief?.label, "Chief 1")
         let cached = try XCTUnwrap(LocalStore.shared.record(server: "https://refresh.invalid", kind: "cache", id: "https://refresh.invalid/api/workers/chief-of-staff/settings")?.payload)
         XCTAssertEqual((try JSONSerialization.jsonObject(with: cached) as? [String: Any])?["future_field"] as? String, "preserved")
@@ -83,6 +84,7 @@ private struct RefreshFixture {
         let body: Any
         switch key {
         case "/api/managers", "/api/tickets": return try Data(contentsOf: fixtures.appendingPathComponent(String(key.dropFirst(5)) + ".json"))
+        case "/api/executor/health": body = ["mode":"remote", "identity":["executor_incarnation":"current", "connection_generation":1], "connection_state":"ready", "last_contact_at_ms":1000] as [String:Any]
         case "/api/review": body = ["items": [], "running_worker_count": 0]
         case "/api/workers/chief-of-staff/settings": body = ["future_field": "preserved", "employee_id": "chief", "label": "Chief " + revision, "recap": "", "skill": ["name": "chief", "description": "", "markdown_body": ""], "launch_defaults": ["employee_backend": "codex"]] as [String: Any]
         case "/api/deployment-status": body = ["state": "idle"]

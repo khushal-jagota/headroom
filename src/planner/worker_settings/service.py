@@ -12,7 +12,7 @@ import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -46,9 +46,9 @@ from planner.worker_settings.contracts import (
 )
 from planner.worker_settings.logic.skill_edits import normalize_skill_patch
 from planner.worker_types.configuration import load_worker_runtime_definitions
-from planner.worker_types.contracts import WorkerProfile, WorkerTypeDefinition
+from planner.worker_types.contracts import TicketTypeMigration, WorkerProfile, WorkerTypeDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
-from planner.worker_types.store import write_definition
+from planner.worker_types.store import definition_transaction, write_definition
 
 CHIEF_SETTINGS_KEY: Final = "chief_of_staff"
 CHIEF_LABEL: Final = "Chief of Staff"
@@ -184,6 +184,29 @@ def read_skill(conn: sqlite3.Connection, skill_name: str) -> ManagedSkill:
     return parse_skill(read_skill_source(conn, skill_name), skill_name)
 
 
+def _render_skill_patch(
+    conn: sqlite3.Connection, skill_name: str, patch: SpecialistSkillPatch, *, allow_create: bool
+) -> str:
+    if allow_create and not has_skill(conn, skill_name):
+        for field in ("description", "markdown_body"):
+            if field not in patch:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    f"{field} is required for a new skill",
+                    {"field": field},
+                )
+        rendered = render_new_skill(skill_name, patch["description"], patch["markdown_body"])
+    else:
+        current = read_skill(conn, skill_name)
+        rendered = render_skill_from_existing_frontmatter(
+            current.source_text,
+            expected_skill_name=skill_name,
+            description=patch.get("description", current.description),
+            markdown_body=patch.get("markdown_body", current.markdown_body),
+        )
+    return rendered
+
+
 def _save_skill(
     conn: sqlite3.Connection,
     skill_name: str,
@@ -198,25 +221,7 @@ def _save_skill(
     patch = normalize_skill_patch(skill_name, payload)
     with skill_publication_lock(database_parent) as skills_home:
         with _one_writer(conn):
-            if allow_create and not has_skill(conn, skill_name):
-                for field in ("description", "markdown_body"):
-                    if field not in patch:
-                        raise PlannerError(
-                            ErrorCode.validation,
-                            f"{field} is required for a new skill",
-                            {"field": field},
-                        )
-                rendered = render_new_skill(
-                    skill_name, patch["description"], patch["markdown_body"]
-                )
-            else:
-                current = read_skill(conn, skill_name)
-                rendered = render_skill_from_existing_frontmatter(
-                    current.source_text,
-                    expected_skill_name=skill_name,
-                    description=patch.get("description", current.description),
-                    markdown_body=patch.get("markdown_body", current.markdown_body),
-                )
+            rendered = _render_skill_patch(conn, skill_name, patch, allow_create=allow_create)
             result = parse_skill(rendered, skill_name)
             write_skill_source(conn, skill_name, rendered, now=now)
         _publish_skill(conn, skills_home, skill_name, rendered)
@@ -248,6 +253,46 @@ def save_worker_type_skill(
     return _save_skill(
         conn, skill_name, payload, now=now, database_parent=database_parent, allow_create=True
     )
+
+
+def save_worker_type_definition(
+    conn: sqlite3.Connection,
+    definition: WorkerTypeDefinition,
+    skill: dict[str, Any] | None,
+    *,
+    now: int,
+    database_parent: Path | str,
+) -> tuple[TicketTypeMigration, ...]:
+    """Commit a bundled declaration before publishing its registry or skill files."""
+    if conn.in_transaction:
+        raise RuntimeError("Worker type API save requires its own outer transaction")
+    with skill_publication_lock(database_parent) as skills_home:
+        rendered: str | None = None
+        with definition_transaction(conn):
+            if skill is not None:
+                name = definition.worker_profile.specialist_skill
+                patch = normalize_skill_patch(name, skill)
+                rendered = _render_skill_patch(conn, name, patch, allow_create=True)
+                parse_skill(rendered, name)
+                write_skill_source(conn, name, rendered, now=now)
+            migrations = write_definition(conn, definition, now=now)
+        load_worker_runtime_definitions(conn)
+        if rendered is not None:
+            try:
+                _publish_skill(
+                    conn, skills_home, definition.worker_profile.specialist_skill, rendered
+                )
+            except PlannerError as exc:
+                if exc.code is ErrorCode.skill_save_incomplete:
+                    detail = dict(exc.detail or {})
+                    detail.update(
+                        worker_type=definition.worker_type,
+                        definition_saved=True,
+                        migrations=[asdict(migration) for migration in migrations],
+                    )
+                    raise PlannerError(exc.code, exc.message, detail) from exc
+                raise
+    return migrations
 
 
 # --- Worker types -------------------------------------------------------------
@@ -464,60 +509,6 @@ def update_worker_requirements(
             (int(requires_macos), now, worker_type),
         )
     return read_worker_settings(conn, registry, worker_type)
-
-
-def correct_chief_model(
-    conn: sqlite3.Connection,
-    *,
-    backend: str,
-    old_model: str,
-    reasoning_effort: str | None,
-    new_model: str,
-) -> bool:
-    """Correct the authorized Chief request without a message or conversation reset."""
-    updated = conn.execute(
-        "UPDATE chief_settings SET employee_launch_model=? WHERE employee_id=? "
-        "AND employee_backend=? AND employee_launch_model=? "
-        "AND employee_launch_reasoning_effort IS ?",
-        (new_model, CHIEF_SETTINGS_KEY, backend, old_model, reasoning_effort),
-    )
-    return updated.rowcount == 1
-
-
-def correct_worker_default_model(
-    conn: sqlite3.Connection,
-    worker_type: str,
-    *,
-    backend: str,
-    old_model: str,
-    reasoning_effort: str | None,
-    new_model: str,
-    now: int,
-) -> bool:
-    """CAS the whole definition so a simultaneous configuration edit cannot be lost."""
-    import json
-
-    row = conn.execute(
-        "SELECT definition_json FROM worker_types WHERE worker_type=?", (worker_type,)
-    ).fetchone()
-    if row is None:
-        return False
-    previous = str(row["definition_json"])
-    payload = json.loads(previous)
-    profile = payload["profile"]
-    if (
-        profile["default_backend"],
-        profile["default_model"],
-        profile["default_reasoning_effort"],
-    ) != (backend, old_model, reasoning_effort):
-        return False
-    profile["default_model"] = new_model
-    updated = conn.execute(
-        "UPDATE worker_types SET definition_json=?, updated_at=? "
-        "WHERE worker_type=? AND definition_json=?",
-        (json.dumps(payload), now, worker_type, previous),
-    )
-    return updated.rowcount == 1
 
 
 def apply_skills(

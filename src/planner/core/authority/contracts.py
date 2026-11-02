@@ -35,6 +35,7 @@ class TargetKind(StrEnum):
 
     ticket = "ticket"
     manager = "manager"
+    goal = "goal"
     plan = "plan"
     owner_only = "owner_only"
 
@@ -74,6 +75,10 @@ def ticket(ticket_id: str) -> Target:
     return Target(TargetKind.ticket, ticket_id)
 
 
+def goal(goal_id: str) -> Target:
+    return Target(TargetKind.goal, goal_id)
+
+
 def manager(manager_id: str, *fields: str) -> Target:
     return Target(TargetKind.manager, manager_id, frozenset(fields))
 
@@ -90,6 +95,7 @@ __all__ = [
     "ANY_ID",
     "Target",
     "TargetKind",
+    "goal",
     "manager",
     "owner_only",
     "plan",

@@ -11,8 +11,10 @@ from typing import Literal, TypedDict
 from planner.navigation.contracts import (
     AddressRecord,
     AttentionKnowledge,
+    BrokenTicketValue,
     ChiefRecord,
     Continuity,
+    GoalRecord,
     ManagerValue,
     ProjectRecord,
     RecordKey,
@@ -22,9 +24,11 @@ from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuth
 from planner.navigation.proof_contracts import ProofResult
 
 VIEW_WIRE_VERSION = 3
-VIEW_PROJECTION_VERSION = 6
+VIEW_PROJECTION_VERSION = 7
 
-ViewSection = Literal["rail_parents", "rail_tickets", "children", "settled", "unread", "review"]
+ViewSection = Literal[
+    "rail_parents", "rail_tickets", "children", "settled", "unread", "review", "goals"
+]
 ViewGroup = Literal[
     "all",
     "awaiting_approval",
@@ -43,7 +47,7 @@ ViewGroup = Literal[
 
 
 class ViewOwner(TypedDict):
-    kind: Literal["chief", "manager", "ticket"]
+    kind: Literal["chief", "manager", "ticket", "goal"]
     id: str
 
 
@@ -65,8 +69,18 @@ class ViewWindowRequest(TypedDict):
     limit: int
 
 
+class ReviewHistoryKey(TypedDict):
+    kind: Literal["ticket", "conversation"]
+    id: str
+
+
+class ReviewSummary(TypedDict):
+    skipped: int
+    new: int
+
+
 class ViewRequest(TypedDict):
-    projection_version: Literal[6]
+    projection_version: Literal[7]
     scope_generation: int
     locale: str
     selected: ViewOwner | None
@@ -74,6 +88,8 @@ class ViewRequest(TypedDict):
     # Exact painted Review conversations whose canonical owners must stay visible
     # while a bounded reply outcome resolves, even after unread membership clears.
     review_conversation_ids: list[str]
+    review_skipped_keys: list[ReviewHistoryKey]
+    review_priority_keys: list[ReviewHistoryKey]
     windows: list[ViewWindowRequest]
 
 
@@ -88,6 +104,10 @@ class ViewContentReference(TypedDict):
 class ViewTicketValue(TicketValue):
     # recap is the complete body when reference is null, otherwise its preview.
     # Exact control identity is unchanged. Canonical saved text is never truncated.
+    recap_reference: ViewContentReference | None
+
+
+class ViewBrokenTicketValue(BrokenTicketValue):
     recap_reference: ViewContentReference | None
 
 
@@ -115,7 +135,7 @@ class ViewConversationValue(TypedDict):
 class ViewTicketRecord(TypedDict):
     kind: Literal["ticket"]
     id: str
-    value: ViewTicketValue
+    value: ViewTicketValue | ViewBrokenTicketValue
 
 
 class ViewManagerRecord(TypedDict):
@@ -142,6 +162,7 @@ type ViewRecord = (
     | ViewSettledManagerRecord
     | ViewConversationRecord
     | ChiefRecord
+    | GoalRecord
     | AddressRecord
     | ProjectRecord
 )
@@ -178,11 +199,12 @@ class ViewContent(TypedDict):
     windows: list[ViewWindow]
     counts: ViewCounts
     review_context: list[ReviewConversationContext]
+    review_summary: ReviewSummary
 
 
 class ViewIdentity(TypedDict):
     wire_version: Literal[3]
-    projection_version: Literal[6]
+    projection_version: Literal[7]
     view_id: str
     scope_generation: int
     ordering_generation: str
@@ -221,6 +243,7 @@ class ViewPatch(ViewIdentity):
     windows: list[ViewWindow]
     counts: ViewCounts
     review_context: list[ReviewConversationContext]
+    review_summary: ReviewSummary
 
 
 class ViewCheckpoint(ViewIdentity):

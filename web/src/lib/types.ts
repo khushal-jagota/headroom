@@ -9,7 +9,7 @@ export type DeploymentStatusState =
   | "problem"
   | "unknown";
 
-export type DeploymentOutcome = "succeeded" | "failed" | "rolled_back";
+export type DeploymentOutcome = "succeeded" | "failed" | "rolled_back" | "cancelled";
 
 export type SuccessPresentation = {
   state: "connected" | "reconnecting" | "back_up";
@@ -24,6 +24,10 @@ export type DeploymentStatus = {
   detail: string | null;
   valid_until: string | null;
   success_display_until: string | null;
+  installation_confirmed?: boolean;
+  work_paused?: boolean;
+  unknown_display_until?: string | null;
+  attention_status?: "pending" | "queued" | "started" | "delivery_uncertain" | "resolved" | "superseded" | null;
 };
 
 export type VpsMetricState = "healthy" | "warning" | "critical" | "unavailable";
@@ -84,6 +88,7 @@ export type ListPageFacts = {
 };
 
 export type TicketSummary = WorkAttention & {
+  locale?: import("./ticketMachines").TicketLocale;
   is_backlogged: boolean;
   waiting_to_closeout: boolean;
   manager?: Principal;
@@ -179,7 +184,7 @@ export type PendingTicketProposal = {
 };
 
 export type Principal = {
-  kind: "owner" | "chief" | "manager" | "ticket";
+  kind: "owner" | "chief" | "manager" | "ticket" | "goal";
   id: string;
 };
 
@@ -286,6 +291,8 @@ export type TicketFieldApproval = {
 };
 
 export type TicketDetail = {
+  /** Missing in an older decoded body means unobserved, never compatible. */
+  locale?: import("./ticketMachines").TicketLocale;
   conversation_signal?: ConversationSignal;
   is_backlogged?: boolean;
   record_sha256?: string;
@@ -338,6 +345,7 @@ export type TicketDeletionResponse = {
 };
 
 export type ManagerWorkspaceTicket = WorkAttention & {
+  locale?: import("./ticketMachines").TicketLocale;
   conversation_signal?: ConversationSignal;
   is_backlogged: boolean;
   conversation_id?: string | null;
@@ -424,6 +432,7 @@ export type BoardManager = {
 };
 
 export type BoardCard = WorkAttention & {
+  locale?: import("./ticketMachines").TicketLocale;
   is_backlogged?: boolean;
   conversation_signal?: ConversationSignal;
   manager?: Principal;
@@ -477,8 +486,9 @@ export type NotificationSettingsResponse = {
 
 // One row names one durable unread conversation, independent of settlement.
 export type WorkspaceMessageConversation = {
+  locale?: import("./ticketMachines").TicketLocale;
   conversationSignal?: Partial<ConversationSignal>;
-  kind: "chief" | "manager" | "ticket";
+  kind: "chief" | "manager" | "ticket" | "goal";
   id: string;
   title: string;
   conversationId: string;

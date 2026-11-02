@@ -5,6 +5,7 @@ describe("persistent shell addresses", () => {
   it.each([
     ["#/config/chief-of-staff", "#/settings/config/chief-of-staff", "settings", { section: "config", roleKind: "agent", id: "chief_of_staff" }],
     ["#/vps", "#/vps", "vps", {}],
+    ["#/dev/goal-components", "#/dev/goal-components", "dev", { sub: "goal-components" }],
   ])("normalizes %s without losing its selection", (input, hash, name, params) => {
     const destination = parseShellDestination(input);
     expect(destination).toMatchObject({ hash, name, params });
@@ -31,7 +32,7 @@ describe("persistent shell addresses", () => {
     expect(parseShellDestination(input)).toMatchObject({ name: "workspace", hash: input, workspace: { openFile: { kind: "ticket-file", ticketId: "t_1", path: "artifacts/report.html" } } });
   });
 
-  it.each(["#/settings/unknown", "#/backends/unknown", "#/vps/unknown", "#/review/unknown", "#/workspace/utility/usage/unknown", "#/day/2026-07-29", "#/sprint"])("keeps an unavailable destination explicit: %s", hash => {
+  it.each(["#/settings/unknown", "#/backends/unknown", "#/vps/unknown", "#/review/unknown", "#/workspace/utility/usage/unknown", "#/day/2026-07-29", "#/sprint", "#/dev", "#/dev/conversation", "#/dev/file-preview-gallery", "#/dev/goal-components/unknown"])("keeps an unavailable destination explicit: %s", hash => {
     expect(parseShellDestination(hash).name).toBe("unknown");
   });
 });

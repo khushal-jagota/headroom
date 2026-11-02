@@ -5,6 +5,11 @@ import { fieldLabelFor, stageLabelFor } from './lifecycle';
 import { holderLabelFor, holderOptionsFor, holderValue } from './ceilingHolder';
 import { workerPageHistory } from './workerPageHistory';
 
+/** Terminal Tickets expose no lifecycle actions. */
+export function terminalTicketLifecycleDomMatches(controls:Element):boolean {
+  return controls.hasAttribute('hidden') && controls.children.length===0;
+}
+
 /** Credit only public facts actually mounted in this Ticket section. */
 export function ticketSectionDomMatches(root:HTMLElement,masthead:HTMLElement,section:TicketSection,view:EffectiveNavigationView):boolean {
   const row=section.record.value,lc=section.lifecycle,detail=section.detail;
@@ -13,7 +18,7 @@ export function ticketSectionDomMatches(root:HTMLElement,masthead:HTMLElement,se
   if(!controls) return false;
   const actions=controls.querySelectorAll('[data-ticket-backlog-action]'),markers=controls.querySelectorAll('[data-ticket-backlogged]');
   if(row.terminal) {
-    if(actions.length!==0 || markers.length!==0 || controls.querySelector('.actions')) return false;
+    if(actions.length!==0 || markers.length!==0 || !terminalTicketLifecycleDomMatches(controls)) return false;
   } else if(actions.length!==1 || actions[0].textContent!==(row.is_backlogged ? 'Resume ticket' : 'Backlog ticket')
     || markers.length!==(row.is_backlogged ? 1 : 0) || (row.is_backlogged && markers[0].textContent!=='Backlogged')) return false;
   if(!root.isConnected || root.dataset.ticketSection!==section.record.id || root.dataset.sectionStage!==row.stage) return false;

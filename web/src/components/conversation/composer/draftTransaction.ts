@@ -1,3 +1,4 @@
+import type { PendingVideo } from "../../../lib/conversation/videoUploads/contracts";
 import type { RunValues } from "../../../lib/conversation/composer";
 import {
   pendingImagesAsPieces,
@@ -17,8 +18,11 @@ export type ComposerDraft = Readonly<{
   attachmentOrder?: readonly ComposerAttachmentReference[];
   pendingImages: readonly PendingConversationImage[];
   pendingFiles: readonly PendingConversationFile[];
+  pendingVideos?: readonly PendingVideo[];
   pickedModel: string | null;
   pickedReasoningEffort: string | null;
+  pickedBackend?: RunValues["backendKey"];
+  effortIsSet?: boolean;
   compositionRevision: number;
 }>;
 
@@ -42,8 +46,11 @@ function snapshotDraft(draft: ComposerDraft): ComposerDraft {
     ...(draft.attachmentOrder === undefined ? {} : { attachmentOrder: [...draft.attachmentOrder] }),
     pendingImages: [...draft.pendingImages],
     pendingFiles: [...draft.pendingFiles],
+    pendingVideos: [...(draft.pendingVideos ?? [])],
     pickedModel: draft.pickedModel,
     pickedReasoningEffort: draft.pickedReasoningEffort,
+    ...(draft.pickedBackend === undefined ? {} : {pickedBackend: draft.pickedBackend}),
+    effortIsSet: draft.effortIsSet,
     compositionRevision: draft.compositionRevision
   };
 }
@@ -82,8 +89,12 @@ function draftEquals(one: ComposerDraft, other: ComposerDraft): boolean {
     && one.text === other.text
     && samePendingImages(one.pendingImages, other.pendingImages)
     && samePendingFiles(one.pendingFiles, other.pendingFiles)
+    && (one.pendingVideos ?? []).length === (other.pendingVideos ?? []).length
+    && (one.pendingVideos ?? []).every((video, index) => video === other.pendingVideos?.[index])
     && one.pickedModel === other.pickedModel
     && one.pickedReasoningEffort === other.pickedReasoningEffort
+    && one.pickedBackend === other.pickedBackend
+    && one.effortIsSet === other.effortIsSet
   );
 }
 
@@ -105,14 +116,18 @@ export function beginComposerSend(
   const content: SentMessagePiece[] = [
     ...(trimmedText === "" ? [] : [{ piece: "text" as const, text: trimmedText }]),
     ...pendingImagesAsPieces(draftBeforeSend.pendingImages),
-    ...pendingFilesAsPieces(draftBeforeSend.pendingFiles)
+    ...pendingFilesAsPieces(draftBeforeSend.pendingFiles),
+    ...(draftBeforeSend.pendingVideos ?? []).flatMap(video => video.phase === "ready" && video.uploadId
+      ? [{piece: "video_upload" as const, upload_id: video.uploadId}] : [])
   ];
   const draftAfterSend: ComposerDraft = {
     text: "",
     ...(draftBeforeSend.attachmentOrder === undefined ? {} : { attachmentOrder: [] }),
     pendingImages: [],
     pendingFiles: [],
+    pendingVideos: [],
     pickedModel: null,
+    ...(draftBeforeSend.pickedBackend === undefined ? {} : {pickedBackend: null}),
     pickedReasoningEffort: null,
     compositionRevision: draftBeforeSend.compositionRevision
   };
@@ -145,6 +160,7 @@ export function restoreRefusedComposerSend(
       text: sentText(attempt.content),
       ...(attempt.draftBeforeSend.attachmentOrder === undefined ? {} : {
         attachmentOrder: attempt.draftBeforeSend.attachmentOrder.map((reference) => {
+          if (reference.kind === "video") return reference;
           const before = reference.kind === "image"
             ? attempt.draftBeforeSend.pendingImages : attempt.draftBeforeSend.pendingFiles;
           const restored = reference.kind === "image" ? restoredImages.images : restoredFiles.files;
@@ -154,8 +170,11 @@ export function restoreRefusedComposerSend(
       }),
       pendingImages: restoredImages.images,
       pendingFiles: restoredFiles.files,
+      pendingVideos: attempt.draftBeforeSend.pendingVideos ?? [],
       pickedModel: attempt.draftBeforeSend.pickedModel,
       pickedReasoningEffort: attempt.draftBeforeSend.pickedReasoningEffort,
+      ...(attempt.draftBeforeSend.pickedBackend === undefined ? {} : {pickedBackend: attempt.draftBeforeSend.pickedBackend}),
+      effortIsSet: attempt.draftBeforeSend.effortIsSet,
       compositionRevision: attempt.draftAfterSend.compositionRevision
     },
     nextImageId: restoredImages.nextId,

@@ -62,6 +62,8 @@ def is_self(caller: Principal, target: Target, facts: ChainFacts) -> bool:
         return False
     if caller.kind is PrincipalKind.ticket:
         return target.kind is TargetKind.ticket and caller.id == target.id
+    if caller.kind is PrincipalKind.goal:
+        return target.kind is TargetKind.goal and caller.id == target.id
     if caller.kind is PrincipalKind.manager:
         return target.kind is TargetKind.manager and caller.id == target.id
     return False
@@ -77,6 +79,21 @@ def stands_above(caller: Principal, target: Target, facts: ChainFacts) -> bool:
         return target.kind is TargetKind.ticket and facts.target_parent_manager_id == caller.id
     if caller.kind is PrincipalKind.ticket:
         return any(declared.covers(target) for declared in facts.caller_declared_targets)
+    return False
+
+
+def can_hold_review(holder: Principal, *, manager_kind: str, manager_id: str | None) -> bool:
+    """Whether the holder is the user or this Ticket's directly assigned manager.
+
+    Holding a review is narrower than general authority. Chief is the direct manager
+    only for Chief-assigned Tickets; no Ticket can hold another Ticket's review.
+    """
+    if holder.kind is PrincipalKind.owner:
+        return True
+    if holder.kind is PrincipalKind.chief:
+        return manager_kind == "chief"
+    if holder.kind is PrincipalKind.manager:
+        return manager_kind == "manager" and holder.id == manager_id
     return False
 
 
@@ -117,6 +134,7 @@ def shares_the_chain(caller: Principal, target: Target, facts: ChainFacts) -> bo
 
 __all__ = [
     "ChainFacts",
+    "can_hold_review",
     "is_below",
     "is_self",
     "shares_the_chain",

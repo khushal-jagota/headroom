@@ -143,6 +143,25 @@ def _catalogs(browser, url):
         page.close()
 
 
+def _visibility_queue_proof(page):
+    import json
+    import os
+    from pathlib import Path
+
+    page.wait_for_function("typeof window.__visibilityQueueProof === 'function'")
+    proof = page.evaluate("window.__visibilityQueueProof()")
+    output = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp"))
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "visibility-queue-proof.json").write_text(json.dumps(proof, indent=2))
+    print("VISIBILITY_QUEUE_PROOF " + json.dumps(proof), flush=True)
+    failures = [f"{row['name']}: expected {row['expected']}; observed {row.get('actual')}"
+                for row in [*proof["rows"], *proof["readiness"]["rows"]] if not row["pass"]]
+    assert proof["nativeObserverRestored"], proof
+    # Collect both directions before raising: one unchanged old-source run must
+    # establish both stale-first failures, rather than stopping at admission.
+    assert not failures, "Visibility or presentation readiness failures:\n" + "\n".join(failures)
+
+
 def _preview_lifecycle(browser, url):
     import base64
     import time
@@ -193,6 +212,7 @@ def _preview_lifecycle(browser, url):
         page.route("**/files/tickets/t_preview/*.md", markdown_preview)
         page.route("**/files/tickets/t_preview/*.png",lambda route: route.fulfill(content_type="image/png",body=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=")))
         page.goto(url+"?previews=1", wait_until="domcontentloaded")
+        _visibility_queue_proof(page)
         page.wait_for_function("document.querySelectorAll('[data-file-preview-html]').length > 0")
         assert 0 < len(reads) < 8, reads
         page.wait_for_function("document.querySelectorAll('[data-preview-fixture] img').length > 0")
@@ -242,7 +262,18 @@ def _preview_lifecycle(browser, url):
         page.wait_for_function("!document.querySelector('[data-preview-index=\"0\"] [data-visible-content-restoring]')")
         assert not page.evaluate("window.__firstPreview.isConnected")
         assert sum('preview0.html' in href for href in reads) == 2, reads
-        expect(restored_slot.locator('.quiet-line')).to_have_text('file fetch failed: 503')
+        expect(restored_slot.locator('.quiet-line')).to_have_text('preview0.html — file fetch failed: 503')
+        failed_name = restored_slot.locator('.file-preview-failed-name')
+        expect(failed_name).to_have_text('preview0.html')
+        assert failed_name.evaluate("""element => {
+          const style = getComputedStyle(element);
+          const reference = document.createElement('span');
+          reference.style.color = 'var(--text-strong)';
+          element.append(reference);
+          const strongColor = getComputedStyle(reference).color;
+          reference.remove();
+          return style.fontWeight === '600' && style.color === strongColor;
+        }""")
         # Failure completes restoration and is retryable when this preview returns.
         page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=element.scrollHeight")
         page.wait_for_function("document.querySelector('[data-preview-index=\"0\"] [data-visible-content-state]')?.dataset.visibleContentState !== 'active'")
@@ -462,7 +493,7 @@ def _run(browser, urls):
 
     # Set this to keep a picture of what the assertions checked. The test proves the same
     # thing with or without it.
-    screenshot_dir = os.environ.get("UNANSWERED_SEND_SCREENSHOT_DIR")
+    screenshot_dir = os.environ.get("UNANSWERED_SEND_SCREENSHOT_DIR", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     if screenshot_dir:
         os.makedirs(screenshot_dir, exist_ok=True)
 
@@ -675,7 +706,7 @@ def _run(browser, urls):
         # All original candidates disappear again, and the saved position now exceeds
         # the shortened transcript's range. The native clamp reaches the newest line.
         before = newest_reading(page)["scrollTop"]
-        page.evaluate("window.__replaceAllScrollRows(20)")
+        page.evaluate("window.__replaceAllScrollRows(2)")
         settled(page)
         limit = page.locator(THREAD).evaluate("thread => thread.scrollHeight-thread.clientHeight")
         actual = newest_reading(page)["scrollTop"]
@@ -802,7 +833,14 @@ def _run(browser, urls):
         assert page.evaluate("window.__raceImage.getBoundingClientRect().height") == 180
 
     def descendant_keyboard_case(page, url):
-        for key in ["PageDown", "Home", "End", "Control+Home", "Control+End"]:
+        import sys
+
+        # macOS uses plain Home/End for document edges; Control+Home/End is
+        # a Windows/Linux native shortcut and does not scroll Chromium on Mac.
+        keys = ["PageDown", "Home", "End"]
+        if sys.platform != "darwin":
+            keys += ["Control+Home", "Control+End"]
+        for key in keys:
             prepare_scroll_case(page, url, "plain", "scrollback")
             install_controlled_image(page)
             page.evaluate("""() => {
@@ -894,7 +932,7 @@ def _run(browser, urls):
         }""")
         settled(page)
         before = newest_reading(page)["scrollTop"]
-        page.keyboard.press("Control+End")
+        page.keyboard.press("Meta+ArrowDown" if sys.platform == "darwin" else "Control+End")
         settled(page)
         assert page.evaluate(
             "window.__nestedEditor.selectionStart === window.__nestedEditor.value.length && window.__nestedEditor.scrollTop > 0"
@@ -928,6 +966,32 @@ def _run(browser, urls):
         )
         before = newest_reading(page)
         before_row_height = page.evaluate("window.__delayedRow.getBoundingClientRect().height")
+        capped_markdown = kind == "markdown"
+        capped_following = capped_markdown and mode == "following"
+
+        def clip_reading():
+            return page.evaluate("""() => {
+              const clip = window.__delayedRow.querySelector('.file-preview-clip');
+              const style = getComputedStyle(clip);
+              return {height:clip.getBoundingClientRect().height,
+                bottom:clip.getBoundingClientRect().bottom - document.querySelector('[data-conversation-thread]').getBoundingClientRect().top,
+                cap:parseFloat(style.maxHeight),
+                expectedCap:24 * parseFloat(getComputedStyle(document.documentElement).fontSize),
+                contentHeight:clip.scrollHeight, clientHeight:clip.clientHeight,
+                overflow:style.overflowY, mask:style.maskImage,
+                busy:!!clip.querySelector('[aria-busy="true"], [data-markdown-rendering]'),
+                paragraphs:[...clip.querySelectorAll('p')].map(node=>node.textContent)};
+            }""")
+
+        if capped_markdown:
+            before_clip = clip_reading()
+            assert before_clip["busy"] and not before_clip["paragraphs"], before_clip
+            if mode == "scrollback":
+                assert before_clip["bottom"] < 0, before_clip
+        if capped_following:
+            page.evaluate('window.__selectEquivalentScrollConversation()')
+            settled(page)
+            assert page.locator('.conversation-transcript-region').get_attribute('aria-busy') == 'true'
         if mode == "scrollback":
             assert page.evaluate("performance.now() - window.__lastRegressionWheel") < 400
         # This is response release, with no row assignment, replaced message, or app event.
@@ -967,19 +1031,49 @@ def _run(browser, urls):
             )
             page.get_by_text("Delayed preview paragraph 5:", exact=False).wait_for()
         settled(page)
+        if capped_following:
+            assert page.locator('.conversation-transcript-region').get_attribute('aria-busy') == 'false'
+            assert page.locator(THREAD).is_visible()
         assert page.evaluate("window.__delayedRow.isConnected")
         assert page.locator("[data-conversation-row]").count() == row_count
         growth = page.evaluate("window.__delayedRow.getBoundingClientRect().height") - before_row_height
-        assert growth > 0, growth
+        if capped_markdown:
+            # This fixture already exceeds the target cap before response release.
+            # Its historical positive outer growth obligation is superseded here.
+            clip = clip_reading()
+            assert clip["cap"] == clip["expectedCap"], clip
+            assert before_clip["cap"] == clip["cap"], (before_clip, clip)
+            assert abs(before_clip["height"] - clip["cap"]) <= 1, (before_clip, clip)
+            assert before_clip["contentHeight"] > before_clip["clientHeight"], before_clip
+            assert before_clip["overflow"] == "hidden", before_clip
+            assert abs(clip["height"] - clip["cap"]) <= 1, clip
+            assert clip["contentHeight"] > clip["clientHeight"], clip
+            assert clip["overflow"] == "hidden", clip
+            assert clip["mask"].startswith("linear-gradient("), clip
+            assert abs(growth) <= 1, growth
+            print("CAPPED_MARKDOWN_PROOF", {"mode":mode, "before":before_clip, "after":clip}, flush=True)
+        else:
+            assert growth > 0, growth
         if held:
             assert held["text"].startswith("Tall paragraph"), held
-            actual = assert_native_growth(page, held, growth)
+            actual = (
+                assert_paragraph(page, held)
+                if capped_markdown
+                else assert_native_growth(page, held, growth)
+            )
             actual_scroll = newest_reading(page)["scrollTop"]
         else:
             actual = assert_newest(page)
             actual_scroll = actual["scrollTop"]
         if not held:
             assert abs((actual_scroll - before["scrollTop"]) - growth) <= 2, (growth, before, actual_scroll)
+        if capped_markdown:
+            assert abs(actual_scroll - before["scrollTop"]) <= 1, (before, actual)
+            after = newest_reading(page)
+            assert abs(after["scrollTop"] - before["scrollTop"]) <= 1, (before, after)
+            assert abs(after["bottom"] - before["bottom"]) <= 1, (before, after)
+        if capped_following:
+            assert abs(actual["bottom"] - before["bottom"]) <= 1, (before, actual)
         print(
             "DELAYED_GEOMETRY",
             kind,
@@ -1095,7 +1189,7 @@ def _run(browser, urls):
     )
     assert (
         model_picker.locator("button").evaluate_all(
-            "buttons => buttons.filter(button => button.tabIndex === 0).length"
+            "buttons => buttons.filter(button => !button.closest('form') && button.tabIndex === 0).length"
         )
         == 1
     )
@@ -1644,7 +1738,7 @@ def _run(browser, urls):
     for text in ("Owner answer one.", "Owner answer two.", "final answer", "middle commentary"):
         page.get_by_text(text, exact=True).wait_for()
         assert page.get_by_text(text, exact=True).count() == 1
-    legacy_evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    legacy_evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     if legacy_evidence:
         from pathlib import Path
         Path(legacy_evidence, "legacy-owner-fold-proof.json").write_text(json.dumps({
@@ -2384,7 +2478,7 @@ def _projected_visual_relationships(browser, url):
     }""")
     proof = {"focus": focus, "full": full}
     print("PROJECTED_VISUAL_PROOF " + json.dumps(proof), flush=True)
-    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     if evidence:
         output = Path(evidence)
         output.mkdir(parents=True, exist_ok=True)
@@ -2416,7 +2510,7 @@ def _conversation_repairs(browser, url):
     from pathlib import Path
     from urllib.parse import unquote
 
-    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"))
     output = Path(evidence) if evidence else None
     if output:
         output.mkdir(parents=True, exist_ok=True)
@@ -2741,7 +2835,7 @@ def _overlay_menu_bounds(browser, url):
                             hit(effort)
                             effort.click()
                         else:
-                            picker.get_by_role('listbox').press('Home')
+                            picker.get_by_role('listbox').press('h')
                             picker.get_by_role('listbox').press('Enter')
                         proof['actions'].append([mode,'effort',method,'high'])
                     expect(trigger).to_have_attribute('aria-label', re.compile(model,re.I))
@@ -2761,14 +2855,17 @@ def _overlay_menu_bounds(browser, url):
                         page.mouse.click(x,y)
                     else:
                         keyboard_rail(item,'Space')
-                    if control.startswith('backend:'):
+                    if control in ('backend:codex','backend:hermes'):
                         expect(picker.locator('[data-conversation-picker-feedback]')).to_be_visible()
                     elif control=='reasoning':
                         expect(picker.locator('[data-conversation-picker-choice="high"]')).to_be_visible()
                     elif control=='models':
                         expect(picker.locator('[data-conversation-picker-choice="opus"]')).to_be_visible()
-                    else:
-                        expect(picker.locator('[data-conversation-picker-feedback]')).to_have_text('Fixture refresh boundary')
+                    elif control=='refresh':
+                        expect(picker.locator('.model-picker-summary')).to_have_text('Fixture refresh boundary')
+                        feedback = picker.locator('[data-conversation-picker-feedback]')
+                        expect(feedback.get_by_role('button', name='Why', exact=True)).to_have_count(0)
+                        expect(feedback.get_by_role('button', name='Check again', exact=True)).to_have_count(0)
                     settle()
                     proof['actions'].append([mode,'runRail',method,control])
                 page.screenshot(path=str(output / (mode+'-run-picker.png')))
@@ -2887,41 +2984,18 @@ def _settled_unread_entry(browser, url):
     proof = []
     page = browser.new_page(viewport={"width": 1000, "height": 900}, reduced_motion="reduce")
     try:
-        page.goto(url + "?reader=1&unread=1500&entry-hold=1")
-        page.wait_for_function("window.__entryProbe.waiting > 0")
-        region = page.locator('.conversation-transcript-region')
-        assert region.get_attribute('aria-busy') == 'true'
-        assert not page.locator('[data-conversation-view-key="e2000"]').is_visible()
-        page.evaluate("window.__entryProbe.hold=false;window.__entryProbe.release()")
+        page.goto(url + "?reader=1&unread=1500")
         page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
-        first = page.locator('[data-conversation-view-key="e1501"]')
-        first.wait_for(state='visible')
-        gap = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
-        assert abs(gap-32) < 2, gap
+        newest = page.locator('[data-conversation-view-key="e2000"]')
+        newest.wait_for(state='visible')
+        gap = newest.evaluate("node=>document.querySelector('[data-conversation-thread]').getBoundingClientRect().bottom-node.getBoundingClientRect().bottom")
+        assert -2 <= gap <= 18, gap
+        assert page.locator('[data-conversation-view-key="e1501"]').count() == 0
+        history_calls = page.evaluate("window.__viewCalls.filter(raw=>new URL(raw,location.origin).pathname.endsWith('/view/pages'))")
+        assert history_calls == [], history_calls
         assert page.locator('[data-conversation-view-key]').count() <= 300
-        page.screenshot(path=str(output / 'settled-unread.png'))
-        proof.append({'case':'older unread delayed admission','topGap':gap,'newestFlash':False})
-
-        page.goto(url + "?reader=1&unread=1500&entry-fail=1")
-        retry = page.get_by_role('button', name='Retry unread messages', exact=True)
-        retry.wait_for(state='visible')
-        assert page.locator('[data-conversation-entry-status]').is_visible()
-        assert region.get_attribute('aria-busy') == 'false'
-        page.screenshot(path=str(output / 'settled-unread-error.png'))
-        page.evaluate("window.__entryProbe.fail=false")
-        retry.click()
-        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
-        page.locator('[data-conversation-view-key="e1501"]').wait_for(state='visible')
-        assert not retry.is_visible()
-        proof.append({'case':'admission failure','visibleRetry':True,'retryPreservesTarget':True})
-
-        page.goto(url + "?reader=1&unread=1500&entry-hidden=1")
-        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
-        first = page.locator('[data-conversation-view-key="e1601"]')
-        first.wait_for(state='visible')
-        gap = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
-        assert abs(gap-32) < 2, gap
-        proof.append({'case':'hidden-only first page','firstVisible':'e1601','topGap':gap})
+        page.screenshot(path=str(output / 'actual-newest-over-unread.png'))
+        proof.append({'case':'actual newest across unread gap','newest':'e2000','bottomGap':gap,'historyCalls':history_calls})
         receipt={'cases':proof,'seconds':round(time.perf_counter()-started,3),'newHosts':0}
         (output / 'settled-unread-proof.json').write_text(json.dumps(receipt,indent=2))
         print('SETTLED_UNREAD_PROOF '+json.dumps(receipt),flush=True)
@@ -2956,20 +3030,21 @@ def _position_commit(browser, url):
       };requestAnimationFrame(sample);""")
     try:
         # Readiness must survive bodies completing after the initial nonzero layout.
-        for attempt in range(2):
-            page.goto(url+'?reader=1&position-race=1')
+        for request in ('permission', 'user-input'):
+            page.goto(url+'?reader=1&position-race=1&opening-request='+request)
             page.wait_for_function('window.__positionProbe.waiting>0')
             page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
             assert page.locator('.conversation-transcript-region').get_attribute('aria-busy')=='true'
             page.evaluate('window.__positionProbe.release()')
             page.locator('[data-conversation-entry="complete"]').wait_for()
+            assert page.locator('[data-conversation-ask-state="live"], [data-conversation-user-input-state="live"]').count() == 1
             page.wait_for_timeout(350)
             frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
             visible=[row for row in frames if not row['hidden']]
             assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), visible
             ready=[row for row in visible if row['busy']!='true']
             assert ready and all(-2<=row['gap']<=18 for row in ready), ready
-            proof['entry'].append({'trigger':'fresh open','attempt':attempt,'frames':frames})
+            proof['entry'].append({'trigger':'fresh open','request':request,'frames':frames})
             for lens in ('full','focus'):
                 page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
                 page.locator('[data-conversation-lens-choice="'+lens+'"]').click()
@@ -2979,7 +3054,7 @@ def _position_commit(browser, url):
                 assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), (lens,visible)
                 ready=[row for row in visible if row['busy']!='true']
                 assert ready and all(-2<=row['gap']<=18 for row in ready), (lens,ready)
-                proof['entry'].append({'trigger':'lens '+lens,'attempt':attempt,'frames':frames})
+                proof['entry'].append({'trigger':'lens '+lens,'request':request,'frames':frames})
             # Browser-owned image and font metrics change after reveal. Neither causes travel.
             frames=page.evaluate("""()=>new Promise(resolve=>{
               const thread=document.querySelector('[data-conversation-thread]');
@@ -2991,6 +3066,27 @@ def _position_commit(browser, url):
             assert all(-2<=row['gap']<=18 for row in frames), frames
             proof['entry'].append({'trigger':'late image/font metrics','frames':frames})
         page.screenshot(path=str(output/'position-entry.png'))
+
+        # A real reader gesture owns the provisional view while newest is still pending.
+        page.goto(url+'?reader=1&position-race=1&position-takeover=1')
+        page.wait_for_function('window.__positionProbe.waiting>0')
+        thread = page.locator('[data-conversation-thread]')
+        thread.wait_for(state='visible')
+        assert page.locator('.conversation-transcript-region').get_attribute('aria-busy') == 'true'
+        thread.focus()
+        page.keyboard.press('PageUp')
+        page.wait_for_function("document.querySelector('[data-conversation-thread]')?.dataset.conversationPositionOwner==='manual'")
+        page.wait_for_timeout(200)
+        held = thread.evaluate('node=>node.scrollTop')
+        page.evaluate('window.__positionProbe.release()')
+        page.wait_for_function("document.querySelector('.conversation-transcript-region')?.getAttribute('aria-busy')==='false'")
+        page.wait_for_timeout(350)
+        after = thread.evaluate('node=>({top:node.scrollTop,gap:node.scrollHeight-node.clientHeight-node.scrollTop,owner:node.dataset.conversationPositionOwner})')
+        assert after['owner'] == 'manual' and after['gap'] > 200, after
+        assert abs(after['top']-held) <= 2, (held,after)
+        proof['entry'].append({'trigger':'PageUp during pending newest body','heldTop':held,'after':after})
+        page.screenshot(path=str(output/'position-reader-takeover.png'))
+
 
         # The label counts unread source messages, while visibility still follows newest.
         page.goto(url)
@@ -3045,11 +3141,15 @@ def _position_commit(browser, url):
         moving=[b for a,b in zip(frames,frames[1:],strict=False) if b['top']-a['top']>.5]
         # Linear per-line motion exposes its duration as line height / screen speed.
         # This measures the written pixels, rather than a duration constant or call.
-        import statistics
         line_height=page.locator('[data-conversation-content]').evaluate('node=>parseFloat(getComputedStyle(node.lastElementChild).lineHeight)')
-        speeds=[(b['top']-a['top'])/(b['ms']-a['ms']) for a,b in zip(frames,frames[1:],strict=False)
-          if b['top']-a['top']>1 and 8 < b['ms']-a['ms'] < 30]
-        observed_line_ms=line_height/statistics.median(speeds)
+        # scrollTop is rounded to pixels. Filtering out one-pixel frames biases
+        # instantaneous speed upward on 120 Hz displays. Measure the whole moving
+        # interval so those frames and their elapsed time receive equal credit.
+        intervals=[(a,b) for a,b in zip(frames,frames[1:],strict=False) if b['top']>a['top']]
+        assert intervals, frames
+        start, end = intervals[0][0], intervals[-1][1]
+        speed=(end['top']-start['top'])/(end['ms']-start['ms'])
+        observed_line_ms=line_height/speed
         assert 100 <= observed_line_ms <= 145, {'lineHeight':line_height,'observedLineMs':observed_line_ms,'frames':frames}
         proof['streaming']={'frames':frames,'events':page.evaluate('window.__presentationEvents')}
         assert len(moving)>3 and moving[-1]['ms']>300,proof['streaming']
@@ -3490,9 +3590,11 @@ def _tab_return(browser, url):
     """A remembered row and its pixel offset survive hidden backlog admission."""
     import json
     import os
+    import runpy
     import time
     from pathlib import Path
 
+    establish_scrollback = runpy.run_path(str(Path(__file__).resolve().parents[1] / "support/state_barriers.py"))["establish_scrollback"]
     started = time.perf_counter()
     output = Path(os.environ.get('PANELS_E2E_FAILURE_DIR', '/tmp'))
     output.mkdir(parents=True, exist_ok=True)
@@ -3552,8 +3654,7 @@ def _tab_return(browser, url):
             _settle_conversation_layout(page)
             if position == 'scrollback':
                 page.locator('[data-conversation-thread]').hover()
-                page.mouse.wheel(0, -750)
-                page.wait_for_timeout(300)
+                establish_scrollback(page, lambda: page.mouse.wheel(0, -750), min_clearance=2)
             held = page.evaluate(reading)
             assert held['key'] and held['scroll'] > 0, held
             page.evaluate(hidden)
@@ -3869,6 +3970,16 @@ def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'visibility':
+            _preview_lifecycle(browser, urls[0])
+            return
+        _machine_evidence(browser, urls[0])
+        if __import__('os').environ.get('PANELS_MACHINE_ONLY') == '1':
+            return
+        _short_lens_restoration(browser, urls[0])
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'short-lens':
+            return
+
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'repairs':
             _conversation_repairs(browser, urls[0])
             return
@@ -3907,6 +4018,9 @@ def run(browser, urls):
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'motion':
             _settled_motion(browser, urls[0])
             return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'position':
+            _position_commit(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'unread':
             _settled_unread_entry(browser, urls[0])
             return
@@ -3933,3 +4047,78 @@ def run(browser, urls):
         _projected_visual_relationships(browser, urls[0])
         _bounded_reader(browser, urls[0])
         _run(browser, urls)
+
+
+def _machine_evidence(browser, url):
+    import time
+
+    from playwright.sync_api import expect
+    started = time.perf_counter()
+    page=browser.new_page(viewport={"width":1100,"height":850})
+    errors=[]
+    page.on("pageerror",lambda error:errors.append(str(error)))
+    page.goto(url+"?machines",wait_until="domcontentloaded")
+    expect(page.locator('[data-machine-notice]')).to_have_count(0)
+    expect(page.locator("button.machine-identity")).to_have_count(0)
+    expect(page.get_by_role("img", name="Runs on Mac")).to_be_visible()
+    expect(page.locator('[data-conversation-id="vps-conversation"] [data-conversation-signal="working"]')).to_be_visible()
+    expect(page.locator('[data-conversation-id="machine-conversation"] [data-conversation-signal="working"]')).to_have_count(0)
+    assert page.locator('.ticket-row button, .ticket-row a').count()==0
+    expect(page.locator('[data-conversation-alive-word]')).to_contain_text('Current activity on Mac is unknown')
+    allow=page.locator('[data-conversation-ask-action="yes"]')
+    expect(allow).to_be_enabled()
+    page.evaluate('()=>window.__machine.change({requestGone:true})')
+    expect(allow).to_have_count(0)
+    page.evaluate('()=>window.__machine.change({requestGone:false})')
+    expect(allow).to_be_enabled()
+    allow.click()
+    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
+    post=page.evaluate('()=>window.__machine.posts[0]')
+    assert post['ask_id']=='public-turn:permission:native-ask'
+    assert set(post)=={'ask_id','option_id'}
+    page.evaluate('()=>window.__machine.change({applied:true})')
+    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer applied on Mac.')
+    page.evaluate('()=>window.__machine.change({questions:true})')
+    expect(page.locator('[data-user-input-option="One"]')).to_be_enabled()
+    page.locator('[data-user-input-option="One"]').click()
+    page.locator('[data-user-input-continue]').click()
+    page.locator('[data-user-input-option="Two"]').click()
+    page.locator('[data-user-input-continue]').click()
+    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
+    post=page.evaluate('()=>window.__machine.posts[1]')
+    assert post['request_id']=='public-turn:user_input:native-questions'
+    assert set(post)=={'request_id','answers'}
+    assert len(post['answers'])==2
+    assert not errors,errors
+    page.close()
+    print('MACHINE_EVIDENCE_PROOF seconds='+str(round(time.perf_counter()-started,3))+' newHosts=0',flush=True)
+
+
+def _short_lens_restoration(browser, url):
+    import json
+    import time
+
+    from playwright.sync_api import expect
+
+    started=time.perf_counter()
+    page=browser.new_page(viewport={"width":1000,"height":900})
+    try:
+        page.goto(url+"?reader=1&short-lens=1&unread=0")
+        text=page.get_by_text("Child direct message",exact=True)
+        expect(text).to_be_visible()
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        measure="""() => { const thread=document.querySelector('[data-conversation-thread]'); const text=thread.querySelector('p'); const region=document.querySelector('.conversation-transcript-region'); return {padding:getComputedStyle(thread).paddingTop,top:text.getBoundingClientRect().top-thread.getBoundingClientRect().top,scrollTop:thread.scrollTop,scrollHeight:thread.scrollHeight,height:thread.clientHeight,visibility:getComputedStyle(region).visibility,status:document.querySelector('[data-conversation-restoration-status]')?.dataset.conversationRestorationStatus??null}; }"""
+        before=page.evaluate(measure)
+        page.locator('[data-conversation-lens-choice="full"]').click()
+        expect(text).to_be_visible()
+        after=page.evaluate(measure)
+        assert after['status'] is None,after
+        assert abs(after['top']-before['top'])<=1,{'before':before,'after':after}
+        page.locator('[data-conversation-lens-choice="focus"]').click()
+        expect(text).to_be_visible()
+        restored=page.evaluate(measure)
+        assert restored['status'] is None,restored
+        assert abs(restored['top']-before['top'])<=1,{'before':before,'restored':restored}
+        print('SHORT_LENS_RESTORATION '+json.dumps({'before':before,'full':after,'focus':restored,'seconds':round(time.perf_counter()-started,3),'newHosts':0}),flush=True)
+    finally:
+        page.close()

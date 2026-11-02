@@ -2,6 +2,7 @@ import Foundation
 import Observation
 
 @MainActor @Observable final class ConversationModel {
+    var machineLocale: String?
     var conversationID: String?
     var draft = "" { didSet { saveDraft() } }
     private var persistenceAPI: APIClient?
@@ -118,7 +119,7 @@ import Observation
             case "prompt_refused": note = "Not delivered · " + (body.refusalDetail ?? ConversationDelivery.refusalText(body.reason))
             case "prompt_uncertain": note = "Delivery uncertain · do not resend"
             case "prompt_discarded": note = "Not delivered · no longer applicable"
-            case "permission_ask", "user_input": note = "Respond on the web"
+            case "permission_ask", "user_input": note = body.answerSentence ?? (body.state == "live" ? "Respond on the web" : body.state?.capitalized)
             default: note = nil
             }
             return ConversationRow(id: retryAliases[item.id] ?? item.id, text: body.text, own: body.isOwnerPrompt, note: note,

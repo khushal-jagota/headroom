@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,15 +12,13 @@ from fastapi.testclient import TestClient
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.db import connect, create_schema
+from planner.core.db import connect
 from planner.core.server import create_app
 
 
 @pytest.fixture
 def feedback_client(tmp_path: Path) -> Iterator[TestClient]:
     db_path = tmp_path / "feedback.db"
-    with closing(connect(str(db_path))) as conn:
-        create_schema(conn)
     config = load_config(
         path=None,
         env={

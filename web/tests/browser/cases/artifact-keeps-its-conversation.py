@@ -19,6 +19,7 @@ import json
 import os
 import runpy
 import sys
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -188,6 +189,8 @@ def run(browser, urls):
     }]}
     start_values = {"backend_key": "codex", "model": None, "reasoning_effort": None}
     values = {
+        "/api/projects?detail=full": {"projects": [{"id": "p_fixture", "name": "Fixture project", "summary": "", "created_at": 1, "updated_at": 1}]},
+        "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
         "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "The Chief's conversation names another Ticket's artifact.", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
         "/api/chief/conversation/start-values": start_values,
         f"/api/managers/{MANAGER_ID}/conversation/start-values": start_values,
@@ -196,6 +199,7 @@ def run(browser, urls):
         "/api/worker-types": manifest,
         "/api/feedback/count": {"open_count": 0},
         "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
+        "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None},
         "/api/meta": {"test_mode": True, "app_sha": None},
         "/api/review": {"items": [], "running_worker_count": 0},
         "/api/conversation/backends": {"backends": []},

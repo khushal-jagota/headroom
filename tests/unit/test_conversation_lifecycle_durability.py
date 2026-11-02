@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from tests.support.conversation_test_loop import conversation_test_loop
 from tests.unit.test_conversation_system import (
     _FakeBackendChild,
     _Harness,
@@ -15,7 +16,7 @@ from tests.unit.test_conversation_system import (
     _start,
 )
 
-from planner.conversation.contracts import PromptDeliveryMode
+from planner.conversation.contracts import AnswerFate, PromptDeliveryMode
 from planner.conversation.events import (
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
@@ -43,8 +44,11 @@ def durable(tmp_path: Path) -> Iterator[_Harness]:
     create_schema(conn)
     conn.close()
     harness = _Harness(path)
-    yield harness
-    asyncio.run(harness.system.shutdown())
+    with conversation_test_loop() as runner:
+        try:
+            yield harness
+        finally:
+            runner.run(harness.system.shutdown())
 
 
 async def _paused(store: ConversationStore) -> None:
@@ -179,17 +183,22 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
     original_permission = _FakeBackendChild.answer_permission_ask
     original_input = _FakeBackendChild.answer_user_input
 
-    async def permission(self: _FakeBackendChild, ask_id: str, option_id: str) -> None:
+    async def permission(
+        self: _FakeBackendChild, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         nonlocal counts
         counts += 1
-        await original_permission(self, ask_id, option_id)
+        return await original_permission(self, ask_id, option_id)
 
     async def user_input(
-        self: _FakeBackendChild, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self: _FakeBackendChild,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        **kwargs: object,
+    ) -> AnswerFate:
         nonlocal counts
         counts += 1
-        await original_input(self, request_id, answers)
+        return await original_input(self, request_id, answers)
 
     monkeypatch.setattr(_FakeBackendChild, "answer_permission_ask", permission)
     monkeypatch.setattr(_FakeBackendChild, "answer_user_input", user_input)
@@ -200,7 +209,7 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
         if request_kind == "permission":
             request_id = await durable.raise_permission_ask("c")
 
-            async def answer() -> bool:
+            async def answer() -> AnswerFate:
                 return await durable.system.answer_permission_ask("c", request_id, "deny")
         else:
             request = await durable.request_user_input("c")
@@ -210,7 +219,7 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
                 UserInputAnswer(question_id="timing", answers=("Now",)),
             )
 
-            async def answer() -> bool:
+            async def answer() -> AnswerFate:
                 return await durable.system.answer_user_input("c", request_id, answers)
 
         fail = True
@@ -242,7 +251,7 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
         fail = False
         assert durable.store.resume_recording("c") == 1
         await durable.settle()
-        assert not await answer()
+        assert await answer() is AnswerFate.refused
         assert counts == 1
         assert (
             sum(
@@ -321,8 +330,12 @@ def test_restart_reused_provider_id_cannot_accept_old_answer(durable: _Harness) 
             await restarted.system.send("c", text_message_content("second"), sender_label="owner")
             new_id = await restarted.raise_permission_ask("c")
             assert old_id != new_id
-            assert not await restarted.system.answer_permission_ask("c", old_id, "deny")
-            assert await restarted.system.answer_permission_ask("c", new_id, "deny")
+            assert (
+                await restarted.system.answer_permission_ask("c", old_id, "deny")
+            ) is AnswerFate.refused
+            assert (
+                await restarted.system.answer_permission_ask("c", new_id, "deny")
+            ) is AnswerFate.applied
             assert restarted.backend("c").permission_answers == {"ask-1": "deny"}
             assert not any(
                 isinstance(e.payload, PermissionAskedEventPayload)

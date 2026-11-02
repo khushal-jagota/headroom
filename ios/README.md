@@ -611,3 +611,36 @@ stopping for Reduce Motion and detachment, and the native refresh bridge keeping
 its action and completion behavior. Existing model tests cannot exercise UIKit
 layers or SwiftUI's refresh-control hierarchy. These tests reuse the app's unit
 test host, stub the refresh work, and require no server or additional browser host.
+
+## Mac execution release compatibility
+
+Ticket rows, Ticket detail and Review identify the Ticket's machine. The server's
+executor health decides whether a Mac working mark is current. A disconnected or
+reconciling Mac retains unread messages but shows activity as unknown. The full
+conversation and Settings show the last measured contact, rather than treating a
+saved running state as proof the Mac is still working. Ticket setup and conversation
+model pickers read the Ticket-scoped catalogue, including the server's last offline
+copy; Chief and Manager model pickers continue to read the VPS catalogue.
+
+Sends, approval, send-back, queue changes, stopping and read acknowledgments keep
+the same Ticket and conversation identities on either machine. Permission and input
+requests still direct the reader to the web to answer. The transcript distinguishes
+an answer saved on VPS, applied on Mac, and application left unconfirmed. Creating
+Tickets or selecting/moving their machine has no native flow yet. Machine installation,
+updates and executor administration remain on the web. Existing scheduled-task detail
+shows the schedule's machine when one is saved.
+
+Usage reads the current date-range summary and refreshes pricing through the rates
+endpoint before rescanning. Source failures, unpriced records and cached/unavailable
+pricing stay visible. These figures describe the server's recorded CLI sources;
+they do not establish a combined Mac/VPS usage total. Deployment status distinguishes
+an unconfirmed installation from an installed app whose final report is unconfirmed.
+Broken Ticket records stay diagnostic rather than preventing the whole list from
+loading. A diagnostic detail never offers lifecycle writes. Goal-owned Review messages
+link to the web; native Goal pages and their conversation flow are not implemented.
+A Ticket's existing Goal reviewer is retained when editing approval limits.
+
+Push registration remains disabled. Dock previews and inline attachment parity
+remain separate work. The compatibility checks use Foundation host tests, in-memory
+HTTP stubs, backend checks and one unsigned generic iOS compile. They do not prove
+physical-device behavior or a live Mac/VPS round trip from the iPhone.

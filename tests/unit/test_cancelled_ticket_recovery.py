@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 from click.testing import CliRunner
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.retired_workers import seed_historical_worker_type
 from tests.unit.test_db import _migration_tree_through, head_revision
 
@@ -61,7 +60,7 @@ def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.
     with monkeypatch.context() as historical:
         _migration_tree_through(tmp_path, historical, "current_model_variants")
         create_schema(conn)
-    seed_test_model_catalogue(conn)
+
     seed_historical_worker_type(conn, "personal")
     try:
         yield conn

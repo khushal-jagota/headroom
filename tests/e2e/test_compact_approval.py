@@ -60,7 +60,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     api.direct_post(
         server,
         f"/api/tickets/{ticket_id}/accept/brief",
-        {"next_ceiling": "needs_success_condition", "next_holder": owner},
+        {"next_ceiling": "needs_what_changes", "next_holder": owner},
     )
     _propose(server, ticket_id, BODY)
     path = f"#/workspace/item/{item['id']}/{ticket_id}" if host == "ticket" else "#/review"
@@ -86,7 +86,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     assert rerouted["stage"] == original["stage"]
     assert rerouted["ceiling"] == original["ceiling"]
     assert rerouted["pending_proposal"]["body"] == BODY
-    assert not rerouted["field_values"].get("success_condition")
+    assert not rerouted["field_values"].get("what_changes")
     # Put the same ask back in the owner's Review queue through the canonical writer.
     api.direct_patch(server, f"/api/tickets/{ticket_id}", {"ceiling_holder": owner})
     page.reload()
@@ -102,14 +102,14 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
         _propose(server, ticket_id, replacement)
         route.continue_()
 
-    accept_url = f"**/api/tickets/{ticket_id}/accept/success_condition"
+    accept_url = f"**/api/tickets/{ticket_id}/accept/what_changes"
     page.route(accept_url, replace_before_accept, times=1)
     card.locator("[data-accept]").click()
-    panel.locator('[data-ceiling-picker-choice="needs_plan"]').click()
+    panel.locator('[data-ceiling-picker-choice="needs_implementation"]').click()
     with page.expect_response(
         lambda response: (
             response.request.method == "POST"
-            and response.url.endswith(f"/{ticket_id}/accept/success_condition")
+            and response.url.endswith(f"/{ticket_id}/accept/what_changes")
         )
     ) as stale:
         panel.locator('[data-scope-holder="owner"]').click()
@@ -127,11 +127,11 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     card.locator("[data-edit]").fill(edited)
     card.locator("[data-edit]").press("Control+Enter")
     card.locator("[data-accept]").click()
-    panel.locator('[data-ceiling-picker-choice="needs_plan"]').click()
+    panel.locator('[data-ceiling-picker-choice="needs_implementation"]').click()
     with page.expect_response(
         lambda response: (
             response.request.method == "POST"
-            and response.url.endswith(f"/{ticket_id}/accept/success_condition")
+            and response.url.endswith(f"/{ticket_id}/accept/what_changes")
         )
     ) as accepted:
         panel.locator('[data-scope-holder="owner"]').click()
@@ -145,8 +145,8 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     )
     final = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     assert final["pending_proposal"] is None
-    assert final["field_values"]["success_condition"] == edited
-    assert final["stage"] == "needs_what_changes"
-    assert final["ceiling"] == "needs_plan"
+    assert final["field_values"]["what_changes"] == edited
+    assert final["stage"] == "needs_implementation"
+    assert final["ceiling"] == "needs_implementation"
     assert final["ceiling_holder"] == owner
     assert errors == []

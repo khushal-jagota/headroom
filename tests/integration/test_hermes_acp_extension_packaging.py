@@ -13,10 +13,13 @@ from tests.support.hermes_extension_proof import lifecycle_script, recovery_scri
 from planner.conversation.backends import hermes_acp
 from planner.environments.hermes_home import resolve_hermes_python
 
+# Capture the configured interpreter before fixtures replace HOME and private paths.
+HERMES_PYTHON = resolve_hermes_python().absolute()
+
 
 @pytest.fixture(scope="module")
 def extension_reports() -> list[dict[str, Any]]:
-    interpreter = resolve_hermes_python()
+    interpreter = HERMES_PYTHON
     if not interpreter.is_file():
         pytest.skip("the configured Hermes interpreter is not installed")
     directory = Path(hermes_acp.__file__).resolve().parent

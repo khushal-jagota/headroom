@@ -13,8 +13,10 @@ export function currentPlacement(operation: ThreadPlacement | null, reader: obje
 }
 /** Parsed data does not establish layout. Only admitted, active presentation blocks gate placement. */
 export function presentationReady(element: Element): boolean {
-  return !element.matches('[aria-busy="true"], [data-markdown-rendering]') &&
-    element.querySelector('[aria-busy="true"], [data-markdown-rendering]') === null;
+  const busySelector = '[aria-busy="true"], [data-markdown-rendering]';
+  const dormantSelector = '[data-visible-content-state="released"], [data-visible-content-state="retained"]';
+  if (element.matches(busySelector) && element.closest(dormantSelector) === null) return false;
+  return [...element.querySelectorAll(busySelector)].every(node => node.closest(dormantSelector) !== null);
 }
 /** Only a text write observed at newest can pay for line-at-a-time travel. */
 export function streamArrivalBudget(textChanged: boolean, wasFollowing: boolean, before: number, after: number): number {

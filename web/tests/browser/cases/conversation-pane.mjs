@@ -16,6 +16,12 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     String.raw`<script lang="ts">
   import { tick, flushSync } from "svelte";
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
+  import { installMachineEvidenceFixture } from "../tests/support/machineEvidenceFixture";
+  import WorkerRow from "../src/components/WorkerRow.svelte";
+  import { queryClient } from "../src/lib/queryClient";
+  const machinesOnly=new URLSearchParams(location.search).has('machines');
+  if(machinesOnly)installMachineEvidenceFixture();
+
   import {installConversationViewReaderFixture} from "../tests/support/conversationViewReaderFixture";
   import {ConversationViewReader} from "../src/lib/conversation/view/reader.svelte";
   const intentOnly=new URLSearchParams(window.location.search).has("intent");
@@ -29,6 +35,8 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         turn_key:null,work_group_key:null,fold_rule:'never' as const,
         body:{kind:'inline' as const,value:{kind:'agent_message' as const,to_owner:true,
           content:[{piece:'text' as const,text:('Intent row '+index+'. ').repeat(30)}]}}}))}];
+    // This synthetic reader already owns its initial admitted content.
+    value.entryPhase='complete';
     value.load=(_scope,_cursor,_direction,replace)=>replace
       ?new Promise<boolean>(resolve=>intentLoads.push(resolve)):Promise.resolve(false);
     return value;
@@ -48,6 +56,183 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   import FilePreview from "../src/components/FilePreview.svelte";
   import FileDocument from "../src/components/FileDocument.svelte";
   import VisibleMessageImage from "../src/components/conversation/VisibleMessageImage.svelte";
+  import { observeVisibleContent } from "../src/lib/visibleContent";
+  import { presentationReady } from "../src/components/conversation/viewport/placement";
+  // Detached native DOM isolates readiness from viewport admission and network timing.
+  function presentationReadinessProof() {
+    const started = performance.now();
+    const rows: {name:string, expected:boolean, actual:boolean, pass:boolean}[] = [];
+    const record = (name:string, element:Element, expected:boolean) => {
+      const actual = presentationReady(element);
+      rows.push({name, expected, actual, pass:actual === expected});
+    };
+    for (const marker of ["aria-busy", "data-markdown-rendering"]) {
+      const root = document.createElement("div");
+      record(marker + "/empty", root, true);
+      root.setAttribute(marker, "true");
+      record(marker + "/unmanaged-root", root, false);
+      root.removeAttribute(marker);
+      const busy = document.createElement("div");
+      busy.setAttribute(marker, "true");
+      root.append(busy);
+      record(marker + "/unmanaged-descendant", root, false);
+      for (const dormant of ["released", "retained"]) {
+        const ancestor = document.createElement("section");
+        ancestor.dataset.visibleContentState = dormant;
+        ancestor.append(root);
+        // The queried root itself can inherit dormancy from outside its subtree.
+        root.dataset.visibleContentState = "active";
+        record(marker + "/" + dormant + "/nested-active", root, true);
+        record(marker + "/" + dormant + "/busy-root-inherits", busy, true);
+        root.removeAttribute("data-visible-content-state");
+        root.remove();
+        busy.dataset.visibleContentState = dormant;
+        record(marker + "/" + dormant + "/busy-self", root, true);
+        record(marker + "/" + dormant + "/queried-busy-self", busy, true);
+        busy.dataset.visibleContentState = "active";
+        record(marker + "/" + dormant + "/active-busy", root, false);
+        busy.removeAttribute(marker);
+        record(marker + "/" + dormant + "/active-clear", root, true);
+        busy.setAttribute(marker, "true");
+        busy.removeAttribute("data-visible-content-state");
+      }
+    }
+    return {rows, milliseconds:performance.now()-started, newHosts:0, newNavigations:0};
+  }
+  // Queue delivery is controlled only for this marked leaf. Every other native
+  // observer target on the existing preview page keeps its ordinary deliveries.
+  (window as any).__visibilityQueueProof = async () => {
+    const NativeObserver = window.IntersectionObserver;
+    const rows: any[] = [];
+    const started = performance.now();
+    const text = "Exact queued visibility text — preserved.";
+    let target: HTMLElement | null = null;
+    let callback: IntersectionObserverCallback | null = null;
+    let observer: IntersectionObserver | null = null;
+    let cleanup: (() => void) | null = null;
+    let stateObserver: MutationObserver | null = null;
+    let updates: boolean[] = [];
+    let states: (string | null)[] = [];
+    let mounts = 0;
+    let originalNode: Node | null = null;
+    let scheduled = 0;
+    const drain = (records: MutationRecord[]) => {
+      for (const record of records) states.push(record.oldValue);
+    };
+    const snapshot = () => {
+      if (stateObserver) drain(stateObserver.takeRecords());
+      return {state:target?.getAttribute("data-visible-content-state") ?? null,
+        text:target?.textContent ?? "", updates:[...updates], mounts,
+        states:[...states], sameNode:originalNode !== null && target?.firstChild === originalNode};
+    };
+    const dispose = () => {
+      cleanup?.(); cleanup = null;
+      stateObserver?.disconnect(); stateObserver = null;
+      target?.remove(); target = null;
+    };
+    const fresh = () => {
+      dispose();
+      target = document.createElement("div");
+      target.dataset.visibilityQueueProof = "";
+      target.style.cssText = "position:fixed;left:0;top:0;width:220px;height:32px;pointer-events:none";
+      document.body.append(target);
+      updates = []; states = []; mounts = 0; originalNode = null;
+      cleanup = observeVisibleContent(target, visible => {
+        updates.push(visible);
+        if (visible && !target!.firstChild) {
+          originalNode = document.createTextNode(text); target!.append(originalNode); mounts++;
+        } else if (!visible) target!.replaceChildren();
+      });
+      stateObserver = new MutationObserver(drain);
+      stateObserver.observe(target, {attributes:true, attributeOldValue:true,
+        attributeFilter:["data-visible-content-state"]});
+    };
+    const foreign = document.createElement("div");
+    const entry = (inside:boolean, time:number, element:Element = target!) =>
+      ({target:element, isIntersecting:inside, time} as IntersectionObserverEntry);
+    const deliver = (entries:IntersectionObserverEntry[]) => callback!(entries, observer!);
+    const record = (name:string, expected:string, pass:boolean, details:any) =>
+      rows.push({name, expected, pass, ...details});
+    window.IntersectionObserver = class extends NativeObserver {
+      constructor(receive:IntersectionObserverCallback, options?:IntersectionObserverInit) {
+        super((entries, instance) => {
+          const native = entries.filter(value => !value.target.hasAttribute("data-visibility-queue-proof"));
+          if (native.length) receive(native, instance);
+        }, options);
+        const nativeObserve = this.observe.bind(this);
+        this.observe = (element:Element) => {
+          if (element.hasAttribute("data-visibility-queue-proof")) { callback = receive; observer = this; }
+          nativeObserve(element);
+        };
+      }
+    };
+    try {
+      for (const equalTimes of [false, true]) {
+        const lastTime = equalTimes ? 10 : 20;
+        fresh();
+        deliver([entry(false,10), entry(true,lastTime)]);
+        const admission = snapshot();
+        record("outside-to-inside"+(equalTimes?"-equal-time":""), "active with exact native text",
+          admission.state === "active" && admission.text === text && admission.mounts === 1,
+          {equalTimes, actual:admission});
+        // Independent admission makes the reverse failure observable even when
+        // the old consumer failed the preceding direction in this same run.
+        fresh(); deliver([entry(true,1)]);
+        const admitted = snapshot();
+        deliver([entry(true,10), entry(false,lastTime)]);
+        const retained = snapshot();
+        record("inside-to-outside"+(equalTimes?"-equal-time":""), "retained with identical native text node",
+          admitted.state === "active" && retained.state === "retained" && retained.sameNode && retained.text === text && retained.updates.length === 1,
+          {equalTimes, actual:retained});
+      }
+      fresh();
+      deliver([entry(true,1), entry(false,2)]);
+      const transient = snapshot();
+      record("released-final-outside", "released without transient admission or mount",
+        transient.state === "released" && transient.updates.length === 0 && transient.mounts === 0 && !transient.states.includes("active"), {actual:transient});
+      fresh();
+      deliver([entry(false,0,foreign), entry(false,1), entry(true,2), entry(false,3,foreign)]);
+      const matched = snapshot();
+      record("target-identity", "active using the final matching target",
+        matched.state === "active" && matched.text === text && matched.mounts === 1, {actual:matched});
+      fresh(); deliver([entry(true,1)]);
+      for (const state of ["active", "retained"]) {
+        if (state === "retained") deliver([entry(false,2)]);
+        for (const [name, batch] of [["empty", []], ["foreign-only", [entry(true,3,foreign),entry(false,4,foreign)]]] as const) {
+          const before = snapshot();
+          deliver([...batch]);
+          const after = snapshot();
+          record(state+"-"+name, "no publication, updates, or node replacement",
+            before.state === state && after.state === state && after.sameNode && after.text === text &&
+            after.updates.length === before.updates.length && after.states.length === before.states.length,
+            {before, actual:after});
+        }
+      }
+      const saved = callback!;
+      cleanup!(); cleanup = null;
+      target!.replaceChildren();
+      const beforeCleanupDelivery = snapshot();
+      const nativeFrame = window.requestAnimationFrame;
+      const nativeTimeout = window.setTimeout;
+      try {
+        window.requestAnimationFrame = (action:FrameRequestCallback) => { scheduled++; return nativeFrame.call(window,action); };
+        window.setTimeout = ((...args:any[]) => { scheduled++; return (nativeTimeout as any).apply(window,args); }) as typeof window.setTimeout;
+        saved([entry(true,5)],observer!);
+      } finally { window.requestAnimationFrame = nativeFrame; window.setTimeout = nativeTimeout; }
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const destroyed = snapshot();
+      record("destroyed-queued-callback", "no state, mount, update, or scheduled work after cleanup",
+        destroyed.state === null && destroyed.text === "" && destroyed.updates.length === beforeCleanupDelivery.updates.length &&
+        destroyed.mounts === beforeCleanupDelivery.mounts && destroyed.states.length === beforeCleanupDelivery.states.length && scheduled === 0,
+        {before:beforeCleanupDelivery, actual:destroyed, scheduled});
+    } finally {
+      try { dispose(); } finally { window.IntersectionObserver = NativeObserver; }
+    }
+    return {rows, readiness:presentationReadinessProof(), seconds:(performance.now()-started)/1000, newHosts:0, newNavigations:0,
+      nativeObserverRestored:window.IntersectionObserver === NativeObserver};
+  };
   import { VISIBLE_CONTENT_INACTIVE_LIMIT } from "../src/lib/visibleContent/config";
   (window as any).__inactiveLimit=VISIBLE_CONTENT_INACTIVE_LIMIT;
   let retainedKind=$state('preview');
@@ -170,6 +355,21 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       description: "Stop the worker", argument_hint: null }
   ];
   let conversationState = $state<ConversationState>("rest");
+  let fixtureConversationId = $state("browser-fixture");
+  let scrollSnapshotNumber = 0;
+  // These synthetic conversations intentionally share text and a Ticket-owned file.
+  // Select a coherent snapshot through ordinary Pane inputs, preserving scoped keys.
+  (window as any).__selectEquivalentScrollConversation = () => {
+    const snapshot = {
+      id: "browser-fixture-scroll-" + ++scrollSnapshotNumber,
+      rows: rows.map(row => ({...row}))
+    };
+    flushSync(() => {
+      fixtureConversationId = snapshot.id;
+      rows = snapshot.rows;
+    });
+    return snapshot.id;
+  };
   let lens = $state<"focus" | "full">("focus");
 
   async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
@@ -555,7 +755,15 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 </script>
 
-{#if managerLayoutOnly}
+{#if machinesOnly}
+  <QueryClientProvider client={queryClient}>
+    <div style="height:750px;display:flex;flex-direction:column;max-width:700px;margin:auto">
+      <WorkerRow title="Mac Worker" locale="macos" signal={{working:true,message_for_owner:false}} conversationId="machine-conversation" />
+      <WorkerRow title="VPS Worker" locale="vps" signal={{working:true,message_for_owner:false}} conversationId="vps-conversation" />
+      <LiveConversation locale="macos" conversationId="machine-conversation" persistenceKey="machine-evidence" label="Worker" conversationState="opened" sendMessage={async()=>({conversation_id:'machine-conversation',fate:'started'})}/>
+    </div>
+  </QueryClientProvider>
+{:else if managerLayoutOnly}
 <QueryClientProvider client={catalogClient}>
   <main class="manager-column" style="max-width:768px;margin:auto;padding:0 32px" data-layout-proof>
     <ManagerHeader recap={layoutRecap} onSaveRecap={async(value)=>{layoutRecap=value;}}>
@@ -634,7 +842,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       <ConversationPane
         bind:conversationState
         bind:lens
-        conversationId="browser-fixture"
+        conversationId={fixtureConversationId}
         conversationExists
         {rows}
         {visibleRows}
@@ -650,7 +858,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         backendKey="claude"
         current={{ model: "opus", reasoningEffort: "high" }}
         models={[
-          { model_id: "opus", display_name: "Opus", enabled: true },
+          { model_id: "opus", display_name: "Opus", enabled: true, reasoning_effort_options: ["high"] },
           { model_id: "sonnet", display_name: "Sonnet", enabled: true,
             reasoning_effort_options: [] }
         ]}

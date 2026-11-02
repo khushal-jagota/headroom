@@ -48,14 +48,18 @@ def _metadata(
     )
     attention = value["attention"] if kind == "conversation" else _attention(conn, conversation)
     current = attention and attention["current"]
-    review = kind == "ticket" and eligible_for_owner_review(
-        ticket_status=value["ticket_status"],
-        is_backlogged=value["is_backlogged"],
-        holder_is_owner=value["ceiling_holder"] == {"kind": "owner", "id": "owner"},
-        has_gating_field=value["gating_field"] is not None,
-        has_proposal=all(
-            value[name] is not None for name in ("proposal_field", "proposal_created_at")
-        ),
+    review = (
+        kind == "ticket"
+        and "integrity_error" not in value
+        and eligible_for_owner_review(
+            ticket_status=value["ticket_status"],
+            is_backlogged=value["is_backlogged"],
+            holder_is_owner=value["ceiling_holder"] == {"kind": "owner", "id": "owner"},
+            has_gating_field=value["gating_field"] is not None,
+            has_proposal=all(
+                value[name] is not None for name in ("proposal_field", "proposal_created_at")
+            ),
+        )
     )
     unread = (
         kind == "address"
@@ -134,7 +138,9 @@ def _members(
                     )
                 )
 
-            if kind == "manager":
+            if kind == "goal" and value["active"]:
+                add("goals", None, rank=int(value["created_at"]), title_key=b"")
+            elif kind == "manager":
                 add(
                     "settled" if value["settled"] else "rail_parents",
                     None,
@@ -144,8 +150,11 @@ def _members(
                     title_key=b"",
                 )
             elif kind == "ticket":
+                broken = "integrity_error" in value
                 child_filter = (
-                    "done"
+                    "active"
+                    if broken
+                    else "done"
                     if value["stage"] == "done"
                     else "backlogged"
                     if value["is_backlogged"]
@@ -158,7 +167,12 @@ def _members(
                 child_title = b"" if parent[0] == "chief" else title
                 child_id = identity.encode() if parent[0] == "chief" else identity_key
                 # Chief excludes non-done terminal stages, as its existing API page does.
-                if parent[0] != "chief" or child_filter == "done" or not value["terminal"]:
+                if (
+                    broken
+                    or parent[0] != "chief"
+                    or child_filter == "done"
+                    or not value["terminal"]
+                ):
                     for filtering in ("all", child_filter):
                         for grouping in ("all", child_group):
                             add(
@@ -183,7 +197,7 @@ def _members(
                                 id_key=child_id,
                             )
                 parent_value = record(conn, parent)
-                eligible = (
+                eligible = broken or (
                     not value["is_backlogged"]
                     and not value["blocked"]
                     and value["ticket_status"] != "blocked"
@@ -231,7 +245,7 @@ def _members(
                 # One canonical address per owner/conversation. Preserve current-first order.
                 add("unread", None, rank=-int(value["current"]), title_key=b"")
                 owner = (str(value["owner_kind"]), str(value["owner_id"]))
-                if owner[0] == "ticket":
+                if owner[0] in ("ticket", "goal"):
                     add("unread", owner, rank=-int(value["current"]), title_key=b"")
                 owner_value = record(conn, owner) or {}
                 if (
@@ -302,7 +316,7 @@ def update(
                     "SELECT kind,id FROM navigation_view_index WHERE conversation_id=?", (identity,)
                 )
             )
-        if kind in ("ticket", "manager", "chief"):
+        if kind in ("ticket", "manager", "chief", "goal"):
             affected.update(
                 (r[0], r[1])
                 for r in conn.execute(
@@ -380,7 +394,7 @@ def update(
         for candidate in (old, new):
             if (
                 candidate
-                and candidate[0] in ("ticket", "manager", "chief", "address")
+                and candidate[0] in ("ticket", "manager", "chief", "goal", "address")
                 and candidate[3]
             ):
                 pointer_ids.add(candidate[3])
@@ -451,7 +465,7 @@ def update(
         ).fetchone()
         references = conn.execute(
             "SELECT count(*) FROM navigation_view_index WHERE conversation_id=? "
-            "AND kind IN ('chief','ticket','manager')",
+            "AND kind IN ('chief','ticket','manager','goal')",
             (identity,),
         ).fetchone()[0]
         current = conn.execute(

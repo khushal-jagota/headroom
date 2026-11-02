@@ -9,8 +9,8 @@
   // The reveal waits for the frame's paint report, and this limit always ends the wait.
   const PAINT_LIMIT_MS = 1500;
 
-  let { href, label, active = true, reloadSignal = 0, full = false, registerArtifactFrame }: {
-    href: string; label: string; active?: boolean; reloadSignal?: number; full?: boolean; registerArtifactFrame?: RegisterManagedArtifactFrame;
+  let { href, label, active = true, reloadSignal = 0, full = false, inlineFailure = false, registerArtifactFrame }: {
+    href: string; label: string; active?: boolean; reloadSignal?: number; full?: boolean; inlineFailure?: boolean; registerArtifactFrame?: RegisterManagedArtifactFrame;
   } = $props();
   let host: HTMLDivElement;
   let frame = $state<HTMLIFrameElement>();
@@ -147,6 +147,9 @@
       {#if notice && !emptyFailure}<span class="quiet-line" role="status" data-html-navigation-notice>{notice}</span>{/if}
     </div>
   {/if}
+  {#if inlineFailure && emptyFailure}
+    <span class="quiet-line managed-html-fetch-notice" role="status" data-html-fetch-notice><span class="file-preview-failed-name">{label}</span> — {notice}</span>
+  {:else}
   <SkeletonRegion shape={full ? "document" : "frame"} layout={full ? "fill" : "flow"}
     loading={full ? !notice && !frameHref : active && !notice && !revealed} loadingText="Loading preview...">
     {#if emptyFailure}
@@ -157,6 +160,7 @@
         sandbox={MANAGED_HTML_PREVIEW_SANDBOX} title={label} onload={() => fragment(new URL(currentHref, window.location.origin).hash)}></iframe>
     {/if}
   </SkeletonRegion>
+  {/if}
 </div>
 <style>
   .managed-html-document { min-height: 0; width: 100%; }

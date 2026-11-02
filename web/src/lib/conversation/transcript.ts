@@ -24,6 +24,7 @@ import type {
   UserInputQuestion
 } from "./wire";
 import { messageContentOf } from "./wire";
+import type { CredentialRequestRowBody } from './view/contracts';
 import type { ConversationFeed } from "./feed";
 import { isMessageOutcome, latestMessageOutcomes } from "./messageOutcome";
 
@@ -36,6 +37,7 @@ export type UserInputState = "live" | "answered" | "failed" | "dead";
 export type PermissionAskDeadReason = "turn_ended" | "no_ending_recorded";
 
 export type TranscriptRow =
+  | { key: string; kind: 'credential_request'; sequence: number; createdAt: number; request: CredentialRequestRowBody }
   | {
       key: string;
       kind: "prompt";
@@ -130,6 +132,7 @@ export type TranscriptRow =
       state: PermissionAskState;
       deadReason: PermissionAskDeadReason | null;
       answeredOptionLabel: string | null;
+      answerFate?: "saved" | "applied" | "unconfirmed";
     }
   | {
       key: string;
@@ -142,6 +145,7 @@ export type TranscriptRow =
       deadReason: PermissionAskDeadReason | null;
       answers: UserInputAnswers | null;
       failureDetail: string | null;
+      answerFate?: "saved" | "applied" | "unconfirmed";
     }
   | {
       key: string;
@@ -186,6 +190,7 @@ export type TranscriptRow =
 const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   no_such_conversation: "there is no such conversation to send to",
   model_resolution_failed: "the selected model could not be resolved",
+  backend_rejected_prompt: "the provider rejected this prompt",
   backend_did_not_start: "the backend would not start",
   session_did_not_load: "the backend's session would not load",
   write_to_backend_failed: "the write to the backend did not succeed",
@@ -283,6 +288,7 @@ export function transcriptRows(
   const toolCallRowIndex = new Map<string, number>();
   const askRowIndex = new Map<string, number>();
   const userInputRowIndex = new Map<string, number>();
+  const credentialRequestRowIndex = new Map<string, number>();
   // Half-finished output belongs to a turn that is running. When the turn is gone,
   // whatever was left in flight is not arriving, and it is not drawn.
   const turnIsGone = reading.turnStoppedWithoutAnEnding === true;
@@ -300,6 +306,18 @@ export function transcriptRows(
     const sequence = event.sequence;
     const createdAt = event.created_at;
     switch (event.kind) {
+      case 'credential_request': {
+        const request = event.payload.request;
+        const previous = credentialRequestRowIndex.get(request.request_id);
+        if (previous === undefined) {
+          credentialRequestRowIndex.set(request.request_id, rows.length);
+          rows.push({ key: `e${sequence}`, kind: 'credential_request', sequence, createdAt, request });
+        } else {
+          const row = rows[previous];
+          if (row?.kind === 'credential_request') rows[previous] = { ...row, request };
+        }
+        break;
+      }
       case "prompt":
         rows.push({
           key: `e${sequence}`,
@@ -310,7 +328,7 @@ export function transcriptRows(
           senderLabel: event.payload.sender_label,
           senderMessageId: event.payload.sender_message_id ?? null,
           mode: event.payload.mode,
-          sentAtUnixMilliseconds: sentAtUnixMilliseconds(event.payload, createdAt)
+          sentAtUnixMilliseconds: sentAtUnixMilliseconds(event.payload, createdAt),
         });
         break;
       case "prompt_delivery_refused":
@@ -323,7 +341,7 @@ export function transcriptRows(
           senderLabel: event.payload.sender_label,
           senderMessageId: event.payload.sender_message_id ?? null,
           reason: event.payload.refusal_reason,
-          sentence: refusalSentence(event.payload.refusal_reason, event.payload.refusal_detail)
+          sentence: refusalSentence(event.payload.refusal_reason, event.payload.refusal_detail),
         });
         break;
       case "prompt_delivery_uncertain":
@@ -599,6 +617,7 @@ export function principalLabel(principal: Principal): string {
     case "chief": return "Chief";
     case "ticket": return `Ticket ${principal.id}`;
     case "manager": return `Manager ${principal.id}`;
+    case "goal": return `Goal ${principal.id}`;
   }
 }
 

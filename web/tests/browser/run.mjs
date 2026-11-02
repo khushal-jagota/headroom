@@ -1,3 +1,4 @@
+import { usageAliases } from "../../usage-aliases.mjs";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -10,7 +11,7 @@ import { build } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { markdownWorkerPlugins } from "../../build/markdown-worker.mjs";
 import { scratchDirectory, ownedByProcess } from "../support/scratch.mjs";
-import { selectedEntries, validateCompanion } from "./contracts.mjs";
+import { assertCompleteCaseEnvironment, selectedEntries, validateCompanion } from "./contracts.mjs";
 
 const webRoot = fileURLToPath(new URL("../../", import.meta.url));
 const repositoryRoot = dirname(webRoot.replace(/\/$/, ""));
@@ -45,6 +46,7 @@ export async function run(selections = [], options = {}) {
   const receipt = {outcome: "failed", cases: [], companion: null};
   try {
     entries = selectedEntries(catalog, selections);
+    assertCompleteCaseEnvironment(process.env);
     requiredCompanions = [...new Set(entries.flatMap(entry => entry.companions || []))];
     return await runSelected(entries, options, receipt, requiredCompanions);
   } catch (error) {
@@ -95,7 +97,7 @@ async function runSelected(entries, options, receipt, requiredCompanions) {
     receipt.timing.prepareSeconds = (performance.now() - prepareStarted) / 1000;
     const output = join(temporary, "dist");
     const buildStarted = performance.now();
-    await build({root: webRoot, base: "/", configFile: false, logLevel: "warn", plugins: [svelte()], worker: { plugins: markdownWorkerPlugins },
+    await build({root: webRoot, base: "/", configFile: false, resolve: { alias: usageAliases }, logLevel: "warn", plugins: [svelte()], worker: { plugins: markdownWorkerPlugins },
       build: {outDir: output, emptyOutDir: true, rollupOptions: {input: prepared.flatMap(case_ => case_.inputs)}}});
     receipt.timing.sharedBuildSeconds = (performance.now() - buildStarted) / 1000;
     const serverStarted = performance.now();

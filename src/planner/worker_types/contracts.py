@@ -155,13 +155,19 @@ class WorkerTypeDefinition:
             {"worker_type": self.worker_type},
         )
 
-    def validate_ticket_position(self, stage: str, ceiling: str) -> None:
+    def validate_ticket_position(
+        self, stage: str, ceiling: str, *, allow_historical_terminal_ceiling: bool = False
+    ) -> None:
         if not self.is_known_stage(stage):
             raise PlannerError(
                 ErrorCode.validation,
                 "stage outside the linear order",
                 {"stage": stage},
             )
+        # Historical terminal rows retain the exact scope their holder once granted.
+        # This read-only exception never admits an unfinished position or a new write.
+        if allow_historical_terminal_ceiling and self.is_terminal(stage):
+            return
         if ceiling not in self.ceiling_range():
             raise PlannerError(
                 ErrorCode.scope_invalid,
@@ -196,3 +202,15 @@ class WorkerTypeManifest(TypedDict):
     default_backend: str
     default_model: str
     default_reasoning_effort: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class TicketTypeMigration:
+    """A save receipt, retained by the caller with the amendment's evidence."""
+
+    ticket_id: str
+    title: str
+    old_stage: str
+    new_stage: str
+    old_ceiling: str
+    new_ceiling: str

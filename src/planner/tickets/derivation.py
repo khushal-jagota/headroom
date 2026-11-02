@@ -23,7 +23,7 @@ from enum import StrEnum
 from planner.core import ticket_blocks
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
-from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkerTypeDefinition
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,11 +81,14 @@ def derive_ticket_status(stored: StoredTicketFacts) -> TicketStatus:
 RESTS_PREDICATE = "t.worker_step_claim = 'none' AND t.pending_proposal IS NULL"
 
 
-def derive_ticket_facts(stored: StoredTicketFacts) -> TicketFacts:
+def derive_ticket_facts(
+    stored: StoredTicketFacts, *, worker_type_definition: WorkerTypeDefinition | None = None
+) -> TicketFacts:
     ticket_status = derive_ticket_status(stored)
-    gating_field = (
-        configured_worker_type_registry().require(stored.worker_type).gating_field(stored.stage)
+    definition = worker_type_definition or configured_worker_type_registry().require(
+        stored.worker_type
     )
+    gating_field = definition.gating_field(stored.stage)
     return TicketFacts(
         ticket_id=stored.ticket_id,
         ticket_status=ticket_status,

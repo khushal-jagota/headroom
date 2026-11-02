@@ -17,11 +17,10 @@
   import ResourceState from "./ResourceState.svelte";
   import WorkerRow from "./WorkerRow.svelte";
 
-  let { principal, tickets, publication, navigationErrorHandledByParent = false, filter, onHover, onLeave }: {
+  let { principal, tickets, publication, filter, onHover, onLeave }: {
     principal: ManagerPrincipal;
     tickets?: readonly (WorkItemTicketFacts & {is_backlogged:boolean})[];
     publication?: import("../lib/navigation/collection").NavigationPublication;
-    navigationErrorHandledByParent?: boolean;
     filter: ManagerChildFilter;
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave: () => void;
@@ -111,7 +110,7 @@
     <div class="manager-workspace-status-body">
       {#each items as ticket (ticket.id)}
         <div use:railPreview={onHover ? {show:(element, immediate) => onHover?.(element, ticket.id, immediate), leave:onLeave} : null}>
-          <WorkerRow title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
+          <WorkerRow locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
             quiet={ticket.stage === "done"}
             href={workspaceAddress(principal.kind === "manager"
               ? { kind: "ticket", id: ticket.id, openedFromManagerId: principal.id } : { kind: "ticket", id: ticket.id })}
@@ -121,7 +120,7 @@
     </div>
   {/snippet}
   {#snippet contents()}
-    <ResourceState shape="rows" error={tickets === undefined && !navigationErrorHandledByParent ? navigation?.state.error : null} loading={tickets === undefined && !shared}
+    <ResourceState shape="rows" loading={tickets === undefined && !shared}
       hasData={tickets !== undefined || shared !== undefined} loadingText={`Loading ${filter === "active" ? "Workers" : label}…`}>
       {#if filter === "active"}
         {#each groups as group (group.key)}

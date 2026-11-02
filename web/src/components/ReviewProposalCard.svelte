@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isBrokenTicket } from "../lib/ticketIntegrity";
   import SkeletonRegion from "./SkeletonRegion.svelte";
   /** One waiting proposal, as a card.
    *
@@ -88,6 +89,7 @@
   onDestroy(() => navigation.disposeRenderBoundary(observer));
   let cardElement = $state<HTMLElement | null>(null);
   const detail = createQuery(() => queries.reviewProposal(identity));
+  let healthyDetail = $derived(detail.data && !isBrokenTicket(detail.data) ? detail.data : undefined);
 
   let currentKey = $derived(reviewProposalIdentity(identity));
   let ticketHref = $derived(workspaceAddress({ kind: "ticket", id: ticketId }));
@@ -96,7 +98,7 @@
   // the detail is still loading OR when the detail's worker_type is absent from a
   // loaded manifest; the markup tells those apart (Codex F3).
   let detailWorkerType = $derived(
-    typeof detail.data?.worker_type === "string" ? (detail.data.worker_type as string) : null
+    typeof healthyDetail?.worker_type === "string" ? (healthyDetail.worker_type as string) : null
   );
   // This card draws the stages of the one Worker type its proposal belongs to, so it
   // asks for that one rather than the whole list of fourteen. Declared here because the
@@ -109,10 +111,10 @@
   // Approving here sets the next ceiling, so the reviewer gets the same choice of holder
   // the Ticket page offers, including handing the Ticket back to its own Manager.
   let reviewManager = $derived(
-    detail.data?.manager_id
+    healthyDetail?.manager_id
       ? {
-          id: detail.data.manager_id,
-          title: detail.data.manager_title || "Manager"
+          id: healthyDetail.manager_id,
+          title: healthyDetail.manager_title || "Manager"
         }
       : null
   );
@@ -163,7 +165,7 @@
   }
 
   async function write(path: string, options: Parameters<typeof mutateJson>[1], operation:TicketNavigationOperation): Promise<unknown> {
-    if (!currentIdentity() || !detail.data || isStale(detail.data)) throw new Error("the visible proposal changed; read it again before accepting");
+    if (!currentIdentity() || !healthyDetail || isStale(healthyDetail)) throw new Error("the visible proposal changed; read it again before accepting");
     return navigation.runCommand(ticketCommandImpact(navigation.state.effective,ticketId,operation),responseMetadata =>
       mutateJson(path,{...options,responseMetadata}),`review proposal ${operation}`);
   }
@@ -190,7 +192,7 @@
 
   let reconciledMismatch: string | null = null;
   $effect(() => {
-    const loaded = detail.data;
+    const loaded = healthyDetail;
     if (!loaded || detail.isFetching || !isStale(loaded)) return;
     const mismatch = JSON.stringify([currentKey,loaded.pending_proposal?.field,loaded.pending_proposal?.created_at,loaded.pending_proposal?.revision]);
     if (reconciledMismatch === mismatch) return;
@@ -203,7 +205,7 @@
     const effective = navigation.selectors.effective;
     const generation = navigation.state.generation;
     const element = cardElement;
-    const loaded = detail.data;
+    const loaded = healthyDetail;
     const expected = identity;
     if (!effective?.runtimeCurrent || !element || !loaded || isStale(loaded) || !currentIdentity()) return;
     const publication = effective.publication;
@@ -253,7 +255,7 @@
   }
 </script>
 
-<SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !detail.data) || Boolean(detail.data && !manifest.error && !manifestMissingWorkerType && isStale(detail.data)))} loadingText="Loading approval...">
+<SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifest.error && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
 {#if detail.error}
   <div>
     <ErrorLine error={detail.error} />
@@ -265,8 +267,8 @@
       <a data-open-ticket href={ticketHref}>open ticket</a>
     </div>
   </div>
-{:else if detail.data && (manifest.error || manifestMissingWorkerType)}
-  {@const ticketDetail = detail.data}
+{:else if healthyDetail && (manifest.error || manifestMissingWorkerType)}
+  {@const ticketDetail = healthyDetail}
   <div data-review-manifest-error>
     <ErrorLine
       error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${ticketDetail.worker_type}"` }}
@@ -278,8 +280,8 @@
       <a data-open-ticket href={ticketHref}>open ticket</a>
     </div>
   </div>
-{:else if detail.data}
-  {@const ticketDetail = detail.data}
+{:else if healthyDetail}
+  {@const ticketDetail = healthyDetail}
   {#if !isStale(ticketDetail)}
     <div
       bind:this={cardElement}

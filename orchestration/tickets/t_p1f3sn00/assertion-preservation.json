@@ -1,0 +1,14 @@
+{
+  "web/tests/browser/cases/workspace-utility-pane.py": {
+    "original_assertions": 157,
+    "original_expect_expressions": 100,
+    "missing_assertions": [],
+    "missing_expect_expressions": []
+  },
+  "web/tests/browser/cases/conversation-pane.py": {
+    "original_assertions": 454,
+    "original_expect_expressions": 85,
+    "missing_assertions": [],
+    "missing_expect_expressions": []
+  }
+}

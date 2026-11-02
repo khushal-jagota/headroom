@@ -48,6 +48,11 @@ struct SettingsView: View {
         Group {
             if let workers {
                 Section {
+                    LabeledContent("Mac executor", value: store.executorHealth?.activityKnown == true ? "Connected" : "Activity unknown")
+                    Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.")
+                        .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                }.listRowBackground(PanelsTheme.raised)
+                Section {
                     NavigationLink {
                         SettingsAgentDetail(title: workers.chiefOfStaff.label, configuration: workers.chiefOfStaff.launchDefaults, skill: workers.chiefOfStaff.skill)
                     } label: { Text(workers.chiefOfStaff.label) }
@@ -80,6 +85,7 @@ struct SettingsView: View {
                         NavigationLink {
                             List {
                                 Section {
+                                    TicketMachineLabel(locale: schedule.locale)
                                     LabeledContent("Status", value: schedule.enabled ? "Enabled" : "Disabled")
                                     LabeledContent("Time", value: schedule.localTime)
                                     LabeledContent("Cadence", value: schedule.cadence.replacingOccurrences(of: "_", with: " ").capitalized)

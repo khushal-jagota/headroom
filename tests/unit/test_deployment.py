@@ -277,6 +277,12 @@ def _app(
     (root / "agent_backends" / "node_modules" / ".package-lock.json").write_text(
         "{}\n", encoding="utf-8"
     )
+    from planner.environments.runtime_contracts import RuntimeContract, runtime_bytes_digest
+    inventory = b'{"native_files": []}'
+    contract = RuntimeContract("3.12.12", runtime_bytes_digest(inventory))
+    (root / "runtime").mkdir()
+    (root / "runtime/inventory.json").write_bytes(inventory)
+    (root / "runtime/contract.json").write_text(json.dumps(contract.as_dict()))
     (root / "manifest.json").write_text(
         json.dumps(
             {
@@ -284,6 +290,7 @@ def _app(
                 "app_sha": sha,
                 "source_digest": digest_app_source(root),
                 "artifact_digest": digest_app_artifact(root),
+                "runtime_contract": contract.as_dict(),
             }
         ),
         encoding="utf-8",
@@ -310,7 +317,7 @@ def test_gate_refuses_changed_proof_before_service_or_backup(
     if change != "first-copy":
         _app(current / "app", SHA_B if change == "same-base" else SHA_A, "old")
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
-    (current / "data").mkdir(parents=True)
+    (current / "data").mkdir(parents=True, mode=0o700)
     database = current / "data" / "planning.db"
     database.write_text("db")
     if change == "first-copy":
@@ -360,6 +367,7 @@ def test_gate_refuses_changed_proof_before_service_or_backup(
             service=FakeService(events),
             health=FakeHealth(events, {SHA_B}),
             gate_evidence=evidence,
+            before_stop=lambda: events.append("claim"),
         )
     assert events == []
     assert not list(current.glob(".app-*"))
@@ -426,3 +434,9 @@ def test_capture_failure_never_vetoes_cutover_or_rollback(
     )
     assert result.status == "unchanged"
     assert captured_deployments == []
+
+
+@pytest.fixture(autouse=True)
+def synthetic_runtime_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Transaction tests use shell stubs. Real admission has separate focused tests.
+    monkeypatch.setattr("planner.environments.deployment.admit_runtime", lambda *args: None)

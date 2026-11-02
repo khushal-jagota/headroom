@@ -249,7 +249,12 @@ export function observeVisibleContent(
     if (next > 0 && !reserved) height = next;
   });
   const intersection = new IntersectionObserver(entries => {
-    intersecting = entries[0]?.isIntersecting ?? false;
+    let finalEntry: IntersectionObserverEntry | undefined;
+    for (const entry of entries) {
+      if (entry.target === element) finalEntry = entry;
+    }
+    if (!finalEntry) return;
+    intersecting = finalEntry.isIntersecting;
     publish();
   }, { root, rootMargin: VISIBLE_CONTENT_ROOT_MARGIN });
   resize.observe(element);

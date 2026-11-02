@@ -72,6 +72,7 @@ BACKEND_CASES = (
 )
 
 
+@pytest.mark.real_provider_homes
 @real_system_steering_only
 @pytest.mark.parametrize("case", BACKEND_CASES, ids=lambda case: str(case.backend_key))
 def test_real_provider_steer_reaches_model_system_api_stop_and_resume(
