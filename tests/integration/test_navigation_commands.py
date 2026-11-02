@@ -314,8 +314,11 @@ def test_manager_mutations_remain_in_the_navigation_command_inventory() -> None:
     from planner.navigation.commands import EXCLUDED_COMMAND_ROUTES, is_navigation_command
 
     excluded = {(route.method, route.path) for route in EXCLUDED_COMMAND_ROUTES}
-    assert ("PUT", "/api/managers/launch-defaults") in excluded
-    assert is_navigation_command("PUT", "/api/managers/example/launch-defaults")
+    for prefix in ("/api/managers", "/api/items"):
+        assert ("PUT", prefix + "/launch-defaults") in excluded
+        assert not is_navigation_command("PUT", prefix + "/launch-defaults")
+        assert is_navigation_command("PUT", prefix + "/example/launch-defaults")
+        assert ("PUT", prefix + "/{item_id}/launch-defaults") not in excluded
     for manager_router in (router, legacy_router):
         for route in manager_router.routes:
             if isinstance(route, APIRoute):

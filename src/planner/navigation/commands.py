@@ -51,6 +51,7 @@ COMMAND_ROUTES = (
         "PUT",
         "An individual Manager launch choice updates its navigation timestamp",
         "/managers/{item_id}/launch-defaults",
+        "/items/{item_id}/launch-defaults",
     ),
     *_routes(
         "PUT",
@@ -117,6 +118,7 @@ EXCLUDED_COMMAND_ROUTES = (
         "PUT",
         "Prospective Manager defaults do not change any current navigation record",
         "/managers/launch-defaults",
+        "/items/launch-defaults",
     ),
     *_routes(
         "PUT",
