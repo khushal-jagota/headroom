@@ -4,6 +4,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import "../lib/config/config.css";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import ManagerLaunchSettings from "../components/ManagerLaunchSettings.svelte";
   import ManagedLaunchDefaults from "../components/ManagedLaunchDefaults.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import RoleSkillEditor from "../components/RoleSkillEditor.svelte";
@@ -337,6 +338,8 @@
               </div>
               <p class="config-identity" aria-hidden="true" data-role-purpose>{roleSkill.description}</p>
             </header>
+
+            {#if stableRoleId === "panels-manager"}<ManagerLaunchSettings />{/if}
 
             <div
               data-role-skill
