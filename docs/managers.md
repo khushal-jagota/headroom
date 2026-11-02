@@ -20,9 +20,11 @@ Backlogged and Done children are sections on the Manager page. The rail’s atte
 
 ## Manager models
 
-Khushal and Chief can save Manager defaults through `GET|PUT /api/managers/launch-defaults`. Settings → Config shows the same controls beside Chief and Workers. Each new Manager copies those choices. Existing Managers retain their own choices. A fresh installation uses Codex `gpt-6.1-sol` with `medium` effort. The migration does not change existing Managers.
+Khushal chooses defaults for new Managers in Settings → Config, under the Manager role. Chief can read and save the same defaults through `GET|PUT /api/managers/launch-defaults`. Each new Manager copies those choices. Existing Managers retain their own choices. A fresh installation uses Codex `gpt-6.1-sol` with `medium` effort. The migration preserves existing Managers.
 
-Each Manager has separate model settings through `GET|PUT /api/managers/{id}/launch-defaults`. These routes use the complete `employee_backend`, `employee_launch_model`, and nullable `employee_launch_reasoning_effort` object. A save sends no message and preserves the conversation and history. An active turn keeps its model. An explicit save applies to the next message, unless its sender explicitly selects another choice. Historical launch metadata does not override an existing conversation. Queued messages retain the choice that accompanied their admission. An accepted owner picker change also saves that intent, even while its message waits. Later wakes and unchanged messages use that saved choice. A null effort requests the provider default on that next message.
+Chief can change one existing Manager through `GET|PUT /api/managers/{id}/launch-defaults`. The owner also retains access to these routes. The complete object contains `employee_backend`, `employee_launch_model`, and nullable `employee_launch_reasoning_effort`. A save sends no message and preserves the conversation and history. An active turn keeps its model. An explicit save applies to the next message, unless its sender explicitly selects another choice. Historical launch metadata does not override an existing conversation.
+
+Queued messages retain the choice that accompanied their admission. An accepted owner picker change also saves that intent, even while its message waits. Later wakes and unchanged messages use that saved choice. A null effort requests the provider default on that next message.
 
 An existing conversation keeps its backend. To change backend, the owner or Chief starts a new conversation first. Ordinary Managers cannot change global defaults or another Manager's settings.
 

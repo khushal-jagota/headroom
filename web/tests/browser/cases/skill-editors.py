@@ -54,7 +54,6 @@ def run(browser, urls):
         "employee_launch_reasoning_effort": "medium",
     }
     manager_defaults = dict(defaults)
-    manager_saved = dict(defaults)
     launch_writes = []
     manifest = {
         "worker_type": "coding",
@@ -73,8 +72,8 @@ def run(browser, urls):
         nonlocal refuse_body
         path = urlsplit(route.request.url).path
         method = route.request.method
-        if path in ("/api/managers/launch-defaults", "/api/managers/test-manager/launch-defaults"):
-            saved = manager_defaults if path == "/api/managers/launch-defaults" else manager_saved
+        if path == "/api/managers/launch-defaults":
+            saved = manager_defaults
             if method == "PUT":
                 launch_writes.append((path, route.request.post_data_json))
                 saved.update(route.request.post_data_json)
@@ -142,34 +141,23 @@ def run(browser, urls):
         expect(description).to_have_text("Refetched description")
         expect(body).to_have_text("Saved body")
 
-    # A saved Manager choice needs no conversation send. The same control serves
-    # global defaults and one existing Manager, whose backend stays fixed.
-    for params, destination in [
-        ({"roleKind": "skill", "roleId": "panels-manager"}, "/api/managers/launch-defaults"),
-        ({"managerId": "test-manager"}, "/api/managers/test-manager/launch-defaults"),
-    ]:
-        page.goto(urls[0] + "?" + urlencode(params))
-        control = page.locator("[data-launch-defaults]")
-        trigger = control.locator("[data-conversation-picker-trigger]")
-        expect(trigger).to_contain_text("Sol")
-        trigger.click()
-        if "managerId" in params:
-            locked = control.locator('[data-conversation-backend="claude"]')
-            expect(locked).to_have_attribute("aria-disabled", "true")
-            expect(control.get_by_text("To change the backend, start a new conversation.").first).to_be_visible()
-            assert len(launch_writes) == 1
-        control.get_by_role("option", name="GPT 6.1 Terra", exact=True).click()
-        control.get_by_role("option", name="high", exact=True).click()
-        expect(trigger).to_contain_text("Terra high")
-        assert launch_writes[-1] == (destination, {
-            "employee_backend": "codex", "employee_launch_model": "gpt-6.1-terra", "employee_launch_reasoning_effort": "high",
-        })
-        page.reload()
-        expect(page.locator("[data-conversation-picker-trigger]")).to_contain_text("Terra high")
-        if evidence := os.environ.get("PANELS_E2E_FAILURE_DIR"):
-            page.screenshot(path=str(Path(evidence) / ("manager-model.png" if "managerId" in params else "manager-defaults.png")), full_page=True)
+    # The global Manager defaults save without a conversation message and survive reload.
+    page.goto(urls[0] + "?" + urlencode({"roleKind": "skill", "roleId": "panels-manager"}))
+    control = page.locator("[data-launch-defaults]")
+    trigger = control.locator("[data-conversation-picker-trigger]")
+    expect(trigger).to_contain_text("Sol")
+    trigger.click()
+    control.get_by_role("option", name="GPT 6.1 Terra", exact=True).click()
+    control.get_by_role("option", name="high", exact=True).click()
+    expect(trigger).to_contain_text("Terra high")
+    assert launch_writes == [("/api/managers/launch-defaults", {
+        "employee_backend": "codex", "employee_launch_model": "gpt-6.1-terra", "employee_launch_reasoning_effort": "high",
+    })]
+    page.reload()
+    expect(page.locator("[data-conversation-picker-trigger]")).to_contain_text("Terra high")
+    if evidence := os.environ.get("PANELS_E2E_FAILURE_DIR"):
+        page.screenshot(path=str(Path(evidence) / "manager-defaults.png"), full_page=True)
 
-    assert len(launch_writes) == 2
     assert writes == expected_writes
     assert errors == [], errors
     context.close()

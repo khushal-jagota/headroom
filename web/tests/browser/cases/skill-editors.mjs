@@ -9,14 +9,13 @@ export async function prepare({ scratchRoot }) {
   await writeFile(join(scratchRoot, host), `<script lang="ts">
 import { QueryClientProvider } from '@tanstack/svelte-query';
 import ConfigRoute from '../src/routes/ConfigRoute.svelte';
-import ManagerLaunchSettings from '../src/components/ManagerLaunchSettings.svelte';
 import { queryClient } from '../src/lib/queryClient';
 import type { ConfigSelection } from '../src/lib/shellRouting';
 const selection = new URLSearchParams(location.search);
 const roleKind = selection.get('roleKind') as ConfigSelection['roleKind'];
 const roleId = selection.get('roleId') ?? undefined;
 </script>
-<QueryClientProvider client={queryClient}>{#if selection.has('managerId')}<ManagerLaunchSettings managerId={selection.get('managerId')!} backendLocked />{:else}<ConfigRoute {roleKind} {roleId} />{/if}</QueryClientProvider>
+<QueryClientProvider client={queryClient}><ConfigRoute {roleKind} {roleId} /></QueryClientProvider>
 `);
   await writeFile(join(scratchRoot, main), `import {mount} from 'svelte'; import Host from './${host}'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host,{target:document.getElementById('app')!});`);
   await writeFile(html, `<!doctype html><html><body><div id="app"></div><script type="module" src="./${main}"></script></body></html>`);
