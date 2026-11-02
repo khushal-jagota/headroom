@@ -18,6 +18,20 @@ The Manager creates children through ordinary Ticket creation. The Workspace lis
 
 Backlogged and Done children are sections on the Manager page. The rail’s attention groups omit backlogged Tickets. Chief’s page shows Chief’s children beside Chief’s conversation, in pages.
 
+## Manager models
+
+Khushal chooses defaults for new Managers in Settings → Config, under the Manager role. Chief can read and save the same defaults through `GET|PUT /api/managers/launch-defaults`. Each new Manager copies those choices. Existing Managers retain their own choices. A fresh installation uses Codex `gpt-6.1-sol` with `medium` effort. The migration preserves existing Managers.
+
+Chief can change one existing Manager through `GET|PUT /api/managers/{id}/launch-defaults`. The owner also retains access to these routes. The complete object contains `employee_backend`, `employee_launch_model`, and nullable `employee_launch_reasoning_effort`. A save sends no message and preserves the conversation and history. An active turn keeps its model. An explicit save applies to the next message, unless its sender explicitly selects another choice. Historical launch metadata does not override an existing conversation.
+
+Queued messages retain the choice that accompanied their admission. An accepted owner picker change also saves that intent, even while its message waits. Later wakes and unchanged messages use that saved choice. A null effort requests the provider default on that next message.
+
+An existing conversation keeps its backend. To change backend, the owner or Chief starts a new conversation first. Ordinary Managers cannot change global defaults or another Manager's settings.
+
+Model choices are exact backend tokens. Catalogs help the picker but do not restrict valid unlisted tokens. New settings reject disabled models. Reads do not reject historical settings. Existing conversations retain their current model until an explicit change. The migration marks historical settings as implicit, because their columns do not prove a later choice. A setting save records explicit intent without a timestamp guess. Normal messages, wakes, and review notices share that distinction.
+
+The former Codex default `sol` is a known unsupported token. If a conversation starts or resumes on that token, the Codex adapter refuses before process startup. The conversation records that refusal with explicit-model guidance. A healthy conversation remains reachable when only its historical launch setting names `sol`. No choice changes silently. If the current conversation model itself is disabled, the existing execution policy still records a durable refusal. Provider availability still requires a real start.
+
 ## How a Manager hears about work
 
 Three kinds of durable wake become real queued prompts in the Chief or Manager conversation. They are recorded in the same transaction as the fact that caused them. A loop later delivers a batch, and it closes a wake only when that prompt is durably in the notebook. A stale proposal notice is dropped rather than sent. Replying to a wake does not approve anything. Approval is still the proposal resolver.
@@ -36,4 +50,4 @@ Creation, goal and recap edits, child Ticket activity, and wakes feed the Manage
 
 `src/planner/managers/` is the record. Wakes live in `src/planner/manager_wakes/`. The screens are `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-02._

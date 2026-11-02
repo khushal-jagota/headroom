@@ -5,6 +5,8 @@ SSR coverage cannot invoke InlineEdit callbacks or prove mounted query refresh.
 One host uses the catalog runner's shared build, static server, and browser.
 """
 
+import os
+from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit
 
 from playwright.sync_api import expect
@@ -17,12 +19,15 @@ def run(browser, urls):
         "executable_path": "/fixture/codex",
         "version": "fixture",
         "identity": {
-            "status": "unauthenticated",
+            "status": "authenticated",
             "account_label": None,
             "detail": "Credential rejected",
             "login_command": "codex login",
         },
-        "available_models": [],
+        "available_models": [
+            {"model_id": "gpt-6.1-sol", "display_name": "GPT 6.1 Sol", "enabled": True, "reasoning_effort_options": ["medium", "high"]},
+            {"model_id": "gpt-6.1-terra", "display_name": "GPT 6.1 Terra", "enabled": True, "reasoning_effort_options": ["medium", "high"]},
+        ],
         "reasoning_effort_options": [],
         "cached_usage": None,
         "update_advisory": None,
@@ -45,9 +50,11 @@ def run(browser, urls):
     }
     defaults = {
         "employee_backend": "codex",
-        "employee_launch_model": None,
-        "employee_launch_reasoning_effort": None,
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "medium",
     }
+    manager_defaults = dict(defaults)
+    launch_writes = []
     manifest = {
         "worker_type": "coding",
         "label": "Coding",
@@ -65,6 +72,15 @@ def run(browser, urls):
         nonlocal refuse_body
         path = urlsplit(route.request.url).path
         method = route.request.method
+        if path == "/api/managers/launch-defaults":
+            saved = manager_defaults
+            if method == "PUT":
+                launch_writes.append((path, route.request.post_data_json))
+                saved.update(route.request.post_data_json)
+            else:
+                assert method == "GET", method
+            route.fulfill(json=saved)
+            return
         if method == "PATCH":
             body = route.request.post_data_json
             writes.append((method, path, body))
@@ -124,6 +140,23 @@ def run(browser, urls):
         page.reload()
         expect(description).to_have_text("Refetched description")
         expect(body).to_have_text("Saved body")
+
+    # The global Manager defaults save without a conversation message and survive reload.
+    page.goto(urls[0] + "?" + urlencode({"roleKind": "skill", "roleId": "panels-manager"}))
+    control = page.locator("[data-launch-defaults]")
+    trigger = control.locator("[data-conversation-picker-trigger]")
+    expect(trigger).to_contain_text("Sol")
+    trigger.click()
+    control.get_by_role("option", name="GPT 6.1 Terra", exact=True).click()
+    control.get_by_role("option", name="high", exact=True).click()
+    expect(trigger).to_contain_text("Terra high")
+    assert launch_writes == [("/api/managers/launch-defaults", {
+        "employee_backend": "codex", "employee_launch_model": "gpt-6.1-terra", "employee_launch_reasoning_effort": "high",
+    })]
+    page.reload()
+    expect(page.locator("[data-conversation-picker-trigger]")).to_contain_text("Terra high")
+    if evidence := os.environ.get("PANELS_E2E_FAILURE_DIR"):
+        page.screenshot(path=str(Path(evidence) / "manager-defaults.png"), full_page=True)
 
     assert writes == expected_writes
     assert errors == [], errors

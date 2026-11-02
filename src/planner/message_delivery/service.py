@@ -10,6 +10,7 @@ from planner.conversation.contracts import (
     ConversationTurnReference,
     NativeMessageOperation,
     PromptDeliveryMode,
+    PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
@@ -352,6 +353,21 @@ async def send_message(
                         if runs_under is NO_CONVERSATION_START_OVERRIDES
                         else conversation_start.manager_resolve(conn, item, runs_under)
                     )
+                    explicit_choice = (
+                        runs_under.backend_key is not None
+                        or runs_under.model is not None
+                        or runs_under.reasoning_effort is not None
+                        or runs_under.reasoning_effort_is_set
+                    )
+                    if explicit_choice:
+                        from planner.managers.launch_settings import validate_launch_configuration
+
+                        validate_launch_configuration(
+                            conn,
+                            item.manager_launch_configuration.__class__(
+                                resolved.backend_key, resolved.model, resolved.reasoning_effort
+                            ),
+                        )
                     delivered = await conversation_start.send_to_agent_conversation(
                         conversations,
                         conn,
@@ -381,12 +397,10 @@ async def send_message(
                     if caller.kind is PrincipalKind.owner and (
                         (current is None and delivered.conversation_id is not None)
                         or (
-                            isinstance(delivered.fate, PromptDeliveryStarted)
-                            and (
-                                runs_under.backend_key is not None
-                                or runs_under.model is not None
-                                or runs_under.reasoning_effort is not None
+                            isinstance(
+                                delivered.fate, (PromptDeliveryStarted, PromptDeliveryQueued)
                             )
+                            and explicit_choice
                         )
                     ):
                         managers_data.update_manager_launch_configuration(
@@ -400,6 +414,7 @@ async def send_message(
                             principal=caller,
                             clock=clock,
                             expected_configuration=item.manager_launch_configuration,
+                            explicit_choice=explicit_choice,
                         )
         else:
             raise PlannerError(
