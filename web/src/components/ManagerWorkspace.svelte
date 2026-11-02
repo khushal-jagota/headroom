@@ -26,7 +26,6 @@
   import InlineEdit from "./InlineEdit.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
-  import ManagerLaunchSettings from "./ManagerLaunchSettings.svelte";
   import ManagerHeader from "./ManagerHeader.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import ArtifactsBand from "./ArtifactsBand.svelte";
@@ -258,12 +257,6 @@
               }} onLeave={() => hover.leave()} />
           </section>
           <div class="manager-bands disclosure-bands">
-            <details class="disclosure-band" data-manager-model>
-              <summary>Model<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
-              <div class="disclosure-band-body">
-                <ManagerLaunchSettings managerId={itemId} backendLocked={Boolean(item.conversation_id)} />
-              </div>
-            </details>
             <details class="disclosure-band goal-band" data-goal-band>
               <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
               <div class="disclosure-band-body">
