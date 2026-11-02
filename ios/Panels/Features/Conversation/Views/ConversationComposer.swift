@@ -24,7 +24,8 @@ struct ConversationComposer: View {
     @State private var picture: PhotosPickerItem?
     @State private var camera = false
     @FocusState private var focused: Bool
-    private var stopsTurn: Bool { !reviewReply && model.status?.turnRunning == true && model.status?.authority == "current" && !TicketMachine.activityUnknown(model.machineLocale, health: store.executorHealth) && model.draft.isEmpty && model.attachments.isEmpty && !speech.recording }
+    // Unknown Mac activity changes the indicator; Stop still targets the saved turn, as on the web.
+    private var stopsTurn: Bool { !reviewReply && model.status?.turnRunning == true && model.draft.isEmpty && model.attachments.isEmpty && !speech.recording }
     private var card: Bool { (!model.draft.isEmpty || !model.attachments.isEmpty) && !speech.recording && !speech.transcribing }
     private var capturingSpeech: Bool { speech.recording || speech.transcribing || speech.starting }
 
