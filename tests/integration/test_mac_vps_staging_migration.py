@@ -22,7 +22,7 @@ from tests.integration.test_navigation_cumulative_migration import (
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "ticket_integrity_reason"
+FINAL_HEAD = "manager_launch_defaults"
 SENTINELS: dict[str, tuple[object, ...]] = {
     "mac_inbox_positions": (
         "sender",
@@ -206,6 +206,7 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
             ]
             rows = {name: list(conn.execute(f'SELECT * FROM "{name}"')) for name in tables}
             ticket_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(tickets)"))
+            manager_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(managers)"))
             assert [row[0] for row in conn.execute("SELECT id FROM tickets ORDER BY id")] == [
                 "alias", "blocker", "held",
             ]
@@ -232,6 +233,12 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                         row[1] for row in conn.execute("PRAGMA table_info(tickets)")
                     ) == (*ticket_columns, "integrity_error_reason")
                     assert current == [(*row, None) for row in before], name
+                elif name == "managers":
+                    # The new flag defaults to false. Every historical field stays exact.
+                    assert tuple(
+                        row[1] for row in conn.execute("PRAGMA table_info(managers)")
+                    ) == (*manager_columns, "launch_configuration_is_explicit")
+                    assert current == [(*row, 0) for row in before], name
                 else:
                     assert current == before, name
             assert (

@@ -21,6 +21,8 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "executor_default_workspace",
         # Ticket audit reasons and navigation dirtiness leave diagnostics and views unchanged.
         "ticket_integrity_reason",
+        # Manager launch choices leave diagnostic events and view schemas unchanged.
+        "manager_launch_defaults",
         "automatic_project_measures",
         # Goal storage/history adds no changes to diagnostic event or view schemas.
         # Goal identities remain ineligible under the existing owner classifier.

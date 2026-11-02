@@ -126,6 +126,16 @@ def test_real_application_command_families_and_store_writes(
                 "/api/managers", json={"title": "Orchestrator", "project_id": project["id"]}
             )
         )
+        accepted(
+            client.put(
+                f"/api/managers/{item['id']}/launch-defaults",
+                json={
+                    "employee_backend": "codex",
+                    "employee_launch_model": "gpt-6.1-sol",
+                    "employee_launch_reasoning_effort": "medium",
+                },
+            )
+        )
         accepted(client.patch(f"/api/managers/{item['id']}/settled", json={"settled": True}))
         ticket = accepted(
             client.post(
@@ -303,13 +313,19 @@ def test_manager_mutations_remain_in_the_navigation_command_inventory() -> None:
     from planner.managers.api import legacy_router, router
     from planner.navigation.commands import EXCLUDED_COMMAND_ROUTES, is_navigation_command
 
+    excluded = {(route.method, route.path) for route in EXCLUDED_COMMAND_ROUTES}
+    assert ("PUT", "/api/managers/launch-defaults") in excluded
+    assert is_navigation_command("PUT", "/api/managers/example/launch-defaults")
     for manager_router in (router, legacy_router):
         for route in manager_router.routes:
             if isinstance(route, APIRoute):
                 assert route.methods is not None
                 for method in route.methods & {"POST", "PATCH", "PUT", "DELETE"}:
-                    assert is_navigation_command(method, "/api" + route.path), route.path
-    excluded = {(route.method, route.path) for route in EXCLUDED_COMMAND_ROUTES}
+                    path = "/api" + route.path
+                    # Each write has exactly one reviewed classification.
+                    assert is_navigation_command(method, path) != (
+                        (method, path) in excluded
+                    ), route.path
     assert ("POST", "/api/skills/apply") in excluded
     for method in ("PUT", "DELETE"):
         assert (method, "/files/managers/{manager_id}/{file_path:path}") in excluded
