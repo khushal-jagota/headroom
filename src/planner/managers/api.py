@@ -17,6 +17,7 @@ from planner.conversation.api import (
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.conversation.video_uploads.contracts import UploadDestination
 from planner.core import authority
+from planner.core.authctx import require_owner_or_chief
 from planner.core.authority import require_above, require_above_or_self
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -36,6 +37,11 @@ from planner.managers import views as managers_views
 from planner.managers.contracts import (
     CreateManagerBody,
     ManagerWorkspaceContent,
+)
+from planner.managers.launch_settings import (
+    launch_configuration_json,
+    parse_launch_configuration,
+    validate_launch_configuration,
 )
 from planner.message_delivery import service as message_delivery_service
 from planner.projects import data as projects_data
@@ -74,6 +80,54 @@ def _marshal_create_manager(raw: JsonDict) -> CreateManagerBody:
 
 
 # --- item routes ---------------------------------------------------------------
+
+
+@router.get("/managers/launch-defaults")
+async def get_manager_launch_defaults(conn: DbConn, ctx: Ctx) -> JsonDict:
+    require_owner_or_chief(ctx)
+    return launch_configuration_json(managers_data.read_launch_defaults(conn))
+
+
+@router.put("/managers/launch-defaults")
+async def put_manager_launch_defaults(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDict:
+    require_owner_or_chief(ctx)
+    configuration = parse_launch_configuration(raw)
+    validate_launch_configuration(conn, configuration)
+    return launch_configuration_json(
+        managers_data.update_launch_defaults(conn, configuration, principal=ctx.principal)
+    )
+
+
+@router.get("/managers/{item_id}/launch-defaults")
+async def get_manager_launch_configuration(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+    require_above_or_self(conn, ctx.principal, authority.manager(item_id))
+    return launch_configuration_json(
+        managers_data.read_manager(conn, item_id).item.manager_launch_configuration
+    )
+
+
+@router.put("/managers/{item_id}/launch-defaults")
+async def put_manager_launch_configuration(
+    item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    require_above(conn, ctx.principal, authority.manager(item_id))
+    configuration = parse_launch_configuration(raw)
+    validate_launch_configuration(conn, configuration)
+    async with managers_service.manager_lifecycle_lock(item_id):
+        item = managers_data.read_manager(conn, item_id).item
+        current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
+        if current is not None and (
+            configuration.employee_backend != item.manager_launch_configuration.employee_backend
+        ):
+            raise PlannerError(
+                ErrorCode.validation,
+                "An existing Manager conversation cannot change backend. "
+                "Start a new conversation before you choose another backend.",
+            )
+        saved = managers_data.update_manager_launch_configuration(
+            conn, item_id, configuration, principal=ctx.principal, clock=clk
+        )
+    return launch_configuration_json(saved.manager_launch_configuration)
 
 
 @router.post("/managers")

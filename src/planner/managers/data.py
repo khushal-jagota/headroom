@@ -11,11 +11,10 @@ from planner.conversation.contracts import ConversationBackendKey
 from planner.core import authority
 from planner.core.authority import require_above
 from planner.core.clock import Clock
-from planner.core.contracts import Principal
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.managers.contracts import (
-    MANAGER_LAUNCH_DEFAULTS,
     Manager,
     ManagerDeletion,
     ManagerLaunchConfiguration,
@@ -122,6 +121,36 @@ def _load_manager(conn: sqlite3.Connection, item_id: str) -> Manager:
 # --- Manager writers ------------------------------------------------------------
 
 
+def read_launch_defaults(conn: sqlite3.Connection) -> ManagerLaunchConfiguration:
+    row = conn.execute(
+        "SELECT employee_backend,employee_launch_model,employee_launch_reasoning_effort "
+        "FROM manager_launch_defaults WHERE singleton=1"
+    ).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.validation, "Manager launch defaults are absent")
+    return ManagerLaunchConfiguration(ConversationBackendKey(str(row[0])), str(row[1]), row[2])
+
+
+def update_launch_defaults(
+    conn: sqlite3.Connection, configuration: ManagerLaunchConfiguration, *, principal: Principal
+) -> ManagerLaunchConfiguration:
+    if principal.kind not in (PrincipalKind.owner, PrincipalKind.chief):
+        raise PlannerError(
+            ErrorCode.agent_forbidden, "Only the owner or Chief can change Manager defaults"
+        )
+    with _tx(conn):
+        conn.execute(
+            "UPDATE manager_launch_defaults SET employee_backend=?,employee_launch_model=?,"
+            "employee_launch_reasoning_effort=? WHERE singleton=1",
+            (
+                configuration.employee_backend.value,
+                configuration.employee_launch_model,
+                configuration.employee_launch_reasoning_effort,
+            ),
+        )
+    return read_launch_defaults(conn)
+
+
 def create_manager(
     conn: sqlite3.Connection,
     *,
@@ -140,7 +169,7 @@ def create_manager(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
             )
         _create_manager_agent(conn, item_id)
-        defaults = MANAGER_LAUNCH_DEFAULTS
+        defaults = read_launch_defaults(conn)
         conn.execute(
             "INSERT INTO managers ("
             "id, title, goal, project_id, "
@@ -316,7 +345,6 @@ def set_manager_settled(
     clock: Clock,
 ) -> Manager:
     """The owner controls settlement. It changes visibility, never child continuation."""
-    from planner.core.contracts import PrincipalKind
 
     if principal.kind is not PrincipalKind.owner:
         raise PlannerError(ErrorCode.agent_forbidden, "only the owner can settle a Manager")

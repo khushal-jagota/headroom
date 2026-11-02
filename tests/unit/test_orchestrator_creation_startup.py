@@ -95,10 +95,10 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
         with closing(connect(str(db_path))) as conn:
             saved = managers_data.read_manager(conn, item["id"]).item.manager_launch_configuration
         assert saved == defaults
-        # The configured alias and its concrete catalogue resolution are distinct.
+        # Exact saved choices reach the backend without family resolution.
         assert (record.backend_key, record.model, record.reasoning_effort) == (
             defaults.employee_backend,
-            "sol",
+            defaults.employee_launch_model,
             defaults.employee_launch_reasoning_effort,
         )
         identity = dict(record.identity_environment_variables)

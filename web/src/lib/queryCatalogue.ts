@@ -10,6 +10,7 @@ import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BoardResponse,
   ChiefManagementSettings,
+  EmployeeConfigurationSnapshot,
   ManagerPrincipal,
   ManagerChildFilter,
   DeploymentStatus,
@@ -99,6 +100,10 @@ export const queries = {
       ["manager", itemId, "workspace"],
       `/api/managers/${encodeURIComponent(itemId)}/workspace`
     ),
+  managerLaunchDefaults: () =>
+    jsonQuery<EmployeeConfigurationSnapshot>(["manager-launch-defaults"], "/api/managers/launch-defaults"),
+  managerLaunchConfiguration: (itemId: string) =>
+    jsonQuery<EmployeeConfigurationSnapshot>(["manager", itemId, "launch-defaults"], `/api/managers/${encodeURIComponent(itemId)}/launch-defaults`),
   managerConversationStartValues: (itemId: string) =>
     jsonQuery<ConversationStartValues>(
       ["manager", itemId, "conversation-start-values"],

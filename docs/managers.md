@@ -18,6 +18,16 @@ The Manager creates children through ordinary Ticket creation. The Workspace lis
 
 Backlogged and Done children are sections on the Manager page. The rail’s attention groups omit backlogged Tickets. Chief’s page shows Chief’s children beside Chief’s conversation, in pages.
 
+## Manager models
+
+Khushal and Chief can save Manager defaults through `GET|PUT /api/managers/launch-defaults`. Settings → Config shows the same controls beside Chief and Workers. Each new Manager copies those choices. Existing Managers retain their own choices. A fresh installation uses Codex `gpt-6.1-sol` with `medium` effort. The migration does not change existing Managers.
+
+Each Manager has separate model settings through `GET|PUT /api/managers/{id}/launch-defaults`. These routes use the complete `employee_backend`, `employee_launch_model`, and nullable `employee_launch_reasoning_effort` object. A save sends no message and preserves the conversation and history. An active turn keeps its model. The next message uses the saved choice unless its sender explicitly selects another choice. Queued messages retain the choice that accompanied their admission. A null effort requests the provider default on that next message.
+
+An existing conversation keeps its backend. To change backend, the owner or Chief starts a new conversation first. Ordinary Managers cannot change global defaults or another Manager's settings.
+
+Model choices are exact backend tokens. Catalogs help the picker but do not restrict valid unlisted tokens. Disabled models are refused. The former Codex default `sol` is a known unsupported token. A Manager with that value receives an actionable model-settings error before any backend turn. It requires an explicit saved correction. It never silently becomes another model. Provider availability still requires a real start.
+
 ## How a Manager hears about work
 
 Three kinds of durable wake become real queued prompts in the Chief or Manager conversation. They are recorded in the same transaction as the fact that caused them. A loop later delivers a batch, and it closes a wake only when that prompt is durably in the notebook. A stale proposal notice is dropped rather than sent. Replying to a wake does not approve anything. Approval is still the proposal resolver.

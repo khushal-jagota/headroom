@@ -15,10 +15,10 @@ class ManagerLaunchConfiguration:
     employee_launch_reasoning_effort: str | None
 
 
-# The default selects a family; dispatch resolves its current installed version.
+# A fresh installation starts on an explicit model. Saved choices never resolve aliases.
 MANAGER_LAUNCH_DEFAULTS: Final = ManagerLaunchConfiguration(
     employee_backend=ConversationBackendKey.codex,
-    employee_launch_model="sol",
+    employee_launch_model="gpt-6.1-sol",
     employee_launch_reasoning_effort="medium",
 )
 

@@ -239,7 +239,7 @@ def manager_resolve(
     workspace_folder: Path | None = None,
 ) -> ConversationStartValues:
     launch = item.manager_launch_configuration
-    return resolve_manager_conversation_start(
+    values = resolve_manager_conversation_start(
         manager_id=item.id,
         launch_configuration=ConversationStartConfiguration(
             backend_key=launch.employee_backend,
@@ -251,6 +251,14 @@ def manager_resolve(
             _default_workspace_folder(conn) if workspace_folder is None else workspace_folder
         ),
     )
+
+    from planner.managers.contracts import ManagerLaunchConfiguration
+    from planner.managers.launch_settings import validate_launch_configuration
+
+    validate_launch_configuration(
+        conn, ManagerLaunchConfiguration(values.backend_key, values.model, values.reasoning_effort)
+    )
+    return values
 
 
 @dataclass(frozen=True, slots=True)

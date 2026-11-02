@@ -365,7 +365,11 @@ async def send_message(
                         ),
                         created_conversation_id=created_conversation_id
                         or conversation_start.new_conversation_id(),
-                        runs_under=runs_under,
+                        runs_under=ConversationStartOverrides(
+                            backend_key=resolved.backend_key, model=resolved.model,
+                            reasoning_effort=resolved.reasoning_effort,
+                            reasoning_effort_is_set=True,
+                        ),
                         sender_label=label,
                         mode=prompt_mode,
                         owner_read_through_sequence=owner_read_through_sequence,
@@ -386,6 +390,7 @@ async def send_message(
                                 runs_under.backend_key is not None
                                 or runs_under.model is not None
                                 or runs_under.reasoning_effort is not None
+                                or runs_under.reasoning_effort_is_set
                             )
                         )
                     ):
