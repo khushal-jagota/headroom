@@ -145,6 +145,7 @@ extension APIClient {
         struct Body: Encodable { let ticketId: String }
         var request = URLRequest(url: try url("/api/conversation/backends"))
         request.httpMethod = "POST"
+        request.timeoutInterval = 25
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(Body(ticketId: id))

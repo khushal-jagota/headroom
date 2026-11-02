@@ -49,4 +49,3 @@ Actual Apple delivery and signed physical-device behavior still need live testin
 
 Code paths: `src/planner/notifications/apns.py`, `src/planner/notifications/apns_data.py`,
 `src/planner/notifications/config.py`, and `ios/Panels/Features/Notifications/`.
-

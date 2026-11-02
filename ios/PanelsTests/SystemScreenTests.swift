@@ -2,7 +2,7 @@ import XCTest
 @testable import Panels
 
 final class SystemScreenTests: XCTestCase {
-    func testRecordedUsageKeepsMissingCostsAndPartialSources() throws {
+    func testRecordedUsageKeepsUnpricedRecordsAndPartialSources() throws {
         let wire = try APIClient.decoder().decode(RecordedUsageSummary.self, from: Data(currentUsageJSON.utf8))
         let summary = UsageSummary(wire, days: 7)
         XCTAssertEqual(summary.totals.costUsd, 1.5)
