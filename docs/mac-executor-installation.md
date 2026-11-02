@@ -128,7 +128,7 @@ git -C "$REVIEWED_REPOSITORY" archive --format=tar "$CANDIDATE_SHA" > "$EVIDENCE
 CANDIDATE_SOURCE="$(mktemp -d)"
 tar -xf "$EVIDENCE/candidate-source.tar" -C "$CANDIDATE_SOURCE"
 PYTHONPATH="$CANDIDATE_SOURCE/src" "$NATIVE_PYTHON" - <<'PY'
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 print(PROTOCOL_VERSION, SPOOL_FORMAT_VERSION)
 PY
 ```
@@ -172,7 +172,7 @@ Independently read the intended VPS package constants on the VPS:
 ```sh
 cd /absolute/intended/vps/app
 /absolute/intended/vps/app/.venv/bin/python - <<'PY'
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 print(PROTOCOL_VERSION, SPOOL_FORMAT_VERSION)
 PY
 ```
@@ -321,7 +321,8 @@ Check the stopped persistent outbox version without opening it for writes:
 ```sh
 PLAN_EXECUTOR_ROOT="$EXECUTOR_ROOT" "$VENV/bin/python" - <<'PY'
 import sqlite3
-from planner.executor.configuration import SPOOL_FORMAT_VERSION, executor_paths
+from planner.execution_configuration import SPOOL_FORMAT_VERSION
+from planner.executor.configuration import executor_paths
 path = executor_paths().spool / "outbox.sqlite3"
 if path.exists():
     with sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True) as database:
