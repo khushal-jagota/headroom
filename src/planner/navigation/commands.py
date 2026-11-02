@@ -49,6 +49,12 @@ COMMAND_ROUTES = (
     *_routes("DELETE", "Manager removal", "/managers/{item_id}", "/items/{item_id}"),
     *_routes(
         "PUT",
+        "An individual Manager launch choice updates its navigation timestamp",
+        "/managers/{item_id}/launch-defaults",
+        "/items/{item_id}/launch-defaults",
+    ),
+    *_routes(
+        "PUT",
         "Navigation collection membership",
         "/collections/{collection}/{container_id}/{member_id}",
     ),
@@ -108,6 +114,12 @@ def is_navigation_command(method: str, path: str) -> bool:
 # Exact exclusions make a new write route an explicit review decision. These
 # operations do not change the current navigation source record contract.
 EXCLUDED_COMMAND_ROUTES = (
+    *_routes(
+        "PUT",
+        "Prospective Manager defaults do not change any current navigation record",
+        "/managers/launch-defaults",
+        "/items/launch-defaults",
+    ),
     *_routes(
         "PUT",
         "Chief recap is dedicated content, outside navigation records",
