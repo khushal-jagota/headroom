@@ -66,7 +66,7 @@ struct ReviewMessageView: View {
                         Text("This message belongs to a page that is available on the web.")
                             .foregroundStyle(PanelsTheme.muted)
                         if item.ownerKind == "goal", let id = item.ownerId,
-                           let url = URL(string: "/#/goals/" + id, relativeTo: store.baseURL) {
+                           let url = URL(string: "/#/workspace/goal/" + id, relativeTo: store.baseURL) {
                             Link("Open on web", destination: url)
                         }
                         Button("Skip", action: onSkip)
