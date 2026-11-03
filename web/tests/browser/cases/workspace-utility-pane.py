@@ -2278,7 +2278,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     started = time.perf_counter()
     one = {"id": "wash_one", "manager_id": "wash_a", "title": "Build the selected rail row",
            "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent"}
-    two = {**one, "id": "wash_two", "title": "Review the matching geometry"}
+    two = {**one, "id": "wash_two", "title": "Review the matching geometry", "awaiting_approval": True}
     fixture.update(enabled=True, board={"managers": [
         {"id": "wash_a", "title": "Build the two-tier selection washes in the Workspace rail", "project": "Panels", "project_id": "wash_project", "created_at": 1, "tickets": [one, two]},
         {"id": "wash_b", "title": "A second selected group", "created_at": 2, "tickets": []},
@@ -2320,8 +2320,9 @@ def verify_selection_washes(page, url, fixture, evidence):
         window.__washProof.push({selector,frames});
         window.__washDone=false;
         const take=()=>{frames.push({ms:performance.now()-start,...window.__washSample(selector)});
-          if(performance.now()-start<720)requestAnimationFrame(take);else window.__washDone=true;};
-        requestAnimationFrame(take);
+          if(performance.now()-start<720)requestAnimationFrame(()=>setTimeout(take,0));else window.__washDone=true;};
+        // Sample after frame callbacks, so the wash controller paints before measurement.
+        requestAnimationFrame(()=>setTimeout(take,0));
       };
     }""")
     samples = []
@@ -2391,6 +2392,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     frames = capture('selected-row-bucket-move', selector, move_bucket)
     moving = [f for f in frames if f.get('moving')]
     assert len(moving) > 3, frames
+    assert max(f['target']['y'] for f in moving) - min(f['target']['y'] for f in moving) > 5, frames
     for frame in moving:
         aligned(frame)
         # The moving row must not paint an opaque surface over its wash.
