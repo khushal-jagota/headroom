@@ -5495,3 +5495,20 @@ details:not([open]) > summary > .manager-workspace-chevron {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
 }
 .chat-queue-slot { min-width: 0; flex: none; }
+
+/* One moving decoration per scroller keeps selection distinct from the rail content. */
+.approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) { position:relative; isolation:isolate; }
+.rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
+.rail-wash[hidden] { display:none; }
+.rail-wash--group { background:var(--wash-context); border-radius:var(--radius-lg); z-index:-1; }
+.rail-wash--item { background:var(--wash-selected); }
+.rail-wash--hover { background-image:var(--interaction-hover); }
+.rail-wash--focus { z-index:4; box-shadow:0 0 0 var(--border-strong) var(--accent-bright); }
+.approved-rail .rail-utilities .rail-wash { border-radius:var(--radius-sm); }
+.approved-rail :is(.settled-item, .utility) { position:relative; z-index:1; }
+.approved-rail :is(.utility:hover, .utility[aria-current="page"], .utility[aria-expanded="true"]) { border-color:transparent; background:none; }
+.approved-rail :is(.item-head, .worker-row, .goal, .settled-title, .utility):focus-visible { outline:none; }
+.approved-rail .workspace-ticket-bucket .worker-row { background:none; }
+.approved-rail .workspace-ticket-bucket .worker-row:hover { color:var(--text-strong); }
+.approved-rail .bucket-label { border-bottom:0; }
+.approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--text-strong); }

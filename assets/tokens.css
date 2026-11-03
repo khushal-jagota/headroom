@@ -185,3 +185,11 @@
     --page-gutter: var(--space-3);
   }
 }
+
+/* Workspace selection tiers and travel. */
+:root {
+  --wash-context: var(--surface-1);
+  --wash-selected: #2c2c2c;
+  --motion-wash: 200ms;
+  --motion-move: cubic-bezier(.45, 0, .55, 1);
+}
