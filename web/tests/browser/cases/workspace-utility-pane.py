@@ -2287,7 +2287,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     page.mouse.move(1300, 950)
     page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
     page.reload(wait_until="domcontentloaded")
-    row = page.locator('[data-ticket-id="wash_one"]')
+    row = page.locator('.worker-row[data-ticket-id="wash_one"]')
     expect(row).to_be_visible()
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
     # Warm the intended selected route before any frame-level checks.
@@ -2349,7 +2349,7 @@ def verify_selection_washes(page, url, fixture, evidence):
         (evidence / 'selection-wash-frames.json').write_text(json.dumps(samples, indent=2))
         return frames
 
-    selector = '[data-ticket-id="wash_one"]'
+    selector = '.worker-row[data-ticket-id="wash_one"]'
     for width in [232, 520]:
         grip = page.get_by_role('separator', name='Resize workspace panel')
         grip.focus()
@@ -2364,7 +2364,7 @@ def verify_selection_washes(page, url, fixture, evidence):
         assert all(abs(frame['context'][key] - frame['group'][key]) < 1.6 for key in ['x', 'y', 'width', 'height']), frame
         page.screenshot(path=str(evidence / f'selection-wash-rail-{width}.png'))
 
-    frames = capture('within-group', '[data-ticket-id="wash_two"]', lambda: page.locator('[data-ticket-id="wash_two"]').evaluate('node=>node.click()'))
+    frames = capture('within-group', '.worker-row[data-ticket-id="wash_two"]', lambda: page.locator('.worker-row[data-ticket-id="wash_two"]').evaluate('node=>node.click()'))
     travel = [f['item']['y'] for f in frames if not f.get('missing')]
     assert max(travel) - min(travel) > 5, frames
     assert len({round(y, 1) for y in travel}) > 3, frames
@@ -2450,14 +2450,14 @@ def verify_selection_washes(page, url, fixture, evidence):
 
     # Rapid reversal cannot leave a stale target or fading ghost behind.
     page.evaluate("""async () => {
-      document.querySelector('[data-ticket-id="wash_one"]').click();
+      document.querySelector('.worker-row[data-ticket-id="wash_one"]').click();
       await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
       document.querySelector('[data-manager="wash_b"] .item-head').click();
       await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
-      document.querySelector('[data-ticket-id="wash_two"]').click();
+      document.querySelector('.worker-row[data-ticket-id="wash_two"]').click();
     }""")
     page.wait_for_timeout(450)
-    aligned(sample('[data-ticket-id="wash_two"]'))
+    aligned(sample('.worker-row[data-ticket-id="wash_two"]'))
     expect(page.locator('.rail-wash--leaving')).to_have_count(0)
     page.emulate_media(reduced_motion='reduce')
     row.evaluate('node=>node.click()')
