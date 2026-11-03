@@ -88,6 +88,12 @@ def run(browser, urls):
             view = json.loads(parse_qs(parts.query)["view"][0])
             route.fulfill(json=fixture["scoped_navigation_response"](source, view))
             return
+        if any(path in (f"/api/tickets/{identity}/workspace", f"/api/tickets/{identity}/conversation/start-values")
+               for identity in card_fixture.get("rail_only_tickets", [])):
+            # This proof selects actual rail controls. The unrelated ticket pane
+            # is deliberately refused, as this case refuses other unused sources.
+            route.fulfill(status=503, json={"error": {"code": "fixture", "message": "Rail selection proof only"}})
+            return
         if path == "/api/recap-requests" and card_fixture.get("recap_worker"):
             assert route.request.post_data_json == {"target": {"kind": "ticket", "id": card_fixture["recap_worker"]["id"]}}
             card_fixture["recap_worker"]["recap"] = ""
@@ -2279,7 +2285,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     one = {"id": "wash_one", "manager_id": "wash_a", "title": "Build the selected rail row",
            "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent"}
     two = {**one, "id": "wash_two", "title": "Review the matching geometry", "awaiting_approval": True}
-    fixture.update(enabled=True, board={"managers": [
+    fixture.update(enabled=True, rail_only_tickets=["wash_one", "wash_two"], board={"managers": [
         {"id": "wash_a", "title": "Build the two-tier selection washes in the Workspace rail", "project": "Panels", "project_id": "wash_project", "created_at": 1, "tickets": [one, two]},
         {"id": "wash_b", "title": "A second selected group", "created_at": 2, "tickets": []},
         {"id": "wash_settled", "title": "A settled selection", "created_at": 3, "settled": True, "tickets": []},
