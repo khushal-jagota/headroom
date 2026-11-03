@@ -2278,7 +2278,7 @@ def verify_selection_washes(page, url, fixture, evidence):
            "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent"}
     two = {**one, "id": "wash_two", "title": "Review the matching geometry"}
     fixture.update(enabled=True, board={"managers": [
-        {"id": "wash_a", "title": "Build the two-tier selection washes in the Workspace rail", "created_at": 1, "tickets": [one, two]},
+        {"id": "wash_a", "title": "Build the two-tier selection washes in the Workspace rail", "project": "Panels", "created_at": 1, "tickets": [one, two]},
         {"id": "wash_b", "title": "A second selected group", "created_at": 2, "tickets": []},
         {"id": "wash_settled", "title": "A settled selection", "created_at": 3, "settled": True, "tickets": []},
     ]}, chief={"label": "Chief of Staff"})
