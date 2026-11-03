@@ -44,8 +44,9 @@
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
 <div class="manager-card-slot">
-<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button, a, [data-goal-preview]")) onSelect(); }} data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected onpointerenter={(event) => {if (!suppressBackgroundPreview && !(event.target as HTMLElement).closest('[data-goal-id], [data-goal-preview]')) input().pointerEnter(event);}} onpointerleave={onLeave} data-manager={chief ? undefined : id}>
-  <div class="identity">
+<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
+  <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+  <div class="identity" onclick={(event) => { if (!(event.target as HTMLElement).closest('button, a')) { const head = event.currentTarget.querySelector<HTMLButtonElement>('.item-head'); head?.click(); } }} onpointerenter={(event) => { if (!suppressBackgroundPreview) input().pointerEnter(event); }} onpointerleave={onLeave} onpointerdown={(event) => { if (!(event.target as HTMLElement).closest('button')) input().down(event); }} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()}>
     {#if !chief}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
     <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={onLeave}>
       {#if chief}<img src={chiefProfile} class="chief-icon" alt="" />{/if}
@@ -67,13 +68,13 @@
 <style>
   .manager-card-slot { min-width:0; }
   :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-3); }
-  .manager-card { box-sizing:border-box; position:relative; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); padding:11px var(--space-3) var(--space-3); transition:border-color var(--motion-fast) var(--motion-ease); }
-  .manager-card:hover, .manager-card:focus-within { border-color:rgb(from var(--border-color) r g b / .26); }
-  .manager-card.selected, .manager-card.selected:hover, .manager-card.selected:focus-within { border-color:var(--accent-bright); }
+  .manager-card { box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-3) calc(var(--space-3) + var(--border-hairline)) var(--space-3); isolation:isolate; z-index:1; }
+  .manager-card.has-tickets { padding-bottom:var(--space-2); }
+  .identity { cursor:pointer; }
   .item-head { display:flex; align-items:flex-start; gap:var(--space-2); margin-top:var(--space-1); width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-title { flex:1; min-width:0; font-size:16px; font-weight:600; line-height:1.35; letter-spacing:-0.002em; color:var(--text-faintest); overflow-wrap:anywhere; }
   .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
-  .manager-card:hover .item-title { color:var(--accent-needs-me); }
+  .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--text-strong); }
   .chief .item-head { align-items:center; margin-top:0; gap:10px; }
   .chief .item-title { font-size:18px; }
   .chief-icon { flex:none; width:26px; height:26px; border-radius:var(--radius-sm); object-fit:cover; }
@@ -82,15 +83,15 @@
   .bucket[data-bucket-key="awaiting_answer"] :global(.worker-row),
   .bucket[data-bucket-key="errored"] :global(.worker-row),
   .bucket :global(.worker-row[data-unread="true"]) { color:var(--text-strong); }
-  .bucket :global(.worker-row.ticket-row--active) { background:var(--surface-2); }
+  .bucket :global(.worker-row:is(:hover, .ticket-row--active)) { background:none; color:var(--text-strong); }
   .item-head :global(.stage-mark--current-running),
   .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--text-faintest); border-right-color:var(--text-faintest); }
-  .bucket :global(.worker-row:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
-  :global(.approved-rail .workspace-ticket-bucket .worker-row.rail-moving), :global(.approved-rail .bucket-label.rail-moving), :global(.approved-rail .manager-card.rail-moving) { position:relative; z-index:1; transition:none; background-color:var(--rail-motion-background); outline:4px solid var(--rail-motion-surrounding); }
+  .bucket :global(.worker-row:focus-visible) { outline:none; }
+  :global(.approved-rail .workspace-ticket-bucket .worker-row.rail-moving), :global(.approved-rail .bucket-label.rail-moving), :global(.approved-rail .manager-card.rail-moving) { position:relative; z-index:1; transition:none; background:none; outline:none; }
   :global(.approved-rail .manager-card.rail-moving:where(.selected)) { z-index:2; }
   :global(.approved-rail .rail-travelling) { z-index:2; }
   :global(.approved-rail .manager-card.rail-travelling-card) { z-index:3; }
   :global(.approved-rail .stage-mark.rail-moving) { background:transparent; outline:none; }
   @media (prefers-reduced-motion:reduce) { :global(.approved-rail *) { transition:none!important; animation:none!important; } }
-  button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
+  button:focus-visible { outline:none; }
 </style>
