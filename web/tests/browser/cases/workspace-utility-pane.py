@@ -2415,6 +2415,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     expect(hover).to_have_attribute('hidden', '')
     page.keyboard.press("Tab")
     row.focus()
+    page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
     ring = page.locator('.active-work-scroll > .rail-wash--focus')
     expect(ring).not_to_have_attribute('hidden', '')
     expect(row).to_have_css('outline-style', 'none')
