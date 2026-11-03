@@ -1,5 +1,8 @@
 <script lang="ts">
   import { tick, onDestroy } from "svelte";
+  import FilePreviewRoute from "./FilePreviewRoute.svelte";
+  import type { ManagedFileTarget } from "../lib/filePreview";
+  import { artifactForPressOnThePage } from "../lib/managedArtifactPress";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationWindow, reviewProposalIdentity } from "../lib/navigation/presentation";
   import { reviewQueueImpact, runtimeCountImpact } from "../lib/reviewNavigationImpact";
@@ -42,6 +45,19 @@
     finalLatched=true;
   }});
   onDestroy(()=>navigation.owner.setDemand('review',undefined));
+  let openedArtifact = $state<ManagedFileTarget | null>(null);
+  let artifactLink: HTMLElement | null = null;
+  function openArtifact(event: MouseEvent): void {
+    const file = artifactForPressOnThePage(event);
+    if (!file) return;
+    event.preventDefault();
+    artifactLink = (event.target as Element | null)?.closest<HTMLElement>("a[href]") ?? null;
+    openedArtifact = file;
+  }
+  function closeArtifact(): void {
+    openedArtifact = null;
+    void tick().then(() => artifactLink?.focus({preventScroll:true}));
+  }
   let renderedBody = $state(0);
   let skipped = $state<Record<string, boolean>>({});
   let skippedHistory=$state<ReviewHistoryKey[]>([]);
@@ -195,7 +211,7 @@
     void bodyObservation;
     const count = runningWorkerCount;
     const finalCount = showFinal ? waitingCount : undefined;
-    if (!effective?.runtimeCurrent || !element) return;
+    if (openedArtifact || !effective?.runtimeCurrent || !element) return;
     const publication = effective.publication;
     const observation = observer.observeSelectors(publication,generation);
     let obsolete = false;
@@ -219,7 +235,7 @@
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (showFinal) return;
+    if (openedArtifact || showFinal) return;
     const item = currentItem;
     if (!item) return;
     // Ignore auto-repeat: holding a key must not skip/approve through the decisions.
@@ -263,7 +279,9 @@
   </div>
 {/snippet}
 
-<section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement} hidden={openedArtifact !== null} inert={openedArtifact !== null} onclick={openArtifact}>
   <ResourceState shape="block" loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
     {#if showFinal}
       <ReviewFinalState {returnLabel} {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
@@ -300,6 +318,9 @@
   </ResourceState>
 </section>
 
+{#if openedArtifact}<FilePreviewRoute target={openedArtifact} onClose={closeArtifact} />{/if}
+
 <style>
+  .review-screen[hidden] { display:none; }
   .review-screen-final { max-width:calc(var(--measure-index) + var(--page-gutter)*2); }
 </style>

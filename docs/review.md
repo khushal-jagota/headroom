@@ -6,6 +6,12 @@ Review is the pass through everything that needs Khushal, oldest first, without 
 
 One card at a time. Skip defers a card for this visit. Open jumps to the Ticket or the conversation in the Workspace. Opening Review does not mark messages read. Marking read, sending a reply, or resolving the proposal clears only what that card showed.
 
+A managed artifact link opens the file beside its owner's conversation. The recipient stays visible, even when another Ticket owns the Review card. The conversation starts at rest. File navigation does not approve a proposal, reply, mark messages read, or advance Review. Close or Escape returns to the same card, draft, and place in the pass. Review shortcuts stay inactive while the artifact covers the card.
+
+A shared standalone preview link uses the same viewer. Ticket, Manager, and goal files each use their owner's current conversation. If that owner is unavailable, the file remains readable without a message box. Raw file URLs and downloads remain ordinary file access.
+
+An artifact opened inside an existing conversation pane keeps that pane's recipient. This also applies to another file opened from the standalone viewer's conversation. The file does not silently change the recipient.
+
 A Ticket card can carry a proposal and one or more messages. The card’s age is the earliest of those. A message-only card is a Manager, Chief, or Ticket conversation that has an unread run addressed to him, with a reply box on the card. The proposal block is the same approval surface as on the Ticket: edit the body, approve with the next ceiling and holder, or send it back. Keyboard approve and send follow whichever block is in front.
 
 When the queue is exhausted, Review settles. The screen says whether anything still awaits a later pass, shows how many agents are running, and offers a Chief reply that does not load the whole Chief transcript. A return pass shows fresh cards first, then the ones skipped this visit.
