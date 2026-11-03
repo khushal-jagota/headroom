@@ -2370,6 +2370,8 @@ def verify_selection_washes(page, url, fixture, evidence):
     travel = [f['item']['y'] for f in frames if not f.get('missing')]
     assert max(travel) - min(travel) > 5, frames
     assert len({round(y, 1) for y in travel}) > 3, frames
+    assert any(100 <= f['ms'] < 200 and abs(f['item']['y'] - f['target']['y']) > 1 for f in frames), frames
+    assert all(abs(f['item']['y'] - f['target']['y']) < 1.6 for f in frames if f['ms'] >= 350), frames
     aligned(frames[-1])
     frames = capture('deepen', '[data-manager="wash_b"] .item-head', lambda: page.locator('[data-manager="wash_b"] .item-head').evaluate('node=>node.click()'))
     context_y = [f['context']['y'] for f in frames if not f['contextHidden']]
