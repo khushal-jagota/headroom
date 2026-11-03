@@ -542,6 +542,10 @@ def run(browser, urls):
     expect(viewer.get_by_role("heading", name="The rollout plan")).to_be_visible()
     assert not writes, writes
 
+    viewer.locator('[data-ticket-artifact-close]').click()
+    page.wait_for_function("() => location.hash === '#/workspace'")
+    assert not writes, writes
+
     page.goto(url + f"#/preview?source=manager&manager={MANAGER_ID}&path=notes.md", wait_until="domcontentloaded")
     expect(viewer.locator("[data-conversation-pane]")).to_have_attribute("data-conversation-id", MANAGER_CONVERSATION)
     expect(viewer).to_contain_text(MANAGER_TITLE)
