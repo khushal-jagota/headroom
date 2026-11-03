@@ -112,6 +112,9 @@ def run(browser, urls):
         if path == "/api/resource-body":
             # Versioned reads arrive wrapped. The screen only needs the body.
             key = parse_qs(parts.query).get("key", [""])[0]
+            if key in {f"/api/tickets/{identity}/workspace" for identity in card_fixture.get("rail_only_tickets", [])}:
+                route.fulfill(status=503, json={"error": {"code": "fixture", "message": "Rail selection proof only"}})
+                return
             inner = {
                 "/api/goals": {"goals": card_fixture.get("goals", []), "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
