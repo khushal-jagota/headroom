@@ -100,7 +100,7 @@ export function workspaceRailWash(root: HTMLElement) {
   function select(next: Target | null) {
     // A bucket move recreates a keyed row in a different bucket. It is still the same selection.
     if (current && next && current.host===next.host && identity(current.node) && identity(current.node)===identity(next.node)) {
-      if (current.node!==next.node) {current.host.item.arrival=0;current.host.item.animation?.cancel();current.host.item.animation=null;}
+      if (current.node!==next.node && root.hasAttribute('data-rail-motion-busy')) {current.host.item.arrival=0;current.host.item.animation?.cancel();current.host.item.animation=null;}
       current=next;return;
     }
     if (current?.node === next?.node && current?.host === next?.host && current?.group === next?.group) {current=next;return;}

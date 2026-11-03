@@ -28,8 +28,6 @@ refresh_projection = _state_barriers["refresh_projection"]
 
 def run(browser, urls):
     url = urls[0]
-    verify_owner_updates(browser, url)
-    verify_conversation_overlay(browser, url)
     # Enough Worker types that the Config index is taller than the pane.
     worker_types = [
         "amend_worker", "coding", "debugging", "exploration", "general",
@@ -339,6 +337,8 @@ def run(browser, urls):
     verify_rail_pagination(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
+    verify_owner_updates(browser, url)
+    verify_conversation_overlay(browser, url)
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
@@ -2308,6 +2308,8 @@ def verify_selection_washes(page, url, fixture, evidence):
           itemHidden:item.hidden,contextHidden:context.hidden,
           targetBackground:getComputedStyle(target).backgroundColor,targetOutline:getComputedStyle(target).outlineStyle,
           itemBackground:getComputedStyle(item).backgroundColor,itemOpacity:+getComputedStyle(item).opacity,
+          reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,
+          motionWash:getComputedStyle(host).getPropertyValue('--motion-wash'),
           moving:!!target.closest('.rail-moving,.rail-travelling,.rail-travelling-card'),
           effects:document.getAnimations().filter(a=>a.effect?.target?.classList?.contains('rail-wash')&&a.playState==='running').length};
       };
