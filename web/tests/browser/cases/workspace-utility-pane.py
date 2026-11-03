@@ -113,6 +113,8 @@ def run(browser, urls):
                 "/api/feedback/count": {"open_count": 0},
                 "/api/deployment-status": {"state": "preparing", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))},
             }.get(key)
+            if key == "/api/projects" and card_fixture.get("goals"):
+                inner = {"projects": []}
             if key.startswith("/api/goals/") and card_fixture.get("goals"):
                 inner = {"goal_id": card_fixture["goals"][0]["id"], "values": [], "charts": {}, "sources": [],
                          "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400} if key.endswith("/readings") else card_fixture["goals"][0]
