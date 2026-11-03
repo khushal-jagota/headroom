@@ -10,7 +10,6 @@
   import { goalQueries } from "../lib/goals/queries";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import { targetFromPreviewQuery, previewHashHref } from "../lib/filePreview";
-  import { workspaceAddress } from "../lib/workspaceAddress";
   import { mutateJson } from "../lib/mutate";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { ticketCommandImpact } from "../lib/ticketNavigationImpact";
@@ -48,13 +47,22 @@
   let conversationState = $state<ConversationState>("rest");
   let backends = $state<readonly BackendSnapshot[]>([]);
   let sentConversationId = $state<string | null>(null);
+  // A send can assign the first conversation before its owner query catches up.
+  // Subsequent canonical pointer changes still replace that transient assignment.
+  let observedPointer = "";
+  $effect(() => {
+    const pointer = owner ? JSON.stringify([owner.kind, owner.id, owner.conversationId]) : "";
+    if (pointer !== observedPointer) {
+      observedPointer = pointer;
+      sentConversationId = null;
+    }
+  });
   let identity = $derived(target ? previewHashHref(target) : "");
   $effect(() => { identity; shownFile = target; conversationState = "rest"; sentConversationId = null; });
   onMount(() => { void readBackends().then(value => backends = value).catch(() => undefined); });
 
   function close(): void {
     if (onClose) onClose();
-    else if (owner) window.location.hash = workspaceAddress({kind: owner.kind, id: owner.id});
     else window.location.hash = "#/workspace";
   }
   function changeFile(file: ManagedFileTarget | null): void {
