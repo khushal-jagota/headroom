@@ -6,7 +6,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 
 On every database open, Headroom rewrites `data/skills/<name>/SKILL.md` from the rows. Hermes, Codex, and Claude homes link to those copies. The packaged tree at `src/planner/skills/` is only the seed for a database that has no skills yet. Nothing consults the package again. Editing a file in the package changes the next fresh install. It does not change a running agent.
 
-History of skill text is kept with the database. A Worker step records which skill versions it was bound to, so a later reading can see what that step was instructed with. Those history writes are among the commits that stay quiet on the change signal, because no screen is waiting on them as live product state.
+The skill editor keeps saved versions of skill text in the database. Worker steps do not record skill versions. Skill history writes stay quiet on the change signal because no screen waits on them as live product state.
 
 ## Who may change one
 
@@ -16,7 +16,7 @@ Khushal and Chief stand above skills, so both may edit them. A Worker or a Manag
 
 ## What a skill feeds
 
-The copies feed every agent home that links to them. The specialist name on a Worker type decides which skill a Worker step binds. Publishing updates the copy the agent homes link to. A turn already in flight has whatever it already read. The next load of the skill reads the published copy. The conversation notebook does not gain a row merely because the skill row changed. Workers that must change a skill hand the exact text to the owner or Chief.
+The copies feed every agent home that links to them. The specialist name on a Worker type decides which specialist skill a Worker reads. Publishing updates the copy the agent homes link to. A turn already in flight has whatever it already read. The next load of the skill reads the published copy. The conversation notebook does not gain a row merely because the skill row changed. Workers that must change a skill hand the exact text to the owner or Chief.
 
 ## Where it shows up
 

@@ -101,10 +101,6 @@ from planner.scheduled_tickets.api import router as scheduled_tickets_router
 from planner.scheduled_tickets.participants import SlotParticipantFactory
 from planner.server_lifecycle.runtime import application_runtime
 from planner.skill_sources import provision_workspace_skills
-from planner.skill_versions import (
-    reconcile_managed_skill_versions,
-    reconcile_provisional_worker_step_bindings,
-)
 from planner.tickets.api import router as tickets_router
 from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
@@ -304,8 +300,6 @@ def create_app(
 
                     ExecutorStore.interrupt_after_restart(audit_conn)
                     audit_conn.commit()
-                    reconcile_managed_skill_versions(audit_conn)
-                    reconcile_provisional_worker_step_bindings(audit_conn)
                 finally:
                     audit_conn.close()
 

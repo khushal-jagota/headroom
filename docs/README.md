@@ -52,6 +52,6 @@ The word list for Ticket, Stage, Review, Conversation, and the rest lives in [`C
 - [Backups](backups.md) — verified snapshots and the stopped restore.
 - [Previews](previews.md) — one tailnet link to a Ticket’s own dev server.
 - [VPS](vps.md) — machine measurements, and the smaller status summary.
-- [Maintenance](maintenance.md) — diagnostic history, which waits for an explicit owner decision.
+- [Maintenance](maintenance.md) — offline database recovery.
 
 _Last verified: 2026-10-30._

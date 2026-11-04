@@ -1433,3 +1433,39 @@ def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE conversations SET workspace_path_policy = 'guess'")
     conn.close()
+
+
+def test_skill_binding_removal_preserves_skill_history_and_conversation_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    _migration_tree_through(tmp_path, monkeypatch, "manager_launch_defaults")
+    conn = connect(str(tmp_path / "skill-bindings.db"))
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO managed_skill_versions VALUES('version','panels',?,?)",
+        ("0" * 64, b"Exact saved skill bytes"),
+    )
+    conn.execute(
+        "INSERT INTO worker_step_skill_bindings VALUES('message','orientation','version','final')"
+    )
+    conn.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) "
+        "VALUES('kept','codex','/tmp/workspace','workspace_write',1)"
+    )
+    conn.execute("INSERT INTO conversation_events VALUES('kept',2,'agent_message','{}',1)")
+    conn.execute("INSERT INTO conversation_expired_ranges VALUES('kept',1,1,1,1,1)")
+    conn.commit()
+    retained = (
+        "managed_skill_versions",
+        "conversations",
+        "conversation_events",
+        "conversation_expired_ranges",
+    )
+    before = {table: list(conn.execute(f'SELECT * FROM "{table}"')) for table in retained}
+    monkeypatch.setattr(db_module, "MIGRATIONS_DIRECTORY", shipped)
+    create_schema(conn)
+    assert "worker_step_skill_bindings" not in _schema_objects(conn)
+    for table in retained:
+        assert list(conn.execute(f'SELECT * FROM "{table}"')) == before[table]
+    conn.close()

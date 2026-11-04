@@ -30,7 +30,7 @@ List commands are pages of 30, and each page says what it omitted. Ticket lists 
 
 ## What the CLI feeds
 
-A Worker’s `propose` feeds the proposal resolver. `send-message` feeds a conversation. Operator commands feed the host: backup, restore, environment prepare, preview register, diagnostic history. None of these are a side channel into a model. If an agent should know something, the text has to be in a prompt the conversation actually sent.
+A Worker’s `propose` feeds the proposal resolver. `send-message` feeds a conversation. Operator commands feed the host: backup, restore, environment prepare, preview register. None of these are a side channel into a model. If an agent should know something, the text has to be in a prompt the conversation actually sent.
 
 ## Where it shows up
 
