@@ -8,6 +8,8 @@ The standing principle list is [`DESIGN.md`](../DESIGN.md). The values those pri
 
 The accent is the soft steel `--accent-bright`. It means a person is needed: a pending approval, a required action, and the enabled Send control in the composer. It is not a brand decoration, and it stays out of ordinary agent prose. If it is everywhere, it says nothing. A selected row is a sunken `--surface-2`, not the accent. The one strongly raised surface is the approval control, with a top highlight and a long shadow. Nothing else on a page is elevated that way. A pure white dot is reserved for a Worker waiting on a permission ask, so “only you can answer this” reads before any label does.
 
+The Workspace rail uses two neutral washes. A light wash covers the selected group, and a stronger wash marks the exact head, Ticket, or goal. Settled items and utilities take only the stronger wash. Selection uses no border. Hover uses a separate shape, and keyboard focus uses an accent ring. Washes follow their targets through resize and row motion. Reduced motion makes each change immediate.
+
 Settled state is quiet. An errored stage can use the error color. Done can use the small green mark. Those are status, not the accent.
 
 ## How a page is built
@@ -49,4 +51,4 @@ Goal workspaces use the shared Artifacts catalog and preview frame. Completion, 
 
 `assets/tokens.css`, `assets/app.css`, [`DESIGN.md`](../DESIGN.md), and `web/src/components/` for the kit: `ScreenHeader`, `ListRow`, `StageMark`, `Button`, `SkeletonRegion`, and `web/src/components/conversation/`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-03._

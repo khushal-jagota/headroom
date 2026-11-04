@@ -15,6 +15,7 @@ from planner.core.contracts import OWNER_PRINCIPAL, JsonDict
 from planner.tickets import derivation
 from planner.tickets.contracts import StageOwnershipMode, TicketStatus, WorkAttention
 from planner.tickets.derivation import AgentState, TicketFacts
+from planner.tickets.integrity import issue_for_ticket
 from planner.tickets.logic import machine
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -207,8 +208,18 @@ async def add_work_attention(
         conversation_system, conversation_record, conversation_ids
     )
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
-    ticket_attention = {
-        ticket_id: _ticket_attention(
+    ticket_attention: dict[str, WorkAttention] = {}
+    for ticket_id, row in stored_tickets.items():
+        conversation = conversations.get(str(row["conversation_id"]))
+        if issue_for_ticket(conn, ticket_id) is not None:
+            ticket_attention[ticket_id] = {
+                **_empty_attention(),
+                "awaiting_reply": bool(conversation and conversation.signal["message_for_owner"]),
+                "awaiting_answer": bool(conversation and conversation.awaiting_answer),
+                "agent_state": AgentState.errored.value,
+            }
+            continue
+        ticket_attention[ticket_id] = _ticket_attention(
             row,
             conversations.get(str(row["conversation_id"]))
             if row["conversation_id"] is not None
@@ -219,8 +230,6 @@ async def add_work_attention(
                 )
             ),
         )
-        for ticket_id, row in stored_tickets.items()
-    }
     for row in ticket_rows:
         row.update(ticket_attention.get(str(row["id"]), _empty_attention()))
         stored = stored_tickets.get(str(row["id"]))

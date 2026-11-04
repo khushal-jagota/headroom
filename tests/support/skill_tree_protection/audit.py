@@ -6,9 +6,11 @@ descriptors, native code, child processes and path races remain outside its reac
 
 from __future__ import annotations
 
+import fcntl
 import os
 import stat
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 from typing import NoReturn
 
@@ -34,6 +36,9 @@ class AuditGuard:
         self._context = "collection/session"
         self._acknowledged = False
         self._installed = False
+        self._open_directory: ContextVar[tuple[str | bytes, int | None] | None] = ContextVar(
+            "skill_guard_open_directory", default=None
+        )
 
     @property
     def receipts(self) -> tuple[RefusalReceipt, ...]:
@@ -49,6 +54,25 @@ class AuditGuard:
         sys.audit(_ACKNOWLEDGEMENT_EVENT, self)
         if not self._acknowledged:
             raise RuntimeError("skill guard audit-hook installation was suppressed")
+        native_open = os.open
+
+        def audited_open(
+            path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            operand = os.fspath(path)
+            token = self._open_directory.set((operand, dir_fd))
+            try:
+                return native_open(operand, flags, mode, dir_fd=dir_fd)
+            finally:
+                self._open_directory.reset(token)
+
+        os.open = audited_open
+        if native_open in os.supports_dir_fd:
+            os.supports_dir_fd.add(audited_open)
         self._installed = True
 
     def _refuse(self, event: str, path: object, reason: str) -> NoReturn:
@@ -78,7 +102,19 @@ class AuditGuard:
 
     def _descriptor_path(self, descriptor: int, event: str) -> Path:
         try:
-            name = os.readlink(f"/proc/self/fd/{descriptor}")
+            if sys.platform == "darwin":
+                result = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
+                name = os.fsdecode(result).split("\0")[0]
+                descriptor_info = os.fstat(descriptor)
+                mac_path_info = os.stat(name)
+                if (mac_path_info.st_dev, mac_path_info.st_ino) != (
+                    descriptor_info.st_dev, descriptor_info.st_ino,
+                ):
+                    self._refuse(
+                        event, f"fd:{descriptor}", "descriptor has no stable filesystem path"
+                    )
+            else:
+                name = os.readlink(f"/proc/self/fd/{descriptor}")
         except OSError:
             self._refuse(event, f"fd:{descriptor}", "descriptor base is unavailable")
         if not name.startswith("/"):
@@ -165,12 +201,16 @@ class AuditGuard:
             if not writes:
                 return
             if mode is None and isinstance(operand, (str, bytes)) and not os.path.isabs(operand):
-                # CPython's os.open audit payload omits dir_fd. CWD cannot
-                # distinguish a normal relative call from a descriptor call.
-                self._refuse(
-                    event, os.fsdecode(operand),
-                    "relative low-level write open has unknown directory base (dir_fd omitted)",
-                )
+                # CPython omits dir_fd. The synchronous wrapper supplies it
+                # for Python calls; an unobserved native call still fails closed.
+                observed = self._open_directory.get()
+                if observed is None or observed[0] != operand:
+                    self._refuse(
+                        event, os.fsdecode(operand),
+                        "relative low-level write open has unknown directory base (dir_fd omitted)",
+                    )
+                self._check(event, self._path(operand, observed[1], event), entry=False)
+                return
             self._check(event, self._path(operand, None, event), entry=False)
         elif event in ("os.remove", "os.rmdir", "os.mkdir"):
             if event != "os.mkdir" and self._is_absent_leaf_in_deleted_directory(

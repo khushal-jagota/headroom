@@ -210,10 +210,11 @@ def test_actual_migration_and_explicit_install_converge_preserving_ranges(
         db.upgrade_schema_connection(migration, "open_work_group_index")
     with sqlite3.connect(archive) as source, closing(connect(str(copied))) as target:
         target.execute("BEGIN IMMEDIATE")
-        # These generic rows have the same columns at the historical boundary.
+        # Transfer only columns that existed at this historical boundary.
+        # The approved workspace policy is a later additive conversation column.
         for table in ("conversations", "conversation_events"):
-            cursor = source.execute(f"SELECT * FROM {table}")
-            columns = [column[0] for column in cursor.description]
+            columns = [row[1] for row in target.execute(f"PRAGMA table_info({table})")]
+            cursor = source.execute(f"SELECT {','.join(columns)} FROM {table}")
             placeholders = ",".join("?" for _ in columns)
             target.executemany(
                 f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})",
@@ -343,7 +344,7 @@ def test_orphan_backend_without_database_identity_blocks_all_principals(
 
 
 def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_identity(
-    archive: Path, tmp_path: Path
+    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Actual deletion/rebuild must preserve non-Ticket history and classify real tool refs."""
     from tests.unit.test_conversation_api import (
@@ -459,6 +460,11 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     copied = tmp_path / "post-expiry.db"
     with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
         source.backup(target)
+    # Read the maintained conversation API only after upgrading the offline copy.
+    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY",
+                        Path(db.__file__).parent / "migrations")
+    with closing(connect(str(copied))) as upgraded:
+        create_schema(upgraded)
 
     async def exercise() -> None:
         async with AsyncExitStack() as cleanup:
@@ -515,3 +521,39 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
                         assert event["sequence"] == sequence
 
     _run(exercise)
+
+
+@pytest.mark.parametrize("schema_revision", ["mac_vps_execution", "executor_default_workspace"])
+def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
+    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schema_revision: str,
+) -> None:
+    """A locally ended turn cannot release history while its Mac child may still run."""
+    copied = tmp_path / "native-stop-proof.db"
+    with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
+        source.backup(target)
+    archive = copied
+    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", Path(db.__file__).parent / "migrations")
+    _migration_tree_through(tmp_path / "native-head", monkeypatch, schema_revision)
+    with closing(connect(str(archive))) as upgraded:
+        create_schema(upgraded)
+        assert {
+            row[0] for row in upgraded.execute("SELECT version_num FROM alembic_version")
+        } == {schema_revision}
+
+    def candidates() -> set[tuple[str, int]]:
+        report = read_report(archive, as_of_unix=AS_OF)
+        keys = {(c.conversation_id, c.sequence) for d in report.decisions for c in d.candidates}
+        return keys
+
+    expected = {("history", 2), ("history", 3)}
+    assert candidates() == expected
+    with closing(sqlite3.connect(archive)) as conn:
+        conn.execute(
+            "INSERT INTO mac_runs VALUES ('history','mac','child','ticket','ticket',1,0,'open')"
+        )
+        conn.commit()
+    assert candidates() == set()
+    with closing(sqlite3.connect(archive)) as conn:
+        conn.execute("UPDATE mac_runs SET stop_state='closed'")
+        conn.commit()
+    assert candidates() == expected

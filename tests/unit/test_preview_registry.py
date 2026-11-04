@@ -143,3 +143,42 @@ def test_lifecycle_lane_runs_while_process_inspection_is_blocked_and_recovers_sq
         asyncio.run(exercise())
     finally:
         writer.close()
+
+
+def test_mac_commands_and_retained_preview_never_inspect_vps_processes(
+    tmp_db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.support.principals import OWNER_PRINCIPAL
+
+    from planner.tickets.data import create_ticket
+
+    ticket = create_ticket(
+        tmp_db, title="Mac preview refusal", worker_type="coding", principal=OWNER_PRINCIPAL,
+        now=1, title_max_chars=200,
+    )
+    prepared = record("was-on-vps", ticket.id)
+    data.prepare(tmp_db, prepared)
+    data.register(tmp_db, prepared, ProcessIdentity("boot", 12, 34, 56, 3001, prepared.worktree))
+    tmp_db.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+
+    def no_vps_process(*args: object, **kwargs: object) -> None:
+        raise AssertionError("Mac preview must not inspect or connect to a VPS process")
+
+    async def exercise() -> None:
+        service = PreviewService(str(tmp_path / "planning-test.db"), "https://panels.example")
+        service.server_epoch = "epoch"
+        monkeypatch.setattr(service.inspector, "check", no_vps_process)
+        monkeypatch.setattr(service.inspector, "discover", no_vps_process)
+        try:
+            with pytest.raises(PreviewError, match="unavailable.*Mac"):
+                await service.stop(ticket.id)
+            # Reading the old address expires it; a refused stop itself is read-only.
+            with pytest.raises(PreviewError, match="unavailable.*Mac"):
+                await service.check(ticket.id, prepared.generation)
+            ended = data.get(tmp_db, ticket.id, prepared.generation)
+            assert ended is not None and ended.state == "ended"
+        finally:
+            await service.close()
+
+    asyncio.run(exercise())

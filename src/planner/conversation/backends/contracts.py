@@ -15,7 +15,8 @@ provider boundary:
 
 - ``BackendSpawnFailed`` → ``backend_did_not_start``
 - ``SessionLoadFailed`` → ``session_did_not_load``
-- ``PromptWriteFailed`` → ``write_to_backend_failed``
+- ``PromptWriteRefused`` → ``write_to_backend_failed``
+- ``PromptWriteFailed`` → delivery uncertain; no automatic retry
 
 Anything else an adapter raises is a fault in the adapter, not a delivery impossibility,
 and is not translated into a refusal.
@@ -24,9 +25,13 @@ and is not translated into a refusal.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from planner.execution_identity import ChildReference
 
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
@@ -42,6 +47,7 @@ from planner.conversation.events import (
 )
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.execution_identity import TurnToken as TurnToken
 
 
 class BackendAdapterError(Exception):
@@ -63,8 +69,24 @@ class SessionLoadFailed(BackendAdapterError):
     """
 
 
+class PromptWriteRefused(BackendAdapterError):
+    """The adapter proved that this prompt was refused before any emission."""
+
+
 class PromptWriteFailed(BackendAdapterError):
     """The prompt write did not complete, so an automatic retry is not safe."""
+
+
+class RemoteCommandUncertain(PromptWriteFailed):
+    """The original native operation has no proven outcome. Do not redispatch it."""
+
+
+class DeliveryCancelled(RuntimeError):
+    """Local shutdown owns disposition; this is not a native command outcome."""
+
+
+class BackendPromptRejected(BackendAdapterError):
+    """The provider explicitly rejected this correlated prompt before admission."""
 
 
 class PermissionAnswerWriteFailed(BackendAdapterError):
@@ -102,23 +124,6 @@ class NeedsRebind(BackendAdapterError):
 
 
 @dataclass(frozen=True, slots=True)
-class TurnToken:
-    """The core's name for one started turn.
-
-    The core reserves its number durably before provider I/O. Numbers never repeat
-    after restart, and historical identities never restore a process or callback.
-    The core hands it to the adapter with the prompt that starts the turn, and
-    the adapter puts it on everything it later reports about that turn. It is what lets
-    the core tell this turn's news from the news of a turn that has already been ended and
-    replaced. A cancelled turn's late-arriving live and operational events are dropped.
-    Finished backend prose is runtime-only, including when it arrives after the ending.
-    """
-
-    conversation_id: str
-    turn_number: int
-
-
-@dataclass(frozen=True, slots=True)
 class BackendPromptAccepted:
     """The backend started the turn and reports which core composition reached it.
 
@@ -148,7 +153,7 @@ class BackendSteerRefused:
 class BackendSteerUncertain:
     """The adapter cannot prove admission or non-admission after the attempt."""
 
-    composed_content_delivered: bool = True
+    composed_content_delivered: bool | None = True
 
 
 type BackendSteerOutcome = BackendSteerAccepted | BackendSteerRefused | BackendSteerUncertain
@@ -180,162 +185,19 @@ class BackendEventSink(Protocol):
     """How an adapter tells the core what its backend just did.
 
     Every turn fact carries the turn token it belongs to, because the core alone decides
-    whether that turn is still the one running. Finished agent messages are the narrow
-    exception to live-only acceptance: the most recently ended turn may still deliver one
-    as durable conversation content. Calls return as soon as the core has taken the fact:
+    whether that turn is still the one running. Backend prose is runtime output, not an
+    addressed notebook message. Calls return as soon as the core has taken the fact:
     they are handed to one queue per conversation and worked through in order, so an
     adapter's reporting is never blocked by whatever the core does about it.
 
-    The one call that carries no turn token is the session cursor. It is not a fact about a
-    turn — it is the conversation's durable session identity, and it has to be kept
+    Session cursor and composer catalog reports carry no turn token. The cursor is the
+    conversation's durable session identity, and it has to be kept
     whatever turn happened to be running when it changed.
     """
 
-    async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
-        """A piece of an agent message that has not finished. Shown live, never stored."""
-
-    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
-        """The model emitted private reasoning just now — and that is the whole message.
-
-        There is no payload and there will not be one. What the model reasoned is dropped
-        by the adapter where it arrives, exactly as it always has been; this says only that
-        it happened, so a turn with nothing else to show yet can still show it is alive.
-
-        Report it as it arrives. The core decides how often anyone is told, because a burst
-        of reasoning is one fact — the agent is working — however many pieces it came in.
-        """
-
-    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
-        """The whole of a finished agent message.
-
-        Nearly always one piece of written words, which is what an agent's message nearly
-        always is. A backend that hands back a file it produced reports that as a piece of
-        the same message rather than as a sentence describing one.
-        """
-
-    async def tool_call_started(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        title: str,
-        tool_kind: str,
-        detail: str | None,
-    ) -> None: ...
-
-    async def tool_call_progress(
-        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
-    ) -> None:
-        """Output from a tool call that has started and has not finished.
-
-        Shown live and then forgotten, exactly like a message delta: it is not a row, and
-        the tool call's own finish is what the record keeps. ``tool_call_id`` is the id the
-        call was reported started under, so a surface can put the output where it belongs.
-
-        An adapter reports this only where its wire genuinely carries in-progress output.
-        Saying nothing is a perfectly good answer — a tool call that shows nothing until it
-        finishes is not a gap, it is a backend that streams nothing.
-        """
-
-    async def tool_call_finished(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        tool_call_status: ToolCallStatus,
-        detail: str | None,
-    ) -> None: ...
-
-    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
-        """The agent's plan, whole, as it now stands.
-
-        Report the entire plan every time it changes rather than what moved in it: the
-        core writes one row per update and the newest row is the answer on its own, so a
-        reader never has to rebuild a plan out of a conversation's history.
-
-        A backend that has no plan on its wire reports nothing here, and the conversation
-        simply has no plan — which is a true thing to show and needs no stand-in.
-        """
-
-    async def token_usage_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        cached_input_tokens: int | None,
-        cost_usd: float | None,
-    ) -> None:
-        """What this turn has cost, as the backend counts it.
-
-        Report what the backend actually said and nothing else: a count it did not give is
-        ``None``, never zero, because a backend silent about cached tokens has not said
-        there were none. Only claude knows about money; the other two leave ``cost_usd``
-        absent rather than computing one.
-
-        Report it as it arrives. A backend that reports running totals reports them; the
-        core writes what it is told.
-        """
-
-    async def context_compacted(self, turn_token: TurnToken) -> None:
-        """The backend summarised what came before and dropped it.
-
-        No payload: that it happened, and where in the thread, is the whole of what a
-        reader needs. Panels never asks for this — the backends do it on their own — and
-        without it a transcript's earlier context goes silently.
-        """
-
-    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
-        """The agent asked for permission.
-
-        The core records the ask and shows it. Nothing is answered here and no answer is
-        returned: an ask waits for a person, however long that takes, and the answer comes
-        back the other way, through ``BackendChild.answer_permission_ask``.
-        """
-
-    async def user_input_requested(
-        self, turn_token: TurnToken, request: BackendUserInputRequest
-    ) -> None:
-        """The agent asked the owner questions and is waiting for the whole answer map."""
-
-    async def user_input_failed(
-        self, turn_token: TurnToken, *, request_id: str, detail: str
-    ) -> None:
-        """A malformed question request was rejected rather than shown as permission."""
-
-    async def turn_ended(
-        self,
-        turn_token: TurnToken,
-        *,
-        ending: ConversationTurnEnding,
-        error_summary: str | None,
-        standard_error_tail: str | None,
-    ) -> None:
-        """The turn stopped running, on the backend's own account.
-
-        An ending the core caused itself — an interruption, or a send-now killing the
-        incumbent — is already recorded by the time this arrives, and the second ending is
-        dropped. First ending wins, once per turn.
-        """
-
-    async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
-        """The backend minted or changed the session id this conversation resumes from."""
-
-    async def composer_catalog_reported(
-        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        """The composer catalog this backend reports, whole.
-
-        Like the session cursor, this carries no turn token, because it is not a fact
-        about a turn. It arrives when a session is established and it stands until the
-        backend says otherwise, so it is kept whatever turn happened to be running — and
-        it is kept after the child is gone, because the menu a person opens to write their
-        first message is worth more than one that is only right while the agent is up.
-
-        Report the whole list every time it changes rather than what moved in it. Hermes
-        and Claude map their command reports into typed command entries. Codex joins its
-        app-server catalog sources and reports one complete typed snapshot.
-        """
+    async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
+        """Take one typed backend fact; session facts carry no turn token."""
+        ...
 
 
 class BackendChild(Protocol):
@@ -350,6 +212,29 @@ class BackendChild(Protocol):
     so no vendor call is left hanging. The core stops accepting answers for them at the
     same moment, so an ask settled this way never carries a person's answer.
     """
+
+    @property
+    def stop_outside_lock(self) -> bool:
+        """Whether termination needs conversation callbacks to run while it waits."""
+        ...
+
+    async def withdraw_delivery(self) -> bool:
+        """Fence the pending delivery. True proves it never reached the provider.
+
+        False preserves uncertainty; it must never trigger a retry. This does not
+        terminate the child. Local writes finish under their existing owner before
+        withdrawal, so local adapters return true.
+        """
+        ...
+
+    async def detach(self) -> None:
+        """Release this process's handle during shutdown.
+
+        A separately owned agent keeps running. A locally owned process is stopped.
+        This is not termination evidence for a separately owned agent; use stop for
+        that, and retain its identity until termination is confirmed.
+        """
+        ...
 
     async def start(
         self,
@@ -380,6 +265,7 @@ class BackendChild(Protocol):
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Start a turn with this message, on these values.
 
@@ -422,7 +308,8 @@ class BackendChild(Protocol):
         false for every sender-authored turn, including one whose text is ``/compact``.
 
         Returns once the text is on the wire, not when the turn ends. Raises
-        ``PromptWriteFailed`` if the current write did not complete, or ``NeedsRebind``
+        ``PromptWriteRefused`` for proven non-emission, ``PromptWriteFailed`` if
+        the current write may have emitted, or ``NeedsRebind``
         if this child cannot safely accept a write that has not started.
         """
 
@@ -457,27 +344,58 @@ class BackendChild(Protocol):
         record: the core wrote the ending when it decided on it, and it stands either way.
         """
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self,
+        ask_id: str,
+        option_id: str,
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give the backend the option a person chose for one of its asks.
 
-        Raises ``PermissionAnswerWriteFailed`` if it did not reach the backend, in which
-        case the answer has not landed and the ask is still waiting.
+        Return applied only after callback acceptance, saved when this process holds
+        delivery for the original callback, or refused without consuming the request.
+        The answer ID and turn token bind saved delivery to the conversation attempt.
+        Raises ``PermissionAnswerWriteFailed`` when the backend could not take it.
         """
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give the backend every answer for one pending question request.
 
-        Raises ``UserInputAnswerWriteFailed`` when the answer map did not land.
+        Use the same applied/saved/refused distinction and identity as permission
+        answers. Raises ``UserInputAnswerWriteFailed`` when the backend could not take it.
         """
 
     async def stop(self) -> None:
         """Shut the child down for good: the janitor's idle sweep, or the server stopping.
 
+        Normal return confirms cleanup for this exact child. An exception or
+        cancellation leaves termination unconfirmed: retain its cleanup identity
+        and do not reuse its wire. Repeated calls must not infer success from a
+        handle that an earlier failed attempt cleared. Confirmed cleanup remains
+        idempotent.
+
         The session cursor is already stored, so a conversation whose child was stopped
         picks up again by resuming, with nothing said about it.
         """
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedBackendRun:
+    """Identity and custody only. A retained run never restores a live turn."""
+
+    reference: ChildReference
+    turn: TurnToken
+    delivery_uncertain: bool
+    retirement_confirmed: bool
 
 
 class BackendChildFactory(Protocol):
@@ -500,3 +418,212 @@ class BackendChildFactory(Protocol):
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
     ) -> BackendChild: ...
+
+
+@runtime_checkable
+class RetainedBackendChildFactory(BackendChildFactory, Protocol):
+    """Recover an exact retained child without allocating or starting an agent."""
+
+    def recover(self, reference: ChildReference) -> BackendChild | None: ...
+
+    def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
+        """Read durable custody, including confirmed retirement, without starting work."""
+        ...
+
+
+# Typed backend facts, shared by local reporting and the native event boundary.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentMessageDelta:
+    """A piece of an agent message that has not finished. Shown live, never stored."""
+
+    text_delta: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModelThinkingHappened:
+    """The model emitted private reasoning just now — and that is the whole message.
+
+    There is no payload and there will not be one. What the model reasoned is dropped
+    by the adapter where it arrives, exactly as it always has been; this says only that
+    it happened, so a turn with nothing else to show yet can still show it is alive.
+
+    Report it as it arrives. The core decides how often anyone is told, because a burst
+    of reasoning is one fact — the agent is working — however many pieces it came in.
+    """
+
+    pass
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentMessageCompleted:
+    """The whole of a finished agent message.
+
+    Nearly always one piece of written words, which is what an agent's message nearly
+    always is. A backend that hands back a file it produced reports that as a piece of
+    the same message rather than as a sentence describing one.
+    """
+
+    content: MessageContent
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolCallStarted:
+    tool_call_id: str
+    title: str
+    tool_kind: str
+    detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolCallProgress:
+    """Output from a tool call that has started and has not finished.
+
+    Shown live and then forgotten, exactly like a message delta: it is not a row, and
+    the tool call's own finish is what the record keeps. ``tool_call_id`` is the id the
+    call was reported started under, so a surface can put the output where it belongs.
+
+    An adapter reports this only where its wire genuinely carries in-progress output.
+    Saying nothing is a perfectly good answer — a tool call that shows nothing until it
+    finishes is not a gap, it is a backend that streams nothing.
+    """
+
+    tool_call_id: str
+    detail: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolCallFinished:
+    tool_call_id: str
+    tool_call_status: ToolCallStatus
+    detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PlanUpdated:
+    """The agent's plan, whole, as it now stands.
+
+    Report the entire plan every time it changes rather than what moved in it: the
+    core writes one row per update and the newest row is the answer on its own, so a
+    reader never has to rebuild a plan out of a conversation's history.
+
+    A backend that has no plan on its wire reports nothing here, and the conversation
+    simply has no plan — which is a true thing to show and needs no stand-in.
+    """
+
+    entries: tuple[PlanEntry, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TokenUsageReported:
+    """What this turn has cost, as the backend counts it.
+
+    Report what the backend actually said and nothing else: a count it did not give is
+    ``None``, never zero, because a backend silent about cached tokens has not said
+    there were none. Only claude knows about money; the other two leave ``cost_usd``
+    absent rather than computing one.
+
+    Report it as it arrives. A backend that reports running totals reports them; the
+    core writes what it is told.
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    cost_usd: float | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ContextCompacted:
+    """The backend summarised what came before and dropped it.
+
+    No payload: that it happened, and where in the thread, is the whole of what a
+    reader needs. Panels never asks for this — the backends do it on their own — and
+    without it a transcript's earlier context goes silently.
+    """
+
+    pass
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PermissionAskRaised:
+    """The agent asked for permission.
+
+    The core records the ask and shows it. Nothing is answered here and no answer is
+    returned: an ask waits for a person, however long that takes, and the answer comes
+    back the other way, through ``BackendChild.answer_permission_ask``.
+    """
+
+    ask: BackendPermissionAsk
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UserInputRequested:
+    """The agent asked the owner questions and is waiting for the whole answer map."""
+
+    request: BackendUserInputRequest
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UserInputFailed:
+    """A malformed question request was rejected rather than shown as permission."""
+
+    request_id: str
+    detail: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TurnEnded:
+    """The turn stopped running, on the backend's own account.
+
+    An ending the core caused itself — an interruption, or a send-now killing the
+    incumbent — is already recorded by the time this arrives, and the second ending is
+    dropped. First ending wins, once per turn.
+    """
+
+    ending: ConversationTurnEnding
+    error_summary: str | None = None
+    standard_error_tail: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VendorSessionCursorRebound:
+    """The backend minted or changed the session id this conversation resumes from."""
+
+    vendor_session_cursor: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ComposerCatalogReported:
+    """The composer catalog this backend reports, whole.
+
+    Like the session cursor, this carries no turn token, because it is not a fact
+    about a turn. It arrives when a session is established and it stands until the
+    backend says otherwise, so it is kept whatever turn happened to be running — and
+    it is kept after the child is gone, because the menu a person opens to write their
+    first message is worth more than one that is only right while the agent is up.
+
+    Report the whole list every time it changes rather than what moved in it. Hermes
+    and Claude map their command reports into typed command entries. Codex joins its
+    app-server catalog sources and reports one complete typed snapshot.
+    """
+
+    composer_catalog: tuple[ComposerCatalogEntry, ...]
+
+
+type BackendEventValue = (
+    AgentMessageDelta
+    | ModelThinkingHappened
+    | AgentMessageCompleted
+    | ToolCallStarted
+    | ToolCallProgress
+    | ToolCallFinished
+    | PlanUpdated
+    | TokenUsageReported
+    | ContextCompacted
+    | PermissionAskRaised
+    | UserInputRequested
+    | UserInputFailed
+    | TurnEnded
+    | VendorSessionCursorRebound
+    | ComposerCatalogReported
+)

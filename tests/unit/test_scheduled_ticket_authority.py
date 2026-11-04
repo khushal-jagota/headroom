@@ -7,7 +7,6 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
-from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -287,10 +286,10 @@ def test_direct_creation_checks_holder_and_denied_schedules_cannot_change_due_wo
         assert denied.status_code == 400, denied.text
         assert denied.json()["error"]["code"] == "agent_forbidden"
 
-    async def refuse_model_resolution(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("Denied callers must not reach model resolution")
+    def refuse_template_resolution(*args: object, **kwargs: object) -> None:
+        raise AssertionError("Denied callers must not reach template resolution")
 
-    monkeypatch.setattr(api, "warm_ticket_creation_model", refuse_model_resolution)
+    monkeypatch.setattr(api, "_template_from_create", refuse_template_resolution)
     before = _snapshot(tmp_db)
     for headers in headers_by_actor:
         for destination in (own, unrelated):

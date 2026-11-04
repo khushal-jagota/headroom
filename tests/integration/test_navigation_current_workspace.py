@@ -164,7 +164,7 @@ def test_review_projection_upgrade_resets_old_cursors_without_granting_authority
     engine = _migration_engine(str(path), 1000)
     try:
         with engine.begin() as connection:
-            command.upgrade(_alembic_config(connection), "head")
+            command.upgrade(_alembic_config(connection), "video_upload_ledger")
     finally:
         engine.dispose()
     with closing(sqlite3.connect(path)) as conn:

@@ -29,7 +29,8 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
   const folds=new URLSearchParams(search).has('folds');
   const liveStream=new URLSearchParams(search).has('live-stream');
   const visual=new URLSearchParams(search).has('visual');
-  let sequence=2000;
+  const shortLens=new URLSearchParams(search).has('short-lens');
+  let sequence=shortLens?1:2000;
   // Return probes reuse this finite transport. Arm only after the initial layout.
   (window as any).__backlog=(count:number)=>{sequence+=count;};
   const returnBodies=new Map<string,string>();
@@ -45,7 +46,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
   const deferredEndingText=JSON.stringify({kind:'turn_ended',ending:'completed',error_summary:null,automatic_compaction_result:null});
   if(visual||liveStream)status.live_output={runtime_epoch:'fixture',turn_key:'turn:1',version:1,byte_count:liveText.length,reference:{body_id:'live:fixture',version:'1',byte_count:liveText.length,media_type:'text/markdown'}};
   const previewBodies = new Map<number,ViewRowBody>();
-  function item(n:number):ConversationViewRow{return{kind:'row',key:'e'+n,row_kind:'agent_message',order:{sequence:n,slot:0},source_sequence:n,sender_message_id:null,changed_through_sequence:n,created_at:n,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:{kind:'agent_message',to_owner:true,content:[{piece:'text',text:`Owner answer ${n}. `+'The same message remains reachable without all previous bodies in memory. '.repeat(4)}]}}};}
+  function item(n:number):ConversationViewRow{return{kind:'row',key:'e'+n,row_kind:'agent_message',order:{sequence:n,slot:0},source_sequence:n,sender_message_id:null,changed_through_sequence:n,created_at:n,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:{kind:'agent_message',to_owner:true,content:[{piece:'text',text:shortLens ? "Child direct message" : `Owner answer ${n}. `+'The same message remains reachable without all previous bodies in memory. '.repeat(4)}]}}};}
   function visualPage(url:URL):ConversationViewPage{
     const lens=url.searchParams.get('lens')==='full'?'full':'focus';
     const scope=JSON.parse(url.searchParams.get('scope')??'{"kind":"timeline","key":null}');

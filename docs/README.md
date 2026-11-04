@@ -37,6 +37,8 @@ The word list for Ticket, Stage, Review, Conversation, and the rest lives in [`C
 
 ## Talking to an agent
 
+- [Mac execution](executor.md) — VPS-owned Tickets with agent processes on the Mac.
+- [Mac installation](mac-executor-installation.md) — install and verify the native service.
 - [Conversations](conversations.md) — the only path into an agent, the notebook, and honest send fates.
 - [The command line](cli.md) — how people and Workers act through `panels`.
 

@@ -12,6 +12,58 @@ from planner.cli import http
 from planner.cli import main as cli_main
 
 
+def test_explicit_ticket_parts_read_only_the_named_retained_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    ticket_id = "t_retained"
+    body_path = f"/api/tickets/{ticket_id}/workspace/fields/retired%20field"
+    record: dict[str, Any] = {
+        "id": ticket_id,
+        "worker_type": "coding",
+        "field_values": {"brief": "Current brief"},
+    }
+
+    def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        assert method == "GET"
+        calls.append(path)
+        if path == "/api/worker-types":
+            return {"worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]}
+        if path in ("/api/tickets", f"/api/tickets/{ticket_id}/worker-self"):
+            return record
+        if path == body_path:
+            return {"field": "retired field", "value": "Retained body", "revision": "7"}
+        assert path.endswith("/workspace/fields/never_stored")
+        http.fail_validation("Ticket field not found", kwargs["as_json"])
+
+    monkeypatch.setattr(http, "send", send)
+    monkeypatch.setenv("PLAN_TICKET_ID", ticket_id)
+    runner = CliRunner()
+    for command in (("ticket", "show", ticket_id), ("worker", "my-ticket")):
+        calls.clear()
+        manifest = runner.invoke(cli_main.main, [*command, "--json"])
+        assert manifest.exit_code == 0, manifest.output
+        assert "retired field" not in json.loads(manifest.output)["manifest"]
+        assert body_path not in calls
+
+        selected = runner.invoke(cli_main.main, [*command, "retired field,brief", "--json"])
+        assert selected.exit_code == 0, selected.output
+        parts = json.loads(selected.output)["parts"]
+        assert parts["retired field"]["value"] == "Retained body"
+        assert parts["brief"]["value"] == "Current brief"
+        assert calls.count(body_path) == 1
+
+        calls.clear()
+        rejected = runner.invoke(cli_main.main, [*command, "rejection"])
+        assert rejected.exit_code != 0
+        assert "Revision feedback arrives in the Worker prompt" in rejected.output
+        assert not any("/workspace/fields/" in path for path in calls)
+
+        unknown = runner.invoke(cli_main.main, [*command, "never_stored", "--json"])
+        assert unknown.exit_code != 0
+        assert "Ticket field not found" in unknown.output
+
+
 @pytest.mark.parametrize(
     ("arguments", "path", "key", "row"),
     (

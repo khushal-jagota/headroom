@@ -104,10 +104,6 @@ def test_inherited_project_resolves_before_locale(
     assert ticket.locale is TicketLocale.macos
 
 
-
-
-
-
 def test_worker_requirement_survives_definition_updates(tmp_db: Connection) -> None:
     from planner.worker_types import store
 
@@ -133,17 +129,23 @@ def test_locale_migration_preserves_entire_existing_rows(
     from planner.core import db
 
     original = db.MIGRATIONS_DIRECTORY
+    scripts = ScriptDirectory(str(original))
+    locale_revision = scripts.get_revision("ticket_locale")
+    assert locale_revision is not None
+    predecessor = locale_revision.down_revision
+    assert isinstance(predecessor, str)
     tree = tmp_path / "predecessor-migrations"
     (tree / "versions").mkdir(parents=True)
     shutil.copy(original / "env.py", tree / "env.py")
-    # Select the predecessor chain so later migrations stay outside this old schema.
-    for revision in ScriptDirectory(str(original)).walk_revisions(
-        base="base", head="disable_retired_worker_schedules"
-    ):
-        shutil.copy(revision.path, tree / "versions" / Path(revision.path).name)
+    # Build the actual pre-locale history, regardless of later descendants.
+    for revision in scripts.walk_revisions(base="base", head=predecessor):
+        path = Path(revision.path)
+        shutil.copy(path, tree / "versions" / path.name)
     conn = db.connect(str(tmp_path / "old.db"))
     monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", tree)
     db.create_schema(conn)
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == predecessor
+    assert "locale" not in {row[1] for row in conn.execute("PRAGMA table_info(tickets)")}
     conn.execute(
         "INSERT INTO tickets (id,title,worker_type,employee_backend,ceiling,field_values,"
         "worker_step_claim,stage,created_at,updated_at) VALUES "
@@ -155,6 +157,7 @@ def test_locale_migration_preserves_entire_existing_rows(
     workers_before = [dict(row) for row in conn.execute("SELECT * FROM worker_types")]
     shutil.copy(original / "versions" / "ticket_locale.py", tree / "versions")
     db.create_schema(conn)
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "ticket_locale"
     after = dict(conn.execute("SELECT * FROM tickets WHERE id='t_preserved'").fetchone())
     assert after.pop("locale") == "vps"
     assert after == before
@@ -164,100 +167,6 @@ def test_locale_migration_preserves_entire_existing_rows(
         assert rows_after == rows_before
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     conn.close()
-
-
-
-
-def test_move_http_checks_record_precondition_and_authority_before_locale_only_write(
-    tmp_db: Connection,
-    tmp_path: Path,
-    fake_clock: ClockForTest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from fastapi.testclient import TestClient
-
-    from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-    from planner.core.config import load_config
-    from planner.core.db import connect
-    from planner.core.server import create_app
-
-    monkeypatch.setitem(
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS,
-        TicketLocale.macos,
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS[TicketLocale.vps],
-    )
-    ticket = data.create_ticket(
-        tmp_db,
-        title="Move with a record precondition",
-        worker_type="coding",
-        principal=OWNER_PRINCIPAL,
-        now=1,
-        title_max_chars=TITLE_MAX_CHARS,
-    )
-    data.set_ticket_backlog(tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=2)
-    stale_hash = data.ticket_record_sha256(tmp_db, ticket.id)
-    data.edit_ticket(
-        tmp_db,
-        ticket.id,
-        edit={"title": "Record changed after the read"},
-        title_max_chars=TITLE_MAX_CHARS,
-        principal=OWNER_PRINCIPAL,
-        now=3,
-    )
-    before = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
-    db_path = tmp_db.execute("PRAGMA database_list").fetchone()[2]
-    config = load_config(
-        path=None,
-        env={
-            "PLAN_TEST_MODE": "1",
-            "PLAN_DB_PATH": db_path,
-            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
-            "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "dispatcher.lock"),
-            "PLAN_SERVER_CONTROL_SOCKET": str(tmp_path / "control.sock"),
-        },
-    )
-    app = create_app(
-        config,
-        fake_clock,
-        lambda: connect(db_path),
-        conversation_system_for_test=InMemoryConversationSystem(),
-    )
-    with TestClient(app) as client:
-        stale = client.post(
-            f"/api/tickets/{ticket.id}/move",
-            json={"locale": "macos", "expected_record_sha256": stale_hash},
-        )
-        assert stale.status_code == 400, stale.text
-        assert "changed" in stale.json()["error"]["message"]
-        assert (
-            dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
-            == before
-        )
-        moved = client.post(
-            f"/api/tickets/{ticket.id}/move",
-            json={
-                "locale": "macos",
-                "expected_record_sha256": data.ticket_record_sha256(tmp_db, ticket.id),
-            },
-        )
-        assert moved.status_code == 200, moved.text
-        assert moved.json()["locale"] == "macos"
-        after = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
-        assert after == {**before, "locale": "macos"}
-        refused = client.post(
-            f"/api/tickets/{ticket.id}/move",
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id},
-            json={
-                "locale": "vps",
-                "expected_record_sha256": data.ticket_record_sha256(tmp_db, ticket.id),
-            },
-        )
-        assert refused.status_code == 400, refused.text
-        assert refused.json()["error"]["code"] == "agent_forbidden"
-        assert (
-            dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
-            == after
-        )
 
 
 def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
@@ -285,16 +194,21 @@ def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
         )
         assert project.status_code == 200, project.text
         project_id = project.json()["id"]
-        request = {"title": "Locale transfer", "worker_type": "coding", "brief": "Scope."}
+        request = {
+            "title": "Locale transfer",
+            "worker_type": "coding",
+            "brief": "Scope.",
+            "employee_backend": "claude",
+            "employee_launch_model": "scripted-model",
+        }
         for choices in ({"locale": "macos"}, {"project_id": project_id}):
             before = [tuple(row) for row in tmp_db.execute("SELECT * FROM tickets ORDER BY id")]
-            refusal = client.post("/api/tickets", json={**request, **choices})
+            refusal = client.post(
+                "/api/tickets",
+                json={**request, **choices, "employee_backend": "unknown-provider"},
+            )
             assert refusal.status_code == 400, refusal.text
-            error = refusal.json()["error"]
-            assert error["detail"]["locale"] == "macos"
-            assert error["detail"]["employee_backend"]
-            assert error["detail"]["reason"]
-            assert "macos" in error["message"]
+            assert refusal.json()["error"]["code"] == "validation"
             assert [
                 tuple(row) for row in tmp_db.execute("SELECT * FROM tickets ORDER BY id")
             ] == before
@@ -309,8 +223,7 @@ def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
             tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone()
         )
         moved = client.post(f"/api/tickets/{ticket_id}/move", json={"locale": "vps"})
-        assert moved.status_code == 200, moved.text
-        assert moved.json()["locale"] == "vps"
+        assert moved.status_code == 404, moved.text
         assert (
             dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
             == before_move

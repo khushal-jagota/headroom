@@ -49,8 +49,8 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     }
     if(record.kind==='ticket') {
       const row=record.value;
-      if(row.worker_step_claim_out) exactOutClaimCount+=1;
-      if(!row.is_backlogged && row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
+      if('worker_step_claim_out' in row && row.worker_step_claim_out) exactOutClaimCount+=1;
+      if(!('integrity_error' in row) && !row.is_backlogged && row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
         && row.gating_field!==null && row.proposal_field!==null && row.proposal_created_at!==null) {
         const proposal:import('../types').NavigationReviewProposalItem={review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
           title:row.title,waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision};
@@ -70,14 +70,25 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const projects=new Map([...rawProjectsById].map(([id,record])=>[id,record.value]));
   const managerRecords=[...rawManagersById.values()];
   const managersById=new Map([...managerRecords,...rawSettledManagersById.values()].map(record=>[record.id,record.value]));
-  const tickets: NavigationTicket[]=[...rawTicketsById.values()].flatMap(record=>{
+  const tickets: NavigationTicket[]=[...rawTicketsById.values()].flatMap<NavigationTicket>(record=>{
     if(record.kind!=='ticket') return [];
     const row=record.value;
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
+    if('integrity_error' in row) {
+      const parent=row.manager_kind==='chief' ? null : row.manager_id;
+      return [{id:record.id,locale:row.locale === 'macos' ? 'macos' as const : 'vps' as const,created_at:row.created_at,terminal:false,title:row.title,stage:row.stage,worker_type:row.worker_type,
+        ticket_status:'errored',is_backlogged:row.is_backlogged,blocked:false,integrity_error:row.integrity_error,
+        activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
+        awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
+        awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:'errored',waiting_to_closeout:false,
+        gating_field:null,recap:row.recap,recap_preview:row.recap_preview,
+        manager:parent===null ? {kind:'chief',id:'chief'} : {kind:'manager',id:parent},
+        manager_id:parent,manager_title:parent===null ? null : managersById.get(parent)?.title ?? null}];
+    }
     const owner=row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner';
     const parked=row.ticket_status==='awaiting_approval';
     const parent=row.manager_kind==='chief' ? null : row.manager_id;
-    return [{id:record.id,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,worker_type:row.worker_type,
+    return [{id:record.id,locale:row.locale === "macos" ? "macos" as const : "vps" as const,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,worker_type:row.worker_type,
       ticket_status:row.ticket_status,is_backlogged:row.is_backlogged,blocked:row.blocked,
       activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
@@ -99,7 +110,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(raw.manager_id!==null && !parent) continue;
     const projectId=raw.manager_id===null ? raw.project_id : parent!.value.project_id;
     if(projectId!==null && !rawProjectsById.has(projectId)) continue;
-    ticketMastheadsById.set(ticket.id,{id:ticket.id,title:raw.title,worker_type:raw.worker_type,
+    ticketMastheadsById.set(ticket.id,{id:ticket.id,locale:ticket.locale ?? "vps",title:raw.title,worker_type:raw.worker_type,
       project:projectId===null ? null : rawProjectsById.get(projectId)!.value.name,
       conversation_id:raw.conversation_id,conversation_signal:signal(raw.conversation_id===null ? undefined : view.conversations.get(raw.conversation_id))});
   }
@@ -259,6 +270,7 @@ export function navigationConversationSignal(view:EffectiveNavigationView | null
 
 /** Masthead facts never become an actionable TicketDetail. */
 export type NavigationTicketMasthead = {
+  readonly locale:import("../ticketMachines").TicketLocale;
   readonly id:string;
   readonly title:string;
   readonly worker_type:string;

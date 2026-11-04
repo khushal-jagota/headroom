@@ -84,9 +84,7 @@ class SubprocessServiceController:
             command = ["systemctl", "--user", "restart", self.service_name]
         elif self.manager == "launchctl":
             target = (
-                self.service_name
-                if "/" in self.service_name
-                else f"system/{self.service_name}"
+                self.service_name if "/" in self.service_name else f"system/{self.service_name}"
             )
             if target.startswith("gui/"):
                 self._restart_user_launchagent(target)
@@ -119,9 +117,7 @@ class SubprocessServiceController:
                 raise DeploymentError("user LaunchAgent did not stop cleanly")
             time.sleep(0.05)
         subprocess.run(["/bin/launchctl", "bootout", target], check=False, shell=False)
-        subprocess.run(
-            ["/bin/launchctl", "bootstrap", domain, str(plist)], check=True, shell=False
-        )
+        subprocess.run(["/bin/launchctl", "bootstrap", domain, str(plist)], check=True, shell=False)
 
 
 def run_current_app_backup(
@@ -619,9 +615,7 @@ def _restore_fallback(
         os.replace(fallback, current_app)
         service.restart()
         _publish_lifecycle(lifecycle_transition, "verifying")
-        if not health.wait_for_sha(
-            prior_manifest.app_sha, deadline=now() + timeout_seconds
-        ):
+        if not health.wait_for_sha(prior_manifest.app_sha, deadline=now() + timeout_seconds):
             raise DeploymentError("prior app did not become healthy")
         _publish_lifecycle(
             lifecycle_transition,

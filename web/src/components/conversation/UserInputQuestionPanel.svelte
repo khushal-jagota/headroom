@@ -14,12 +14,14 @@
   let {
     request,
     busy = false,
+    answerAvailable = true,
     note = null,
     onSubmit,
     onCancelTurn
   }: {
     request: { requestId: string; questions: readonly UserInputQuestion[] };
     busy?: boolean;
+    answerAvailable?: boolean;
     note?: string | null;
     onSubmit?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
@@ -44,12 +46,12 @@
   let isLast = $derived(step === request.questions.length - 1);
 
   function choose(option: string): void {
-    if (question === undefined || busy) return;
+    if (question === undefined || busy || !answerAvailable) return;
     draft = toggleUserInputChoice(draft, question, option);
   }
 
   function writeOther(value: string): void {
-    if (question === undefined) return;
+    if (question === undefined || busy || !answerAvailable) return;
     draft = {
       selected: question.multi_select
         ? draft.selected
@@ -59,7 +61,7 @@
   }
 
   function continueOrSubmit(): void {
-    if (!canContinue || question === undefined || busy) return;
+    if (!canContinue || question === undefined || busy || !answerAvailable) return;
     if (!isLast) {
       step += 1;
       return;
@@ -93,7 +95,7 @@
           class:selected
           data-user-input-option={option.label}
           aria-pressed={selected}
-          disabled={busy}
+          disabled={busy || !answerAvailable}
           onclick={() => choose(option.label)}
         >
           <span>{option.label}</span>
@@ -109,7 +111,7 @@
           data-user-input-other
           value={draft.other[question.question_id] ?? ""}
           placeholder="Type your answer"
-          disabled={busy}
+          disabled={busy || !answerAvailable}
           oninput={(event) => writeOther(event.currentTarget.value)}
         />
       </label>
@@ -139,7 +141,7 @@
         type="button"
         class="continue"
         data-user-input-continue
-        disabled={busy || !canContinue}
+        disabled={busy || !answerAvailable || !canContinue}
         onclick={continueOrSubmit}
       >{busy && isLast ? "Sending…" : isLast ? "Submit answers" : "Next"}</button>
     </footer>

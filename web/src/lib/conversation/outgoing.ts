@@ -64,6 +64,8 @@ export type OutgoingMessage = {
    *  for. Absent means nothing was picked, which is what an ordinary send says. */
   pickedModel?: string | null;
   pickedReasoningEffort?: string | null;
+  effortIsSet?: boolean;
+  pickedBackend?: import("./wire").ConversationBackendKey | null;
 };
 
 const outgoingImageReservations = new Map<string, number>();
@@ -170,6 +172,8 @@ export function mintOutgoingMessage(input: {
   sentAtUnixMilliseconds?: number;
   pickedModel?: string | null;
   pickedReasoningEffort?: string | null;
+  effortIsSet?: boolean;
+  pickedBackend?: import("./wire").ConversationBackendKey | null;
 }): OutgoingMessage {
   const sentAtUnixMilliseconds = input.sentAtUnixMilliseconds ?? Date.now();
   return {
@@ -180,7 +184,9 @@ export function mintOutgoingMessage(input: {
     sentAtUnixMilliseconds,
     knownFate: "nothing_yet",
     ...(input.pickedModel == null ? {} : { pickedModel: input.pickedModel }),
-    ...(input.pickedReasoningEffort == null
+    ...(input.effortIsSet === undefined ? {} : {effortIsSet: input.effortIsSet}),
+    ...(input.pickedBackend == null ? {} : {pickedBackend: input.pickedBackend}),
+    ...(input.pickedReasoningEffort == null && !input.effortIsSet
       ? {}
       : { pickedReasoningEffort: input.pickedReasoningEffort })
   };
@@ -789,7 +795,9 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
     sentAtUnixMilliseconds,
     knownFate: knownFate as OutgoingMessageKnownFate,
     ...(pickedModel === null ? {} : { pickedModel }),
-    ...(pickedReasoningEffort === null ? {} : { pickedReasoningEffort })
+    ...(typeof held.effortIsSet === "boolean" ? {effortIsSet: held.effortIsSet} : {}),
+    ...(held.pickedBackend === "claude" || held.pickedBackend === "codex" || held.pickedBackend === "hermes" ? {pickedBackend: held.pickedBackend} : {}),
+    ...(pickedReasoningEffort === null && held.effortIsSet !== true ? {} : { pickedReasoningEffort })
   };
 }
 

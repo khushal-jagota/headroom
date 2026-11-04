@@ -11,6 +11,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import sysconfig
 import time
 import venv
@@ -20,6 +21,11 @@ from pathlib import Path
 import playwright
 import pytest
 import yaml
+
+pytestmark = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Deployment mount isolation requires Linux bubblewrap namespaces",
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 # Capture the browser input before test setup replaces HOME with a private home.

@@ -12,11 +12,13 @@
   let {
     ask,
     busy = false,
+    answerAvailable = true,
     onAnswer,
     onCancelTurn
   }: {
     ask: { options?: readonly PermissionAskOption[] } | null;
     busy?: boolean;
+    answerAvailable?: boolean;
     onAnswer: (optionId: string) => void;
     onCancelTurn: () => void;
   } = $props();
@@ -45,8 +47,8 @@
         data-conversation-ask-action={action.optionId}
         data-conversation-ask-supplied={action.supplied ? "true" : "false"}
         title={action.supplied ? undefined : "Panels supplied this answer; the backend may not take it"}
-        disabled={busy}
-        onclick={() => onAnswer(action.optionId)}
+        disabled={busy || !answerAvailable}
+        onclick={() => answerAvailable && onAnswer(action.optionId)}
       >{action.label}</button>
     {/if}
   {/each}

@@ -20,7 +20,7 @@ from tests.support.conversation_contract_conformance import (
     RecordedTurnEnding,
 )
 
-from planner.conversation.contracts import ConversationSystem
+from planner.conversation.contracts import AnswerFate, ConversationSystem
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservation,
     InMemoryConversationSystem,
@@ -93,8 +93,8 @@ class InMemoryConversationSystemUnderTest:
         return self._system.raise_permission_ask(conversation_id)
 
     async def answer_permission_ask(
-        self, conversation_id: str, ask_id: str, option_id: str
-    ) -> bool:
+        self, conversation_id: str, ask_id: str, option_id: str, **kwargs: object
+    ) -> AnswerFate:
         return self._system.answer_permission_ask(conversation_id, ask_id, option_id)
 
     async def arm_backend_start_failure(self, conversation_id: str) -> None:

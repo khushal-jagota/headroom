@@ -133,12 +133,14 @@ def test_snapshot_freezes_external_graph_and_rejects_special_files(tmp_path: Pat
                    for entry in redirected.entries)
     assert compare_manifests(baseline, redirected)
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Linux procfs descriptor deletion proof")
 def test_real_audited_operations_refuse_before_mutation(tmp_path: Path) -> None:
     # An irreversible hook belongs in a child, never in the enclosing pytest session.
     script = r'''
 import os
 from pathlib import Path
 import sys
+native_open = os.open
 from tests.support.skill_tree_protection.audit import AuditGuard
 from tests.support.skill_tree_protection.contracts import GuardRefusal, ProtectionInventory
 from tests.support.skill_tree_protection.inventory import snapshot, compare_manifests
@@ -249,7 +251,7 @@ operations = [
     unsafe_detached_operation,
     lambda: os.rename("SKILL.md", "renamed", src_dir_fd=fd, dst_dir_fd=fd),
     lambda: os.open("SKILL.md", os.O_WRONLY, dir_fd=fd),
-    lambda: os.open("relative-unknown", os.O_CREAT | os.O_WRONLY, dir_fd=unknown_fd),
+    lambda: native_open("relative-unknown", os.O_CREAT | os.O_WRONLY, dir_fd=unknown_fd),
     lambda: provision_native_backend_skills(profile, database),
 ]
 for number, operation in enumerate(operations):
@@ -346,7 +348,8 @@ def _pytest_probe(tmp_path: Path, body: str) -> tuple[subprocess.CompletedProces
     )
     (suite / "test_probe.py").write_text(body.replace("SENTINEL", repr(str(sentinel))))
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-s", "--confcutdir", str(suite), str(suite)],
+        [sys.executable, "-m", "pytest", "-q", "-s", "--basetemp",
+         str(tmp_path / "probe-temp"), "--confcutdir", str(suite), str(suite)],
         cwd=suite, env=_child_env(home), text=True, capture_output=True, timeout=120,
     )
     return result, sentinel
@@ -425,7 +428,7 @@ def test_home_routing_precedes_all_fixture_scopes_and_preserves_teardown_paths(
     # Module/session setup can launch native processes before function fixtures exist.
     result, sentinel = _pytest_probe(
         tmp_path,
-        "import os, pytest, shutil\n"
+        "import os, pytest, shutil, sys\n"
         "from pathlib import Path\n"
         "from conftest import protection\n"
         "from tests.support.skill_tree_protection.inventory import snapshot, compare_manifests\n"
@@ -462,10 +465,11 @@ def test_home_routing_precedes_all_fixture_scopes_and_preserves_teardown_paths(
         "        before = snapshot(protection.inventory)\n"
         "        cleanup_root.rename(cleanup_root.with_name('cleanup-renamed'))\n"
         "        assert_protected_unchanged('ordinary temp-root rename', before)\n"
-        "        before = snapshot(protection.inventory)\n"
-        "        with pytest.raises(FileNotFoundError):\n"
-        "            os.rmdir('missing-child', dir_fd=detached_fd)\n"
-        "        assert_protected_unchanged('detached-descriptor teardown', before)\n"
+        "        if sys.platform != 'darwin':  # Linux unlinked-directory inode proof\n"
+        "            before = snapshot(protection.inventory)\n"
+        "            with pytest.raises(FileNotFoundError):\n"
+        "                os.rmdir('missing-child', dir_fd=detached_fd)\n"
+        "            assert_protected_unchanged('detached-descriptor teardown', before)\n"
         "        before = snapshot(protection.inventory)\n"
         "        assert shutil.rmtree.avoids_symlink_attacks\n"
         "        shutil.rmtree(cleanup_root.with_name('cleanup-renamed'))\n"

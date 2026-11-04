@@ -50,6 +50,29 @@ class TicketValue(TypedDict):
     locale: str
 
 
+class NavigationTicketIntegrityIssue(TypedDict):
+    reason: str
+
+
+class BrokenTicketValue(TypedDict):
+    title: str
+    recap: str
+    recap_preview: str
+    worker_type: str
+    stage: str
+    ticket_status: Literal["errored"]
+    integrity_error: NavigationTicketIntegrityIssue
+    deadline: str | None
+    project_id: str | None
+    manager_kind: str
+    manager_id: str | None
+    conversation_id: str | None
+    locale: str
+    updated_at: int
+    created_at: int
+    is_backlogged: bool
+
+
 class ManagerValue(TypedDict):
     updated_at: int
     title: str
@@ -170,7 +193,7 @@ class ProjectValue(TypedDict):
 class TicketRecord(TypedDict):
     kind: Literal["ticket"]
     id: str
-    value: TicketValue
+    value: TicketValue | BrokenTicketValue
 
 
 class ManagerRecord(TypedDict):

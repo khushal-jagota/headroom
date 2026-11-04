@@ -33,11 +33,21 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.derivation import TicketFacts
+from planner.tickets.integrity import (
+    diagnostic_projection,
+    issue_for_ticket,
+)
 from planner.tickets.logic import fields_codec, machine, proposal_routing
 from planner.tickets.logic.creation_receipt import supervision_receipt
 from planner.tickets.logic.recap import recap_preview
 from planner.tickets.logic.review import eligible_for_owner_review
 from planner.worker_types.configuration import configured_worker_type_registry
+
+
+def _broken(conn: sqlite3.Connection, ticket_id: str) -> JsonDict | None:
+    issue = issue_for_ticket(conn, ticket_id)
+    return cast(JsonDict, diagnostic_projection(conn, ticket_id, issue)) if issue else None
+
 
 # --- serializers ---------------------------------------------------------------
 
@@ -154,7 +164,11 @@ def list_tickets(
         + " ORDER BY tickets.created_at ASC, tickets.id",
         tuple(params),
     ).fetchall()
-    return [ticket_json(tickets_data.read_ticket(conn, str(row["id"])), now) for row in rows]
+    return [
+        _broken(conn, str(row["id"]))
+        or ticket_json(tickets_data.read_ticket(conn, str(row["id"])), now)
+        for row in rows
+    ]
 
 
 def _ticket_search_text(row: sqlite3.Row) -> str:
@@ -178,6 +192,7 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         "waiting_to_closeout": facts.waiting_to_closeout,
         "id": str(row["id"]),
         "title": str(row["title"]),
+        "locale": str(row["locale"]),
         "worker_type": str(row["worker_type"]),
         "stage": str(row["stage"]),
         "ticket_status": facts.ticket_status.value,
@@ -225,7 +240,7 @@ def list_ticket_summaries(
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
     rows = conn.execute(
-        "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
+        "SELECT tickets.id, tickets.title, tickets.locale, tickets.worker_type, tickets.stage, "
         "tickets.is_backlogged, "
         "tickets.worker_step_claim, tickets.recap, "
         "tickets.pending_proposal, "
@@ -246,8 +261,18 @@ def list_ticket_summaries(
     registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     search = filters.search.casefold() if filters.search else None
-    matches: list[tuple[sqlite3.Row, TicketFacts]] = []
+    matches: list[JsonDict] = []
     for row in rows:
+        broken = _broken(conn, str(row["id"]))
+        if broken is not None:
+            if filters.ticket_statuses and TicketStatus.errored not in filters.ticket_statuses:
+                continue
+            if TicketStatus.errored in filters.excluded_ticket_statuses:
+                continue
+            if search is not None and search not in str(broken).casefold():
+                continue
+            matches.append(broken)
+            continue
         stage = str(row["stage"])
         facts = derivation.derive_ticket_facts(
             derivation.stored_facts_from_row(
@@ -275,10 +300,10 @@ def list_ticket_summaries(
             continue
         if search is not None and search not in _ticket_search_text(row).casefold():
             continue
-        matches.append((row, facts))
+        matches.append(_ticket_summary_json(row, facts))
     selected = matches[page_request.offset : page_request.offset + page_request.limit]
     return ListPage(
-        rows=tuple(_ticket_summary_json(row, facts) for row, facts in selected),
+        rows=tuple(selected),
         match_count=len(matches),
         limit=page_request.limit,
         offset=page_request.offset,
@@ -311,6 +336,9 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         # This read is also what fixes the snapshot. A deferred BEGIN reserves nothing
         # until a statement actually reads, so the Ticket's own row has to be read here
         # rather than further in, or the rows around it could come from after a write.
+        broken = _broken(conn, ticket_id)
+        if broken is not None:
+            return broken
         ticket = tickets_data.read_ticket(conn, ticket_id)
         return _ticket_detail_rows(conn, ticket, now)
 
@@ -359,6 +387,9 @@ def _ticket_artifacts(conn: sqlite3.Connection, ticket_id: str) -> list[dict[str
 
 
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
+    broken = _broken(conn, ticket_id)
+    if broken is not None:
+        return str(broken)
     ticket = tickets_data.read_ticket(conn, ticket_id)
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
     ownership = machine.stage_ownership_mode(
@@ -415,7 +446,7 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
         "managers.title AS manager_title, "
         "parent_projects.name AS parent_project_name, "
         "tickets.pending_proposal, tickets.worker_type, "
-        "tickets.employee_backend, "
+        "tickets.employee_backend, tickets.locale, "
         "tickets.conversation_id, "
         "tickets.worker_step_claim, "
         "tickets.created_at, tickets.updated_at FROM tickets "
@@ -431,6 +462,32 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
         sid: [] for sid in column_order
     }
     for row in rows:
+        broken = _broken(conn, str(row["id"]))
+        if broken is not None:
+            broken_card = {
+                **broken,
+                "stage_label": "Broken Ticket",
+                "gating_field": None,
+                "gating_field_label": None,
+                "is_done": False,
+                "blocked": False,
+                "waiting_to_closeout": False,
+                "has_pending_proposal": False,
+                "recap_preview": broken["integrity_error"]["reason"],
+                "group_project_id": broken.get("project_id"),
+                "group_project": broken.get("project"),
+                "deadline": None,
+                "activity_at": int(row["updated_at"]),
+                "employee_backend": str(row["employee_backend"]),
+                "manager": {"kind": row["manager_kind"], "id": row["manager_id"]},
+            }
+            if "broken" not in by_stage:
+                by_stage["broken"] = []
+                column_order.append("broken")
+            by_stage["broken"].append(
+                ((1, "", int(row["created_at"])), cast(BoardCardSource, broken_card))
+            )
+            continue
         stage = str(row["stage"])
         deadline = str(row["deadline"]) if row["deadline"] is not None else None
         worker_type = str(row["worker_type"])
@@ -479,6 +536,7 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
             "ticket_status": facts.ticket_status.value,
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
+            "locale": str(row["locale"]),
             "stage": stage,
             "stage_label": worker_type_definition.stage_definition(stage).label,
             "gating_field": gating_field_id,
@@ -578,6 +636,8 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     items: list[JsonDict] = []
     for row in rows:
+        if _broken(conn, str(row["id"])) is not None:
+            continue
         facts = derivation.derive_ticket_facts(
             derivation.stored_facts_from_row(
                 row, has_live_blocker=str(row["id"]) in blocked_ticket_ids

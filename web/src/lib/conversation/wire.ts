@@ -1,3 +1,6 @@
+import type { BackendScopeRequest } from "./modelResolutionWire";
+export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
+
 import { mutationHeaders } from "../releaseMonitor";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
@@ -44,6 +47,7 @@ export type ToolCallStatus = "completed" | "failed";
 export type PromptDeliveryRefusalReason =
   | "no_such_conversation"
   | "model_resolution_failed"
+  | "backend_rejected_prompt"
   | "backend_did_not_start"
   | "session_did_not_load"
   | "write_to_backend_failed"
@@ -135,6 +139,8 @@ export type PermissionAskOption = {
   option_kind: string;
 };
 
+export type AnswerFate = "applied" | "saved" | "refused";
+
 export type PendingPermissionAsk = {
   ask_id: string;
   title: string;
@@ -191,7 +197,8 @@ export type ConversationView = {
   supports_steer: boolean;
   model: string | null;
   reasoning_effort: string | null;
-  workspace_folder: string;
+  workspace_folder: string | null;
+  workspace_path_policy?: "home_relative" | "absolute" | "executor_default";
   access: string;
   latest_sequence: number;
   owner_read_through_sequence: number;
@@ -297,14 +304,15 @@ export type ConversationEvent =
       "permission_asked",
       { ask_id: string; title: string; detail: string | null; options: PermissionAskOption[] }
     >
-  | Row<"permission_answered", { ask_id: string; option_id: string }>
+  | Row<"permission_answered", { ask_id: string; option_id: string; fate?: AnswerFate; answer_id?: string | null }>
+  | Row<"answer_applied", { answer_id: string }>
   | Row<
       "user_input_requested",
       { request_id: string; questions: UserInputQuestion[] }
     >
   | Row<
       "user_input_answered",
-      { request_id: string; answers: UserInputAnswers }
+      { request_id: string; answers: UserInputAnswers; fate?: AnswerFate; answer_id?: string | null }
     >
   | Row<"user_input_failed", { request_id: string; detail: string }>
   | Row<'credential_request', { request: import('./view/contracts').CredentialRequestRowBody }>
@@ -381,19 +389,17 @@ export type BackendModel = {
   display_name: string | null;
   /** Provider-owned variant and its current concrete model. */
   selected_variant?: string | null;
+  version?: number[];
   resolved_model_id?: string | null;
   /** A failed catalogue refresh can leave a last known-good model available. */
-  catalogue_warning?: string | null;
   /** Disabled models remain visible on Backends, but no picker offers them for a run. */
   enabled: boolean;
   /** What this model really is, when the name alone does not say — an alias and the
    *  version it reaches, for instance. Optional: a catalog that offers none is read the
    *  same way as one that has not started offering them yet. */
   detail?: string | null;
-  /** The reasoning efforts this particular model takes, where they differ per model
-   *  rather than per backend. Absent means the backend's own list is the answer; an
-   *  empty list means this model takes none, and no effort control exists for it. */
-  reasoning_effort_options?: string[];
+  /** Per-model metadata. Null or absent means unknown; an empty list is known empty. */
+  reasoning_effort_options?: string[] | null;
 };
 
 export type BackendUpdateAdvisory = {
@@ -488,7 +494,9 @@ export type OwnerSendBody = {
   conversation_id: string | null;
   backend_key?: string;
   model?: string;
-  reasoning_effort?: string;
+  /** Omitted preserves effort; null explicitly requests provider default. */
+  reasoning_effort?: string | null;
+  /** Ticket model intent only; omitted preserves historical classification. */
   content: SentMessagePiece[];
   sender_label: string;
   mode: PromptDeliveryMode;
@@ -509,6 +517,8 @@ export type OwnerSendBody = {
  * is on reported no catalogue. A start on that is refused rather than guessed at.
  */
 export type ConversationStartValues = {
+  workspace_folder?: string | null;
+  workspace_path_policy?: "home_relative" | "absolute" | "executor_default";
   backend_key: ConversationBackendKey;
   model: string | null;
   reasoning_effort: string | null;
@@ -679,8 +689,8 @@ export function answerPermissionAsk(
   conversationId: string,
   askId: string,
   optionId: string
-): Promise<{ landed: boolean }> {
-  return request<{ landed: boolean }>(
+): Promise<{ fate: AnswerFate }> {
+  return request<{ fate: AnswerFate }>(
     `/conversations/${encodeURIComponent(conversationId)}/permission-answers`,
     postJson({ ask_id: askId, option_id: optionId })
   );
@@ -690,8 +700,8 @@ export function answerUserInput(
   conversationId: string,
   requestId: string,
   answers: UserInputAnswers
-): Promise<{ landed: boolean }> {
-  return request<{ landed: boolean }>(
+): Promise<{ fate: AnswerFate }> {
+  return request<{ fate: AnswerFate }>(
     `/conversations/${encodeURIComponent(conversationId)}/user-input-answers`,
     postJson({ request_id: requestId, answers })
   );
@@ -723,6 +733,15 @@ export function promoteHeldPrompt(
       + `/held-prompts/${encodeURIComponent(heldPromptId)}/promote`,
     postJson({ mode })
   );
+}
+
+export async function readScopedBackends(
+  selection: BackendScopeRequest, refresh = false
+): Promise<BackendSnapshot[]> {
+  const answer = await request<{backends: BackendSnapshot[]}>(
+    `/backends${refresh ? "?refresh=true" : ""}`, postJson({ ticket_id: selection.ticket_id })
+  );
+  return answer.backends;
 }
 
 export async function readBackends(refresh = false): Promise<BackendSnapshot[]> {

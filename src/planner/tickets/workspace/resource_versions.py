@@ -60,7 +60,10 @@ class TicketWorkspaceResources:
         ).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
-        dependencies = [("ticket", ticket_id), ("blockers", ticket_id)]
+        dependencies = [
+            ("ticket", ticket_id),
+            ("blockers", ticket_id),
+        ]
         if row["manager_id"] is not None:
             dependencies.append(("manager", str(row["manager_id"])))
         if row["project_id"] is not None:

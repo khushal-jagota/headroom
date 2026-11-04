@@ -11,6 +11,7 @@ from typing import Literal, TypedDict
 from planner.navigation.contracts import (
     AddressRecord,
     AttentionKnowledge,
+    BrokenTicketValue,
     ChiefRecord,
     Continuity,
     GoalRecord,
@@ -106,6 +107,10 @@ class ViewTicketValue(TicketValue):
     recap_reference: ViewContentReference | None
 
 
+class ViewBrokenTicketValue(BrokenTicketValue):
+    recap_reference: ViewContentReference | None
+
+
 class ViewManagerValue(ManagerValue):
     recap_reference: ViewContentReference | None
 
@@ -130,7 +135,7 @@ class ViewConversationValue(TypedDict):
 class ViewTicketRecord(TypedDict):
     kind: Literal["ticket"]
     id: str
-    value: ViewTicketValue
+    value: ViewTicketValue | ViewBrokenTicketValue
 
 
 class ViewManagerRecord(TypedDict):

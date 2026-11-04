@@ -8,6 +8,8 @@ export type WorkItemAttentionFacts = Omit<WorkAttention, 'awaiting_reply' | 'awa
 };
 
 export type WorkItemTicketFacts = WorkItemAttentionFacts & {
+  integrity_error?: {reason:string};
+  locale?: import("./ticketMachines").TicketLocale;
   conversation_signal?: Partial<import("./conversationSignal").ConversationSignal>;
   id: string;
   title: string;
@@ -70,6 +72,7 @@ export type WorkItemTicketGroup<T extends WorkItemTicketFacts> =
 export function workItemTicketGroupKey(
   ticket: WorkItemTicketFacts
 ): WorkItemTicketGroupKey {
+  if (ticket.integrity_error) return "errored";
   if (ticket.is_backlogged) return "backlog";
   const attention = primaryWorkAttention(ticket);
   if (attention !== null) return attention;

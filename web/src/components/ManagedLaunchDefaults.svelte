@@ -7,10 +7,12 @@
 
   let {
     label,
+    description,
     value,
     onSave
   }: {
     label: string;
+    description?: string;
     value: EmployeeConfigurationSnapshot;
     onSave: (next: EmployeeConfigurationSnapshot) => Promise<EmployeeConfigurationSnapshot>;
   } = $props();
@@ -22,6 +24,7 @@
   <header class="worker-launch-defaults-head">
     <h2>{label} launch defaults</h2>
   </header>
+  {#if description}<p>{description}</p>{/if}
   <div class="worker-launch-defaults-controls">
     <UnifiedModelPicker
       view={editor.picker}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import click
@@ -18,6 +19,10 @@ def _human(data: dict[str, Any]) -> str:
 @click.group()
 def preview() -> None:
     """Prepare, publish, inspect, or stop your Ticket's application preview."""
+    if os.environ.get("PLAN_EXECUTOR_ROOT"):
+        raise click.ClickException(
+            "Application previews are unavailable for Tickets running on the Mac."
+        )
 
 
 @preview.command()

@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -32,6 +33,8 @@ def test_pytest_report_requires_each_selected_module_and_executed_proof(tmp_path
 def test_pytest_provider_opt_in_cannot_excuse_required_skip(tmp_path: Path) -> None:
     report = tmp_path / "pytest.xml"
     opt_ins = {
+        "tests.unit.test_manager_first_model":
+            "set PANELS_REAL_CODEX_TESTS=1 for the isolated real-account Manager smoke",
         "tests.unit.test_conversation_claude_agent_sdk":
             "set PANELS_REAL_CLAUDE_TESTS=1 with claude installed to run this",
         "tests.unit.test_conversation_claude_real_cli":
@@ -64,6 +67,9 @@ def test_pytest_provider_opt_in_cannot_excuse_required_skip(tmp_path: Path) -> N
 
     # Module and reason must both match. Prefix collisions and missing tools stay fatal.
     for module, reason in (
+        ("tests.unit.test_manager_first_model", "a different skip reason"),
+        ("tests.unit.test_manager_first_model_extra",
+         opt_ins["tests.unit.test_manager_first_model"]),
         ("tests.unit.test_skipped", opt_ins["tests.unit.test_conversation_codex_real_cli"]),
         ("tests.unit.test_conversation_codex_real_cli_extra",
          opt_ins["tests.unit.test_conversation_codex_real_cli"]),
@@ -84,6 +90,79 @@ def test_pytest_provider_opt_in_cannot_excuse_required_skip(tmp_path: Path) -> N
         '<failure message="provider failed"/></testcase></testsuite>'
     )
     with pytest.raises(ValueError, match="failed test"):
+        check_pytest(report, ["tests/unit/test_one.py"])
+
+
+def test_pytest_report_names_unavailable_macos_proof_without_executed_credit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("scripts.deployment_check_report.sys", SimpleNamespace(platform="linux"))
+    report = tmp_path / "pytest.xml"
+    executed = '<testcase classname="tests.unit.test_one" name="ok"/>'
+    macos = (
+        '<testcase classname="tests.unit.test_skill_guard_macos" '
+        'name="test_macos_directory_descriptor_resolves_private_and_protected_paths">'
+        '<skipped message="macOS F_GETPATH descriptor proof"/></testcase>'
+    )
+    provider = (
+        '<testcase classname="tests.unit.test_conversation_codex_real_cli" name="paid">'
+        '<skipped message="set PANELS_REAL_CODEX_TESTS=1 with codex installed to run this"/>'
+        '</testcase>'
+    )
+    report.write_text(f"<testsuite>{executed}{macos}{provider}</testsuite>")
+    check_pytest(report, ["tests/unit/test_one.py", "tests/unit/test_skill_guard_macos.py"])
+    output = capsys.readouterr().out
+    assert (
+        "Mac proof unavailable on Linux: tests.unit.test_skill_guard_macos."
+        "test_macos_directory_descriptor_resolves_private_and_protected_paths: "
+        "macOS F_GETPATH descriptor proof"
+    ) in output
+    assert "1 executed, 1 provider opt-ins, 1 unavailable Mac proofs" in output
+
+    report.write_text(f"<testsuite>{macos}{provider}</testsuite>")
+    with pytest.raises(ValueError, match="supplied no default coverage"):
+        check_pytest(report, ["tests/unit/test_skill_guard_macos.py"])
+
+
+@pytest.mark.parametrize(("platform", "module", "name", "reason"), [
+    (
+        "darwin", "tests.unit.test_skill_guard_macos",
+        "test_macos_directory_descriptor_resolves_private_and_protected_paths",
+        "macOS F_GETPATH descriptor proof",
+    ),
+    (
+        "linux", "tests.unit.test_skill_guard_macos_extra",
+        "test_macos_directory_descriptor_resolves_private_and_protected_paths",
+        "macOS F_GETPATH descriptor proof",
+    ),
+    (
+        "linux", "tests.unit.test_skill_guard_macos.TestProof",
+        "test_macos_directory_descriptor_resolves_private_and_protected_paths",
+        "macOS F_GETPATH descriptor proof",
+    ),
+    (
+        "linux", "tests.unit.test_skill_guard_macos",
+        "test_macos_directory_descriptor_resolves_private_and_protected_paths_extra",
+        "macOS F_GETPATH descriptor proof",
+    ),
+    (
+        "linux", "tests.unit.test_skill_guard_macos",
+        "test_macos_directory_descriptor_resolves_private_and_protected_paths",
+        "a different skip reason",
+    ),
+])
+def test_pytest_report_refuses_any_other_macos_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    platform: str, module: str, name: str, reason: str,
+) -> None:
+    monkeypatch.setattr("scripts.deployment_check_report.sys", SimpleNamespace(platform=platform))
+    report = tmp_path / "pytest.xml"
+    report.write_text(
+        '<testsuite><testcase classname="tests.unit.test_one" name="ok"/>'
+        f'<testcase classname="{module}" name="{name}">'
+        f'<skipped message="{reason}"/></testcase></testsuite>'
+    )
+    with pytest.raises(ValueError, match="unexpected required skip"):
         check_pytest(report, ["tests/unit/test_one.py"])
 
 

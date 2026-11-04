@@ -8,6 +8,7 @@ extension needs a uniquely named leaf library. No host cache can supply that lea
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,8 @@ from planner.environments.runtime_elf import ElfDynamic, ElfObject, read_dynamic
 
 @pytest.fixture
 def compiler() -> str:
+    if sys.platform == "darwin":
+        pytest.skip("Real loader proof requires Linux ELF/glibc")
     compiler = shutil.which("cc")
     assert compiler is not None, "real ELF loader checks require a C compiler"
     assert shutil.which("readelf") is not None, "real ELF loader checks require readelf"

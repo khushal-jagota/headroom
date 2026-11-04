@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from planner.tickets.contracts import TicketLocale
+
 
 class PreviewError(Exception):
     def __init__(self, message: str, status_code: int = 409) -> None:
@@ -55,3 +57,4 @@ class TicketEligibility:
     ticket_id: str
     project_folder: Path | None
     terminal: bool
+    locale: TicketLocale = TicketLocale.vps

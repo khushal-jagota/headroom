@@ -8,7 +8,9 @@ from planner.conversation.contracts import (
     ConversationMessageContent,
     ConversationSystem,
     ConversationTurnReference,
+    NativeMessageOperation,
     PromptDeliveryMode,
+    PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
@@ -172,6 +174,7 @@ async def send_message(
     expects_reply: bool = True,
     system_message: bool = False,
     admission: MessageAdmission | None = None,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> MessageDeliveryResult:
     """Send one text message to one resolved Panels conversation owner.
 
@@ -235,6 +238,7 @@ async def send_message(
                 recipient=recipient,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                recording_receipt=recording_receipt,
             )
         return MessageDeliveryResult(recipient, sending_into, MessageRecordedToOwner())
 
@@ -271,6 +275,7 @@ async def send_message(
                     recipient=recipient,
                     reply_requested=not system_message and expects_reply and not is_reply,
                     now=clock.now_unix(),
+                    recording_receipt=recording_receipt,
                 )
         elif recipient.kind is PrincipalKind.chief:
             async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):
@@ -306,6 +311,7 @@ async def send_message(
                     sender=sender,
                     recipient=recipient,
                     reply_requested=not system_message and expects_reply and not is_reply,
+                    recording_receipt=recording_receipt,
                 )
         elif recipient.kind is PrincipalKind.goal:
             from planner.goals.conversation import deliver_goal_message
@@ -347,6 +353,21 @@ async def send_message(
                         if runs_under is NO_CONVERSATION_START_OVERRIDES
                         else conversation_start.manager_resolve(conn, item, runs_under)
                     )
+                    explicit_choice = (
+                        runs_under.backend_key is not None
+                        or runs_under.model is not None
+                        or runs_under.reasoning_effort is not None
+                        or runs_under.reasoning_effort_is_set
+                    )
+                    if explicit_choice:
+                        from planner.managers.launch_settings import validate_launch_configuration
+
+                        validate_launch_configuration(
+                            conn,
+                            item.manager_launch_configuration.__class__(
+                                resolved.backend_key, resolved.model, resolved.reasoning_effort
+                            ),
+                        )
                     delivered = await conversation_start.send_to_agent_conversation(
                         conversations,
                         conn,
@@ -371,16 +392,15 @@ async def send_message(
                         reply_requested=not system_message and expects_reply and not is_reply,
                         required_manager_id=item_id,
                         retain_created_conversation=retain_created_conversation,
+                        recording_receipt=recording_receipt,
                     )
                     if caller.kind is PrincipalKind.owner and (
                         (current is None and delivered.conversation_id is not None)
                         or (
-                            isinstance(delivered.fate, PromptDeliveryStarted)
-                            and (
-                                runs_under.backend_key is not None
-                                or runs_under.model is not None
-                                or runs_under.reasoning_effort is not None
+                            isinstance(
+                                delivered.fate, (PromptDeliveryStarted, PromptDeliveryQueued)
                             )
+                            and explicit_choice
                         )
                     ):
                         managers_data.update_manager_launch_configuration(
@@ -394,6 +414,7 @@ async def send_message(
                             principal=caller,
                             clock=clock,
                             expected_configuration=item.manager_launch_configuration,
+                            explicit_choice=explicit_choice,
                         )
         else:
             raise PlannerError(
@@ -418,6 +439,7 @@ async def send_message(
         source_turn is not None
         and not isinstance(delivered.fate, (PromptDeliveryRefused, PromptDeliverySuppressed))
         and delivered.newly_accepted
+        and (recording_receipt is None or recording_receipt.composed_confirmed)
     ):
         await conversations.record_explicit_reply(source_turn, recipient)
     return result

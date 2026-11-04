@@ -28,8 +28,6 @@ refresh_projection = _state_barriers["refresh_projection"]
 
 def run(browser, urls):
     url = urls[0]
-    verify_owner_updates(browser, url)
-    verify_conversation_overlay(browser, url)
     # Enough Worker types that the Config index is taller than the pane.
     worker_types = [
         "amend_worker", "coding", "debugging", "exploration", "general",
@@ -61,11 +59,21 @@ def run(browser, urls):
 
     fold = {"enabled": False, "count": 3, "overflow": False, "active_count": 1, "release_sha": "fixture-boot"}
     card_fixture = {"enabled": False}
+    artifact_owner = {"id": "t_fixture", "title": "Wide artifact owner", "worker_type": "coding",
+                      "conversation_id": None, "locale": "vps"}
     fixture = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
 
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        # The standalone artifact resolves its owner and launch settings. Keep these
+        # exact: an unrelated ticket read must still fail this case's request guard.
+        if route.request.method == "GET" and path == "/api/tickets" and parse_qs(parts.query) == {"detail": ["full"], "id": [artifact_owner["id"]]}:
+            route.fulfill(json=artifact_owner)
+            return
+        if route.request.method == "GET" and path == "/api/tickets/t_fixture/conversation/start-values" and not parts.query:
+            route.fulfill(json={"backend_key": "codex", "model": None, "reasoning_effort": None})
+            return
         if (fold["enabled"] or card_fixture["enabled"]) and path == "/api/navigation/view/snapshot":
             board = {"managers": [
                 {"id": f"fold_{index}", "title": ("Settled" + "UnbrokenTitle" * 12) if fold["overflow"] else f"Settled fixture {index}", "created_at": index + 1,
@@ -82,14 +90,29 @@ def run(browser, urls):
             if card_fixture["enabled"]:
                 board = card_fixture["board"]
             source = fixture["navigation_response"](board, {"chief_of_staff": card_fixture.get("chief", {"label": "Chief"})})
+            source["snapshot"]["records"].extend(
+                {"kind": "goal", "id": goal["id"], "value": {key: goal[key] for key in (
+                    "title", "conversation_id", "active", "completed", "created_at", "updated_at")}}
+                for goal in card_fixture.get("goals", [])
+            )
             view = json.loads(parse_qs(parts.query)["view"][0])
             route.fulfill(json=fixture["scoped_navigation_response"](source, view))
+            return
+        if any(path in (f"/api/tickets/{identity}/workspace", f"/api/tickets/{identity}/conversation/start-values")
+               for identity in card_fixture.get("rail_only_tickets", [])):
+            # This proof selects actual rail controls. The unrelated ticket pane
+            # is deliberately refused, as this case refuses other unused sources.
+            route.fulfill(status=503, json={"error": {"code": "fixture", "message": "Rail selection proof only"}})
             return
         if path == "/api/recap-requests" and card_fixture.get("recap_worker"):
             assert route.request.post_data_json == {"target": {"kind": "ticket", "id": card_fixture["recap_worker"]["id"]}}
             card_fixture["recap_worker"]["recap"] = ""
             card_fixture["recap_requests"] = card_fixture.get("recap_requests", 0) + 1
             route.fulfill(json={"fate": "started"})
+            return
+        if path.startswith("/api/goals/") and card_fixture.get("goals"):
+            route.fulfill(json={"backend_key": "codex", "model": None, "reasoning_effort": None}
+                          if path.endswith("/conversation/start-values") else card_fixture["goals"][0])
             return
         if path.startswith("/api/vps-metrics/"):
             metrics_calls.append(path)
@@ -99,13 +122,21 @@ def run(browser, urls):
         if path == "/api/resource-body":
             # Versioned reads arrive wrapped. The screen only needs the body.
             key = parse_qs(parts.query).get("key", [""])[0]
+            if key in {f"/api/tickets/{identity}/workspace" for identity in card_fixture.get("rail_only_tickets", [])}:
+                route.fulfill(status=503, json={"error": {"code": "fixture", "message": "Rail selection proof only"}})
+                return
             inner = {
-                "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
+                "/api/goals": {"goals": card_fixture.get("goals", []), "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
                 "/api/feedback/count": {"open_count": 0},
                 "/api/deployment-status": {"state": "preparing", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))},
             }.get(key)
+            if key == "/api/projects" and card_fixture.get("goals"):
+                inner = {"projects": []}
+            if key.startswith("/api/goals/") and card_fixture.get("goals"):
+                inner = {"goal_id": card_fixture["goals"][0]["id"], "values": [], "charts": {}, "sources": [],
+                         "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400} if key.endswith("/readings") else card_fixture["goals"][0]
             if inner is None:
                 unexpected.append(key)
                 route.fulfill(status=503, json={"error": {"code": "fixture", "message": key}})
@@ -264,7 +295,12 @@ def run(browser, urls):
     page.route("**/files/tickets/t_fixture/artifacts/wide.html", lambda route: route.fulfill(
         content_type="text/html", body="<html><body style='width:3000px;height:3000px'>Wide artifact</body></html>"))
     page.evaluate("location.hash='#/preview?source=ticket&ticket=t_fixture&path=artifacts%2Fwide.html'")
-    expect(pane.locator('[data-file-preview-route] iframe')).to_be_visible()
+    preview = pane.locator('[data-file-preview-route]')
+    expect(preview.locator('iframe')).to_be_visible()
+    expect(preview.locator('[data-artifact-recipient]')).to_have_text("Message Wide artifact owner")
+    expect(preview.locator('[data-conversation-pane]')).to_have_attribute("data-conversation-state", "rest")
+    expect(preview.get_by_placeholder("Message Wide artifact owner...", exact=True)).to_be_visible()
+    expect(preview.locator('[data-artifact-owner-unavailable]')).to_have_count(0)
     assert rail.evaluate("node => node === window.__persistentRail")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     bounds = pane.bounding_box()
@@ -321,11 +357,14 @@ def run(browser, urls):
     fold["enabled"] = True
     verify_settled_fold(page, url, fold, evidence)
     verify_rail_overflow(page, fold, evidence)
+    verify_selection_washes(page, url, card_fixture, evidence)
     capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
+    verify_owner_updates(browser, url)
+    verify_conversation_overlay(browser, url)
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
@@ -1721,21 +1760,53 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         assert page.evaluate("document === window.__navigationDocument")
         navigation_seconds = time.perf_counter() - health_started
         if not problem_only:
-            # A live connection must still disclose an expired runner record. Then the
-            # normal update controls return through the existing contentless change signal.
+            # Notice priority must not hide an eligible update or reset an owner decision.
+            # Reuse the mounted shell and real update routes, without another host.
             recovery = "Installation is unconfirmed. Work remains paused. Chief review is required."
             deployment.update(state="unknown", detail=recovery, installation_confirmed=False)
             signal()
             expect(card.locator(".deployment-detail")).to_have_text(recovery)
             expect(card.locator(".deployment-detail")).to_have_count(1)
             expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_be_visible()
+            expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
+            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
             page.screenshot(path=str(evidence / "installation-unconfirmed.png"))
+            # Unknown notices do not weaken release eligibility.
+            for unavailable in (None, replace(offered, expires_at="2000-01-01T00:00:00Z")):
+                backend.provider.offered = unavailable
+                backend.service.refresh_available(force=True)
+                signal()
+                expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
+                expect(card.get_by_role("button", name="Update when idle", exact=True)).to_have_count(0)
+                expect(card.locator(".deployment-detail")).to_have_text(recovery)
+            backend.provider.offered = offered
+            backend.service.refresh_available(force=True)
+            backend.service.provider = None
+            signal()
+            expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
+            backend.service.provider = backend.provider
+            signal()
+            before_notice_posts = len(posts)
+            card.get_by_role("button", name="Start update", exact=True).click()
+            expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+            for state in ("preparing", "restarting"):
+                deployment.update(state=state, valid_until="2000-01-01T00:00:00Z")
+                signal()
+                expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_be_visible()
+                expect(card.locator(".deployment-detail")).to_be_visible()
+                expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+            assert len(posts) == before_notice_posts
+            page.screenshot(path=str(evidence / "expired-notice-with-confirmation.png"))
+            deployment.update(state="unknown")
             installed = "The requested app is installed and available. Its final report is unconfirmed. No action is needed from you."
             deployment.update(installation_confirmed=True, detail=installed,
                               unknown_display_until="2099-01-01T00:00:00Z")
             signal()
             expect(card.locator(".deployment-detail")).to_have_text(installed)
             expect(card.locator(".deployment-detail")).to_have_count(1)
+            expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+            card.get_by_role("button", name="Go back", exact=True).click()
+            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
             page.screenshot(path=str(evidence / "installed-report-unconfirmed.png"))
             deployment.update(unknown_display_until="2020-01-01T00:00:00Z")
             signal()
@@ -2220,3 +2291,217 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     proof["seconds"] = round(time.perf_counter() - started, 3)
     (evidence / 'recap-floor-geometry.json').write_text(json.dumps(proof, indent=2))
     print('RECAP_FLOOR_PROOF ' + json.dumps({"seconds": proof["seconds"], "sessions": proof["sessions"]}), flush=True)
+
+
+def verify_selection_washes(page, url, fixture, evidence):
+    """Real layout/WAAPI is necessary to prove washes follow transformed rows.
+
+    Reuse the App host and mocked navigation source. No backend or new host.
+    Existing cases cover popup content/delays, touch hold, and phone navigation.
+    """
+    started = time.perf_counter()
+    one = {"id": "wash_one", "manager_id": "wash_a", "title": "Build the selected rail row",
+           "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent"}
+    two = {**one, "id": "wash_two", "title": "Review the matching geometry", "awaiting_approval": True}
+    fixture.update(enabled=True, rail_only_tickets=["wash_one", "wash_two"], board={"managers": [
+        {"id": "wash_a", "title": "Build the two-tier selection washes in the Workspace rail", "project": "Panels", "project_id": "wash_project", "created_at": 1, "tickets": [one, two]},
+        {"id": "wash_b", "title": "A second selected group", "created_at": 2, "tickets": []},
+        {"id": "wash_settled", "title": "A settled selection", "created_at": 3, "settled": True, "tickets": []},
+    ]}, chief={"label": "Chief of Staff"})
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.emulate_media(reduced_motion="no-preference")
+    page.mouse.move(1300, 950)
+    page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
+    page.reload(wait_until="domcontentloaded")
+    row = page.locator('.worker-row[data-ticket-id="wash_one"]')
+    expect(row).to_be_visible()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    # Warm the intended selected route before any frame-level checks.
+    page.locator('[data-manager="wash_a"] .item-head').click()
+    page.mouse.move(1300, 950)
+    page.wait_for_timeout(350)
+    page.evaluate("""() => {
+      window.__washProof=[];
+      window.__washSample=selector=>{
+        const target=document.querySelector(selector);
+        if(!target)return {missing:true};
+        const rect=n=>{if(!n)return null;const r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
+        const host=target.closest('.active-work-scroll,.settled-body,.rail-utilities');
+        const group=target.closest('.manager-card');
+        const item=host.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
+        const context=host.querySelector('.rail-wash--group:not(.rail-wash--leaving)');
+        return {target:rect(target.closest('.settled-row')??target),group:rect(group),item:rect(item),context:rect(context),
+          itemHidden:item.hidden,contextHidden:context.hidden,
+          targetBackground:getComputedStyle(target).backgroundColor,targetOutline:getComputedStyle(target).outlineStyle,
+          itemBackground:getComputedStyle(item).backgroundColor,itemOpacity:+getComputedStyle(item).opacity,
+          reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,
+          motionWash:getComputedStyle(host).getPropertyValue('--motion-wash'),
+          moving:!!target.closest('.rail-moving,.rail-travelling,.rail-travelling-card'),
+          effects:document.getAnimations().filter(a=>a.effect?.target?.classList?.contains('rail-wash')&&a.playState==='running').length};
+      };
+      window.__washCapture=selector=>{
+        const frames=[],start=performance.now();
+        window.__washProof.push({selector,frames});
+        window.__washDone=false;
+        const take=()=>{frames.push({ms:performance.now()-start,...window.__washSample(selector)});
+          if(performance.now()-start<720)requestAnimationFrame(()=>setTimeout(take,0));else window.__washDone=true;};
+        // Sample after frame callbacks, so the wash controller paints before measurement.
+        requestAnimationFrame(()=>setTimeout(take,0));
+      };
+    }""")
+    samples = []
+
+    def sample(selector):
+        return page.evaluate("selector=>window.__washSample(selector)", selector)
+
+    def aligned(frame, grouped=True):
+        assert not frame["itemHidden"], frame
+        target, wash = frame["target"], frame["item"]
+        assert abs(target["y"] - wash["y"]) < 1.6 and abs(target["height"] - wash["height"]) < 1.6, frame
+        if grouped:
+            group = frame["group"]
+            assert abs(wash["x"] - group["x"] - 4) < 1.6, frame
+            assert abs(wash["width"] - group["width"] + 8) < 1.6, frame
+            assert not frame["contextHidden"], frame
+        else:
+            assert frame["contextHidden"], frame
+        assert frame["itemBackground"] == "rgb(44, 44, 44)", frame
+
+    def capture(name, selector, change):
+        page.evaluate("selector=>window.__washCapture(selector)", selector)
+        change()
+        page.wait_for_timeout(70)
+        page.screenshot(path=str(evidence / f"selection-wash-{name}-midpoint.png"))
+        page.wait_for_function("window.__washDone")
+        frames = page.evaluate("window.__washProof.at(-1).frames")
+        samples.append({"name": name, "frames": frames})
+        (evidence / 'selection-wash-frames.json').write_text(json.dumps(samples, indent=2))
+        return frames
+
+    selector = '.worker-row[data-ticket-id="wash_one"]'
+    for width in [232, 520]:
+        grip = page.get_by_role('separator', name='Resize workspace panel')
+        grip.focus()
+        for _ in range(20):
+            page.keyboard.press('Shift+ArrowLeft' if width == 232 else 'Shift+ArrowRight')
+        expect(grip).to_have_attribute('aria-valuenow', str(width))
+        row.click()
+        page.mouse.move(1300, 950)
+        page.wait_for_timeout(350)
+        frame = sample(selector)
+        aligned(frame)
+        assert all(abs(frame['context'][key] - frame['group'][key]) < 1.6 for key in ['x', 'y', 'width', 'height']), frame
+        page.screenshot(path=str(evidence / f'selection-wash-rail-{width}.png'))
+
+    frames = capture('within-group', '.worker-row[data-ticket-id="wash_two"]', lambda: page.locator('.worker-row[data-ticket-id="wash_two"]').evaluate('node=>node.click()'))
+    travel = [f['item']['y'] for f in frames if not f.get('missing')]
+    assert max(travel) - min(travel) > 5, frames
+    assert len({round(y, 1) for y in travel}) > 3, frames
+    assert any(100 <= f['ms'] < 200 and abs(f['item']['y'] - f['target']['y']) > 1 for f in frames), frames
+    assert all(abs(f['item']['y'] - f['target']['y']) < 1.6 for f in frames if f['ms'] >= 350), frames
+    aligned(frames[-1])
+    frames = capture('deepen', '[data-manager="wash_b"] .item-head', lambda: page.locator('[data-manager="wash_b"] .item-head').evaluate('node=>node.click()'))
+    context_y = [f['context']['y'] for f in frames if not f['contextHidden']]
+    assert len({round(y, 1) for y in context_y}) > 3, frames
+    assert any(f['itemOpacity'] < .95 for f in frames), frames
+    page.screenshot(path=str(evidence / 'selection-wash-deepen-final.png'))
+
+    # The selected row changes bucket while its real WAAPI transform moves it.
+    row.evaluate('node=>node.click()')
+    page.wait_for_timeout(300)
+    page.mouse.move(1300, 950)
+    def move_bucket():
+        one['awaiting_approval'] = True
+        page.evaluate('void window.__refreshNavigation()')
+    frames = capture('selected-row-bucket-move', selector, move_bucket)
+    moving = [f for f in frames if f.get('moving')]
+    assert len(moving) > 3, frames
+    assert max(f['target']['y'] for f in moving) - min(f['target']['y'] for f in moving) > 5, frames
+    for frame in moving:
+        aligned(frame)
+        # The moving row must not paint an opaque surface over its wash.
+        assert frame['targetBackground'] == 'rgba(0, 0, 0, 0)' and frame['targetOutline'] == 'none', frame
+    aligned(frames[-1])
+    page.screenshot(path=str(evidence / 'selection-wash-bucket-final.png'))
+
+    # Decorative space does not navigate. Only the complete head identity selects.
+    before = page.evaluate('location.hash')
+    page.locator('[data-manager="wash_a"] .bucket-label').first.click()
+    assert page.evaluate('location.hash') == before
+    page.locator('[data-manager="wash_a"] .manager-eyebrow > span').click()
+    expect(page.locator('[data-manager="wash_a"] .item-head')).to_have_attribute('aria-current', 'page')
+    page.mouse.move(1300, 950)
+    row.hover()
+    expect(page.locator('[data-manager="wash_a"] .settle')).to_have_css('opacity', '0')
+    hover = page.locator('.active-work-scroll > .rail-wash--hover:not(.rail-wash--leaving)')
+    expect(hover).not_to_have_attribute('hidden', '')
+    row.click()
+    page.mouse.move(1300, 950)
+    page.wait_for_timeout(450)
+    expect(hover).to_have_attribute('hidden', '')
+    page.keyboard.press("Tab")
+    row.focus()
+    page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
+    ring = page.locator('.active-work-scroll > .rail-wash--focus')
+    expect(ring).not_to_have_attribute('hidden', '')
+    expect(row).to_have_css('outline-style', 'none')
+    ring_box, item_box = ring.bounding_box(), sample(selector)['item']
+    assert ring_box and all(abs(ring_box[key] - item_box[key]) < 1.6 for key in ['x', 'y', 'width', 'height']), (ring_box, item_box)
+    page.screenshot(path=str(evidence / 'selection-wash-keyboard.png'))
+
+    # Goals use the same selected-row geometry inside Chief, before its Workers.
+    goal = {"id": "wash_goal", "title": "Ship the rail", "active": True, "completed": False,
+            "kind": "binary", "conversation_id": None, "created_at": 1, "updated_at": 1,
+            "project_id": None, "why": "", "deadline": None, "primary_chart": None,
+            "primary_checklist_block_id": None, "revision": 0, "status": "neutral",
+            "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400,
+            "employee_backend": "codex", "employee_launch_model": "", "employee_launch_reasoning_effort": None,
+            "page": {"kind": "headroom.page", "version": 1, "title": "Approach", "summary": "", "blocks": []}}
+    fixture["goals"] = [goal]
+    sampler = page.evaluate("window.__washSample.toString()")
+    page.reload(wait_until="domcontentloaded")
+    page.evaluate("code=>window.__washSample=eval('('+code+')')", sampler)
+    goal_row = page.locator('[data-goal-id="wash_goal"]')
+    expect(goal_row).to_be_visible()
+    goal_row.click()
+    page.mouse.move(1300, 950)
+    page.wait_for_timeout(350)
+    aligned(sample('[data-goal-id="wash_goal"]'))
+    fixture["goals"] = []
+
+    # Ungrouped selections have one strong wash and no context wash.
+    page.locator('.settled-head').click()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    settled_selector = '[data-settled-item="wash_settled"] .settled-title'
+    page.locator(settled_selector).click()
+    page.mouse.move(1300, 950)
+    page.wait_for_timeout(350)
+    aligned(sample(settled_selector), grouped=False)
+    page.locator('.rail-utilities [aria-label="Settings"]').click()
+    page.wait_for_timeout(350)
+    aligned(sample('.rail-utilities [aria-label="Settings"]'), grouped=False)
+
+    # Rapid reversal cannot leave a stale target or fading ghost behind.
+    page.evaluate("""async () => {
+      document.querySelector('.worker-row[data-ticket-id="wash_one"]').click();
+      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+      document.querySelector('[data-manager="wash_b"] .item-head').click();
+      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+      document.querySelector('.worker-row[data-ticket-id="wash_two"]').click();
+    }""")
+    page.wait_for_timeout(450)
+    aligned(sample('.worker-row[data-ticket-id="wash_two"]'))
+    expect(page.locator('.rail-wash--leaving')).to_have_count(0)
+    page.emulate_media(reduced_motion='reduce')
+    row.evaluate('node=>node.click()')
+    page.evaluate('() => new Promise(requestAnimationFrame)')
+    frame = sample(selector)
+    aligned(frame)
+    assert frame['effects'] == 0, frame
+    page.screenshot(path=str(evidence / 'selection-wash-reduced.png'))
+    page.emulate_media(reduced_motion='no-preference')
+    (evidence / 'selection-wash-proof.json').write_text(json.dumps({
+        'seconds': round(time.perf_counter() - started, 3), 'newHosts': 0,
+        'boundary': 'Real App layout and WAAPI with existing mocked navigation source',
+        'samples': samples,
+    }, indent=2))

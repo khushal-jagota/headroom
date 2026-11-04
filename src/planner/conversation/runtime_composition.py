@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, closing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,8 +22,6 @@ from planner.conversation.lifecycle_storage import (
 )
 from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.data import ModelResolutionStore
-from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.conversation.publication import persistence
 from planner.conversation.publication.coordinator import (
     SignalGuardLease,
@@ -98,7 +96,11 @@ class SignalRuntimeComposition:
     def connect(self) -> ChangeSignallingConnection:
         return _managed(connect(self.db_path, self.busy_timeout_ms))
 
-    def bootstrap(self) -> None:
+    def bootstrap(
+        self,
+        *,
+        startup_audit: Callable[[sqlite3.Connection], None] | None = None,
+    ) -> None:
         if self.ownership is not None or self._closed:
             raise RuntimeError("Signal bootstrap is single use")
         self.ownership = acquire_runtime_ownership(self.db_path)
@@ -120,7 +122,9 @@ class SignalRuntimeComposition:
             )
             with self.coordinator.bootstrap_authority(self.ownership) as bootstrap:
                 with closing(self.connect()) as connection:
-                    create_schema(connection, migration_admission=bootstrap)
+                    create_schema(
+                        connection, migration_admission=bootstrap, startup_audit=startup_audit
+                    )
                     with bind_admission(connection, bootstrap):
                         connection.execute("BEGIN IMMEDIATE")
                         try:
@@ -177,7 +181,6 @@ class ConversationRuntime:
     message_files: ConversationMessageFiles
     database_path: str
     sse_heartbeat_ms: int
-    model_resolution: ModelResolutionService | None = None
     backend_state: BackendStateStore | None = None
     # Absent when this process has no backend that can start a sign-in. The routes say
     # so rather than pretending the affordance exists.
@@ -240,11 +243,6 @@ def build_conversation_runtime(
     )
 
     backend_state = BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
-    model_resolution = ModelResolutionService(
-        snapshots=backend_snapshots,
-        store=ModelResolutionStore(db_path, busy_timeout_ms=db_busy_timeout_ms),
-        backend_state=backend_state,
-    )
 
     async def codex_app_server_argv() -> tuple[str, ...] | None:
         """How to run a codex app-server here, read when a sign-in starts, not at boot.
@@ -261,7 +259,7 @@ def build_conversation_runtime(
         backend_child_factories=backend_child_factories,
         message_files=message_files,
         live_tail=live_tail,
-        model_resolver=model_resolution,
+        backend_snapshots=backend_snapshots,
         runtime_ownership=None if signal_composition is None else signal_composition.ownership,
     )
     if signal_composition is not None:
@@ -289,7 +287,6 @@ def build_conversation_runtime(
         database_path=db_path,
         sse_heartbeat_ms=sse_heartbeat_ms,
         backend_state=backend_state,
-        model_resolution=model_resolution,
         codex_sign_in=CodexSignInService(
             resolve_argv=codex_app_server_argv,
             remembered_login_rejection=remembered_codex_login_rejection,

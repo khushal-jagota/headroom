@@ -28,7 +28,6 @@ COMMAND_ROUTES = (
         "/tickets/{ticket_id}/request-help",
         "/tickets/{ticket_id}/backlog",
         "/tickets/{ticket_id}/resume",
-        "/tickets/{ticket_id}/move",
     ),
     *_routes("PATCH", "Ticket navigation metadata", "/tickets/{ticket_id}"),
     *_routes("DELETE", "Ticket removal", "/tickets/{ticket_id}"),
@@ -48,6 +47,12 @@ COMMAND_ROUTES = (
         "/projects/{project_id}",
     ),
     *_routes("DELETE", "Manager removal", "/managers/{item_id}", "/items/{item_id}"),
+    *_routes(
+        "PUT",
+        "An individual Manager launch choice updates its navigation timestamp",
+        "/managers/{item_id}/launch-defaults",
+        "/items/{item_id}/launch-defaults",
+    ),
     *_routes(
         "PUT",
         "Navigation collection membership",
@@ -91,11 +96,6 @@ COMMAND_ROUTES = (
     ),
     *_routes("POST", "Worker definition registry", "/worker-types"),
     *_routes(
-        "POST",
-        "Corrections of existing navigation-affecting launch bindings",
-        "/conversation/model-corrections/apply",
-    ),
-    *_routes(
         "PUT", "Worker definitions and launch bindings", "/workers/{worker_type}/launch-defaults"
     ),
     *_routes("PATCH", "Worker definition requirements", "/workers/{worker_type}/requirements"),
@@ -114,6 +114,12 @@ def is_navigation_command(method: str, path: str) -> bool:
 # Exact exclusions make a new write route an explicit review decision. These
 # operations do not change the current navigation source record contract.
 EXCLUDED_COMMAND_ROUTES = (
+    *_routes(
+        "PUT",
+        "Prospective Manager defaults do not change any current navigation record",
+        "/managers/launch-defaults",
+        "/items/launch-defaults",
+    ),
     *_routes(
         "PUT",
         "Chief recap is dedicated content, outside navigation records",
@@ -150,7 +156,7 @@ EXCLUDED_COMMAND_ROUTES = (
         "POST",
         "Backend catalogue, usage and login configuration",
         "/conversation/backends/refresh",
-        "/conversation/model-corrections/preview",
+        "/conversation/backends",
         "/conversation/usage/refresh",
         "/conversation/backends/{backend_key}/update",
         "/conversation/backends/{backend_key}/sign-in",

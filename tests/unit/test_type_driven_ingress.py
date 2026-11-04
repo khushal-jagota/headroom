@@ -38,7 +38,7 @@ from planner.core import authority
 from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import OWNER_PRINCIPAL
+from planner.core.contracts import OWNER_PRINCIPAL, PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
@@ -317,3 +317,41 @@ def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> 
                 .fetchone()[0]
             ).hexdigest()
         assert before == after
+
+
+def test_ticket_fingerprint_tracks_integrity_marks_and_clearance_without_admitting_writes(
+    tmp_db: Connection,
+) -> None:
+    ticket = tickets_data.create_ticket(
+        tmp_db, title="Integrity identity", worker_type="coding", brief="k",
+        principal=OWNER_PRINCIPAL, now=1, title_max_chars=TITLE_MAX_CHARS,
+    )
+    tmp_db.set_authorizer(_deny_retired_ticket_guidance)
+    clean_hash = tickets_data.ticket_record_sha256(tmp_db, ticket.id)
+    tmp_db.execute(
+        "UPDATE tickets SET integrity_error_reason=? WHERE id=?", ("first fault", ticket.id)
+    )
+    tmp_db.commit()
+    marked_hash = tickets_data.ticket_record_sha256(tmp_db, ticket.id)
+    assert marked_hash != clean_hash
+    with pytest.raises(PlannerError, match="Ticket integrity failure"):
+        tickets_data.set_ticket_backlog(
+            tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
+            expected_record_sha256=marked_hash,
+        )
+    tmp_db.execute(
+        "UPDATE tickets SET integrity_error_reason=? WHERE id=?", ("changed fault", ticket.id)
+    )
+    tmp_db.commit()
+    changed_hash = tickets_data.ticket_record_sha256(tmp_db, ticket.id)
+    assert changed_hash not in {clean_hash, marked_hash}
+    tmp_db.execute("UPDATE tickets SET integrity_error_reason=NULL WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    assert tickets_data.ticket_record_sha256(tmp_db, ticket.id) == clean_hash
+    for stale_hash in (marked_hash, changed_hash):
+        with pytest.raises(PlannerError, match="the Ticket changed"):
+            tickets_data.set_ticket_backlog(
+                tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
+                expected_record_sha256=stale_hash,
+            )
+    assert not tickets_data.read_ticket(tmp_db, ticket.id).is_backlogged

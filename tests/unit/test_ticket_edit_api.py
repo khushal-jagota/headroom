@@ -9,7 +9,6 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.probe import seed_probe_worker_type
 
@@ -39,7 +38,7 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     # The probe Worker type is stored like any other, so the app reads it from here.
     seed_probe_worker_type(boot)
     load_worker_runtime_definitions(boot)
-    seed_test_model_catalogue(boot)
+
     boot.commit()
     boot.close()
     config = load_config(

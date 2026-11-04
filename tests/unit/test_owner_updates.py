@@ -6,6 +6,7 @@ Reuse existing conversation/deployment fakes. No new host or browser is necessar
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,6 +20,7 @@ from tests.unit.test_deployment import SHA_A, SHA_B, FakeHealth, FakeService, _a
 
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.message_content import text_message_content
+from planner.core.db import connect
 from planner.core.errors import PlannerError
 from planner.core.server import handle_planner_error
 from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
@@ -67,7 +69,10 @@ def test_named_agents_remain_refused_through_hosted_ingress(tmp_path: Path) -> N
     app.add_exception_handler(PlannerError, handle_planner_error)
     app.include_router(router, prefix="/api")
     app.state.updates = UpdateService(
-        Provider(), FileUpdateRequestStore(tmp_path / "request.json"), lambda: None
+        Provider(),
+        FileUpdateRequestStore(tmp_path / "request.json"),
+        lambda: None,
+        connection_factory=lambda: connect(str(tmp_path / "unused.db")),
     )
     app.add_middleware(
         TrustedIngressMiddleware,
@@ -100,7 +105,12 @@ def test_pinned_request_survives_new_publication_and_cannot_be_claimed_after_can
 ) -> None:
     provider = Provider()
     store = FileUpdateRequestStore(tmp_path / "request.json")
-    service = UpdateService(provider, store, lambda: cast(ConversationSystem, harness.system))
+    service = UpdateService(
+        provider,
+        store,
+        lambda: cast(ConversationSystem, harness.system),
+        connection_factory=lambda: connect(str(harness.db_path)),
+    )
     request = service.request(provider.offered, "idle", confirm_activity=False)
     provider.offered = replace(provider.offered, artifact_id=99)
     assert service.dispatch_pending()
@@ -123,7 +133,12 @@ def test_idle_claim_rechecks_new_send_and_now_claim_does_not_wait_for_backend(
         await _start(harness, "second")
         provider = Provider()
         store = FileUpdateRequestStore(tmp_path / "request.json")
-        service = UpdateService(provider, store, lambda: cast(ConversationSystem, harness.system))
+        service = UpdateService(
+            provider,
+            store,
+            lambda: cast(ConversationSystem, harness.system),
+            connection_factory=lambda: connect(str(harness.db_path)),
+        )
         request = service.request(provider.offered, "idle", confirm_activity=False)
         assert service.dispatch_pending()
         first = harness.backend("first")
@@ -153,6 +168,65 @@ def test_idle_claim_rechecks_new_send_and_now_claim_does_not_wait_for_backend(
             await _start(harness, "too-late")
         first.writes_wait_for_release.set()
         await sending
+
+    _run(exercise)
+
+
+def test_invalid_finished_ticket_refuses_claim_and_keeps_workspace_open(
+    tmp_path: Path,
+    harness: _Harness,  # noqa: F811
+) -> None:
+    # Existing admission tests cover activity races, but not a database that fails startup.
+    provider = Provider()
+    store = FileUpdateRequestStore(tmp_path / "request.json")
+    service = UpdateService(
+        provider,
+        store,
+        lambda: cast(ConversationSystem, harness.system),
+        connection_factory=lambda: connect(str(harness.db_path)),
+    )
+    connection = connect(str(harness.db_path))
+    try:
+        connection.execute(
+            "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
+            "field_values,created_at,updated_at,ceiling_holder) "
+            "VALUES ('finished','Finished Ticket','coding','codex','done','removed_stage',"
+            "'{}',1,1,?)",
+            (json.dumps({"kind": "chief", "id": "chief"}),),
+        )
+    finally:
+        connection.close()
+    request = service.request(provider.offered, "idle", confirm_activity=False)
+    assert service.dispatch_pending()
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    app.state.updates = service
+    app.state.update_admission_closed = False
+    with TestClient(app) as client:
+        response = client.post(f"/api/updates/requests/{request.request_id}/claim")
+        assert response.status_code == 409
+        assert "finished" in response.json()["detail"]
+        assert "ceiling outside the type's range" in response.json()["detail"]
+        assert "before service shutdown" in response.json()["detail"]
+        assert not app.state.update_admission_closed
+    receipt = store.read()
+    assert receipt is not None and receipt.state == "failed"
+    assert not harness.system.workspace_admission.closed
+    # An ordinary DB write and conversation start remain available after refusal.
+    connection = connect(str(harness.db_path))
+    try:
+        connection.execute(
+            "UPDATE tickets SET ceiling = 'needs_implementation' WHERE id='finished'"
+        )
+    finally:
+        connection.close()
+
+    async def exercise() -> None:
+        await _start(harness, "still-serving")
+        retry = service.request(provider.offered, "idle", confirm_activity=False)
+        assert service.dispatch_pending()
+        assert (await service.claim(retry.request_id)).state == "applying"
+        assert harness.system.workspace_admission.closed
 
     _run(exercise)
 
@@ -197,7 +271,12 @@ def test_now_request_rechecks_confirmation_and_hides_installed_release(
     async def exercise() -> None:
         provider = Provider()
         store = FileUpdateRequestStore(tmp_path / "request.json")
-        service = UpdateService(provider, store, lambda: cast(ConversationSystem, harness.system))
+        service = UpdateService(
+            provider,
+            store,
+            lambda: cast(ConversationSystem, harness.system),
+            connection_factory=lambda: connect(str(harness.db_path)),
+        )
         request = service.request(provider.offered, "now", confirm_activity=False)
         assert service.dispatch_pending()
         await _start(harness, "new-work")
@@ -207,7 +286,13 @@ def test_now_request_rechecks_confirmation_and_hides_installed_release(
         receipt = store.read()
         assert receipt is not None and receipt.state == "failed"
         assert not harness.system.workspace_admission.closed
-        installed = UpdateService(provider, store, lambda: None, current_app_sha=SHA_B)
+        installed = UpdateService(
+            provider,
+            store,
+            lambda: None,
+            connection_factory=lambda: connect(str(tmp_path / "unused.db")),
+            current_app_sha=SHA_B,
+        )
         assert installed.status().available is None
         with pytest.raises(UpdateConflict, match="already installed"):
             installed.request(provider.offered, "now", confirm_activity=True)
@@ -325,7 +410,9 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         project = DeploymentLifecycleStore.project
 
         def close_during_projection(
-            store: DeploymentLifecycleStore, deployed_sha: str | None, *,
+            store: DeploymentLifecycleStore,
+            deployed_sha: str | None,
+            *,
             admission_open: bool = False,
         ) -> LifecycleProjection:
             snapshot = project(store, deployed_sha, admission_open=admission_open)
@@ -375,21 +462,30 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         assert not admission.active
         persisted = connect(str(database))
         try:
-            assert persisted.execute(
-                "SELECT name FROM projects WHERE id=?", (created.json()["id"],)
-            ).fetchone()[0] == "Admission proof"
+            assert (
+                persisted.execute(
+                    "SELECT name FROM projects WHERE id=?", (created.json()["id"],)
+                ).fetchone()[0]
+                == "Admission proof"
+            )
         finally:
             persisted.close()
 
         oversized = {"content-length": str(MAX_CONVERSATION_SEND_REQUEST_BYTES + 1)}
         # Each outer layer retains precedence over a rejection from an inner layer.
-        assert client.post(
-            "/api/messages/send",
-            headers={**oversized, "origin": "https://other.example", "X-Panels-App-SHA": SHA_A},
-        ).status_code == 409
-        assert client.post(
-            "/api/messages/send", headers={**oversized, "origin": "https://other.example"}
-        ).status_code == 403
+        assert (
+            client.post(
+                "/api/messages/send",
+                headers={**oversized, "origin": "https://other.example", "X-Panels-App-SHA": SHA_A},
+            ).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                "/api/messages/send", headers={**oversized, "origin": "https://other.example"}
+            ).status_code
+            == 403
+        )
         assert client.post("/api/messages/send", headers=oversized).status_code == 413
         assert not admission.active
 
@@ -412,10 +508,18 @@ def test_uncertain_dispatch_timeout_records_failure_without_replay(
     monkeypatch.setattr(httpx.Client, "request", timeout)
     store = FileUpdateRequestStore(tmp_path / "request.json")
     # Update now with explicit confirmation is valid when activity is unknown.
-    request = UpdateService(provider, store, lambda: None).request(
-        release(), "now", confirm_activity=True
+    request = UpdateService(
+        provider,
+        store,
+        lambda: None,
+        connection_factory=lambda: connect(str(tmp_path / "unused.db")),
+    ).request(release(), "now", confirm_activity=True)
+    service = UpdateService(
+        provider,
+        store,
+        lambda: None,
+        connection_factory=lambda: connect(str(tmp_path / "unused.db")),
     )
-    service = UpdateService(provider, store, lambda: None)
     assert not service.dispatch_pending()
     receipt = store.read()
     assert receipt is not None and receipt.request_id == request.request_id
@@ -436,7 +540,12 @@ def test_readiness_discovers_new_offer_once_per_cadence_and_persists_receipt(
     store = FileUpdateRequestStore(tmp_path / "request.json")
     availability = tmp_path / "availability.json"
     service = UpdateService(
-        provider, store, lambda: None, availability_path=availability, now=lambda: now[0]
+        provider,
+        store,
+        lambda: None,
+        connection_factory=lambda: connect(str(tmp_path / "unused.db")),
+        availability_path=availability,
+        now=lambda: now[0],
     )
     signals: list[bool] = []
     unsubscribe = change_signal.subscribe(lambda: signals.append(True))
@@ -451,7 +560,12 @@ def test_readiness_discovers_new_offer_once_per_cadence_and_persists_receipt(
         assert provider.reads == 2 and len(signals) == 2
         assert service.status().available != old
         reloaded = UpdateService(
-            provider, store, lambda: None, availability_path=availability, now=lambda: now[0]
+            provider,
+            store,
+            lambda: None,
+            connection_factory=lambda: connect(str(tmp_path / "unused.db")),
+            availability_path=availability,
+            now=lambda: now[0],
         )
         assert reloaded.status().available == provider.offered
         assert provider.reads == 2
@@ -540,8 +654,13 @@ def test_provider_rechecks_metadata_without_repeated_proof_download(
 
 @pytest.mark.parametrize(
     ("state", "lifecycle_identity"),
-    [("dispatched", None), ("cancelled", None), ("applying", None),
-     ("applying", "prior-attempt"), ("applying", "request")],
+    [
+        ("dispatched", None),
+        ("cancelled", None),
+        ("applying", None),
+        ("applying", "prior-attempt"),
+        ("applying", "request"),
+    ],
 )
 def test_runner_preflight_failure_preserves_cancellation_and_uncertain_admission(
     tmp_path: Path,
@@ -769,9 +888,7 @@ def test_reporting_failure_cannot_block_replacement(
 
 
 @pytest.mark.parametrize("committed", [False, True])
-def test_uncertain_report_preserves_candidate_admission(
-    tmp_path: Path, committed: bool
-) -> None:
+def test_uncertain_report_preserves_candidate_admission(tmp_path: Path, committed: bool) -> None:
     store = DeploymentLifecycleStore(tmp_path / "lifecycle.json")
     store.start("attempt", SHA_B)
     store.transition("attempt", "verifying")
