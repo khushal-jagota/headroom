@@ -18,11 +18,12 @@ from tests.integration.test_navigation_cumulative_migration import (
     _raw,
     _seed_pre_lifecycle,
 )
+from tests.unit.test_db import head_revision
 
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "manager_launch_defaults"
+FINAL_HEAD = head_revision()
 SENTINELS: dict[str, tuple[object, ...]] = {
     "mac_inbox_positions": (
         "sender",
@@ -205,7 +206,11 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                 )
             ]
             rows = {name: list(conn.execute(f'SELECT * FROM "{name}"')) for name in tables}
-            ticket_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(tickets)"))
+            columns = {
+                name: tuple(row[1] for row in conn.execute(f'PRAGMA table_info("{name}")'))
+                for name in tables
+            }
+            ticket_columns = columns["tickets"]
             manager_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(managers)"))
             assert [row[0] for row in conn.execute("SELECT id FROM tickets ORDER BY id")] == [
                 "alias", "blocker", "held",
@@ -218,7 +223,16 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                 )
             )
             command.upgrade(config, "head")
+            removed_tables = {
+                "scheduled_ticket_occurrences", "scheduled_ticket_schedules",
+                "worker_step_skill_bindings",
+            }
             for name, before in rows.items():
+                if name in removed_tables:
+                    assert conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)
+                    ).fetchone() is None, name
+                    continue
                 current = list(conn.execute(f'SELECT * FROM "{name}"'))
                 if name == "navigation_dirty":
                     # The integrity migration queues exactly these existing Tickets
@@ -226,6 +240,25 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                     expected = set(before) | refresh_rows
                     assert len(current) == len(expected), name
                     assert set(current) == expected, name
+                elif name in {"projects", "worker_types"}:
+                    # The approved Mac requirement removal deletes one column only.
+                    # Keep the complete surviving rows, including definition_json, exact.
+                    removed = columns[name].index("requires_macos")
+                    expected_columns = tuple(
+                        column for column in columns[name] if column != "requires_macos"
+                    )
+                    assert tuple(
+                        row[1] for row in conn.execute(f'PRAGMA table_info("{name}")')
+                    ) == expected_columns, name
+                    assert current == [
+                        (*row[:removed], *row[removed + 1:]) for row in before
+                    ], name
+                elif name == "goals":
+                    # Legacy goals gain nullable outcomes without invented history.
+                    assert tuple(
+                        row[1] for row in conn.execute("PRAGMA table_info(goals)")
+                    ) == (*columns[name], "completion_rule", "completion_date")
+                    assert current == [(*row, None, None) for row in before], name
                 elif name == "tickets":
                     # Keep every old column exact and prove the sole added column is
                     # nullable, rather than excluding the Ticket table from comparison.

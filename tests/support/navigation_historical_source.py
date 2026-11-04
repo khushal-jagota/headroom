@@ -454,10 +454,18 @@ def _main() -> None:
             else:
                 raise AssertionError("legacy reader connection admitted a write")
         if action == "read_unavailable":
-            # The reviewed Manager rename changes the physical schema. Old binaries
-            # require their matched backup, rather than synthetic compatibility views.
+            # The Manager rename and Mac requirement removal change the schema.
+            # Old binaries require their matched backup, without compatibility views.
             assert expected_tip in {HISTORICAL_TIP, CURRENT_STAGING_TIP}
-            projects = {project.id: project.name for project in list_projects(connection)}
+            try:
+                list_projects(connection)
+            except sqlite3.OperationalError as error:
+                project_failure = str(error)
+                assert project_failure == "no such column: requires_macos", project_failure
+            else:
+                raise AssertionError("pre-removal Project reader unexpectedly succeeded")
+            # Observe retained names separately, without a compatibility reader.
+            raw_projects = dict(connection.execute("SELECT id,name FROM projects"))
             try:
                 read_ticket(connection, "t_historical")
             except sqlite3.OperationalError as error:
@@ -473,8 +481,8 @@ def _main() -> None:
                     {
                         "tip": observed,
                         "unavailable": "structural_manager_rename",
-                        "failures": {"ticket": failure},
-                        "projects": projects,
+                        "failures": {"projects": project_failure, "ticket": failure},
+                        "raw_projects": raw_projects,
                         "denied_writes": len(denied),
                         "source": source_facts(connection),
                         "foreign_keys": [
