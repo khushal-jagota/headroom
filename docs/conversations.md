@@ -27,6 +27,14 @@ Live streaming text is shown while a turn runs and is not stored as notebook pro
 
 A message to the owner is a notebook row for Khushal. It does not invoke the backend. Editing a Ticket field, parking a proposal, or updating a recap in the database does not inform the Worker. Those become agent context only when a later prompt carries them.
 
+## Worker resources on Linux
+
+A Ticket agent and its tools run in a separate systemd user service. Memory exhaustion stops that Worker unit and reports the cause in its conversation. Other Workers and Panels stay available.
+
+Each Claude or Codex Worker receives a disk directory for temporary files. The directory survives across turns until the agent process stops. Unit shutdown stops its tools before cleanup. Account and login probes keep their separate lifetime. Platforms without systemd retain their existing launch path.
+
+The host must supply the Worker slice and its CPU and memory limits before Linux Workers can start. A missing budget stops the launch with an error. The [user-service inputs](../ops/panels-environments/README.md#worker-resource-units) describe installation and the operator-owned restart.
+
 ## One process, three backends
 
 The backends are a closed set: `hermes`, `codex`, and `claude`. One door turns an untrusted name into a member of that set or refuses it. While work is running, the conversation has one child process. After a server restart, nothing is running until the next send. After about half an hour idle, the process stops. The next send starts it again. If the backend cannot restore the session’s memory, the send refuses out loud. Headroom does not put a fresh brain behind an old transcript.
