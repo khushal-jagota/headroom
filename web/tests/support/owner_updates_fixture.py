@@ -65,7 +65,9 @@ class OwnerUpdatesFixture:
         self.provider = FakeProvider()
         self.activity = ActivityProbe()
         self.current_sha = "a" * 40
-        self.lifecycle = DeploymentLifecycleStore(Path(self.directory.name) / "deployment-lifecycle.json")
+        self.lifecycle = DeploymentLifecycleStore(
+            Path(self.directory.name) / "deployment-lifecycle.json"
+        )
         self.store = FileUpdateRequestStore(Path(self.directory.name) / "request.json")
         database_path = Path(self.directory.name) / "planner.db"
         with closing(connect(str(database_path))) as connection:
@@ -80,8 +82,8 @@ class OwnerUpdatesFixture:
         )
         app = FastAPI()
         app.state.updates = self.service
-        self.mac_status: dict[str, object] | None = None
-        app.state.executor_endpoint = SimpleNamespace(health=lambda: self.mac_status)
+        self._app = app
+        self.mac_status = None
         app.include_router(router, prefix="/api")
 
         @app.get("/api/meta")
@@ -90,6 +92,19 @@ class OwnerUpdatesFixture:
 
         self.client = TestClient(app)
         self.client.__enter__()
+
+    @property
+    def mac_status(self) -> dict[str, object] | None:
+        return self._mac_status
+
+    @mac_status.setter
+    def mac_status(self, value: dict[str, object] | None) -> None:
+        self._mac_status = value
+        # Disabled execution has no endpoint. A configured endpoint always
+        # returns the same dictionary contract as the production executor.
+        self._app.state.executor_endpoint = (
+            None if value is None else SimpleNamespace(health=lambda: value)
+        )
 
     def close(self) -> None:
         self.client.__exit__(None, None, None)

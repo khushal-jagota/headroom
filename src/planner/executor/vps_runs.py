@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -299,7 +300,7 @@ class MacRuns:
     ) -> bool:
         command = pending.command
         emit = (
-            self._emit_answer(command, identity, writer)
+            self._emit_answer(pending, identity, writer)
             if command.operation
             in (
                 ChildOperation.answer_permission_ask,
@@ -324,7 +325,7 @@ class MacRuns:
         command = pending.command
 
         def admit() -> bool:
-            if self._initial_command_cancelled(command) or pending.future.done():
+            if self._initial_command_cancelled(command) or self._fence_closed_command(pending):
                 return False
             if identity != self.identity or writer is not self.link:
                 raise ConnectionError("command input generation changed")
@@ -343,12 +344,17 @@ class MacRuns:
         )
 
     async def _emit_answer(
-        self, command: ChildCommand, identity: ExecutorIdentity, writer: Link
+        self, pending: _PendingCommand, identity: ExecutorIdentity, writer: Link
     ) -> bool:
+        if self._fence_closed_command(pending):
+            return False
+        command = pending.command
         child = self.children.get(command.child.child_id)
         emitted = False
 
         def admit_answer() -> bool:
+            if self._fence_closed_command(pending):
+                return False
             if not self.ready or self.link is not writer or self.identity != identity:
                 raise ConnectionError("answer connection changed")
             return (
@@ -428,6 +434,14 @@ class MacRuns:
         pending = _PendingCommand(command, future)
         self.pending_commands[command.command_id] = pending
         try:
+            if command.operation is not ChildOperation.stop:
+                try:
+                    closed = await settled_io(self.store.has_closed_child_assignment, command.child)
+                except (OSError, sqlite3.Error):
+                    self._settle_uncertain(pending, "executor_child_authority_unconfirmed")
+                else:
+                    if closed:
+                        self._settle_uncertain(pending, "executor_child_stopped")
             if self.ready and self.link is not None:
                 identity, writer = self.identity, self.link
                 assert identity is not None
@@ -442,6 +456,31 @@ class MacRuns:
         finally:
             if future.done():
                 self.pending_commands.pop(command.command_id, None)
+
+    @staticmethod
+    def _settle_uncertain(pending: _PendingCommand, reason: str) -> None:
+        if not pending.future.done():
+            pending.future.set_result(CommandOutcome(
+                pending.command.command_id,
+                pending.command.child,
+                CommandDisposition.uncertain,
+                {"reason": reason},
+            ))
+
+    def _fence_closed_command(self, pending: _PendingCommand) -> bool:
+        """Read exact closure at the final send point, after writer backpressure."""
+        if pending.future.done():
+            return True
+        if pending.command.operation is ChildOperation.stop:
+            return False
+        try:
+            closed = self.store.has_closed_child_assignment(pending.command.child)
+        except (OSError, sqlite3.Error):
+            self._settle_uncertain(pending, "executor_child_authority_unconfirmed")
+            return True
+        if closed:
+            self._settle_uncertain(pending, "executor_child_stopped")
+        return closed
 
     def authority(self, child: ChildReference) -> Principal:
         binding = self.store.child_assignment(child)
@@ -498,6 +537,12 @@ class MacRuns:
             return
         if not await settled_io(self.store.has_closed_child_assignment, outcome.child):
             await settled_io(self.store.close_child, outcome.child, now_ms())
+        for waiting in tuple(self.pending_commands.values()):
+            if (
+                waiting.command.child == outcome.child
+                and waiting.command.operation is not ChildOperation.stop
+            ):
+                self._settle_uncertain(waiting, "executor_child_stopped")
         # Another retirement can wait for a different stop of this exact child.
         # ACK this journal suffix before core settlement, so replay can finish.
         if hasattr(self, "conversations"):

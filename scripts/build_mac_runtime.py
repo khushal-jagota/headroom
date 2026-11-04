@@ -233,7 +233,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from planner.conversation.production_backends import PANELS_OWNED_CLAUDE_EXECUTABLE
 for module in (planner.cli.main, planner.executor.mac_service, aiohttp, cryptography, icu):
     pathlib.Path(module.__file__).resolve().relative_to(root)
-assert PANELS_OWNED_CLAUDE_EXECUTABLE.is_relative_to(root)
+assert PANELS_OWNED_CLAUDE_EXECUTABLE.resolve().is_relative_to(root)
 assert PANELS_OWNED_CLAUDE_EXECUTABLE.is_file()
 with sqlite3.connect(":memory:") as db:
     assert db.execute("select 6 * 7").fetchone()[0] == 42

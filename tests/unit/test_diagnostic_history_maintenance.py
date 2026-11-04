@@ -11,7 +11,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from tests.support.migration_head import shipped_migration_head
 from tests.support.ticket_workflows import preset_workflow_json
 from tests.unit.test_db import _migration_tree_through
 
@@ -31,7 +30,7 @@ from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
 AS_OF = RETENTION_SECONDS + 1000
 
 
-def seed_archive(database: Path) -> None:
+def seed_archive(database: Path, *, initialize_runtime: bool = True) -> None:
     with closing(connect(str(database))) as conn:
         create_schema(conn)
         conn.execute("BEGIN IMMEDIATE")
@@ -71,7 +70,8 @@ def seed_archive(database: Path) -> None:
     try:
         runtime.bootstrap()
         runtime.coordinator.bind_runtime(lambda _identity: None)
-        runtime.initialize()
+        if initialize_runtime:
+            runtime.initialize()
     finally:
         runtime.close()
 
@@ -92,7 +92,7 @@ def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     # The offline writer deliberately refuses later, unreviewed schema revisions.
     _migration_tree_through(tmp_path, monkeypatch, "owner_message_preview")
     database = tmp_path / "archive.db"
-    seed_archive(database)
+    seed_archive(database, initialize_runtime=False)
     yield database
 
 
@@ -536,7 +536,9 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
 
 @pytest.mark.parametrize(
     "schema_revision",
-    ["mac_vps_execution", "executor_default_workspace", shipped_migration_head()],
+    # Offline expiry admits only explicitly reviewed revisions. The current
+    # application head can add storage that this maintenance policy refuses.
+    ["mac_vps_execution", "executor_default_workspace", "ticket_owned_workflows"],
 )
 def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
     archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schema_revision: str,

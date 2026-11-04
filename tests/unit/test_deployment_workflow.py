@@ -119,13 +119,14 @@ def test_publication_preserves_existing_isolated_suite_report_boundaries() -> No
 def test_parallel_publication_requires_all_suites_before_any_candidate_work() -> None:
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
     preparation, suites, publication = jobs["prepare"], jobs["suites"], jobs["deploy"]
+    native = jobs["mac-runtime"]
     assert suites["needs"] == "prepare"
     assert suites["strategy"] == {"fail-fast": False,
                                   "matrix": {"suite": ["unit", "integration", "e2e", "browser"]}}
-    assert publication["needs"] == ["prepare", "suites"]
+    assert publication["needs"] == ["prepare", "suites", "mac-runtime"]
     assert "always()" in publication["if"]
-    for job in (preparation, suites, publication):
-        assert job["runs-on"] == "ubuntu-24.04"
+    for job in (preparation, suites, publication, native):
+        assert job["runs-on"] == ("macos-15" if job is native else "ubuntu-24.04")
         assert job["steps"][0]["with"]["ref"] == "${{ github.sha }}"
         assert not job.get("continue-on-error")
         assert all(not step.get("continue-on-error") for step in job["steps"])
@@ -141,6 +142,13 @@ def test_parallel_publication_requires_all_suites_before_any_candidate_work() ->
     assert names.index("Set deployment paths") < names.index(gate_name)
     assert names.index(gate_name) < names.index("Provision offline Hermes packaging prerequisite")
     assert names.index(gate_name) < names.index("Start known-good rehearsal release")
+    mac_gate = steps["Require successful native Mac publication"]
+    assert mac_gate["env"]["PANELS_MAC_BUILD_RESULT"] == "${{ needs.mac-runtime.result }}"
+    assert mac_gate["run"] == 'test "$PANELS_MAC_BUILD_RESULT" = success'
+    assert names.index(gate_name) < names.index("Require successful native Mac publication")
+    assert names.index("Require successful native Mac publication") < names.index(
+        "Provision offline Hermes packaging prerequisite"
+    )
     assert names.index("Validate collected suite reports at requested source") < (
         names.index("Build exact candidate once")
     )
@@ -152,9 +160,16 @@ def test_parallel_publication_requires_all_suites_before_any_candidate_work() ->
     assert not any("app-build" in step.get("run", "") for step in suites["steps"])
     downloads = [step for step in publication["steps"]
                  if "actions/download-artifact@" in step.get("uses", "")]
-    assert len(downloads) == 5
-    assert len({step["with"]["path"] for step in downloads}) == 5
-    assert all("github.run_attempt" in step["with"]["name"] for step in downloads)
+    assert len(downloads) == 6
+    assert len({step["with"]["path"] for step in downloads}) == 6
+    suite_downloads = [step for step in downloads if "name" in step["with"]]
+    assert len(suite_downloads) == 5
+    assert all("github.run_attempt" in step["with"]["name"] for step in suite_downloads)
+    assert steps["Download checked native Mac publication"]["with"] == {
+        "artifact-ids": "${{ needs.mac-runtime.outputs.artifact_id }}",
+        "path": "${{ env.PANELS_GATE_DIR }}/mac",
+        "merge-multiple": True,
+    }
 
 
 def test_parallel_suite_setup_and_evidence_keep_the_existing_native_and_mount_boundaries() -> None:
