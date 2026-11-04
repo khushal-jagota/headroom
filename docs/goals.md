@@ -8,7 +8,9 @@ A goal stores its Project, title, why it matters, deadline, active state, primar
 
 Checklists belong to the page. Their checked state does not create a measurement. Numeric charts can reference existing measures or bind a retained dataset. Targets, reference paths, units, and number formats describe the chart. They do not create observations. The goal reader preserves signed values, fractions, missing dates, source health, and observation provenance.
 
-A binary goal is neutral before its due date, yellow on that date, and red afterward. A completed binary goal is green. Completion and active state are independent. A completed goal stays in Active goals until someone explicitly deactivates it. Reactivation preserves completion. The goal agent can change its own page, completion, and active state directly. These edits need no approval step.
+An open goal has a neutral deadline before its due date, yellow on that date, and red afterward. A completed goal has a green deadline for a hit and a red deadline for a miss. An unknown result has a neutral deadline.
+
+Completion and active state are independent. A completed goal stays in Active goals until someone explicitly deactivates it. Reactivation preserves completion. The goal agent can change its own page, completion, and active state directly. These edits need no approval step.
 
 The owner, Chief, and the goal's own agent use one writer. Each edit carries the current `expected_revision`. An accepted edit returns the saved goal and page. A stale edit fails instead of replacing a newer document. The caller keeps the draft, reads the current document, and resolves the change.
 
@@ -60,7 +62,9 @@ Only the date value receives deadline color. An unfinished item is red before to
 
 Dates use the existing server calendar: process `TZ`, or `/etc/localtime` when `TZ` is unset. A deadline stays due today throughout that calendar date. It becomes overdue at the next local midnight, including daylight-saving transitions. Open views refresh at the server-provided midnight and after browser suspension. The browser timezone does not change the date status.
 
-The overall deadline uses the same colors only on its existing date value. This covers the goal header, overview card and table, sidebar row, and preview header. Effective completion takes precedence when a date exists. Titles, backgrounds, progress rings, and numeric comparison colors retain their behavior. Item dates do not create a forecast or change the overall deadline, completion, or active state.
+The overall deadline follows the recorded goal result. A hit is green, a miss is red, and an unknown result is neutral. Open goals keep their calendar-based deadline colors. This covers the goal header, overview card and table, sidebar row, and preview header. Completion alone does not make a missed deadline green.
+
+Titles, backgrounds, progress rings, and numeric comparison colors retain their behavior. Item dates do not create a forecast or change the overall deadline, completion, or active state.
 
 Agents use the existing revision-checked goal writer. `panels goal schema create --json` includes dated and undated items in `checklist_goal`. `panels goal schema edit --json` includes complete-page examples for date replacement and null clearing. The dates and identifiers in these examples are illustrative.
 
@@ -68,7 +72,9 @@ Before a real edit, read the accepted goal with `panels goal show GOAL_ID --json
 
 ## Sidebar previews
 
-Active goals appear inside the full Chief card, before its Worker groups. Each row links to its goal page. Hover, keyboard focus, or a touch hold opens the goal preview. The preview shows the Project, deadline, full title, and primary content.
+Active goals appear inside the full Chief card, before its Worker groups. Each row links to its goal page. Hover, keyboard focus, or a touch hold opens the goal preview. The preview shows the Project, deadline, full title, saved completion result, and primary content.
+
+The rail row shows the same recorded result: completed and hit, completed late and missed, or open. Current numeric readings remain measurement facts, separate from goal completion.
 
 Main goal displays and active goal cards show the normal interactive checklist at every width. Sidebar previews show the small interactive checklist. Both sizes retain checkboxes, item details, actions, and completed items.
 
@@ -140,7 +146,7 @@ The existing background scheduler evaluates numeric goals without a page visit o
 
 Each goal has one deadline. A completion date on or before it means hit. A later completion means miss. An unfinished goal becomes a miss after its deadline passes. Before that, it remains pending. A deadline edit changes this comparison. A goal without a deadline is undated.
 
-The goal page, cards, and overview show completion and the result. The overview also shows hits divided by hits plus misses, with both counts. This rate includes active and inactive goals, regardless of list filters. Pending, undated, and unknown results stay outside it. Without any scored goals, the rate has no percentage. The 50% ambition aim describes the overall rate, not an individual finish line.
+The goal page, cards, overview, rail row, and preview show completion and the recorded result. The overview also shows hits divided by hits plus misses, with both counts. This rate includes active and inactive goals, regardless of list filters. Pending, undated, and unknown results stay outside it. Without any scored goals, the rate has no percentage. The 50% ambition aim describes the overall rate, not an individual finish line.
 
 Old completed goals retain their state and an unknown completion date. Panels does not substitute their last edit date. Retained numeric evidence can establish a date after an explicit rule is configured. Existing numeric goals without rules keep their state until configured. They do not gain an inferred finish line from their chart.
 
