@@ -79,14 +79,7 @@ def admit_command(
     if family == 'messages' and writing:
         admit_message(conn, principal, _principal(body.get('target')))
         return
-    if family == 'feedback' and writing:
-        if route.endswith('/use'):
-            from planner.tickets.api import body_str
-
-            target, own = authority.ticket(body_str(dict(body), 'ticket_id')), True
-        else:
-            target = authority.owner_only('feedback')
-    elif family == 'tickets':
+    if family == 'tickets':
         from planner.managers.assignment import normalize_assignment
 
         body = normalize_assignment(dict(body))
