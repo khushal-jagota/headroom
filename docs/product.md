@@ -28,7 +28,7 @@ Waits addressed to Khushal reach him in Review.
 Waits addressed to Chief or a Manager arrive in that agent's conversation.
 ```
 
-An [Idea](ideas.md) is a remembered possibility. It never becomes work by itself. A [Ticket](tickets.md) is the committed unit: one piece of work for one Worker, with a ladder of stages that its [Worker type](worker-types.md) declares. People, Chief, Managers, and daily [schedules](schedules.md) create Tickets.
+An [Idea](ideas.md) is a remembered possibility. It never becomes work by itself. A [Ticket](tickets.md) is the committed unit: one piece of work for one Worker, with a ladder of stages that its [Worker type](worker-types.md) declares. People, Chief, and Managers create Tickets. Tickets cannot be created on a timer.
 
 When a Ticket is ready, the [worker-step loop](worker-steps.md) sends the Worker one prompt and stops watching. The Worker answers by filing a proposal for the current stage. The Ticket's ceiling decides whether that proposal settles on its own or waits for a person. [Review](review.md) is Khushal's queue of the waits addressed to him, together with messages that need him. Consequences is where merges, follow-up Tickets, and a verified report happen. Installing a release stays Khushal's action. Done ends the ladder.
 

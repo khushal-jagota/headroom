@@ -23,6 +23,8 @@ Opening Limits reads the last observation Headroom saved for Codex and Claude. I
 
 Tokens and Cost are totalled from the transcripts of Codex, Claude, and Grok Build on this host, including sessions never started in Headroom, with prices refreshed separately. That path never asks a provider for allowance. Grok Build appears in the scan but is not a conversation backend. See [Conversations](conversations.md).
 
+Recorded usage comes from one local server. The browser calculates totals and charts from that server’s summary.
+
 ## Backend setup
 
 Backend cards read the tools installed on this host. Codex can sign in from the screen, while Claude and Hermes keep their own login commands. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table. Each machine reads its own lists. See [Executor](executor.md).

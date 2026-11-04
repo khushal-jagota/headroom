@@ -15,9 +15,7 @@ from urllib.parse import quote, unquote, urlsplit
 import anyio.to_thread
 from fastapi import APIRouter, Request
 
-from planner.core import authority
 from planner.core.authctx import request_context
-from planner.core.authority import require_above_or_self
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import goal_files
 from planner.files.catalog.config import (
@@ -197,13 +195,9 @@ def _read(
     conn = request.app.state.conn_factory()
     try:
         conn.execute("BEGIN")
-        if kind == "manager":
-            require_above_or_self(
-                conn, request_context(request).principal, authority.manager(owner_id)
-            )
-        elif kind == "goal":
+        if kind == "goal":
             goal_files.require_goal(conn, request_context(request).principal, owner_id)
-        else:
+        elif kind == "ticket":
             if conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None:
                 raise PlannerError(ErrorCode.not_found, "ticket not found", {})
         configured_db = Path(request.app.state.config.db_path)

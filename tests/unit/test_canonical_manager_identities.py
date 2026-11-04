@@ -9,8 +9,9 @@ from planner.core.migrations.versions.canonical_manager_identities import migrat
 from planner.runtime.logic.conversation_start_resolution import MANAGER_ROLE_TEXT
 
 
+@pytest.mark.parametrize("producer_installed", [False, True])
 def test_manager_identity_migration_preserves_links_and_authored_bytes(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, producer_installed: bool,
 ) -> None:
     # Reuse the migration directly with only its input tables. Navigation has its own
     # existing occupied-database coverage; this case isolates retained identity bytes.
@@ -45,6 +46,8 @@ def test_manager_identity_migration_preserves_links_and_authored_bytes(
         "INSERT INTO signal_publication_associations VALUES(?)",
         (json.dumps({"owner_kind": "orchestrator", "owner_id": "si_kept"}),),
     )
+    if not producer_installed:
+        conn.execute("DROP TABLE signal_publication_associations")
     authored = "  old sprint_item_supervisor bytes \n"
     conn.execute("INSERT INTO conversation_events VALUES(?)", (authored,))
     migrate(conn)
@@ -60,9 +63,6 @@ def test_manager_identity_migration_preserves_links_and_authored_bytes(
     assert after["brief"]["principal"] == {"kind": "manager", "id": "si_kept"}
     assert after["brief"]["display_label"] == approval["brief"]["display_label"]
     assert conn.execute("SELECT payload FROM conversation_events").fetchone()[0] == authored
-    assert (
-        json.loads(conn.execute("SELECT value FROM signal_publication_associations").fetchone()[0])[
-            "owner_kind"
-        ]
-        == "manager"
-    )
+    if producer_installed:
+        receipt = conn.execute("SELECT value FROM signal_publication_associations").fetchone()[0]
+        assert json.loads(receipt)["owner_kind"] == "manager"

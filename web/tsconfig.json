@@ -19,9 +19,6 @@
       "@t3tools/contracts": [
         "./src/lib/usage/contracts/index.ts"
       ],
-      "@t3tools/shared/usageMerge": [
-        "./src/lib/usage/usageMerge.ts"
-      ],
       "vite-plus/test": [
         "./node_modules/vitest/dist/index.d.ts"
       ]

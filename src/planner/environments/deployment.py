@@ -131,7 +131,7 @@ def run_current_app_backup(
     database = source_db.expanduser().resolve()
     backups = backup_dir.expanduser().resolve()
     command = [
-        str(current_app / "bin" / "panels-launcher"),
+        str(current_app / "bin" / "panels"),
         "environment",
         "backup-current",
         "--source-db",

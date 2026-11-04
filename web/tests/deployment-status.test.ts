@@ -105,7 +105,7 @@ describe("deployment status precedence and expiry", () => {
 });
 
 const release = (changes: Partial<ReleaseSnapshot> = {}): ReleaseSnapshot => ({
-  updateAvailable: false, compositionActive: false, reloadRequested: false, ...changes
+  updateAvailable: false, reloadRequested: false, ...changes
 });
 
 describe("the one status card", () => {
@@ -117,12 +117,6 @@ describe("the one status card", () => {
     for (const state of ["preparing", "restarting", "back_up", "reconnecting", "connected"] as const) {
       expect(resolveStatusCard(state, release({ updateAvailable: true }))).toBe("update-ready");
     }
-  });
-  it("holds the update while a message is composed, and only once a reload was asked for", () => {
-    const composing = release({ updateAvailable: true, compositionActive: true });
-    expect(resolveStatusCard("connected", composing)).toBe("update-ready");
-    expect(resolveStatusCard("connected", { ...composing, reloadRequested: true })).toBe("update-held");
-    expect(resolveStatusCard("connected", release({ updateAvailable: true, reloadRequested: true }))).toBe("update-ready");
   });
   it("narrates the deploy when no update is waiting", () => {
     expect(resolveStatusCard("preparing", release())).toBe("Deploying");

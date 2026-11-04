@@ -5,7 +5,6 @@ import sqlite3
 from dataclasses import replace
 from itertools import islice
 
-from planner.core import authority
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.measures import configuration as limits
@@ -23,16 +22,6 @@ from planner.measures.contracts import (
 from planner.measures.logic.dates import date_range, invalid
 from planner.measures.logic.evaluation import demanded_pairs, evaluate
 from planner.measures.logic.formulas import dependencies, parse_formula, validate_graph
-
-
-def _require_author(conn: sqlite3.Connection, principal: Principal, source_id: str | None) -> None:
-    if source_id is None:
-        authority.require_above(conn, principal, authority.owner_only("measures"))
-    else:
-        from planner.measure_sources import authority as sources_authority
-        from planner.measure_sources import data as sources_data
-
-        sources_authority.require_author(conn, principal, sources_data.read_source(conn, source_id))
 
 
 def _validate_text(measure: Measure) -> None:
@@ -93,7 +82,6 @@ def create_measure(
     )
     _validate_text(measure)
     with data.transaction(conn):
-        _require_author(conn, principal, body["source_id"])
         if (
             conn.execute("SELECT 1 FROM projects WHERE id=?", (measure.project_id,)).fetchone()
             is None
@@ -137,7 +125,6 @@ def update_measure(
 ) -> Measure:
     with data.transaction(conn):
         current = data.read_measure(conn, measure_id)
-        _require_author(conn, principal, current.source_id)
         if (
             type(body.get("expected_revision")) is not int
             or body["expected_revision"] != current.definition_revision
@@ -182,7 +169,6 @@ def delete_measure(
 ) -> None:
     with data.transaction(conn):
         measure = data.read_measure(conn, measure_id)
-        _require_author(conn, principal, measure.source_id)
         retained = conn.execute(
             "SELECT 1 FROM measure_dependencies WHERE input_measure_id=? UNION ALL SELECT "
             "1 FROM measure_observations WHERE measure_id=? UNION ALL SELECT 1 FROM "

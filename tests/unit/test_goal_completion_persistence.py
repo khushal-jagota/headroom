@@ -52,7 +52,7 @@ def edit(conn: Connection, goal: Goal, **changes: Any) -> Goal:
     return actions.update_goal(
         conn,
         goal.id,
-        {"expected_revision": goal.revision, **changes},
+        {**changes},
         principal=OWNER_PRINCIPAL,
         now=NOW + goal.revision,
     )
@@ -315,7 +315,7 @@ def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Conn
         saved = data.read_goal(tmp_db, goal.id)
         write = await api.update_goal(
             goal.id,
-            {"expected_revision": saved.revision, "completed": completed},
+            {"completed": completed},
             tmp_db,
             context,
             clock,

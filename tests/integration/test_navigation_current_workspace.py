@@ -29,10 +29,6 @@ from tests.unit.test_db import _migration_tree_through
 
 from planner.core.db import _alembic_config, _migration_engine
 from planner.navigation import data, journal, snapshot
-from planner.navigation.configuration import DeliveryConfig
-from planner.navigation.contracts import Continuity
-from planner.navigation.delivery import read_page
-from planner.navigation.delivery_contracts import ResetRequired, decode_cursor, encode_cursor
 
 
 def assert_prepared_rejected(path: Path) -> None:
@@ -44,22 +40,6 @@ def assert_prepared_rejected(path: Path) -> None:
             snapshot(conn)
         with pytest.raises(RuntimeError, match="current schema"):
             journal(conn, current["epoch"], current["revision"])
-        cursor = decode_cursor(
-            encode_cursor(
-                cast(
-                    Continuity,
-                    {
-                        "scope": current["scope"],
-                        "schema_version": 7,
-                        "semantics": "generic-source-facts-v5",
-                        "epoch": current["epoch"],
-                        "revision": current["revision"],
-                    },
-                )
-            )
-        )
-    with pytest.raises(ResetRequired, match="incompatible_continuity"):
-        read_page(path, cursor, DeliveryConfig())
 
 
 def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
@@ -76,11 +56,6 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
     assert (
         next(row["value"] for row in old["records"] if row["kind"] == "ticket")["priority"] == "P3"
     )
-    old_continuity = cast(
-        Continuity,
-        {key: old[key] for key in ("scope", "schema_version", "semantics", "epoch", "revision")},
-    )
-    old_cursor = decode_cursor(encode_cursor(old_continuity))
     engine = _migration_engine(str(path), 1000)
     try:
         # This source change commits BEFORE the join attempt. Its removal must
@@ -92,8 +67,6 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
             assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 4
             assert "priority" not in {row[1] for row in conn.execute("PRAGMA table_info(tickets)")}
             checkpoint = list(conn.iterdump())
-        with pytest.raises(ResetRequired, match="incompatible_continuity"):
-            read_page(path, old_cursor, DeliveryConfig())
         real_rebuild = data.rebuild
 
         def fail_join(conn: sqlite3.Connection) -> None:
@@ -129,8 +102,6 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
         assert source_facts(conn)["events"] == original["source"]["events"]
         assert source_facts(conn)["tickets"] == original["source"]["tickets"]
         assert all("priority" not in record["value"] for record in current["records"])
-    with pytest.raises(ResetRequired, match="incompatible_continuity"):
-        read_page(path, old_cursor, DeliveryConfig())
 
 
 @pytest.mark.parametrize(

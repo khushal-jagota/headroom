@@ -1089,7 +1089,9 @@ def _optional_principal(stored: dict[str, Any], field_name: str) -> Principal | 
         raise ValueError(f"{field_name} must contain text kind and id")
     # Archived event payloads retain their original sender bytes. This decoder is
     # only for stored events, not request principals.
-    return Principal(PrincipalKind.manager if kind == "sprint_item" else PrincipalKind(kind), principal_id)
+    return Principal(
+        PrincipalKind.manager if kind == "sprint_item" else PrincipalKind(kind), principal_id
+    )
 
 
 def _text(stored: dict[str, Any], field_name: str) -> str:

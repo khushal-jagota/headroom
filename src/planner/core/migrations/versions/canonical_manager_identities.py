@@ -9,7 +9,7 @@ from alembic import op
 from planner.runtime.logic.conversation_start_resolution import MANAGER_ROLE_TEXT
 
 revision = "canonical_manager_identities"
-down_revision = "goal_outcomes"
+down_revision = "remove_ticket_approvers"
 branch_labels = None
 depends_on = None
 
@@ -65,11 +65,17 @@ def migrate(conn: sqlite3.Connection) -> None:
                 "UPDATE tickets SET field_approvals=? WHERE id=?",
                 (json.dumps(approvals), ticket_id),
             )
-    conn.execute(
-        "UPDATE signal_publication_associations SET value="
-        "json_set(value,'$.owner_kind','manager') "
-        "WHERE json_extract(value,'$.owner_kind')='orchestrator'"
-    )
+    # The producer creates these tables at runtime, after schema migration. Fresh
+    # databases have no receipts, while occupied databases can retain old owners.
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='signal_publication_associations'"
+    ).fetchone():
+        conn.execute(
+            "UPDATE signal_publication_associations SET value="
+            "json_set(value,'$.owner_kind','manager') "
+            "WHERE json_extract(value,'$.owner_kind')='orchestrator'"
+        )
     from planner.navigation.data import rebuild
 
     rebuild(conn)

@@ -803,7 +803,6 @@ async def read_scoped_backends(
     refresh: bool = False,
 ) -> dict[str, Any]:
     """Read the models of the Ticket's machine, including its last offline copy."""
-    from planner.core import authority
     from planner.core.errors import ErrorCode, PlannerError
     from planner.tickets import data as ticket_data
     from planner.tickets.contracts import TicketLocale
@@ -815,7 +814,6 @@ async def read_scoped_backends(
     ):
         raise PlannerError(ErrorCode.validation, "ticket_id is required", {})
     with closing(connect(runtime.database_path)) as conn:
-        authority.require_above_or_self(conn, ctx.principal, authority.ticket(raw["ticket_id"]))
         ticket = ticket_data.read_ticket(conn, raw["ticket_id"])
     from planner.conversation.model_resolution.contracts import RemoteCatalogSource
 

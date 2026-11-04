@@ -82,7 +82,7 @@ def attach(conn: sqlite3.Connection) -> None:
 
 def _priority_source_shape(conn: sqlite3.Connection) -> bool:
     """Recognize the two accepted canonical histories before changing any rows."""
-    tables = ("projects", "managers", "tickets", "scheduled_ticket_schedules")
+    tables = ("projects", "managers", "tickets")
     shapes = []
     for table in tables:
         columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}

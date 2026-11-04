@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation.contracts import (
     ConversationBackendKey,
@@ -18,7 +19,6 @@ from planner.conversation.contracts import (
     PromptDeliverySuppressed,
     PromptDeliveryUncertain,
 )
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import TestClock as PlannerTestClock
 from planner.core.contracts import CHIEF_PRINCIPAL
 from planner.environments.backup import managed_file_roots

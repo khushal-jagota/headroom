@@ -13,11 +13,11 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.attention.configuration import DAILY_METRICS
 from planner.cli import http
 from planner.cli.main import main
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import TestClock as FakeClock
 from planner.core.config import load_config
 from planner.core.contracts import CHIEF_PRINCIPAL

@@ -68,7 +68,7 @@ The locale is chosen at creation and does not change. A VPS Ticket's agent runs 
 
 ## Where it shows up
 
-The Ticket page is the inspector: the stage ladder, the current gate with its proposal card, blockers, artifacts, and the conversation beside them. The Workspace rail and each Manager page list Tickets by the attention they need. Creation happens from the command line, the API, or by asking Chief or a Manager. The browser has no new-Ticket form.
+The Ticket page is the inspector: the stage ladder, the current gate with its proposal card, blockers, artifacts, and the conversation beside them. The Workspace rail and each Manager page list Tickets by the attention they need. Creation happens from the command line, the API, or by asking Chief or a Manager. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate. The browser has no new-Ticket form.
 
 ## Decisions that shape it
 

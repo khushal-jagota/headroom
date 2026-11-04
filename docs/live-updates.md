@@ -25,6 +25,8 @@ A few writers commit quietly on purpose: skill history, and conversation rows th
 
 Deployment status and the "this app is older than the server" prompt ride the same wake, then make a small status read. See [Deployment](deployment.md).
 
+The browser uses server messages directly. TypeScript types describe them during development. Runtime description tables do not validate them again. The Ticket screen uses loaded detail and Worker configuration without a second navigation admission check. The server checks saves and approvals.
+
 ## What does not move by itself
 
 A screen that is not mounted keeps its last body until it opens. A file written straight into a Ticket's artifact folder has no database revision, so the artifact list refreshes when that Ticket is selected, not because a commit named the file.
