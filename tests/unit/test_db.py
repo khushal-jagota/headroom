@@ -1439,7 +1439,7 @@ def test_skill_binding_removal_preserves_skill_history_and_conversation_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     shipped = db_module.MIGRATIONS_DIRECTORY
-    _migration_tree_through(tmp_path, monkeypatch, "manager_launch_defaults")
+    _migration_tree_through(tmp_path, monkeypatch, "goal_outcomes")
     conn = connect(str(tmp_path / "skill-bindings.db"))
     create_schema(conn)
     conn.execute(

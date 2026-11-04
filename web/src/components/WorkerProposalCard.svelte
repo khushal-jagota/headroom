@@ -6,7 +6,7 @@
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
-  let { proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, contextRow }: {
+  let { proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, initialReturnOpen = false, initialEditedBody, onEditedBodyChange, contextRow }: {
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     manager: { id: string; title: string } | null;
     onAccept: (body: Record<string, unknown>) => Promise<unknown>;
@@ -15,6 +15,9 @@
     canReturn?: boolean;
     disabled?: boolean;
     revisionEditor?: Snippet;
+    initialReturnOpen?: boolean;
+    initialEditedBody?: string;
+    onEditedBodyChange?: (text: string) => void;
     returnUnavailableReason?: string;
     contextRow?: Snippet;
   } = $props();
@@ -32,10 +35,11 @@
   let identity = $derived([proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, finalApproval, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
   $effect(() => {
     if (identity === lastKey) return;
+    const first = lastKey === null;
     lastKey = identity;
-    draft = proposal.body;
+    draft = first ? initialEditedBody ?? proposal.body : proposal.body;
     note = "";
-    returning = false;
+    returning = first && initialReturnOpen;
     resolved = false;
     error = null;
   });
@@ -72,7 +76,7 @@
   <h2>{fieldLabelFor(lifecycle, proposal.field)} <span class="who">— for
     <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}</button> to approve</span></h2>
   <div class="proposal-prose">
-    <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; }} onCancel={() => proposal.body} />
+    <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; onEditedBodyChange?.(raw); }} onCancel={() => proposal.body} />
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="actions">

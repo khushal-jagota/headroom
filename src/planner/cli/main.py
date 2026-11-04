@@ -23,6 +23,7 @@ from urllib.parse import quote
 
 import click
 
+from planner.attention.cli import attention as attention_group
 from planner.cli import http
 from planner.cli.artifact_io import read_artifact_source
 from planner.cli.errors import CompatibilityChoice, CompatibilityOption, PanelsGroup
@@ -133,7 +134,6 @@ _ITEM_FIELDS = {
 }
 
 _PROJECT_FIELDS = {
-    "requires-macos": "requires_macos",
     "folder-path": "folder_path",
     "name": "name",
     "summary": "summary",
@@ -348,7 +348,7 @@ def _project_record(
     data: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, RecordPart]]:
     return (
-        {key: data[key] for key in ("id", "name", "folder_path", "requires_macos") if key in data},
+        {key: data[key] for key in ("id", "name", "folder_path") if key in data},
         {"summary": part(data["summary"])},
     )
 
@@ -474,6 +474,7 @@ main.add_command(credential_group)
 main.add_command(goal_group)
 main.add_command(measure_group)
 main.add_command(dataset_group)
+main.add_command(attention_group)
 main.add_command(measure_source_group)
 main.add_command(preview_group)
 environment_group.hidden = True
@@ -1079,18 +1080,14 @@ def project_show(project_id: str, part_names: str | None, as_json: bool) -> None
 @click.option("--name", required=True, help="Project display name.")
 @click.option("--summary", default=None, help="Optional project summary text.")
 @click.option("--folder-path", default=None, help="Optional absolute Project folder path.")
-@click.option("--requires-macos/--no-requires-macos", default=None)
 @json_option
 def project_create(
     name: str,
     summary: str | None,
     folder_path: str | None,
-    requires_macos: bool | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"name": name}
-    if requires_macos is not None:
-        body["requires_macos"] = requires_macos
     if summary is not None:
         body["summary"] = summary
     if folder_path is not None:
@@ -1123,17 +1120,6 @@ def project_set(
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
     if field in {"name"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
-    if field == "requires-macos":
-        if new_value not in {"true", "false"}:
-            http.fail_validation("requires-macos must be true or false", as_json)
-        data = http.send(
-            "PATCH",
-            f"/api/projects/{project_id}",
-            as_json=as_json,
-            json_body={api_field: new_value == "true"},
-        )
-        http.emit(data, as_json, f"{data['id']} {field} set")
-        return
     data = http.send(
         "PATCH",
         f"/api/projects/{project_id}",

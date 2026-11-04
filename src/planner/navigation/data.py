@@ -543,7 +543,9 @@ def _derive(
             value = {
                 "title": goal["title"],
                 "active": bool(goal["active"]),
-                "completed": effective_completion(
+                "completed": bool(goal.get("completion_date"))
+                if goal.get("kind") == "quantitative" and goal.get("completion_rule") is not None
+                else effective_completion(
                     bool(goal["completed"]),
                     cast(PageDocument, json.loads(goal["page"])),
                     # Navigation rebuilds also run before this column's migration.

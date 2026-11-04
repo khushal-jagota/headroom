@@ -11,6 +11,7 @@
   import type { ManagedFileTarget } from "../lib/filePreview";
   import { targetFromPreviewQuery, previewHashHref } from "../lib/filePreview";
   import { mutateJson } from "../lib/mutate";
+  import { reviewReturnHref } from "../lib/review/visit";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { ticketCommandImpact } from "../lib/ticketNavigationImpact";
   import { conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
@@ -63,7 +64,9 @@
 
   function close(): void {
     if (onClose) onClose();
-    else window.location.hash = "#/workspace";
+    else window.location.hash = navigation && target
+      ? reviewReturnHref(navigation, previewHashHref(target)) ?? "#/workspace"
+      : "#/workspace";
   }
   function changeFile(file: ManagedFileTarget | null): void {
     if (!file) close();
