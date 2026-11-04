@@ -1445,7 +1445,12 @@ def test_feedback_removal_upgrade_keeps_ticket_revision_feedback(
     conn.execute("CREATE INDEX idx_feedback_notes_ticket_id ON feedback_notes(id)")
     conn.execute("INSERT INTO feedback_notes VALUES ('old-note', 'Unused note')")
     conn.execute("UPDATE alembic_version SET version_num='goal_outcomes'")
-    _insert_ticket(conn, "t_feedback_kept", "Keep")
+    conn.execute(
+        "INSERT INTO tickets (id,title,worker_type,employee_backend,ceiling,field_values,"
+        "worker_step_claim,stage,created_at,updated_at) "
+        "VALUES ('t_feedback_kept','Keep','coding','hermes','needs_brief','{}',"
+        "'none','needs_brief',1,1)"
+    )
     conn.execute(
         "INSERT INTO ticket_revision_feedback VALUES "
         "('t_feedback_kept','needs_success','{\"feedback\":\"Keep this review\"}',1,1,1)"
