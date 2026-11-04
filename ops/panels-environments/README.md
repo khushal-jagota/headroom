@@ -82,7 +82,8 @@ Their tools inherit that unit. Each service limits memory to 6 GiB and stops its
 whole process group on OOM. The slice limits all Workers to 20 GiB and gives them
 CPU weight 10. Its parent `panels.slice` also uses weight 10, below the
 foreground `app.slice`. Panels uses weight 100 and a 1 GiB memory reservation.
-`MemoryLow` protects memory under pressure. It does not preallocate RAM.
+`MemoryLow` protects memory under pressure only when every ancestor supplies
+the same protection. It does not preallocate RAM.
 
 Worker temporary files use a private directory on disk for the agent process
 lifetime, including successive conversation turns. Shutdown removes the directory
@@ -104,6 +105,11 @@ For activation, the operator runs these commands from this directory after the
 application release is ready:
 
 ```sh
+# Reserve one GiB through the full cgroup hierarchy on this UID-1000 VPS.
+sudo systemctl set-property user.slice MemoryLow=1G
+sudo systemctl set-property user-1000.slice MemoryLow=1G
+sudo systemctl set-property user@1000.service MemoryLow=1G
+systemctl --user set-property app.slice MemoryLow=1G
 cp panels.slice panels-workers.slice panels-live.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user restart panels-live.service
@@ -112,3 +118,14 @@ systemctl --user restart panels-live.service
 These commands stop the live app and its existing children. Do not run them from
 a Worker. Keep the prepared files with the release until the operator selects
 the activation time.
+
+The three system-manager commands set resource protection on existing ancestors.
+They do not create another service or account. The user-manager command protects
+the foreground slice. Each command persists its property. These host changes
+require operator authority. Without them, the live unit's `MemoryLow` alone
+does not supply an effective reservation. The independent Worker memory cap
+still preserves headroom.
+
+After activation, the operator checks `memory.low` along the ancestor chain and
+checks that each Worker cgroup is outside `panels-live.service`. The operator
+also checks `memory.max`, `memory.oom.group`, CPU weights, and disk `TMPDIR`.
