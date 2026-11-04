@@ -77,7 +77,26 @@ def available(conn: sqlite3.Connection) -> bool:
 def attach(conn: sqlite3.Connection) -> None:
     # REPLACE performs an implicit deletion. Its OLD dependencies need capture too.
     conn.execute("PRAGMA recursive_triggers=ON")
-    conn.create_function("navigation_transaction_active", 0, lambda: int(conn.in_transaction))
+
+
+def remove_source_admission_triggers(conn: sqlite3.Connection) -> None:
+    """Remove obsolete source admission before migrations and startup seed writes."""
+    triggers = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' "
+        "AND name LIKE 'navigation_%' AND instr(sql,'navigation_transaction_active')>0"
+    ).fetchall()
+    for row in triggers:
+        conn.execute('DROP TRIGGER "' + str(row[0]).replace('"', '""') + '"')
+
+
+def install_source_triggers(conn: sqlite3.Connection) -> None:
+    """Restore source change capture after schema preparation."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
+        from planner.core.migrations.historical_navigation import data as historical_data
+
+        historical_data._install_source_triggers(conn)
+    else:
+        _install_source_triggers(conn)
 
 
 def _priority_source_shape(conn: sqlite3.Connection) -> bool:
@@ -131,8 +150,6 @@ def _install_source_triggers(conn: sqlite3.Connection) -> None:
             conn.execute(
                 f"CREATE TRIGGER navigation_{table}_{operation.lower()} "
                 f"{timing} {clause} ON {table} BEGIN "
-                "SELECT CASE WHEN navigation_transaction_active()=0 THEN "
-                "RAISE(ABORT,'navigation source write requires transaction') END;"
                 + capture
                 + " END"
             )

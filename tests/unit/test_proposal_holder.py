@@ -66,7 +66,9 @@ def _park(
 def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> None:
     ticket = _park(tmp_db, OWNER_PRINCIPAL)
     self_principal = Principal(PrincipalKind.ticket, ticket.id)
-    with pytest.raises(PlannerError, match="cannot hold its own ceiling"):
+    with pytest.raises(
+        PlannerError, match="ceiling holder must be the user or the Ticket's direct manager"
+    ):
         data.accept_proposal(
             tmp_db,
             ticket.id,

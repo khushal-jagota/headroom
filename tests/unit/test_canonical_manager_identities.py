@@ -63,12 +63,18 @@ def test_manager_identity_migration_preserves_links_and_authored_bytes(
     assert after["brief"]["display_label"] == approval["brief"]["display_label"]
     assert conn.execute("SELECT payload FROM conversation_events").fetchone()[0] == authored
     if producer_installed:
-        # Offline migration restored canonical capture and retained its authority
-        # boundary. No runtime functions or lease exist on this bare connection.
+        # Offline migration restores ordinary SQLite capture without runtime
+        # functions or a producer lease on this bare connection.
         trigger = conn.execute(
             "SELECT sql FROM sqlite_master WHERE name='signal_source_agents_insert'"
         ).fetchone()[0]
         assert "manager_" in trigger
         assert "sprint_item_supervisor_" not in trigger
-        with pytest.raises(sqlite3.OperationalError, match="signal_publication_admitted"):
-            conn.execute("INSERT INTO agents VALUES('manager_other','conversation_other')")
+        conn.execute("INSERT INTO agents VALUES('manager_other','conversation_other')")
+        assert conn.execute(
+            "SELECT conversation_id FROM signal_publication_dirty "
+            "WHERE conversation_id='conversation_other'"
+        ).fetchall() == [("conversation_other",)]
+        assert conn.execute(
+            "SELECT agent_key,conversation_id FROM agents WHERE agent_key='manager_other'"
+        ).fetchall() == [("manager_other", "conversation_other")]

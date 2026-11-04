@@ -17,6 +17,7 @@ from planner.goals.contracts import Goal, GoalCompletionRule
 from planner.goals.outcomes import reconcile_completions
 from planner.goals.rule_evaluation import evaluate_completion_date, parse_completion_rule
 from planner.goals.scheduling import GoalCompletionParticipant
+from planner.measure_sources.schedule_loop import SourceScheduleLoop
 from planner.measures import actions as measure_actions
 from planner.measures import manual
 from planner.measures.contracts import (
@@ -28,7 +29,6 @@ from planner.measures.contracts import (
     UpdateMeasureBody,
 )
 from planner.measures.data import transaction
-from planner.measure_sources.schedule_loop import SourceScheduleLoop
 
 
 def finish_line(measure_id: str, *, first_date: str = "2026-10-25") -> GoalCompletionRule:

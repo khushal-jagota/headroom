@@ -177,7 +177,7 @@ def submit_script(
 
 def delete_source(conn: sqlite3.Connection, source_id: str, *, principal: Principal) -> None:
     with transaction(conn):
-        source = data.read_source(conn, source_id)
+        data.read_source(conn, source_id)
         if (
             conn.execute(
                 "SELECT 1 FROM measures WHERE source_id=? LIMIT 1", (source_id,)

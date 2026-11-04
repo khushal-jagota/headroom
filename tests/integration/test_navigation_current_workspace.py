@@ -89,6 +89,13 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
         engine.dispose()
     with prepared_navigation_database(path) as conn:
         assert historical_snapshot(conn)["schema_version"] == 7
+        assert not conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' "
+            "AND instr(sql,'navigation_transaction_active')>0"
+        ).fetchall()
+        assert conn.execute(
+            "SELECT name FROM sqlite_master WHERE name='navigation_projects_insert'"
+        ).fetchone() is not None
     assert_prepared_rejected(path)
     with prepared_navigation_database(path) as conn:
         assert historical_snapshot(conn)["schema_version"] == 7

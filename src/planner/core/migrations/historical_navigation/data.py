@@ -61,7 +61,6 @@ def _json(value: object) -> str:
 def attach(conn: sqlite3.Connection) -> None:
     # REPLACE performs an implicit deletion. Its OLD dependencies need capture too.
     conn.execute("PRAGMA recursive_triggers=ON")
-    conn.create_function("navigation_transaction_active", 0, lambda: int(conn.in_transaction))
 
 
 def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
@@ -132,8 +131,6 @@ def _install_source_triggers(conn: sqlite3.Connection) -> None:
             conn.execute(
                 f"CREATE TRIGGER navigation_{table}_{operation.lower()} "
                 f"{timing} {clause} ON {table} BEGIN "
-                "SELECT CASE WHEN navigation_transaction_active()=0 THEN "
-                "RAISE(ABORT,'navigation source write requires transaction') END;"
                 + capture
                 + " END"
             )
@@ -689,5 +686,3 @@ def rebuild(conn: sqlite3.Connection) -> None:
 
     # Historical preparation never publishes current Manager views.
     pass
-
-

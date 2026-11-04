@@ -147,12 +147,7 @@ export interface CurrentAttentionKnowledge {
   durable: DurableSignal;
 }
 
-export interface DurableAttentionKnowledge {
-  current: null;
-  durable: DurableSignal;
-}
-
-export type AttentionKnowledge = CurrentAttentionKnowledge | DurableAttentionKnowledge;
+export type AttentionKnowledge = CurrentAttentionKnowledge;
 
 export interface ConversationValue {
   first_unread_owner_message_at: number | null;
@@ -282,12 +277,6 @@ export interface CurrentAvailability {
   reason: null;
 }
 
-export interface NoncurrentAvailability {
-  state: "initializing" | "unavailable";
-  generation: string;
-  reason: string | null;
-}
-
 export interface SignalPermit {
   scope: string;
   runtime_epoch: string;
@@ -301,12 +290,6 @@ export interface CurrentAuthority {
   permit: SignalPermit;
 }
 
-export interface DegradedAuthority {
-  delivery_session_id: string;
-  availability: NoncurrentAvailability;
-  permit: null;
-}
-
 export interface CurrentSnapshotResponse {
   wire_version: 2;
   mode: "current";
@@ -315,15 +298,7 @@ export interface CurrentSnapshotResponse {
   snapshot: Snapshot;
 }
 
-export interface DegradedSnapshotResponse {
-  wire_version: 2;
-  mode: "degraded";
-  authority: DegradedAuthority;
-  cursor: null;
-  snapshot: Snapshot;
-}
-
-export type SnapshotResponse = CurrentSnapshotResponse | DegradedSnapshotResponse;
+export type SnapshotResponse = CurrentSnapshotResponse;
 
 export interface BatchEnvelope {
   wire_version: 2;
@@ -503,7 +478,7 @@ export interface ViewWindow {
 }
 
 export interface ViewCounts {
-  running_conversations: number | null;
+  running_conversations: number;
   out_claims: number;
   review: number;
   unread: number;
@@ -547,21 +522,7 @@ export interface CurrentViewSnapshot {
   content: ViewContent;
 }
 
-export interface DegradedViewSnapshot {
-  wire_version: 3;
-  projection_version: 7;
-  view_id: string;
-  scope_generation: number;
-  ordering_generation: string;
-  coverage: Continuity;
-  content_version: string;
-  event: "snapshot";
-  mode: "degraded";
-  authority: DegradedAuthority;
-  content: ViewContent;
-}
-
-export type ViewSnapshot = CurrentViewSnapshot | DegradedViewSnapshot;
+export type ViewSnapshot = CurrentViewSnapshot;
 
 export interface ViewPatch {
   wire_version: 3;

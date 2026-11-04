@@ -41,7 +41,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     item = api.direct_post(
         server,
         "/api/managers",
-        {"title": "Named orchestrator must not appear", "project_id": project["id"]},
+        {"title": "Named Manager must not appear", "project_id": project["id"]},
     )
     ticket = api.direct_post(
         server,
@@ -51,7 +51,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
             "worker_type": "coding",
             "project_id": project["id"],
             "brief": "The brief is agreed.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
         },
     )
     ticket_id = str(ticket["id"])

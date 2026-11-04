@@ -432,4 +432,3 @@ async def settle_item(
         conn, item_id, settled=raw["settled"], principal=ctx.principal, clock=clk
     )
     return managers_views.manager_detail(conn, item_id)
-

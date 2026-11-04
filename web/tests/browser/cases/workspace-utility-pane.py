@@ -1487,10 +1487,9 @@ def verify_rail_overflow(page, fixture, evidence):
     fixture["release_sha"] = "fixture-next"
     page.evaluate("dispatchEvent(new Event('pageshow'))")
     status_samples = []
-    for state, word in [("ready", "New version ready"), ("held", "Page refresh waits until this message is safe")]:
-        if state == "held":
+    for state, word in [("ready", "New version ready"), ("composing", "New version ready")]:
+        if state == "composing":
             page.evaluate("document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))")
-            page.locator("[data-shell-refresh]:visible").click()
         for viewport_width in [721, 720]:
             page.set_viewport_size({"width": viewport_width, "height": 700})
             expect(rail).to_be_visible()
@@ -1501,7 +1500,7 @@ def verify_rail_overflow(page, fixture, evidence):
                 expect(grip).to_have_attribute("aria-valuenow", "232")
             bounds = status_geometry(word)
             status = page.locator(".status-card:visible")
-            assert status.locator(".status-action").count() == (1 if state == "ready" else 0)
+            assert status.locator(".status-action").count() == 1
             values = []
             for scroller, selector in [(active, ".manager-card:not(.chief) .settle"), (settled, ".reopen")]:
                 dimensions = geometry(scroller)
@@ -1525,6 +1524,12 @@ def verify_rail_overflow(page, fixture, evidence):
                 values.append(dimensions)
             status_samples.append({"state": state, "viewportWidth": viewport_width, "status": bounds, "scrollers": values})
             page.screenshot(path=str(evidence / f"rail-overflow-status-{state}-{viewport_width}.png"))
+    # Composition no longer holds a requested refresh. Keep both geometry modes
+    # actionable, then cross the real reload boundary before later fixture work.
+    page.evaluate("window.__beforeStatusRefreshDocument = document")
+    with page.expect_navigation(wait_until="domcontentloaded"):
+        page.locator("[data-shell-refresh]:visible").click()
+    assert page.evaluate("document !== window.__beforeStatusRefreshDocument")
     (evidence / "rail-overflow-status-geometry.json").write_text(json.dumps(status_samples, indent=2))
     (evidence / "rail-overflow-geometry.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "samples": proof,
@@ -1537,7 +1542,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
     The provider records external dispatch only. The Problem composition must keep
     confirmation, retry, and cancellation usable beside the failure explanation.
     The narrow problem_only path skips unrelated recovery and cutover checks.
-    A synthetic SHA change proves refresh hold, not deployment or database migration.
+    A synthetic SHA change proves immediate refresh and retained drafts, not deployment.
     """
     from dataclasses import replace
 
@@ -1548,7 +1553,6 @@ def verify_owner_updates(browser, url, *, problem_only=False):
     deployment = {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None, "success_display_until": None}
     posts = []
     documents = []
-    navigation_health = {"mode": "current", "generation": 1, "reason": None}
     errors = []
     context = browser.new_context(viewport={"width": 1280, "height": 900}, reduced_motion="reduce")
     context.add_init_script("localStorage.setItem('panels.workspace.rail-width', '300')")
@@ -1571,12 +1575,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             return
         if path == "/api/navigation/view/snapshot":
             view = json.loads(parse_qs(parts.query)["view"][0])
-            authority = {**source["authority"], "availability": {
-                "state": "current" if navigation_health["mode"] == "current" else "unavailable",
-                "generation": str(navigation_health["generation"]), "reason": navigation_health["reason"],
-            }, "permit": {**source["authority"]["permit"], "generation": str(navigation_health["generation"])} if navigation_health["mode"] == "current" else None}
-            projected = {**source, "mode": navigation_health["mode"], "authority": authority}
-            route.fulfill(json=navigation["scoped_navigation_response"](projected, view))
+            route.fulfill(json=navigation["scoped_navigation_response"](source, view))
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
@@ -1615,6 +1614,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         from datetime import UTC, datetime, timedelta
 
         from planner.environments.update_contracts import OwnerUpdateRequest
+        from planner.environments.update_requests import CANCELLED_DETAIL
 
         capture_started = time.perf_counter()
         capture_proof = []
@@ -1636,9 +1636,6 @@ def verify_owner_updates(browser, url, *, problem_only=False):
                 elif name in {"available", "failed-retry"}:
                     expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
                     expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-                elif name == "active-requested":
-                    expect(card.get_by_text("Update requested", exact=True)).to_be_visible()
-                    expect(card.get_by_role("button", name="Cancel update", exact=True)).to_be_visible()
                 elif name == "active-idle":
                     expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
                     expect(card.get_by_role("button", name="Cancel update", exact=True)).to_be_visible()
@@ -1680,15 +1677,15 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             page.set_viewport_size(viewport)
             card.get_by_role("button", name="Go back", exact=True).click()
         page.set_viewport_size({"width": 1280, "height": 900})
-        backend.store.create(OwnerUpdateRequest("capture", offered, "idle", "pending", datetime.now(UTC).isoformat()))
+        backend.store.create(OwnerUpdateRequest("capture", offered, "idle", "requested", datetime.now(UTC).isoformat()))
         signal()
         expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
         capture("active-idle")
-        backend.store.transition("capture", frozenset({"pending"}), "applying")
+        backend.store.transition("capture", frozenset({"requested"}), "installing")
         signal()
         expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
         capture("active-applying")
-        backend.store.transition("capture", frozenset({"applying"}), "failed", detail="Update failed")
+        backend.store.transition("capture", frozenset({"installing"}), "failed", detail="Update failed")
         signal()
         expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         capture("failed-retry")
@@ -1733,25 +1730,23 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         page.screenshot(path=str(evidence / "navigation-reconnecting.png"))
         page.evaluate("window.__navigationOffline = false")
         expect(health).to_have_count(0)
-        reason = "Runtime <script> is unavailable. " + "The server keeps durable navigation data while runtime authority recovers. " * 3
-        navigation_health.update(mode="degraded", generation=2, reason=reason)
-        page.evaluate("void window.__refreshNavigation()")
-        expect(health).to_have_attribute("data-navigation-health", "degraded")
-        expect(health.get_by_text("Navigation degraded", exact=True)).to_be_visible()
-        expect(health.locator(".navigation-reason")).to_have_text(reason)
-        expect(health.locator("script")).to_have_count(0)
+        # Keep a real transport loss active through the update controls. There
+        # is no unavailable-status frame or separate degraded presentation.
+        page.evaluate("window.__disconnectNavigation()")
+        expect(health).to_have_attribute("data-navigation-health", "reconnecting")
+        expect(health).to_have_text("Navigation reconnecting")
         expect(box).to_have_value(retained_draft)
-        page.screenshot(path=str(evidence / "navigation-degraded-desktop.png"))
+        page.screenshot(path=str(evidence / "navigation-reconnecting-desktop.png"))
         page.set_viewport_size({"width": 390, "height": 844})
         compact_health = page.locator(".compact-bar [data-navigation-health]")
         expect(compact_health).to_be_visible()
-        expect(compact_health.locator(".navigation-reason")).to_have_text(reason)
-        dimensions = compact_health.evaluate("node => ({width:node.clientWidth, scroll:node.scrollWidth, reasonHeight:node.querySelector('.navigation-reason').getBoundingClientRect().height, lineHeight:parseFloat(getComputedStyle(node).lineHeight)})")
+        expect(compact_health).to_have_text("Navigation reconnecting")
+        dimensions = compact_health.evaluate("node => ({width:node.clientWidth, scroll:node.scrollWidth, height:node.getBoundingClientRect().height, lineHeight:parseFloat(getComputedStyle(node).lineHeight)})")
         assert dimensions["scroll"] == dimensions["width"], dimensions
-        assert dimensions["reasonHeight"] > dimensions["lineHeight"] * 2, dimensions
-        page.screenshot(path=str(evidence / "navigation-degraded-compact.png"))
+        assert dimensions["height"] >= dimensions["lineHeight"], dimensions
+        page.screenshot(path=str(evidence / "navigation-reconnecting-compact.png"))
         page.set_viewport_size({"width": 1280, "height": 900})
-        expect(health).to_have_attribute("data-navigation-health", "degraded")
+        expect(health).to_have_attribute("data-navigation-health", "reconnecting")
         assert page.evaluate("document === window.__navigationDocument")
         navigation_seconds = time.perf_counter() - health_started
         if not problem_only:
@@ -1784,14 +1779,20 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             before_notice_posts = len(posts)
             card.get_by_role("button", name="Start update", exact=True).click()
             expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+            # Progress notices remain progress after their old validity timestamp.
+            # Only an explicit unknown lifecycle report uses the unknown notice.
             for state in ("preparing", "restarting"):
-                deployment.update(state=state, valid_until="2000-01-01T00:00:00Z")
+                progress = "The update is in progress."
+                deployment.update(state=state, detail=progress,
+                                  valid_until="2000-01-01T00:00:00Z")
                 signal()
-                expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_be_visible()
+                expect(card.get_by_text("Deploying", exact=True)).to_be_visible()
+                expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_have_count(0)
+                expect(card.locator(".deployment-detail")).to_have_text(progress)
                 expect(card.locator(".deployment-detail")).to_be_visible()
                 expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
             assert len(posts) == before_notice_posts
-            page.screenshot(path=str(evidence / "expired-notice-with-confirmation.png"))
+            page.screenshot(path=str(evidence / "progress-notice-with-confirmation.png"))
             deployment.update(state="unknown")
             installed = "The requested app is installed and available. Its final report is unconfirmed. No action is needed from you."
             deployment.update(installation_confirmed=True, detail=installed,
@@ -1831,12 +1832,13 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
         card.get_by_role("button", name="Go back", exact=True).click()
         expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        expect(health).to_have_attribute("data-navigation-health", "degraded")
+        expect(health).to_have_attribute("data-navigation-health", "reconnecting")
         expect(box).to_have_value(retained_draft)
         page.screenshot(path=str(evidence / "problem-with-update-actions.png"))
-        navigation_health.update(mode="current", generation=3, reason=None)
-        page.evaluate("void window.__refreshNavigation()")
+        page.evaluate("window.__navigationOffline = false")
         expect(health).to_have_count(0)
+        assert page.evaluate("document === window.__navigationDocument")
+        assert len(documents) == 1
         expect(card.get_by_text("Problem", exact=True)).to_be_visible()
         expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         expect(box).to_have_value(retained_draft)
@@ -1844,7 +1846,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         (evidence / "navigation-health-proof.json").write_text(json.dumps({
             "seconds": round(navigation_seconds, 3), "newHosts": 0,
             "boundary": "App + production scoped navigation transport + both shell mounts + retained composer + existing Problem and update controls",
-            "compactReason": dimensions, "reason": reason,
+            "compactHealth": dimensions, "recoveredWithoutReload": True,
         }, indent=2))
 
         for activity, warning in (("unknown", "Activity is unknown. The update can interrupt work."), ("busy", "Work is active. The update can interrupt it.")):
@@ -1858,11 +1860,11 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             if activity == "unknown":
                 page.screenshot(path=str(evidence / "confirmation.png"))
             card.get_by_role("button", name="Proceed with update", exact=True).click()
-            expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
+            expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
             receipt = backend.store.read()
-            assert receipt is not None and receipt.state == "dispatched" and receipt.confirm_activity
+            assert receipt is not None and receipt.state == "installing" and receipt.confirm_activity
             if activity == "unknown":
-                capture("active-requested")
+                capture("active-applying")
             assert len(backend.provider.dispatched) == before_dispatches + 1
             body = posts[-1]["body"]
             selected = backend.provider.offered
@@ -1881,33 +1883,47 @@ def verify_owner_updates(browser, url, *, problem_only=False):
                 # A failed request leaves an available publication usable for retry.
                 # Its failure and the deployment failure remain visible at each step.
                 failed_request = "The runner refused the previous attempt."
-                backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed", detail=failed_request)
+                backend.store.transition(receipt.request_id, frozenset({"installing"}), "failed", detail=failed_request)
                 signal()
-                expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
+                assert backend.store.read().state == "failed"
+                assert backend.store.read().detail == failed_request
+                expect(card.get_by_role("alert")).to_have_text(failed_request)
                 card.get_by_role("button", name="Start update", exact=True).click()
                 expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
                 expect(card.locator(".deployment-detail")).to_have_text(failure)
                 expect(card.locator(".deployment-detail")).to_be_visible()
-                expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
+                expect(card.get_by_role("alert")).to_have_text(failed_request)
                 assert len(backend.provider.dispatched) == before_dispatches + 1
                 page.screenshot(path=str(evidence / "problem-with-retry-confirmation.png"))
                 card.get_by_role("button", name="Proceed with update", exact=True).click()
-                expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
+                expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
                 assert len(backend.provider.dispatched) == before_dispatches + 2
                 expect(card.locator(".deployment-detail")).to_have_text(failure)
                 expect(card.locator(".deployment-detail")).to_be_visible()
+            # Dispatch now enters installing. Cancellation stays unavailable once
+            # the provider receives the request. End the synthetic runner attempt,
+            # then exercise cancellation on a real idle request before dispatch.
+            expect(card.get_by_role("button", name="Cancel update", exact=True)).to_have_count(0)
+            active_request = backend.store.read()
+            backend.store.transition(active_request.request_id, frozenset({"installing"}),
+                                     "failed", detail="Synthetic runner ended this attempt.")
+            signal()
+            card.get_by_role("button", name="Update when idle", exact=True).click()
+            expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
+            assert backend.store.read().state == "requested"
             card.get_by_role("button", name="Cancel update", exact=True).click()
             expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
             expect(card.locator(".deployment-detail")).to_have_text(failure)
             expect(card.locator(".deployment-detail")).to_be_visible()
-            assert backend.store.read().state == "cancelled"
+            assert backend.store.read().state == "failed"
+            assert backend.store.read().detail == CANCELLED_DETAIL
 
         backend.activity.activity = "unknown"
         signal()
         expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", "unknown")
         card.get_by_role("button", name="Update when idle", exact=True).click()
         expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
-        assert backend.store.read().state == "pending"
+        assert backend.store.read().state == "requested"
         assert backend.store.read().release == backend.provider.offered
         assert len(backend.provider.dispatched) == 3
         expect(card.locator(".deployment-detail")).to_have_text(failure)
@@ -1929,7 +1945,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         card.get_by_role("button", name="Cancel update", exact=True).click()
         expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         expect(card.get_by_text("fffffff", exact=False)).to_have_count(0)
-        assert backend.store.read().state == "cancelled"
+        assert backend.store.read().state == "failed"
+        assert backend.store.read().detail == CANCELLED_DETAIL
         expect(card.locator(".deployment-detail")).to_have_text(failure)
         expect(card.locator(".deployment-detail")).to_be_visible()
         if problem_only:
@@ -1949,20 +1966,20 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", "idle")
         card.get_by_role("button", name="Start update", exact=True).click()
-        expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
+        expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
         receipt = backend.store.read()
-        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "applying")
+        assert receipt is not None and receipt.state == "installing"
         signal()
         expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
         expect(card.get_by_role("button", name="Cancel update", exact=True)).to_have_count(0)
         assert len(backend.provider.dispatched) == 4
 
-        # The application version changes synthetically. The retained App and its
-        # actual composer keep the unsent draft until the owner clears it.
+        # The application version changes synthetically. A requested refresh
+        # replaces the document immediately and restores the actual composer draft.
         draft = "Keep this unsent draft across the installed revision change."
         box.fill(draft)
         page.evaluate("window.__beforeUpdateDocument = document")
-        backend.store.transition(receipt.request_id, frozenset({"applying"}), "applied")
+        backend.store.transition(receipt.request_id, frozenset({"installing"}), "done")
         backend.current_sha = pinned.manifest.app_sha
         backend.service.current_app_sha = backend.current_sha
         signal()
@@ -1977,16 +1994,14 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card.locator("[data-shell-refresh]")).to_be_visible()
         assert page.evaluate("document === window.__beforeUpdateDocument")
         page.screenshot(path=str(evidence / "navigation-with-refresh-control.png"))
-        card.locator("[data-shell-refresh]").click()
-        expect(card.get_by_text("Page refresh waits until this message is safe", exact=True)).to_be_visible()
+        with page.expect_navigation(wait_until="domcontentloaded"):
+            card.locator("[data-shell-refresh]").click()
+        assert page.evaluate("document !== window.__beforeUpdateDocument")
+        expect(box).to_be_visible()
         expect(box).to_have_value(draft)
-        assert page.evaluate("document === window.__beforeUpdateDocument")
-        assert len(documents) == 1
+        assert documents == ["a" * 40, "b" * 40]
         page.screenshot(path=str(evidence / "refresh-keeps-draft.png"))
         box.fill("")
-        page.wait_for_function("document !== window.__beforeUpdateDocument")
-        expect(box).to_be_visible()
-        assert documents == ["a" * 40, "b" * 40]
         expect(page.get_by_text("Refresh page", exact=True)).to_have_count(0)
         assert errors == [], errors
         (evidence / "proof.json").write_text(json.dumps({

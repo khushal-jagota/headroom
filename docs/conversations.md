@@ -83,6 +83,8 @@ Automation sends a Ticket its [Worker steps](worker-steps.md), a Manager its goa
 
 The notebook feeds attention: messages to the owner, open asks, and failures become the marks the rail, [Review](review.md), and [notifications](notifications.md) read. Unread dots and working marks are per conversation, so a child Ticket's dot is not its Manager's. A failed Ticket turn wakes the agent who holds the Ticket's ceiling, or reaches Khushal through attention when he holds it. Gated Ticket text changes only through [proposals](tickets.md#how-a-stage-advances). Files an agent writes are artifacts on disk, not notebook rows. Usage rows feed the cost lines on [Usage](usage.md). An agent asking for an API key is covered by [Credentials](credentials.md).
 
+After each application save, Headroom updates changed conversation statuses and sends them to the browser. Server startup recalculates every status from conversation records and current runtime state. Plain SQLite edits remain possible.
+
 ## Decisions that shape it
 
 - One input path, so whatever an agent knows from Headroom can be read in its notebook.

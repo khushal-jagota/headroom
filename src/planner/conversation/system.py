@@ -3343,8 +3343,6 @@ class SqliteProcessConversationSystem:
             return None
         return SignalRuntimeMutation(
             conversation_id=state.record.conversation_id,
-            runtime_epoch=self._signal.runtime_epoch,
-            expected_turn=state.running_turn,
             operations=operations,
         )
 

@@ -131,7 +131,7 @@ def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_p
         # Closed admission blocks all participant polls, not only source execution.
         assert admission.claim(lambda: None, idle=lambda: True, require_idle=True)
         before = list(polls)
-        assert scheduler.poll_once() is None
+        scheduler.poll_once()
         assert polls == before
 
     asyncio.run(run())

@@ -15,10 +15,6 @@ from planner.conversation.contracts import (
     SignalReadPermit,
 )
 from planner.navigation.configuration import DeliveryConfig
-from planner.navigation.contracts import (
-    AttentionKnowledge,
-    DurableSignal,
-)
 from planner.navigation.delivery_authority import (
     DeliveryAdmission,
     DeliveryRead,
@@ -33,32 +29,6 @@ def _read_connection(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, isolation_level=None)
     conn.execute("PRAGMA query_only=ON")
     return conn
-
-
-def _require_current_knowledge(value: AttentionKnowledge, durable: DurableSignal) -> None:
-    current = value["current"]
-    if (
-        set(value) != {"current", "durable"}
-        or current is None
-        or set(current) != {"signal", "awaiting_answer", "last_turn_failed"}
-        or set(current["signal"]) != {"working", "message_for_owner"}
-        or set(value["durable"]) != {"message_for_owner", "last_turn_failed"}
-        or any(
-            type(bit) is not bool
-            for bit in (
-                current["signal"]["working"],
-                current["signal"]["message_for_owner"],
-                current["awaiting_answer"],
-                current["last_turn_failed"],
-                value["durable"]["message_for_owner"],
-                value["durable"]["last_turn_failed"],
-            )
-        )
-        or value["durable"] != durable
-        or current["signal"]["message_for_owner"] != durable["message_for_owner"]
-        or current["last_turn_failed"] != durable["last_turn_failed"]
-    ):
-        raise DeliveryUnavailable("current publication disagrees with canonical durable knowledge")
 
 
 class DeliveryRuntime:

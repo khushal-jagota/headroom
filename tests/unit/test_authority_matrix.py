@@ -126,8 +126,12 @@ def _seed(db_path: Path) -> Seed:
     create_schema(conn)
     conn.close()
     with TestClient(_app_on(db_path)) as client:
-        item_a = _ok(client.post("/api/managers", json={"title": "A", "project_id": "project_vylo"}))
-        item_b = _ok(client.post("/api/managers", json={"title": "B", "project_id": "project_vylo"}))
+        item_a = _ok(
+            client.post("/api/managers", json={"title": "A", "project_id": "project_vylo"})
+        )
+        item_b = _ok(
+            client.post("/api/managers", json={"title": "B", "project_id": "project_vylo"})
+        )
         ticket_a = _ok(
             client.post(
                 "/api/tickets",
@@ -375,7 +379,10 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         "POST   /managers/{i}/conversation/reset",
         lambda s: Call("POST", f"/api/managers/{s.item_a}/conversation/reset"),
     ),
-    ("GET    /managers/{i}/workspace", lambda s: Call("GET", f"/api/managers/{s.item_a}/workspace")),
+    (
+        "GET    /managers/{i}/workspace",
+        lambda s: Call("GET", f"/api/managers/{s.item_a}/workspace"),
+    ),
     # --- an Outcome, through its ordinary address
     (
         "PATCH  /managers/{i}",

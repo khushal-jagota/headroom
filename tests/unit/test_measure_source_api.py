@@ -14,8 +14,8 @@ from fastapi.params import Body as BodyParameter
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
-from tests.support.measure_sources import configured_source
 from tests.support.api_app import _app
+from tests.support.measure_sources import configured_source
 
 from planner.cli.main import main
 from planner.core.clock import TestClock as FakeClock
@@ -456,9 +456,15 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "bar",
             "gauge",
         )
-        # Empty objects were deliberate setup probes, not failed valid product operations.
-        for path in ("/api/measure-sources", "/api/measures"):
-            invalid(client.post(path, json={}, headers=headers), "required")
+        # Required-field probes retain valid assignment context where intake needs it.
+        invalid(
+            client.post("/api/measure-sources", json={}, headers=headers),
+            "$.responsible: expected an object with kind and id",
+        )
+        invalid(
+            client.post("/api/measures", json={"source_id": source_id}, headers=headers),
+            "$.origin", "required",
+        )
         invalid(
             client.patch(
                 f"/api/goals/{goal_id}",
@@ -478,15 +484,16 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "unknown",
         )
 
-        # Runtime parsing order is unchanged: source/measure syntax precedes authority;
-        # goal edits check ownership before inspecting authored content.
+        # Intake parses assignment context before permission checks. Authored fields
+        # reach command validation only after the request passes intake.
         invalid(
             client.post("/api/measure-sources", json=guessed_source, headers=foreign_headers),
             "$.responsible.goal_id",
         )
-        invalid(
-            client.post("/api/measures", json=guessed_measure, headers=foreign_headers), "unknown"
-        )
+        denied = client.post("/api/measures", json=guessed_measure, headers=foreign_headers)
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+        assert sentinel not in denied.text
         assert (
             client.post("/api/measures", json=measure_body, headers=foreign_headers).json()[
                 "error"
@@ -624,8 +631,8 @@ def test_explicit_participants_constructor_executes_registered_lifespan(tmp_db: 
     from planner.core.server import create_app
     from planner.credentials.contracts import CredentialResolver
     from planner.measure_sources.contracts import RunAdmission, RunMetrics, RunResult
-    from planner.measures.contracts import CandidateObservation
     from planner.measure_sources.registry import build_participants
+    from planner.measures.contracts import CandidateObservation
 
     class FixtureRuntime:
         def __init__(self) -> None:

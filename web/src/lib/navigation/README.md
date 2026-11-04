@@ -14,7 +14,13 @@ The workspace sidebar, Manager headers and child lists, Chief child pages, Revie
 
 The provider shares one presentation result per effective view identity. A knowledge change invalidates that result even when the publication stays the same. `navigationWorkingAgentCount(view)` reads the global count from the scoped view. Filters and pages do not reduce that total.
 
-The owner carries health separately from its connection state. A degraded snapshot preserves the server availability and reason. A transport or protocol failure reports reconnecting. Only accepted current data for the demanded scope clears the warning. The shell displays that health beside its other connection messages.
+The scoped owner carries client health separately from its mechanical connection state.
+A failed stream or snapshot uses the existing retry sequence.
+A transport or protocol failure reports reconnecting. Only accepted current data for the demanded scope clears the warning.
+Current frames from an older active scope cannot clear a warning for its pending replacement.
+Obsolete callbacks cannot update health or restore healthy status.
+Generation changes, runtime knowledge loss, and retry timing retain their existing rules.
+The application passes this health to both shell status mounts, alongside deployment and update messages.
 
 Successful owner reads request shared-owner recovery before the unread-message optimization. Failures retain their existing behavior. Current frames from an older active scope cannot clear a warning for its pending replacement.
 

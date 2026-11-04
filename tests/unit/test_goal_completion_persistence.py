@@ -110,7 +110,7 @@ def test_item_deadline_changes_preserve_saved_completion_selection_and_active_st
     assert effective_completion(changed.binary_checked, changed.page, "delivery")
     assert not changed.active and changed.deadline == initial.deadline
 
-    # A date write with an old revision cannot replace a newer completion or page.
+    # Ordinary page writes use the submitted checklist and retain other saved fields.
     item["state"] = "open"
     reopened = edit(tmp_db, changed, page=document, active=True)
     assert not effective_completion(reopened.binary_checked, reopened.page, "delivery")
@@ -122,9 +122,12 @@ def test_item_deadline_changes_preserve_saved_completion_selection_and_active_st
     stale_checklist = selected_checklist(stale_document, "delivery")
     assert stale_checklist is not None
     stale_checklist["items"][0]["deadline"] = None
-    with pytest.raises(PlannerError, match="goal changed"):
-        edit(tmp_db, changed, page=stale_document)
-    assert data.read_goal(tmp_db, reopened.id) == reopened
+    replaced = edit(tmp_db, changed, page=stale_document)
+    assert data.read_goal(tmp_db, replaced.id) == replaced
+    assert replaced.page == stale_document
+    assert effective_completion(replaced.binary_checked, replaced.page, "delivery")
+    assert replaced.active and replaced.primary_checklist_block_id == "delivery"
+    assert replaced.deadline == initial.deadline
 
     item["deadline"] = None
     cleared = edit(tmp_db, reopened, page=document)
@@ -294,16 +297,22 @@ def test_invalid_selected_completion_edits_are_atomic(
     assert data.read_goal(tmp_db, goal.id) == goal
 
 
-def test_stale_page_cannot_change_selected_completion(tmp_db: Connection) -> None:
+def test_page_write_changes_selected_completion_from_submitted_checklist(
+    tmp_db: Connection,
+) -> None:
     initial = create(tmp_db)
     document = deepcopy(initial.page)
     checklist = selected_checklist(document, "delivery")
     assert checklist is not None
     checklist["items"][0]["state"] = "open"
     accepted = edit(tmp_db, initial, page=document)
-    with pytest.raises(PlannerError, match="goal changed"):
-        edit(tmp_db, initial, page=initial.page, completed=True)
-    assert data.read_goal(tmp_db, initial.id) == accepted
+    assert not effective_completion(accepted.binary_checked, accepted.page, "delivery")
+    replaced = edit(tmp_db, initial, page=initial.page, completed=True)
+    assert data.read_goal(tmp_db, initial.id) == replaced
+    assert replaced.page == initial.page
+    assert replaced.primary_checklist_block_id == "delivery"
+    assert effective_completion(replaced.binary_checked, replaced.page, "delivery")
+    assert replaced.binary_checked == initial.binary_checked
 
 
 def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Connection) -> None:
@@ -312,7 +321,7 @@ def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Conn
     context = RequestContext(OWNER_PRINCIPAL)
 
     async def responses(completed: bool) -> None:
-        saved = data.read_goal(tmp_db, goal.id)
+        data.read_goal(tmp_db, goal.id)
         write = await api.update_goal(
             goal.id,
             {"completed": completed},

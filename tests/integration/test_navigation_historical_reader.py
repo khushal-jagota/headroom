@@ -2,8 +2,8 @@
 
 Risk: a current migration fixture cannot prove compatibility with real retained
 source or its canonical readers. One subprocess-backed case crosses that missing
-boundary. The Manager rename is forward-only and makes old direct Ticket readers
-unavailable. A matched backup restores their schema and their original facts.
+boundary. The Manager rename and Mac requirement removal make old Ticket and Project
+readers unavailable. A matched backup restores their schema and their original facts.
 Existing runtime tests cover obsolete cursors.
 All databases, homes, skill files and producer leases stay under tmp_path.
 """
@@ -169,8 +169,9 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
     after = run_historical(source, candidate, "read_unavailable", expected_tip=expected_tip)
     assert after["tip"] == expected_tip
     assert after["unavailable"] == "structural_manager_rename"
-    assert set(after["failures"]) == {"ticket"}
-    assert after["projects"]["project_historical"] == "Later fixture project"
+    assert set(after["failures"]) == {"projects", "ticket"}
+    assert after["failures"]["projects"] == "no such column: requires_macos"
+    assert after["raw_projects"]["project_historical"] == "Later fixture project"
     assert after["denied_writes"] == 2
     assert after["foreign_keys"] == []
     assert after["source"] == later_facts
@@ -227,7 +228,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
                 "python_prefix": before["python_prefix"],
                 "migration_sha256": before["migration"],
                 "scope": (
-                    "historical Ticket reader unavailable after structural rename, "
+                    "historical readers unavailable after approved schema removals, "
                     "matched-backup old reader, current Ticket reader, exact raw source facts"
                 ),
             }

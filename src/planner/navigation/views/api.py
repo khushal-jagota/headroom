@@ -69,7 +69,7 @@ def router(runtime: ScopedDeliveryRuntime) -> APIRouter:
             media_type="text/event-stream",
             send_timeout=runtime.parent.config.send_timeout_seconds,
             admission=runtime.parent.admission,
-            read=captured[1],
+            read=captured[0],
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 

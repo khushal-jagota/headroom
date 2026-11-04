@@ -37,8 +37,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.measure_sources.contracts import SourceRuntime
-from planner.runtime.workspaces import register_workspace_root, workspace_root_for_connection
 from planner.measure_sources.registry import build_participants
+from planner.runtime.workspaces import register_workspace_root, workspace_root_for_connection
 from planner.server_lifecycle import runtime as application_runtime
 
 
@@ -178,14 +178,12 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
         original_finish_writes = runtime.store.finish_writes
 
         def blocked_write() -> None:
-            with runtime.store._publication_connection() as (conn, _admission):
+            with runtime.store._publication_connection() as (conn, _mutation):
                 conn.execute("BEGIN IMMEDIATE")
                 conn.execute("UPDATE conversations SET model=model WHERE conversation_id='live'")
-                runtime.store._record_signal_result(conn, None)
                 conn.execute("COMMIT")
-            # Hold the tracked operation after canonical SQL and its producer gate
-            # close. Holding the gate until child stop would deadlock shutdown's
-            # preceding invalidation. This proves operation drain, not active SQL.
+            # Hold the tracked operation after its SQL transaction closes.
+            # This proves operation drain, not active SQL.
             writer_started.set()
             if not writer_release.wait(10):
                 raise RuntimeError("synthetic writer release timed out")

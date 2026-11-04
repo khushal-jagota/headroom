@@ -13,7 +13,9 @@ from typing import Any, cast
 from zoneinfo import TZPATH, ZoneInfo
 
 import pytest
+from fastapi.testclient import TestClient
 from starlette.requests import Request
+from tests.support.api_app import _app
 from tests.unit.test_manual_measures import manual_measure
 from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 
@@ -123,14 +125,14 @@ def test_saved_page_race_and_independent_completion_activation(tmp_db: Connectio
     )
     assert reversed_goal.active and not reversed_goal.binary_checked
     other = create(tmp_db, title="Another goal")
-    with pytest.raises(PlannerError):
-        actions.update_goal(
-            tmp_db,
-            other.id,
-            {"active": False},
-            principal=agent,
-            now=NOW + 6,
+    with TestClient(_app(tmp_db)) as client:
+        denied = client.patch(
+            f"/api/goals/{other.id}", json={"active": False},
+            headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal.id},
         )
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+    assert data.read_goal(tmp_db, other.id).active
 
 
 @pytest.mark.parametrize("kind", [MeasureKind.reading, MeasureKind.running_total])

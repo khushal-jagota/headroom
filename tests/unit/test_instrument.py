@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -72,7 +73,7 @@ def test_environment_checks_the_resolved_source_path(
     for origin, accepted in cases:
         spec = ModuleSpec("planner", loader=None, origin=str(origin) if origin else None)
         monkeypatch.setattr(
-            tree_environment.importlib.util, "find_spec", lambda name, found=spec: found
+            importlib.util, "find_spec", lambda name, found=spec: found
         )
         diagnosis = tree_environment.preflight(tree)
         assert (diagnosis is None) is accepted

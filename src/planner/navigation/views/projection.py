@@ -94,166 +94,142 @@ def _members(
     parent = (str(metadata[4]), str(metadata[5]))
     attention = _attention(conn, value.get("conversation_id"))
     messages = review_message_items(conn, ticket_id=identity) if kind == "ticket" else []
-    for profile in ("current", "durable"):
-        signal = (
-            None
-            if attention is None
-            else attention["current"]
-            if profile == "current"
-            else {
-                "signal": {
-                    "working": False,
-                    "message_for_owner": attention["durable"]["message_for_owner"],
-                },
-                "awaiting_answer": False,
-                "last_turn_failed": attention["durable"]["last_turn_failed"],
-            }
-        )
-        for locale in config.locales:
-            title = sort_key(str(value.get("title", "")), locale)
-            identity_key = sort_key(identity, locale, base=False)
+    profile = "current"
+    signal = None if attention is None else attention["current"]
+    for locale in config.locales:
+        title = sort_key(str(value.get("title", "")), locale)
+        identity_key = sort_key(identity, locale, base=False)
 
-            def add(
-                section: str,
-                owner: Key | None,
-                grouping: str = "all",
-                child_filter: str = "all",
-                *,
-                rank: int = 0,
-                title_key: bytes = title,
-                id_key: bytes = identity_key,
-                profile: str = profile,
-                locale: str = locale,
-            ) -> None:
-                result.add(
-                    (
-                        section_key(section, owner, grouping, child_filter),
-                        profile,
-                        locale,
-                        kind,
-                        identity,
-                        rank,
-                        title_key,
-                        id_key,
-                    )
+        def add(
+            section: str,
+            owner: Key | None,
+            grouping: str = "all",
+            child_filter: str = "all",
+            *,
+            rank: int = 0,
+            title_key: bytes = title,
+            id_key: bytes = identity_key,
+            profile: str = profile,
+            locale: str = locale,
+        ) -> None:
+            result.add(
+                (
+                    section_key(section, owner, grouping, child_filter),
+                    profile,
+                    locale,
+                    kind,
+                    identity,
+                    rank,
+                    title_key,
+                    id_key,
                 )
+            )
 
-            if kind == "goal" and value["active"]:
-                add("goals", None, rank=int(value["created_at"]), title_key=b"")
-            elif kind == "manager":
+        if kind == "goal" and value["active"]:
+            add("goals", None, rank=int(value["created_at"]), title_key=b"")
+        elif kind == "manager":
+            add(
+                "settled" if value["settled"] else "rail_parents",
+                None,
+                rank=-int(value["updated_at"]) if value["settled"] else int(value["created_at"]),
+                title_key=b"",
+            )
+        elif kind == "ticket":
+            broken = "integrity_error" in value
+            child_filter = (
+                "active"
+                if broken
+                else "done"
+                if value["stage"] == "done"
+                else "backlogged"
+                if value["is_backlogged"]
+                else "active"
+            )
+            child_group = group(value, signal, rail=True)
+            rank = int(value["created_at"]) if parent[0] == "chief" else -int(value["updated_at"])
+            child_title = b"" if parent[0] == "chief" else title
+            child_id = identity.encode() if parent[0] == "chief" else identity_key
+            # Chief excludes non-done terminal stages, as its existing API page does.
+            if broken or parent[0] != "chief" or child_filter == "done" or not value["terminal"]:
+                for filtering in ("all", child_filter):
+                    for grouping in ("all", child_group):
+                        add(
+                            "children",
+                            parent,
+                            grouping,
+                            filtering,
+                            rank=(
+                                GROUPS.index(child_group)
+                                if parent[0] != "chief"
+                                and filtering == "active"
+                                and grouping == "all"
+                                else rank
+                            ),
+                            title_key=(
+                                (-int(value["updated_at"]) + 2**63).to_bytes(8, "big") + title
+                                if parent[0] != "chief"
+                                and filtering == "active"
+                                and grouping == "all"
+                                else child_title
+                            ),
+                            id_key=child_id,
+                        )
+            parent_value = record(conn, parent)
+            eligible = broken or (
+                not value["is_backlogged"]
+                and not value["blocked"]
+                and value["ticket_status"] != "blocked"
+                and value["stage"] != "done"
+                and not (parent_value or {}).get("settled", False)
+            )
+            if eligible:
+                rail_group = group(value, signal, rail=True)
+                # All-group windows retain group order, then the group's existing order.
+                for grouping in ("all", rail_group):
+                    rank = GROUPS.index(rail_group) if grouping == "all" else 0
+                    ordered_title = (-int(value["updated_at"]) + 2**63).to_bytes(8, "big") + title
+                    add("rail_tickets", parent, grouping, rank=rank, title_key=ordered_title)
+            if metadata[11] or messages:
+                waiting = [int(message["waiting_since"]) for message in messages]
+                if metadata[11]:
+                    waiting.append(int(value["proposal_created_at"]))
                 add(
-                    "settled" if value["settled"] else "rail_parents",
+                    "review",
                     None,
-                    rank=-int(value["updated_at"])
-                    if value["settled"]
-                    else int(value["created_at"]),
-                    title_key=b"",
+                    rank=min(waiting),
+                    title_key=b"ticket",
+                    id_key=identity.encode(),
                 )
-            elif kind == "ticket":
-                broken = "integrity_error" in value
-                child_filter = (
-                    "active"
-                    if broken
-                    else "done"
-                    if value["stage"] == "done"
-                    else "backlogged"
-                    if value["is_backlogged"]
-                    else "active"
+        elif kind == "address" and metadata[12]:
+            conversation_id = str(value["conversation_id"])
+            owner_value = record(conn, (value["owner_kind"], value["owner_id"]))
+            if (
+                owner_value is not None
+                and value["owner_kind"] != "ticket"
+                and message_owner_is_live(value["owner_kind"], owner_value)
+                and canonical_review_address(conn, conversation_id) == identity
+            ):
+                conversation = record(conn, ("conversation", conversation_id))
+                assert conversation is not None
+                add(
+                    "review",
+                    None,
+                    rank=int(conversation["first_unread_owner_message_at"]),
+                    title_key=b"message",
+                    id_key=conversation_id.encode(),
                 )
-                child_group = group(value, signal, rail=True)
-                rank = (
-                    int(value["created_at"]) if parent[0] == "chief" else -int(value["updated_at"])
-                )
-                child_title = b"" if parent[0] == "chief" else title
-                child_id = identity.encode() if parent[0] == "chief" else identity_key
-                # Chief excludes non-done terminal stages, as its existing API page does.
-                if (
-                    broken
-                    or parent[0] != "chief"
-                    or child_filter == "done"
-                    or not value["terminal"]
-                ):
-                    for filtering in ("all", child_filter):
-                        for grouping in ("all", child_group):
-                            add(
-                                "children",
-                                parent,
-                                grouping,
-                                filtering,
-                                rank=(
-                                    GROUPS.index(child_group)
-                                    if parent[0] != "chief"
-                                    and filtering == "active"
-                                    and grouping == "all"
-                                    else rank
-                                ),
-                                title_key=(
-                                    (-int(value["updated_at"]) + 2**63).to_bytes(8, "big") + title
-                                    if parent[0] != "chief"
-                                    and filtering == "active"
-                                    and grouping == "all"
-                                    else child_title
-                                ),
-                                id_key=child_id,
-                            )
-                parent_value = record(conn, parent)
-                eligible = broken or (
-                    not value["is_backlogged"]
-                    and not value["blocked"]
-                    and value["ticket_status"] != "blocked"
-                    and value["stage"] != "done"
-                    and not (parent_value or {}).get("settled", False)
-                )
-                if eligible:
-                    rail_group = group(value, signal, rail=True)
-                    # All-group windows retain group order, then the group's existing order.
-                    for grouping in ("all", rail_group):
-                        rank = GROUPS.index(rail_group) if grouping == "all" else 0
-                        ordered_title = (-int(value["updated_at"]) + 2**63).to_bytes(
-                            8, "big"
-                        ) + title
-                        add("rail_tickets", parent, grouping, rank=rank, title_key=ordered_title)
-                if metadata[11] or messages:
-                    waiting = [int(message["waiting_since"]) for message in messages]
-                    if metadata[11]:
-                        waiting.append(int(value["proposal_created_at"]))
-                    add(
-                        "review",
-                        None,
-                        rank=min(waiting),
-                        title_key=b"ticket",
-                        id_key=identity.encode(),
-                    )
-            elif kind == "address" and metadata[12]:
-                conversation_id = str(value["conversation_id"])
-                owner_value = record(conn, (value["owner_kind"], value["owner_id"]))
-                if (
-                    owner_value is not None
-                    and value["owner_kind"] != "ticket"
-                    and message_owner_is_live(value["owner_kind"], owner_value)
-                    and canonical_review_address(conn, conversation_id) == identity
-                ):
-                    conversation = record(conn, ("conversation", conversation_id))
-                    assert conversation is not None
-                    add(
-                        "review",
-                        None,
-                        rank=int(conversation["first_unread_owner_message_at"]),
-                        title_key=b"message",
-                        id_key=conversation_id.encode(),
-                    )
-                # One canonical address per owner/conversation. Preserve current-first order.
-                add("unread", None, rank=-int(value["current"]), title_key=b"")
-                owner = (str(value["owner_kind"]), str(value["owner_id"]))
-                if owner[0] in ("ticket", "goal"):
-                    add("unread", owner, rank=-int(value["current"]), title_key=b"")
-                owner_value = record(conn, owner) or {}
-                if (
-                    value["parent_kind"] is not None
-                    and parent != owner
-                    and not owner_value.get("is_backlogged", False)
-                ):
-                    add("unread", parent, rank=-int(value["current"]), title_key=b"")
+            # One canonical address per owner/conversation. Preserve current-first order.
+            add("unread", None, rank=-int(value["current"]), title_key=b"")
+            owner = (str(value["owner_kind"]), str(value["owner_id"]))
+            if owner[0] in ("ticket", "goal"):
+                add("unread", owner, rank=-int(value["current"]), title_key=b"")
+            owner_value = record(conn, owner) or {}
+            if (
+                value["parent_kind"] is not None
+                and parent != owner
+                and not owner_value.get("is_backlogged", False)
+            ):
+                add("unread", parent, rank=-int(value["current"]), title_key=b"")
     return result
 
 

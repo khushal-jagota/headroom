@@ -3,7 +3,7 @@ import {applyFrame} from '../src/lib/navigation/views/applyFrame';
 import {createNavigationPresentationCache,navigationReviewPresentation,navigationWorkingAgentCount} from '../src/lib/navigation/presentation';
 import {WORK_ITEM_TICKET_GROUPS} from '../src/lib/workItemPresentation';
 import {createScopedNavigationOwner,viewWindow,defaultViewRequest} from '../src/lib/navigation/views/owner';
-import type {CurrentViewSnapshot,DegradedViewSnapshot,ViewFrame,ViewRequest} from '../src/lib/navigation/contracts';
+import type {CurrentViewSnapshot,ViewFrame,ViewRequest} from '../src/lib/navigation/contracts';
 import type {ViewTransport} from '../src/lib/navigation/views/transport';
 import {reviewReturnLabel} from '../src/lib/review/return';
 import {authority,continuity,conversation} from './support/navigation/fixtures';
@@ -14,12 +14,6 @@ function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapsh
     scope_generation:request.scope_generation,ordering_generation:'fixture',coverage:{...continuity,revision},
     content_version:name,mode:'current',authority:authority(),
     content:{review_context:[],review_summary:{skipped:0,new:0},records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{first_unread_owner_message_at:source.value.first_unread_owner_message_at,attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
-}
-function degraded(request:ViewRequest,reason:string|null='Runtime is not ready',generation='1',session='delivery'):DegradedViewSnapshot {
-  const current=snapshot(request);
-  return {...current,mode:'degraded',authority:{delivery_session_id:session,availability:{state:'unavailable',generation,reason},permit:null},
-    content:{...current.content,counts:{...current.content.counts,running_conversations:null},records:current.content.records.map(row=>row.kind==='conversation'
-      ? {...row,value:{...row.value,attention:{current:null,durable:row.value.attention.durable}}} : row)}};
 }
 function fixture(options:{reconnectDelayMs?:number}={reconnectDelayMs:100000}) {
   const connections:{request:ViewRequest;send:(frame:ViewFrame)=>void;error:()=>void;signal:AbortSignal;closed:boolean}[]=[];
@@ -32,27 +26,6 @@ function fixture(options:{reconnectDelayMs?:number}={reconnectDelayMs:100000}) {
 }
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
 describe('bounded navigation owner',()=>{
-  it('retains degraded availability through the unchanged retry interval and distinguishes a new stream failure',async()=>{
-    vi.useFakeTimers();
-    const {owner,connections}=fixture({});
-    try {
-      const started=owner.start(),first=connections[0],frame=degraded(first.request);
-      first.send(frame);await started;
-      const health={state:'degraded',availability:frame.authority.availability};
-      expect(owner.getState()).toMatchObject({connection:'reconnecting',health});
-      expect(owner.getState().effective!.runtimeCurrent).toBe(false);
-      await vi.advanceTimersByTimeAsync(999);expect(connections).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(1);expect(connections).toHaveLength(2);
-      expect(owner.getState()).toMatchObject({connection:'snapshot',health});
-      first.send(snapshot(first.request));first.error();
-      expect(owner.getState().health).toEqual(health);
-      connections[1].error();expect(owner.getState().health).toEqual({state:'reconnecting'});
-      await vi.advanceTimersByTimeAsync(1000);expect(connections).toHaveLength(3);
-      connections[2].send(snapshot(connections[2].request));
-      expect(owner.getState().health).toBeNull();
-      first.error();expect(owner.getState().health).toBeNull();
-    } finally {owner.dispose();vi.useRealTimers();}
-  });
   it('retains a failed demanded-scope warning through active updates and emits same-content recovery',async()=>{
     vi.useFakeTimers();
     const {owner,connections}=fixture({});let notifications=0;const stop=owner.subscribe(()=>notifications++);
@@ -70,7 +43,7 @@ describe('bounded navigation owner',()=>{
       replacement.send({...snapshot(replacement.request,'1'),view_id:initial.view_id});
       expect(notifications).toBe(before+1);
       expect(owner.getState().health).toBeNull();
-      failed.send(degraded(failed.request,'Obsolete reason'));failed.error();active.error();
+      failed.send(snapshot(failed.request));failed.error();active.error();
       expect(owner.getState().health).toBeNull();
       const generation=owner.getState().generation,next=owner.recover(),latest=connections[3];
       latest.send({...snapshot(latest.request,'1'),view_id:initial.view_id});await next;
@@ -78,37 +51,6 @@ describe('bounded navigation owner',()=>{
       replacement.error();expect(owner.getState().health).toBeNull();
     } finally {stop();owner.dispose();vi.useRealTimers();}
   });
-  it('validates pending degraded authority before exposing its reason and preserves valid degradation through retry',async()=>{
-    vi.useFakeTimers();
-    const {owner,connections}=fixture({});
-    try {
-      const started=owner.start(),initial=snapshot(connections[0].request);
-      initial.authority=authority('signal-workspace','1','retired');connections[0].send(initial);await started;
-      connections[0].send({...initial,authority:authority('signal-workspace','2')});
-      owner.setDemand('selected',{selected:{kind:'ticket',id:'next'},windows:[]});await flush();
-      for(const [generation,session] of [['1','delivery'],['9','retired']]) {
-        const pending=connections.at(-1)!;pending.send(degraded(pending.request,'Rejected stale reason',generation,session));
-        expect(owner.getState()).toMatchObject({connection:'subscribed',health:{state:'reconnecting'},effective:{runtimeCurrent:true}});
-        await vi.advanceTimersByTimeAsync(1000);
-      }
-      const retained=owner.getState().publication;
-      const replacement=connections.at(-1)!,accepted=degraded(replacement.request,null,'3','next-delivery');
-      replacement.send(accepted);
-      expect(owner.getState()).toMatchObject({connection:'reconnecting',health:{state:'degraded',availability:accepted.authority.availability},effective:{runtimeCurrent:false}});
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(owner.getState()).toMatchObject({connection:'snapshot',health:{state:'degraded',availability:{reason:null}}});
-      for(const [generation,session] of [['2','next-delivery'],['9','delivery']]) {
-        const recovery=connections.at(-1)!,rejected=snapshot(recovery.request);rejected.authority=authority('signal-workspace',generation,session);
-        recovery.send(rejected);
-        expect(owner.getState()).toMatchObject({health:{state:'reconnecting'},effective:{runtimeCurrent:false}});
-        expect(owner.getState().publication).toBe(retained);
-        await vi.advanceTimersByTimeAsync(1000);
-      }
-      const recovery=connections.at(-1)!,current=snapshot(recovery.request);current.authority=authority('signal-workspace','3','next-delivery');
-      recovery.send(current);expect(owner.getState().health).toBeNull();
-    } finally {owner.dispose();vi.useRealTimers();}
-  });
-  ;
   it('supplies the global working count beyond resident pointers and preserves unknown through runtime loss',async()=>{
     const {owner,connections}=fixture();
     try {
@@ -122,7 +64,7 @@ describe('bounded navigation owner',()=>{
       expect(count()).toBe(7);
       expect(navigationReviewPresentation(owner.getState().effective!)).toMatchObject({runningConversationCount:7,currentConversationIds:new Set(['c'])});
       let revision=0;
-      for(const total of [9,0,null,6]) {
+      for(const total of [9,0,6]) {
         const previous=owner.getState().publication!;
         source.send({event:'patch',wire_version:3,projection_version:7,view_id:initial.view_id,
           scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
@@ -135,6 +77,8 @@ describe('bounded navigation owner',()=>{
       }
       source.error();
       expect(count()).toBeNull();
+      expect(owner.getState().effective!.runtimeCurrent).toBe(false);
+      expect(navigationReviewPresentation(owner.getState().effective!).runningConversationCount).toBeNull();
       expect(owner.getState().publication!.view!.counts.running_conversations).toBe(6);
       const recovering=owner.recover();
       expect(count()).toBeNull();

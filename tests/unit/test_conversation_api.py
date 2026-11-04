@@ -96,7 +96,6 @@ from planner.conversation.message_content import (
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.runtime_composition import (
     SignalRuntimeComposition,
-    bind_admission,
     transaction_control,
 )
 from planner.conversation.snapshot import (
@@ -347,10 +346,6 @@ class _Harness:
             str(db_path),
             signal_coordinator=(
                 None if signal_composition is None else signal_composition.coordinator
-            ),
-            bind_signal_admission=None if signal_composition is None else bind_admission,
-            runtime_reconciliation_admission=(
-                None if signal_composition is None else signal_composition.initialization
             ),
             transaction_control_guard=None if signal_composition is None else transaction_control,
             **(store_options or {}),

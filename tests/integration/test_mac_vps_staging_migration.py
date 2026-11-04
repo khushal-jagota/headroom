@@ -18,11 +18,12 @@ from tests.integration.test_navigation_cumulative_migration import (
     _raw,
     _seed_pre_lifecycle,
 )
+from tests.unit.test_db import head_revision
 
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "remove_navigation_proof"
+FINAL_HEAD = head_revision()
 SENTINELS: dict[str, tuple[object, ...]] = {
     "mac_inbox_positions": (
         "sender",
@@ -209,7 +210,11 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                 )
             ]
             rows = {name: list(conn.execute(f'SELECT * FROM "{name}"')) for name in tables}
-            ticket_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(tickets)"))
+            columns = {
+                name: tuple(row[1] for row in conn.execute(f'PRAGMA table_info("{name}")'))
+                for name in tables
+            }
+            ticket_columns = columns["tickets"]
             manager_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(managers)"))
             assert [row[0] for row in conn.execute("SELECT id FROM tickets ORDER BY id")] == [
                 "alias", "blocker", "held",
@@ -221,8 +226,20 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                     "AND tbl_name='conversations' ORDER BY name"
                 )
             )
-            command.upgrade(config, "head")
+            # Check exact retained rows before the later Manager identity migration
+            # deliberately rebuilds navigation projections from canonical sources.
+            command.upgrade(config, "remove_navigation_proof")
+            removed_tables = {
+                "scheduled_ticket_occurrences", "scheduled_ticket_schedules",
+                "worker_step_skill_bindings", "feedback_notes",
+                "navigation_commit_witnesses", "navigation_proof_identity",
+            }
             for name, before in rows.items():
+                if name in removed_tables:
+                    assert conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)
+                    ).fetchone() is None, name
+                    continue
                 current = list(conn.execute(f'SELECT * FROM "{name}"'))
                 if name == "navigation_dirty":
                     # The integrity migration queues exactly these existing Tickets
@@ -230,6 +247,25 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                     expected = set(before) | refresh_rows
                     assert len(current) == len(expected), name
                     assert set(current) == expected, name
+                elif name in {"projects", "worker_types"}:
+                    # The approved Mac requirement removal deletes one column only.
+                    # Keep the complete surviving rows, including definition_json, exact.
+                    removed = columns[name].index("requires_macos")
+                    expected_columns = tuple(
+                        column for column in columns[name] if column != "requires_macos"
+                    )
+                    assert tuple(
+                        row[1] for row in conn.execute(f'PRAGMA table_info("{name}")')
+                    ) == expected_columns, name
+                    assert current == [
+                        (*row[:removed], *row[removed + 1:]) for row in before
+                    ], name
+                elif name == "goals":
+                    # Legacy goals gain nullable outcomes without invented history.
+                    assert tuple(
+                        row[1] for row in conn.execute("PRAGMA table_info(goals)")
+                    ) == (*columns[name], "completion_rule", "completion_date")
+                    assert current == [(*row, None, None) for row in before], name
                 elif name == "tickets":
                     # Keep every old column exact and prove the sole added column is
                     # nullable, rather than excluding the Ticket table from comparison.
@@ -265,10 +301,61 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                 "UPDATE conversations SET workspace_path_policy='home_relative' "
                 "WHERE conversation_id='current'"
             )
+            # The final identity migration may regenerate only these derived tables.
+            # Preserve every other table, column and row, including archived bytes.
+            derived_tables = {
+                "navigation_meta", "navigation_records", "navigation_dependencies",
+                "navigation_root_records", "navigation_dirty", "navigation_journal",
+                "navigation_view_meta", "navigation_view_index",
+                "navigation_view_memberships", "navigation_view_counts",
+                "navigation_view_current_conversations",
+                "navigation_view_unread_conversations", "navigation_view_globals",
+                "navigation_view_changes",
+            }
+            surviving_tables = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name!='alembic_version'"
+                )
+            } - derived_tables
+            final_source_columns = {
+                name: list(conn.execute(f'PRAGMA table_info("{name}")'))
+                for name in surviving_tables
+            }
+            final_source_rows = {
+                name: list(conn.execute(f'SELECT * FROM "{name}"'))
+                for name in surviving_tables
+            }
+            # This cumulative fixture has no historical Manager identity/principal
+            # rewrites. The occupied identity fixture separately proves those exact
+            # authorized changes, so every source byte here must remain unchanged.
+            assert conn.execute(
+                "SELECT 1 FROM agents WHERE agent_key LIKE 'sprint_item_supervisor_%'"
+            ).fetchall() == []
+            assert all(
+                dict(json.loads(row[0])).get("PLAN_ACTOR")
+                not in {"manager", "sprint_item_supervisor"}
+                for row in conn.execute("SELECT identity_environment_variables FROM conversations")
+            )
+            assert all(
+                approval.get("principal", {}).get("kind") != "sprint_item"
+                for row in conn.execute("SELECT field_approvals FROM tickets")
+                for approval in json.loads(row[0]).values()
+            )
+            command.upgrade(config, "head")
+            _assert_join(conn)
+            for name in surviving_tables:
+                assert list(conn.execute(f'PRAGMA table_info("{name}")')) == (
+                    final_source_columns[name]
+                ), name
+                assert list(conn.execute(f'SELECT * FROM "{name}"')) == (
+                    final_source_rows[name]
+                ), name
         # Ordinary startup of the same populated DB must keep all dependent history.
         conn = db.connect(str(path))
         try:
             db.create_schema(conn)
+            _assert_join(conn)
             assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
             assert conn.execute("SELECT COUNT(*) FROM conversation_events").fetchone()[0] > 0
             assert conn.execute("SELECT COUNT(*) FROM ticket_conversations").fetchone()[0] > 0

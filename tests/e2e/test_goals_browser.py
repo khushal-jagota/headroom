@@ -563,6 +563,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     # The newly interactive overview must use the real goal writer.
     # Reuse this connected scenario: component tests cannot prove persisted API
     # acceptance, effective completion, or reload reads from a card-originated edit.
+    overview_revision = api.get(server, path)["revision"]
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
         timeout=WAIT_MS,
@@ -663,6 +664,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
 
     # Reuse this connected host to prove a real native title commit and reload.
     # Frontend-only cases cannot prove API acceptance and persisted browser reads.
+    before_title = api.get(server, path)
     title_editor = page.get_by_role("textbox", name="Goal title", exact=True)
     title_editor.fill("Owner title", timeout=WAIT_MS)
     with page.expect_response(
@@ -681,8 +683,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     expect(title_editor).to_have_text("Owner title", timeout=WAIT_MS)
 
-    # An external revision must reach the mounted page without replacing a focused
-    # draft. Submitting that original revision must produce a real stale response.
+    # An external revision reaches the mounted page without replacing a focused
+    # draft. The later title-only save wins and preserves the remotely edited page.
     title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
     page.locator("[data-goal-page]").evaluate(
         "node => node.dataset.nativeEditProof = 'retained'"
@@ -717,22 +719,31 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     with page.expect_response(
         lambda reply: reply.url.endswith(path) and reply.request.method == "PATCH",
         timeout=WAIT_MS,
-    ) as stale_title:
+    ) as local_title:
         title_editor.press("Enter", timeout=WAIT_MS)
-    assert stale_title.value.status == 409
-    assert stale_title.value.request.post_data_json == {
+    assert local_title.value.status == 200, local_title.value.text()
+    assert local_title.value.request.post_data_json == {
         "title": "Unaccepted local title",
     }
     error = page.locator("[data-goal-page] .goal-heading .error-line")
-    expect(error).to_contain_text("goal changed", timeout=WAIT_MS)
-    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
-    accepted_remote = api.get(server, path)
-    assert accepted_remote["title"] == "Agent title"
-    assert accepted_remote["revision"] == remote.json()["revision"]
-    title_editor.press("Escape", timeout=WAIT_MS)
-    expect(title_editor).to_have_text("Agent title", timeout=WAIT_MS)
     expect(error).to_have_count(0, timeout=WAIT_MS)
-    assert api.get(server, path)["revision"] == accepted_remote["revision"]
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    accepted_local = api.get(server, path)
+    assert remote.json()["revision"] == current["revision"] + 1
+    assert accepted_local["title"] == "Unaccepted local title"
+    assert accepted_local["revision"] == remote.json()["revision"] + 1
+    assert accepted_local["page"] == reordered
+    expect(page.locator(f'a[data-goal-id="{goal["id"]}"] .row-title')).to_have_text(
+        "Unaccepted local title", timeout=WAIT_MS
+    )
+    expect(page.locator("[data-goal-page]")).to_have_attribute(
+        "data-native-edit-proof", "retained", timeout=WAIT_MS
+    )
+    title_editor.fill("Discard this unsaved title", timeout=WAIT_MS)
+    title_editor.press("Escape", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    expect(error).to_have_count(0, timeout=WAIT_MS)
+    assert api.get(server, path)["revision"] == accepted_local["revision"]
     expect(page.locator('[data-block="table"] tbody tr').first).to_contain_text(
         "Second", timeout=WAIT_MS
     )
@@ -771,7 +782,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(primary.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
     )
-    expect(rail_checklist.locator("small")).to_contain_text("Done", timeout=WAIT_MS)
+    expect(rail_checklist.locator("small")).to_contain_text("Complete", timeout=WAIT_MS)
     rail_binary = page.locator(f'a[data-goal-id="{other["id"]}"]')
     rail_binary.hover(timeout=WAIT_MS)
     binary_preview = page.locator(f'[data-goal-preview="{other["id"]}"]')
@@ -785,7 +796,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         binary_preview.get_by_role("button", name="Mark done", exact=True).click(timeout=WAIT_MS)
     assert preview_binary.value.ok
     assert api.get(server, f"/api/goals/{other['id']}")["completed"] is True
-    expect(rail_binary.locator("small")).to_contain_text("Done", timeout=WAIT_MS)
+    expect(rail_binary.locator("small")).to_contain_text("Complete", timeout=WAIT_MS)
 
     manual_goal = api.direct_post(
         server,
@@ -837,9 +848,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     state = api.get(server, f"/api/measures/{manual_snapshot['id']}/manual-state")
     assert state["observation"]["value"] == 7
     expect(snapshot.get_by_role("textbox")).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
-    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
+    expect(rail_manual.locator("small")).to_contain_text("Open", timeout=WAIT_MS)
     expect(rail_manual.locator("[data-tone]")).to_have_attribute(
-        "data-tone", "bad", timeout=WAIT_MS
+        "data-tone", "neutral", timeout=WAIT_MS
     )
     rail_manual.hover(timeout=WAIT_MS)
     expect(value).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
@@ -879,7 +890,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(manual_page.get_by_role("textbox")).to_have_attribute(
         "data-reading", "7", timeout=WAIT_MS
     )
-    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
+    expect(rail_manual.locator("small")).to_contain_text("Open", timeout=WAIT_MS)
     expect(selected_bar.locator(".bar")).to_have_attribute(
         "style", re.compile(r"background-color: var\(--accent-error\)"), timeout=WAIT_MS
     )
@@ -1149,7 +1160,6 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     expect(rate).to_contain_text("50%", timeout=WAIT_MS)
 
     page.locator("[data-goal-page]").evaluate("node => node.dataset.outcomeProof = 'retained'")
-    current = api.get(server, path)
     changed = api.direct_patch(
         server,
         path,
@@ -1174,7 +1184,6 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     capture_success(page, "goal-result-hit-preview.png")
 
     # The same mounted preview must also replace a previously completed result.
-    current = api.get(server, path)
     reopened = api.direct_patch(
         server,
         path,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 def test_managed_skill_retirement_preserves_custom_prose_and_detects_unknown_commands() -> None:
     from planner.core.migrations.retirement_skills import (
         corrected_sources,

@@ -233,7 +233,7 @@ def scoped_navigation_response(response: FixtureObject, view: FixtureObject) -> 
         )
         prepare(conn)
         rebuild(conn)
-        coverage, content = read_content(conn, descriptor, current=response["mode"] == "current")
+        coverage, content = read_content(conn, descriptor)
     return {
         "event": "snapshot",
         "wire_version": VIEW_WIRE_VERSION,

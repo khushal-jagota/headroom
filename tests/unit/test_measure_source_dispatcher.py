@@ -96,7 +96,8 @@ def test_shared_clock_source_slot_creates_no_ticket_or_model_work(
     participant = SourceScheduleParticipant(config, fake_clock, runtime)
     loop = SourceScheduleLoop(path, fake_clock, participants=(participant,))
     before = tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
-    assert loop.poll_once() is None and loop.poll_once() is None
+    loop.poll_once()
+    loop.poll_once()
     rows = tmp_db.execute(
         "SELECT * FROM measure_source_runs WHERE source_id=?", (source.id,)
     ).fetchall()

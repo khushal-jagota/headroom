@@ -188,9 +188,10 @@ def test_broken_child_does_not_hide_healthy_attention_or_manager_rollup(tmp_path
     with closing(sqlite3.connect(db_path)) as raw:
         attach(raw)
         raw.execute("BEGIN")
+        # Keep valid SQL shape while the holder and Worker type lack registry entries.
         raw.execute(
             "UPDATE tickets SET worker_type='missing_type',ceiling_holder=? WHERE id=?",
-            (json.dumps({"kind": "ticket", "id": "missing_holder"}), broken.id),
+            (json.dumps({"kind": "manager", "id": "missing_holder"}), broken.id),
         )
         raw.commit()
     tickets_data.audit_ticket_registry_integrity(conn, startup=True)
@@ -213,5 +214,5 @@ def test_broken_child_does_not_hide_healthy_attention_or_manager_rollup(tmp_path
     assert manager_rows[0]["ticket_rollup"]["agent_state"] == "errored"
     assert conn.execute("SELECT ceiling_holder FROM tickets WHERE id=?", (broken.id,)).fetchone()[
         0
-    ] == json.dumps({"kind": "ticket", "id": "missing_holder"})
+    ] == json.dumps({"kind": "manager", "id": "missing_holder"})
     conn.close()
