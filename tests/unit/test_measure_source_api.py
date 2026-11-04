@@ -127,9 +127,9 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
     }
     assert "default" not in branches["quantitative"]["properties"]["completed"]
     for branch in branches.values():
-        assert "expected_revision" in branch["properties"]
+        assert "expected_revision" not in branch["properties"]
         assert "default" not in branch["properties"]["kind"]
-    assert edit_schema["required"] == ["expected_revision"]
+    assert not edit_schema.get("required")
     for field in ("deadline", "primary_chart", "primary_checklist_block_id"):
         assert {"type": "null"} in branches["binary"]["properties"][field]["anyOf"]
     assert "anyOf" not in branches["quantitative"]["properties"]["primary_chart"]
@@ -308,7 +308,6 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                     ("clear_checklist_deadline", None),
                 ):
                     edit = deepcopy(edit_examples[edit_name])
-                    edit["expected_revision"] = accepted["revision"]
                     # These complete-page examples apply to their matching fictional
                     # create example; real pages must retain all accepted content.
                     changed = client.patch(
@@ -413,7 +412,6 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "day",
         )
         assert measure["formula"] is None
-        chart_body["expected_revision"] = goal["revision"]
         chart_body["primary_chart"]["measure_id"] = measure["id"]
 
         # Populated native chart failure; discriminator-only probes are checked separately.
@@ -481,7 +479,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
         )
 
         # Runtime parsing order is unchanged: source/measure syntax precedes authority;
-        # goal edits check ownership, then revision, before inspecting authored content.
+        # goal edits check ownership before inspecting authored content.
         invalid(
             client.post("/api/measure-sources", json=guessed_source, headers=foreign_headers),
             "$.responsible.goal_id",
@@ -499,7 +497,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             client.patch(
                 f"/api/goals/{goal_id}",
                 headers=foreign_headers,
-                json={"expected_revision": 0, "primary_chart": guessed_chart},
+                json={"primary_chart": guessed_chart},
             ).json()["error"]["code"]
             == "agent_forbidden"
         )
@@ -507,9 +505,9 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             client.patch(
                 f"/api/goals/{goal_id}",
                 headers=headers,
-                json={"expected_revision": 0, "primary_chart": guessed_chart},
+                json={"primary_chart": guessed_chart},
             ).json()["error"]["code"]
-            == "stale_claim"
+            == "validation"
         )
         saved = client.patch(f"/api/goals/{goal_id}", json=chart_body, headers=headers)
         assert saved.status_code == 200, saved.text
@@ -533,7 +531,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
         minimal = client.post(
             "/api/goals",
             headers={"X-Plan-Actor": "chief"},
-            json={"title": "Defaults", "project_id": "project_vylo", "expected_revision": 99,
+            json={"title": "Defaults", "project_id": "project_vylo",
                   "kind": "binary", "primary_checklist_block_id": None},
         )
         assert minimal.status_code == 200, minimal.text

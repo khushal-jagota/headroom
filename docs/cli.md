@@ -24,13 +24,15 @@ Other groups stay hidden until a skill or an operator needs them: `serve`, `skil
 
 `ticket show`, `manager show`, and `project show` return a header and a manifest of parts. Name the parts you want expanded. `ticket show` with no id, inside a Worker, reads that Worker’s Ticket through the self route, including the Worker type and specialist. Neither form returns the conversation. `ticket history` is the conversation record when the record is what you need.
 
-List commands are pages of 30, and each page says what it omitted. Ticket lists can filter on backlog and Worker type. Completed Tickets need `--include-terminal`. Backlog and resume accept a hash of the record that was shown, and a stale hash writes nothing.
+List commands are pages of 30, and each page says what it omitted. Ticket lists can filter on backlog and Worker type. Completed Tickets need `--include-terminal`. Backlog and resume need no record fingerprint.
 
-`ticket create` sends one JSON object through the ordinary create route. The server applies defaults and validates the whole Ticket before one write. Skill edits and applies are the same writers as Settings. See [Skills](skills.md).
+`ticket delete` needs no confirmation flag. A running Ticket still needs `--force`.
+
+`ticket create --input-json FILE` sends one JSON object through the ordinary create route. The server applies defaults and validates the whole Ticket before one write. Skill edits and applies are the same writers as Settings. See [Skills](skills.md).
 
 ## What the CLI feeds
 
-A Worker’s `propose` feeds the proposal resolver. `send-message` feeds a conversation. Operator commands feed the host: backup, restore, environment prepare, preview register, diagnostic history. None of these are a side channel into a model. If an agent should know something, the text has to be in a prompt the conversation actually sent.
+A Worker’s `propose` feeds the proposal resolver. `send-message` feeds a conversation. Operator commands feed the host: backup, restore, environment prepare, preview register. None of these are a side channel into a model. If an agent should know something, the text has to be in a prompt the conversation actually sent.
 
 ## Where it shows up
 

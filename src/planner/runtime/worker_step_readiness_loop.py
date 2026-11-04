@@ -50,11 +50,6 @@ from planner.runtime.logic.worker_step_prompt import (
     compose_worker_step_prompt,
     mid_step_memory_loss_prompt,
 )
-from planner.skill_versions import (
-    bind_worker_step_skills,
-    delete_worker_step_skill_bindings,
-    settle_worker_step_skill_bindings,
-)
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -203,18 +198,10 @@ async def _admitted_start_ready_worker_step(
                     stage=claimed.stage,
                 )
 
-        def remove_tentative_bindings() -> None:
-            delete_worker_step_skill_bindings(conn, sender_message_id)
-
         try:
             # Inside the guard: a lookup that raises must give the claim back, or the
             # Ticket sits out of `empty` with nothing running and nothing to re-claim it.
             worker_type_definition = worker_type_registry.require(claimed.worker_type)
-            bind_worker_step_skills(
-                conn,
-                sender_message_id,
-                worker_type_definition.worker_profile.specialist_skill,
-            )
             conversation_id = claimed.conversation_id
             # Composed before anything is made: a failure here must not leave a conversation
             # behind, and the opener is what would have brought one into being.
@@ -260,7 +247,6 @@ async def _admitted_start_ready_worker_step(
                 ticket_id,
                 conversation_id,
             )
-            remove_tentative_bindings()
             give_the_claim_back()
             return WorkerStepStartResult(started=False)
 
@@ -273,7 +259,6 @@ async def _admitted_start_ready_worker_step(
                 conversation_id,
                 fate.refusal_reason.value,
             )
-            remove_tentative_bindings()
             if (
                 not paired_opener
                 and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
@@ -290,7 +275,6 @@ async def _admitted_start_ready_worker_step(
             return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliverySuppressed):
-            remove_tentative_bindings()
             give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
@@ -312,14 +296,7 @@ async def _admitted_start_ready_worker_step(
                     ticket_id,
                     conversation_id,
                 )
-            remove_tentative_bindings()
             return WorkerStepStartResult.from_delivery_fate(fate)
-
-        if not isinstance(fate, PromptDeliveryQueued):
-            # The durable conversation record normally finalizes this in the same
-            # transaction as its prompt row. This idempotent update also supports the
-            # in-memory conversation system used by focused worker-step tests.
-            settle_worker_step_skill_bindings(conn, sender_message_id, delivered=True)
 
         if paired_opener:
             give_the_claim_back(opener_succeeded=True)

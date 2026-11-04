@@ -67,7 +67,7 @@ def create_goal(as_json: bool) -> None:
 @click.argument("goal_id")
 @json_option
 def edit_goal(goal_id: str, as_json: bool) -> None:
-    """Read revision-checked changes from stdin. Discover display switches with goal schema edit."""
+    """Read changes from stdin. Discover display switches with goal schema edit."""
     _emit_goal_response(
         http.send(
             "PATCH",

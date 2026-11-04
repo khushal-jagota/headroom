@@ -89,7 +89,6 @@ from planner.tickets.contracts import (
     AcceptBody,
     CreateTicketBody,
     EmployeeConfigurationBody,
-    EmployeeLaunchConfiguration,
     GateCompletionBody,
     ProposalBody,
     RejectionBody,
@@ -701,7 +700,6 @@ class ResolvedEmployeeConfiguration:
     the Ticket its worker and give it nothing back.
     """
 
-    expected: EmployeeLaunchConfiguration
     employee_backend: str
     employee_launch_model: str
     employee_launch_reasoning_effort: str | None
@@ -717,12 +715,9 @@ async def resolve_employee_configuration(
     employee_launch_reasoning_effort: str | None,
 ) -> ResolvedEmployeeConfiguration:
     """Keep exact submitted values and refuse disabled models."""
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    expected = tickets_data.employee_launch_configuration(ticket)
     registered_backend = require_conversation_backend_key(employee_backend)
     require_enabled_model(conn, registered_backend, employee_launch_model)
     return ResolvedEmployeeConfiguration(
-        expected=expected,
         employee_backend=registered_backend.value,
         employee_launch_model=employee_launch_model,
         employee_launch_reasoning_effort=employee_launch_reasoning_effort,
@@ -740,7 +735,6 @@ def write_resolved_employee_configuration(
     return tickets_data.write_employee_configuration(
         conn,
         ticket_id,
-        expected_employee_configuration=resolved.expected,
         employee_backend=resolved.employee_backend,
         employee_launch_model=resolved.employee_launch_model,
         employee_launch_reasoning_effort=resolved.employee_launch_reasoning_effort,
@@ -1436,13 +1430,6 @@ async def review(
     return response
 
 
-def _record_precondition(body: dict[str, Any]) -> str | None:
-    value = body.get("expected_record_sha256")
-    if value is not None and (not isinstance(value, str) or len(value) != 64):
-        raise PlannerError(ErrorCode.validation, "expected_record_sha256 must be a SHA256 string")
-    return value
-
-
 @router.post("/tickets/{ticket_id}/backlog")
 async def backlog_ticket(
     ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
@@ -1453,7 +1440,6 @@ async def backlog_ticket(
         is_backlogged=True,
         principal=ctx.principal,
         now=clk.now_unix(),
-        expected_record_sha256=_record_precondition(body),
     )
     return _ticket_detail(conn, ticket_id, clk.now_unix())
 
@@ -1468,6 +1454,5 @@ async def resume_ticket(
         is_backlogged=False,
         principal=ctx.principal,
         now=clk.now_unix(),
-        expected_record_sha256=_record_precondition(body),
     )
     return _ticket_detail(conn, ticket_id, clk.now_unix())

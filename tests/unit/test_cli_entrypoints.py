@@ -279,3 +279,54 @@ def test_project_cli_rejects_removed_macos_requirement(arguments: tuple[str, ...
     result = CliRunner().invoke(cli_main.main, arguments)
     assert result.exit_code != 0
     assert "requires-macos" in result.output
+
+
+def test_removed_ticket_syntax_never_sends_a_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Removed parser paths cannot silently retain their old mutation behavior."""
+    def unexpected_send(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("removed syntax sent a request")
+
+    monkeypatch.setattr(http, "send", unexpected_send)
+    runner = CliRunner()
+    for command in ("set", "set-value", "place", "approve", "reject", "copy"):
+        result = runner.invoke(cli_main.main, ["ticket", command, "t_old"])
+        assert result.exit_code != 0
+        assert "is not a command" in result.output
+    for option in (
+        "--title", "--worker-type", "--employee-backend", "--employee-launch-model",
+        "--deadline", "--project", "--project-id", "--manager", "--blocked-by",
+        "--kickoff-note", "--kickoff-note-file", "--ceiling", "--holder",
+    ):
+        result = runner.invoke(cli_main.main, ["ticket", "create", option, "old"])
+        assert result.exit_code != 0
+        assert "is not an option" in result.output
+    for command, option in (("delete", "--yes"), ("backlog", "--expected-record-sha256"),
+                            ("resume", "--expected-record-sha256")):
+        result = runner.invoke(cli_main.main, ["ticket", command, "t_old", option])
+        assert result.exit_code != 0
+        assert "is not an option" in result.output
+
+
+def test_ticket_delete_force_and_deferral_need_no_confirmations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI forwards force only when requested and sends no deferral fingerprint."""
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        return {}
+
+    monkeypatch.setattr(http, "send", send)
+    runner = CliRunner()
+    for arguments in (("delete", "t_old"), ("delete", "t_old", "--force"),
+                      ("backlog", "t_old"), ("resume", "t_old")):
+        result = runner.invoke(cli_main.main, ["ticket", *arguments])
+        assert result.exit_code == 0, result.output
+    assert calls[0][0:2] == ("DELETE", "/api/tickets/t_old")
+    assert calls[0][2]["params"] is None
+    assert calls[1][2]["params"] == {"force": True}
+    assert [(method, path, kwargs["json_body"]) for method, path, kwargs in calls[2:]] == [
+        ("POST", "/api/tickets/t_old/backlog", {}),
+        ("POST", "/api/tickets/t_old/resume", {}),
+    ]

@@ -229,7 +229,7 @@ def test_contract_guidance_is_discoverable_without_transport_or_stdin(
                 ("clear_checklist_deadline", None),
             ):
                 example = guidance["examples"][name]
-                assert example["expected_revision"] == 1
+                assert "expected_revision" not in example
                 assert example["page"]["blocks"][0]["items"][0]["deadline"] == deadline
     default = runner.invoke(main, ["measure-source", "schema", "--json"])
     explicit = runner.invoke(main, ["measure-source", "schema", "create", "--json"])

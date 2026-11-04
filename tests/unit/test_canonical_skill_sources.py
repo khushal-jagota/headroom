@@ -25,7 +25,6 @@ from planner.skill_sources import (
     provision_native_backend_skills,
     provision_workspace_skills,
 )
-from planner.skill_versions import reconcile_managed_skill_versions
 from planner.worker_settings import service
 
 
@@ -296,7 +295,8 @@ def test_owner_edit_stands_in_the_row_and_the_file_when_version_history_fails(
     assert edited != before.decode("utf-8")
     assert 'description: "changed"' in edited
     assert path.read_bytes() == edited.encode("utf-8")
-    reconcile_managed_skill_versions(conn)
+    monkeypatch.undo()
+    service.save_skill(conn, "panels", {"description": "changed"}, now=2, database_parent=tmp_path)
     assert (
         conn.execute(
             "SELECT content FROM managed_skill_versions WHERE skill_name = ? AND content = ?",
@@ -354,10 +354,15 @@ def test_file_failure_reports_saved_state_and_startup_repairs_the_copy(
 def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
     tmp_path: Path, database: sqlite3.Connection
 ) -> None:
-    import hashlib
 
-    reconcile_managed_skill_versions(database)
     before = read_skill_source(database, "panels")
+    service.save_skill(
+        database,
+        "panels",
+        {"description": service.read_skill(database, "panels").description},
+        now=0,
+        database_parent=tmp_path,
+    )
     original_versions = list(database.execute("SELECT id,content FROM managed_skill_versions"))
     target = before + "\nOwner custom text remains exact.\n"
     created = "---\nname: reviewed-manager\ndescription: New role\n---\n\nFull source.\n"
@@ -366,18 +371,19 @@ def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
             {
                 "name": "panels",
                 "source_text": target,
-                "expected_sha256": hashlib.sha256(before.encode()).hexdigest(),
             },
-            {"name": "reviewed-manager", "source_text": created, "expected_sha256": "0" * 64},
+            {"name": "reviewed-manager", "source_text": created},
         ]
     }
-    with pytest.raises(PlannerError, match="hash changed"):
+    valid_source = batch["skills"][1]["source_text"]
+    batch["skills"][1]["source_text"] = "invalid skill"
+    with pytest.raises(PlannerError):
         service.apply_skills(database, batch, now=21, database_parent=tmp_path)
     assert read_skill_source(database, "panels") == before
     assert not database.execute(
         "SELECT 1 FROM managed_skills WHERE skill_name='reviewed-manager'"
     ).fetchone()
-    batch["skills"][1]["expected_sha256"] = None
+    batch["skills"][1]["source_text"] = valid_source
     service.apply_skills(database, batch, now=21, database_parent=tmp_path)
     assert read_skill_source(database, "panels") == target
     assert (tmp_path / "skills/reviewed-manager/SKILL.md").read_text() == created
@@ -393,7 +399,6 @@ def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
 def test_full_skill_batch_retry_republishes_only_the_exact_applied_target(
     tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import hashlib
 
     before = read_skill_source(database, "panels")
     target = before + "\nReviewed source.\n"
@@ -402,7 +407,6 @@ def test_full_skill_batch_retry_republishes_only_the_exact_applied_target(
             {
                 "name": "panels",
                 "source_text": target,
-                "expected_sha256": hashlib.sha256(before.encode()).hexdigest(),
             }
         ]
     }
@@ -448,8 +452,7 @@ def test_manager_skill_primary_identity_matches_the_generated_role() -> None:
     assert "PLAN_SPRINT_ITEM_ID" not in primary and "PLAN\\_SPRINT" not in primary
     plain_source = source.replace("`", "").replace("\\_", "_")
     assert (
-        "If PLAN_MANAGER_ID is absent, use the retained PLAN_SPRINT_ITEM_ID "
-        "for the same Manager."
+        "If PLAN_MANAGER_ID is absent, use the retained PLAN_SPRINT_ITEM_ID for the same Manager."
     ) in plain_source
 
 

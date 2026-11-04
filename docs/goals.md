@@ -12,13 +12,13 @@ An open goal has a neutral deadline before its due date, yellow on that date, an
 
 Completion and active state are independent. A completed goal stays in Active goals until someone explicitly deactivates it. Reactivation preserves completion. The goal agent can change its own page, completion, and active state directly. These edits need no approval step.
 
-The owner, Chief, and the goal's own agent use one writer. Each edit carries the current `expected_revision`. An accepted edit returns the saved goal and page. A stale edit fails instead of replacing a newer document. The caller keeps the draft, reads the current document, and resolves the change.
+The owner, Chief, and the goal's own agent use one writer. An accepted edit returns the saved goal and page. Each edit applies to the current saved record.
 
 The detail query does not depend on measurement revisions. The separate readings query depends on both the goal and automatic measures. A collection refresh therefore updates charts without replacing a page draft. Deadline status follows the server's local calendar. The response includes the next local midnight so the browser can refresh status without a database write. Each measure keeps its declared timezone. Without a requested date range, readings include the stored dependency history through the measure's current local date. Missing current readings stay missing instead of displaying an older reading as current.
 
 The goal agent uses the same conversation system as Tickets. The first message starts a conversation. Opening a page alone does not start a model turn. Reset preserves prior conversation history. Goals do not acquire Ticket stages, continuation loops, or a new management hierarchy.
 
-`panels goal list` and `show` read saved goals. `create` and `edit` accept JSON on stdin. `edit` needs `expected_revision`. `read` returns the existing bound measure values, with optional `--first-date` and `--last-date`. The HTTP routes are `/api/goals`, `/api/goals/{id}`, and `/api/goals/{id}/readings`.
+`panels goal list` and `show` read saved goals. `create` and `edit` accept JSON on stdin. `read` returns the existing bound measure values, with optional `--first-date` and `--last-date`. The HTTP routes are `/api/goals`, `/api/goals/{id}`, and `/api/goals/{id}/readings`.
 
 Before a write, inspect the accepted request through these read-only commands:
 
@@ -36,7 +36,7 @@ _Code paths:_ `src/planner/goals/`, `src/planner/core/request_guidance.py`, and 
 
 ## Native page edits
 
-The owner edits goal title and rationale in place. The header shows the current Project, deadline, and active state. It also shows completion, its date, and the deadline result. Native inline controls retain accessible names, keyboard entry, and touch access. Their widths follow the current values, and the metadata shares a baseline. An empty deadline shows No deadline and retains the native date editor and picker. Each change uses the same revision-checked writer.
+The owner edits goal title and rationale in place. The header shows the current Project, deadline, and active state. It also shows completion, its date, and the deadline result. Native inline controls retain accessible names, keyboard entry, and touch access. Their widths follow the current values, and the metadata shares a baseline. An empty deadline shows No deadline and retains the native date editor and picker. Each change uses the same writer.
 
 Focus loss saves text and dates. Enter saves single-line fields. Ctrl/Cmd+Enter saves multiline text. Escape discards the draft.
 
@@ -48,7 +48,7 @@ On the full goal page, visible authored strings outside charts also support nati
 
 Text blocks retain Markdown, artifact previews, source links, and download fallbacks. Other authored fields remain plain text. Checklist titles, item labels, details, and action labels remain plain text. The goal agent changes checklist text. Other text editors and disclosure, sort, view selection, or completion actions use separate targets. Sidebar previews and the component gallery retain their existing controls without page-text editors.
 
-Each text draft retains its original goal and revision through background refreshes. A stale write fails visibly instead of replacing newer data. The draft remains until an explicit retry or discard. Accepted edits survive reload.
+Each text draft retains its original goal through background refreshes. Failed writes retain the draft until an explicit retry or discard. Accepted edits survive reload.
 
 ## Checklist item deadlines
 
@@ -66,9 +66,9 @@ The overall deadline follows the recorded goal result. A hit is green, a miss is
 
 Titles, backgrounds, progress rings, and numeric comparison colors retain their behavior. Item dates do not create a forecast or change the overall deadline, completion, or active state.
 
-Agents use the existing revision-checked goal writer. `panels goal schema create --json` includes dated and undated items in `checklist_goal`. `panels goal schema edit --json` includes complete-page examples for date replacement and null clearing. The dates and identifiers in these examples are illustrative.
+Agents use the existing goal writer. `panels goal schema create --json` includes dated and undated items in `checklist_goal`. `panels goal schema edit --json` includes complete-page examples for date replacement and null clearing. The dates and identifiers in these examples are illustrative.
 
-Before a real edit, read the accepted goal with `panels goal show GOAL_ID --json`. Copy its complete page and current revision. Keep every block, item ID, state, and unrelated field. Change only the intended item's `deadline`, and submit the page with `expected_revision`. Use null to clear the date. Never replace an owner page with a schema example.
+Before a real edit, read the accepted goal with `panels goal show GOAL_ID --json`. Copy its complete page. Keep every block, item ID, state, and unrelated field. Change only the intended item's `deadline`, and submit the page. Use null to clear the date. Never replace an owner page with a schema example.
 
 ## Sidebar previews
 
@@ -90,7 +90,7 @@ Tab reaches the preview controls from its goal row. Escape inside a value field 
 
 Before dismissal or replacement, a focused value field loses focus while it remains mounted. Its valid draft saves through the native control. Submitted writes continue after the preview closes. Reopen the same goal to see a pending save or a failed save with its native retry control. Manual retries reuse the original request and receipt. A stale manual edit requires an accepted-state refresh and another explicit edit. Saves never retry automatically.
 
-Checklist and binary edits share the goal page's revision-checked writer. Queued checklist commands use the accepted document after the preceding write. Accepted saves refresh the page and sidebar queries. A refresh failure remains a read error and does not turn an accepted save into a failed write. Historical chart selection does not change the current sidebar status.
+Checklist and binary edits share the goal page's writer. Queued checklist commands use the accepted document after the preceding write. Accepted saves refresh the page and sidebar queries. A refresh failure remains a read error and does not turn an accepted save into a failed write. Historical chart selection does not change the current sidebar status.
 
 ## Completion displays
 
@@ -104,11 +104,10 @@ The ring shows the accepted number of done items and the total item count. Activ
 
 A pending save does not change accepted completion or count summaries. If a save fails, the checkbox returns to its accepted state. The checklist shows the error and permits an explicit retry.
 
-Agents select a checklist by its stable block ID through the existing revision-checked goal writer. `primary_checklist_block_id` applies only to binary goals. A null value selects the binary display. This edit selects the saved checklist named `approach`:
+Agents select a checklist by its stable block ID through the existing goal writer. `primary_checklist_block_id` applies only to binary goals. A null value selects the binary display. This edit selects the saved checklist named `approach`:
 
 ```json
 {
-  "expected_revision": 4,
   "primary_checklist_block_id": "approach"
 }
 ```
@@ -142,7 +141,7 @@ Use a saved measure ID and a first date that match the goal. The actual expressi
 
 The backend evaluates retained evidence from the first date through the current server date. It saves the earliest date that meets the finish line. Later fluctuations preserve that earlier achievement. Corrections to observations, measure formulas, or the finish line can move or clear the saved date. Manual completion cannot contradict a numeric rule.
 
-The existing background scheduler evaluates numeric goals without a page visit or an agent turn. It checks again after data changes and at midnight. Goal creation and finish-line edits also evaluate the rule immediately. Evaluation errors preserve the saved completion facts rather than claim that the goal failed. Reads remain read-only. An accepted background completion changes the goal revision, so an older page draft still receives the ordinary stale-edit response.
+The existing background scheduler evaluates numeric goals without a page visit or an agent turn. It checks again after data changes and at midnight. Goal creation and finish-line edits also evaluate the rule immediately. Evaluation errors preserve the saved completion facts rather than claim that the goal failed. Reads remain read-only. An accepted background completion changes the goal revision.
 
 Each goal has one deadline. A completion date on or before it means hit. A later completion means miss. An unfinished goal becomes a miss after its deadline passes. Before that, it remains pending. A deadline edit changes this comparison. A goal without a deadline is undated.
 
@@ -217,7 +216,7 @@ A read-only scalar line chart or number readout can store an expected-value form
 
 The formula takes precedence over saved references and targets. An unavailable formula never falls back to another target. Removing it restores the chart's existing reference and target behavior, including range-specific targets.
 
-Agents save the formula through the existing revision-checked goal edit. For example, this chart field expresses a baseline of 100 plus two per elapsed day:
+Agents save the formula through the existing goal edit. For example, this chart field expresses a baseline of 100 plus two per elapsed day:
 
 ```json
 {
