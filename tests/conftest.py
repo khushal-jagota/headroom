@@ -29,9 +29,10 @@ except ContainmentRefusal as error:
         f"Test containment refused: {error}. Use scripts/run_contained_pytest.py."
     ) from error
 
-# Default discovery must omit opt-in probes entirely: publication requires every
-# selected file to execute tests. Explicit paths still load their refusal conftest.
-collect_ignore = ["containment"] if _BOUNDARY is None else []
+# Default discovery omits the full installed build. Explicit paths opt in.
+# Containment probes also stay out of ordinary discovery; their conftest refuses
+# explicit execution outside a contained process.
+collect_ignore = ["opt_in"] + (["containment"] if _BOUNDARY is None else [])
 
 from tests.support.skill_tree_protection.pytest_plugin import bootstrap  # noqa: E402
 
@@ -54,7 +55,7 @@ def executor_transport_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 def pytest_configure(config: pytest.Config) -> None:
     # File transport rejects symlink ancestors, including macOS's /var and /tmp.
-    os.environ["TMPDIR"] = str(Path("/tmp").resolve())
+    os.environ["TMPDIR"] = str(Path(os.environ.get("TMPDIR", "/tmp")).resolve())
     tempfile.tempdir = None
 
     config.pluginmanager.register(_SKILL_TREE_PROTECTION, "skill-tree-protection")

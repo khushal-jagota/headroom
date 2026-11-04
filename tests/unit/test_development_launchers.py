@@ -316,3 +316,30 @@ def test_npm_distribution_prefix_is_admitted_only_on_macos(
     (tree / "web/.npmrc").write_text("prefix=/other\n")
     with pytest.raises(SafetyRefusal, match="Unsupported config key"):
         launcher.node_environment(tree, tree / "web", {})
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="Linux dependency storage check needs /proc")
+def test_shared_npm_cache_requires_independent_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from development_safety import scanner
+
+    tree = _tree(tmp_path / "checkout")
+    deployment = tmp_path / "deployment"
+    deployment.mkdir()
+    shared_cache = tmp_path / "shared-cache"
+    shared_cache.mkdir()
+    (shared_cache / "entry").write_text("cached package")
+    monkeypatch.setattr(scanner, "protected_roots", lambda environment: (deployment,))
+    # Isolate npm config discovery from the host while exercising the real scanner.
+    original_exists = Path.exists
+    monkeypatch.setattr(
+        Path, "exists", lambda path: path.is_relative_to(tmp_path) and original_exists(path)
+    )
+    env = {"npm_config_cache": str(shared_cache)}
+    launcher.node_environment(tree, tree / "web", env)
+    (shared_cache / "deployed-entry").symlink_to(deployment)
+    with pytest.raises(SafetyRefusal, match="shared deployment storage detected"):
+        launcher.node_environment(tree, tree / "web", env)
+    with pytest.raises(SafetyRefusal, match="shared deployment storage detected"):
+        launcher.node_environment(tree, tree / "web", {"npm_config_cache": str(deployment)})

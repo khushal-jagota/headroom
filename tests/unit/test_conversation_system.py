@@ -3347,3 +3347,28 @@ def test_system_prompt_provenance_keeps_agent_only_attention_share_usable(
         assert figures["without_owner_involvement_share"]["value"] == 1
 
     _run(exercise)
+
+
+def test_resumed_manager_receives_canonical_role_and_environment(harness: _Harness) -> None:
+    """A retained transcript must not suppress the new Manager role on its next turn."""
+    from planner.runtime.logic.conversation_start_resolution import manager_role_materials
+
+    async def exercise() -> None:
+        materials = manager_role_materials("si_retained")
+        await _start(harness, "manager-resume", role_materials=materials)
+        await harness.system.send(
+            "manager-resume", text_message_content("first"), sender_label="owner"
+        )
+        await harness.complete_turn("manager-resume")
+        await harness.system.send(
+            "manager-resume", text_message_content("next"), sender_label="owner"
+        )
+        assert harness.backend("manager-resume").written_texts() == (
+            materials.role_text + "\n\nfirst",
+            materials.role_text + "\n\nnext",
+        )
+        record = await harness.store.read_conversation("manager-resume")
+        assert record is not None
+        assert dict(record.identity_environment_variables)["PLAN_MANAGER_ID"] == "si_retained"
+
+    _run(exercise)

@@ -64,9 +64,7 @@ def write_ticket_mutation(
     ticket_id = args.get("ticket_id")
     params = {"ticket_id": ticket_id}
     route, method = "/api/tickets/{ticket_id}", "PATCH"
-    if write.operation == "feedback.use":
-        route, method, params = "/api/feedback/use", "POST", {}
-    elif write.operation == "ticket.create":
+    if write.operation == "ticket.create":
         route, method, params = "/api/tickets", "POST", {}
     elif write.operation == "ticket.propose":
         route, method = route + "/propose", "POST"
@@ -78,10 +76,6 @@ def write_ticket_mutation(
             "member_id": args.get("blocker_id"),
         }
     admit_command(connection, principal, method, route, params, body)
-    if write.operation == "feedback.use":
-        from planner.feedback.api import write_use_feedback
-
-        return write_use_feedback(body, connection, clock, RequestContext(principal))
     if write.operation in ("ticket.block", "ticket.unblock"):
         from planner.membership.collections import ENTRIES, MembershipWrite
         from planner.membership.contracts import Collection

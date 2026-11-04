@@ -14,7 +14,6 @@ FixtureObject = dict[str, Any]
 
 _navigation_revision = 0
 
-
 def navigation_response(board: FixtureObject, workers: FixtureObject) -> FixtureObject:
     global _navigation_revision
     _navigation_revision += 1
@@ -203,9 +202,8 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
         },
         "cursor": cursor,
         "snapshot": {**continuity, "records": list(unique.values())},
-        "proof": None,
-    }
 
+    }
 
 def scoped_navigation_response(response: FixtureObject, view: FixtureObject) -> FixtureObject:
     """Reuse production membership/index logic over this host's synthetic source rows."""
@@ -248,5 +246,4 @@ def scoped_navigation_response(response: FixtureObject, view: FixtureObject) -> 
         "mode": response["mode"],
         "authority": response["authority"],
         "content": content,
-        "proof": response["proof"],
     }

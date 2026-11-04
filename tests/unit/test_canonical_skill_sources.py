@@ -396,7 +396,7 @@ def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
         )
 
 
-def test_full_skill_batch_retry_republishes_and_later_writes_replace_saved_source(
+def test_full_skill_batch_retry_republishes_and_later_application_replaces_current_source(
     tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
@@ -559,8 +559,11 @@ def test_workspace_skill_setup_preserves_foreign_link_after_creation_race(
     raced: list[Path] = []
 
     def concurrent_creator(
-        src: str | Path, dst: str, target_is_directory: bool = False,
-        *, dir_fd: int | None = None,
+        src: str | Path,
+        dst: str | Path,
+        target_is_directory: bool = False,
+        *,
+        dir_fd: int | None = None,
     ) -> None:
         # The native projection races before the workspace link exists.
         real_symlink(foreign, dst, target_is_directory, dir_fd=dir_fd)

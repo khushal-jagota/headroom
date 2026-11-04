@@ -5,7 +5,7 @@ from typing import cast
 
 from alembic import op
 
-from planner.navigation import create_schema
+from planner.core.migrations.historical_navigation.data import create_schema
 
 revision = "transactional_navigation"
 down_revision = "durable_conversation_facts"

@@ -54,8 +54,6 @@ from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
-from planner.environments.deployment_attention import DeploymentAttentionObserver
-from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.update_admission import matching_commit, startup_requires_commit
 from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
@@ -73,13 +71,11 @@ from planner.environments.vps_status import (
     collect_vps_status,
     collect_vps_status_summary,
 )
-from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
 from planner.goals.conversation_api import router as goal_conversation_router
 from planner.ideas.api import router as ideas_router
-from planner.managers.api import legacy_router as legacy_managers_router
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
 from planner.measure_sources.participants import SlotParticipantFactory
@@ -87,7 +83,6 @@ from planner.measures.api import router as measures_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
-from planner.navigation.middleware import NavigationCommandFenceMiddleware
 from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
 from planner.previews.api import handle_preview_error
@@ -201,7 +196,6 @@ def create_app(
 
         recovery_task: asyncio.Task[None] | None = None
         lifecycle_observer: asyncio.Task[None] | None = None
-        attention_observer: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
@@ -228,8 +222,6 @@ def create_app(
                     pass
 
             await attempt(preview_runtime.close())
-            if attention_observer is not None:
-                await attempt(cancel_task(attention_observer))
             if release_task is not None and not release_task.done():
                 await attempt(cancel_task(release_task))
             if video_cleanup_task is not None:
@@ -313,32 +305,6 @@ def create_app(
                     if conversation_system_for_test is None
                     else conversation_system_for_test
                 )
-
-                attention = DeploymentAttentionObserver(
-                    lifecycle_store=deployment_lifecycle_store,
-                    attention_directory=deployment_lifecycle_path.parent / "deployment-attention",
-                    app_sha=config.app_sha,
-                    clock=clock,
-                    connect_database=conn_factory,
-                    conversation_system=lambda: app.state.conversation_system,
-                    startup_pending=lambda: app.state.update_startup_pending,
-                    admission_closed=lambda: app.state.update_admission_closed,
-                )
-
-                async def observe_deployment_attention() -> None:
-                    while True:
-                        try:
-                            observed = await attention.poll()
-                            if observed != app.state.deployment_attention:
-                                app.state.deployment_attention = observed
-                                change_signal.emit()
-                        except Exception:
-                            logging.getLogger(__name__).exception(
-                                "Deployment attention could not be recorded or delivered"
-                            )
-                        await asyncio.sleep(DEPLOYMENT_ATTENTION_POLL_SECONDS)
-
-                attention_observer = asyncio.create_task(observe_deployment_attention())
 
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, loops, metrics
@@ -438,7 +404,6 @@ def create_app(
                                     "The app is installed, but setup did not complete. "
                                     "Chief review is required."
                                 )
-                                import logging
 
                                 logging.getLogger(__name__).error(
                                     "Deferred setup failed after app %s committed",
@@ -481,11 +446,6 @@ def create_app(
     app.state.previews = preview_service
     app.state.preview_transport = preview_transport
     app.state.video_uploads = video_uploads
-    app.add_middleware(
-        NavigationCommandFenceMiddleware,
-        conn_factory=conn_factory,
-        db_path=config.db_path,
-    )
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
@@ -523,7 +483,7 @@ def create_app(
     recorded_update = update_request_store.read()
     applying_candidate = bool(
         recorded_update is not None
-        and recorded_update.state == "applying"
+        and recorded_update.state == "installing"
         and recorded_update.release.manifest.app_sha == config.app_sha
     )
     app.state.update_startup_pending = startup_requires_commit(
@@ -531,7 +491,6 @@ def create_app(
     ) or (applying_candidate and not matching_commit(deployment_lifecycle_store, config.app_sha))
     app.state.update_admission_closed = False
     app.state.update_startup_detail = None
-    app.state.deployment_attention = None
     app.state.updates = UpdateService(
         GitHubUpdateProvider.configured(),
         update_request_store,
@@ -568,7 +527,6 @@ def create_app(
         conversation_history_router,
         projects_router,
         managers_router,
-        legacy_managers_router,
         ideas_router,
         measure_sources_router,
         measures_router,
@@ -579,7 +537,6 @@ def create_app(
         credentials_router,
         credential_requests_router,
         notifications_router,
-        feedback_router,
         worker_settings_router,
         message_delivery_router,
         membership_router,
@@ -670,8 +627,6 @@ def create_app(
             payload["state"] = "problem"
             payload["installation_confirmed"] = False
             payload["unknown_display_until"] = None
-        attention = app.state.deployment_attention
-        payload["attention_status"] = attention.status if attention is not None else None
         return payload
 
     @app.get("/api/vps-status-summary")

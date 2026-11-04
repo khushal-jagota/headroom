@@ -8,12 +8,10 @@ These cases do not establish public consumer cutover or whole-runtime acceptance
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pytest
 from starlette.types import Message
@@ -97,10 +95,9 @@ def test_actual_domain_callback_invalidates_threaded_snapshot_across_reattachmen
         parent: DeliveryRuntime,
         value: ViewRequest,
         access: DeliveryAccess,
-        fence: object,
         config: ViewConfig,
-    ) -> tuple[Continuity, ViewContent, Any]:
-        result = original(parent, value, access, fence, config)
+    ) -> tuple[Continuity, ViewContent]:
+        result = original(parent, value, access, config)
         pinned.set()
         assert release.wait(3), "snapshot worker was not released"
         return result

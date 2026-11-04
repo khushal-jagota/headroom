@@ -20,7 +20,6 @@ from planner.navigation.delivery import (
 )
 from planner.navigation.delivery_authority import DeliveryAccess, DeliveryUnavailable
 from planner.navigation.delivery_contracts import CurrentAuthority
-from planner.navigation.proof import certify
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.contracts import (
     VIEW_PROJECTION_VERSION,
@@ -49,15 +48,13 @@ def _snapshot(
     parent: DeliveryRuntime,
     value: ViewRequest,
     access: DeliveryAccess,
-    fence: object,
     config: ViewConfig,
-) -> tuple[Continuity, ViewContent, Any]:
+) -> tuple[Continuity, ViewContent]:
     with contextlib.closing(_read_connection(parent.path)) as conn:
         conn.execute("BEGIN")
         parent.admission.validate_snapshot(conn, access)
         coverage, content = read_content(conn, value, config=config)
-        proof = certify(conn, fence) if fence is not None else None
-        return coverage, content, proof
+        return coverage, content
 
 
 def _notice(
@@ -178,14 +175,13 @@ class ScopedDeliveryRuntime:
     async def snapshot(
         self,
         value: ViewRequest,
-        fence: object = None,
         *,
         captured: tuple[DeliveryAccess, CurrentAuthority] | None = None,
     ) -> tuple[ViewSnapshot, DeliveryAccess]:
         access, authority = captured or await self.capture()
         try:
-            coverage, content, proof = await asyncio.to_thread(
-                _snapshot, self.parent, value, access, fence, self.config
+            coverage, content = await asyncio.to_thread(
+                _snapshot, self.parent, value, access, self.config
             )
             await asyncio.to_thread(self.parent.admission.validate, access)
         except (
@@ -209,7 +205,6 @@ class ScopedDeliveryRuntime:
             "mode": "current",
             "authority": authority,
             "content": content,
-            "proof": proof,
         }
         return cast(ViewSnapshot, result), access
 

@@ -14,6 +14,7 @@ from planner.navigation.delivery_authority import (
     DeliveryUnavailable,
 )
 
+
 class DeadlineStreamingResponse(StreamingResponse):
     def __init__(
         self,

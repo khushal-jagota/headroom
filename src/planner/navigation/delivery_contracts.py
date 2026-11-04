@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Literal, TypedDict
 
 from planner.navigation.contracts import Continuity, RevisionBatch, Snapshot
-from planner.navigation.proof_contracts import ProofResult
 
 WIRE_VERSION = 2
 ResetReason = Literal[
@@ -47,7 +46,6 @@ class CurrentSnapshotResponse(TypedDict):
     authority: CurrentAuthority
     cursor: str
     snapshot: Snapshot
-    proof: ProofResult | None
 
 
 type SnapshotResponse = CurrentSnapshotResponse

@@ -78,6 +78,10 @@ def _assert_sentinels(conn: sqlite3.Connection, seeded: set[str]) -> None:
 
 def _assert_join(conn: sqlite3.Connection) -> None:
     _assert_canonical(conn)
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE name IN "
+        "('navigation_commit_witnesses', 'navigation_proof_identity')"
+    ).fetchall() == []
     assert conn.execute("SELECT 1 FROM ticket_application_previews LIMIT 1").fetchall() == []
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert [tuple(row) for row in conn.execute("SELECT version_num FROM alembic_version")] == [
@@ -89,7 +93,7 @@ def _assert_join(conn: sqlite3.Connection) -> None:
     "source_head",
     [
         "scheduled_ticket_locale", "owner_message_preview", "video_upload_ledger",
-        "ticket_application_previews",
+        "ticket_application_previews", "manager_launch_defaults",
     ],
 )
 def test_retained_source_heads_join_without_losing_authority(
@@ -222,10 +226,13 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                     "AND tbl_name='conversations' ORDER BY name"
                 )
             )
-            command.upgrade(config, "head")
+            # Check exact retained rows before the later Manager identity migration
+            # deliberately rebuilds navigation projections from canonical sources.
+            command.upgrade(config, "remove_navigation_proof")
             removed_tables = {
                 "scheduled_ticket_occurrences", "scheduled_ticket_schedules",
-                "worker_step_skill_bindings",
+                "worker_step_skill_bindings", "feedback_notes",
+                "navigation_commit_witnesses", "navigation_proof_identity",
             }
             for name, before in rows.items():
                 if name in removed_tables:
@@ -294,10 +301,61 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                 "UPDATE conversations SET workspace_path_policy='home_relative' "
                 "WHERE conversation_id='current'"
             )
+            # The final identity migration may regenerate only these derived tables.
+            # Preserve every other table, column and row, including archived bytes.
+            derived_tables = {
+                "navigation_meta", "navigation_records", "navigation_dependencies",
+                "navigation_root_records", "navigation_dirty", "navigation_journal",
+                "navigation_view_meta", "navigation_view_index",
+                "navigation_view_memberships", "navigation_view_counts",
+                "navigation_view_current_conversations",
+                "navigation_view_unread_conversations", "navigation_view_globals",
+                "navigation_view_changes",
+            }
+            surviving_tables = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name!='alembic_version'"
+                )
+            } - derived_tables
+            final_source_columns = {
+                name: list(conn.execute(f'PRAGMA table_info("{name}")'))
+                for name in surviving_tables
+            }
+            final_source_rows = {
+                name: list(conn.execute(f'SELECT * FROM "{name}"'))
+                for name in surviving_tables
+            }
+            # This cumulative fixture has no historical Manager identity/principal
+            # rewrites. The occupied identity fixture separately proves those exact
+            # authorized changes, so every source byte here must remain unchanged.
+            assert conn.execute(
+                "SELECT 1 FROM agents WHERE agent_key LIKE 'sprint_item_supervisor_%'"
+            ).fetchall() == []
+            assert all(
+                dict(json.loads(row[0])).get("PLAN_ACTOR")
+                not in {"manager", "sprint_item_supervisor"}
+                for row in conn.execute("SELECT identity_environment_variables FROM conversations")
+            )
+            assert all(
+                approval.get("principal", {}).get("kind") != "sprint_item"
+                for row in conn.execute("SELECT field_approvals FROM tickets")
+                for approval in json.loads(row[0]).values()
+            )
+            command.upgrade(config, "head")
+            _assert_join(conn)
+            for name in surviving_tables:
+                assert list(conn.execute(f'PRAGMA table_info("{name}")')) == (
+                    final_source_columns[name]
+                ), name
+                assert list(conn.execute(f'SELECT * FROM "{name}"')) == (
+                    final_source_rows[name]
+                ), name
         # Ordinary startup of the same populated DB must keep all dependent history.
         conn = db.connect(str(path))
         try:
             db.create_schema(conn)
+            _assert_join(conn)
             assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
             assert conn.execute("SELECT COUNT(*) FROM conversation_events").fetchone()[0] > 0
             assert conn.execute("SELECT COUNT(*) FROM ticket_conversations").fetchone()[0] > 0

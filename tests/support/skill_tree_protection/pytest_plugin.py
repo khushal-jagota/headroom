@@ -22,7 +22,11 @@ from tests.support.skill_tree_protection.inventory import (
     compare_manifests,
     snapshot,
 )
-from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
+from tests.support.synthetic_homes import (
+    create_synthetic_homes,
+    shared_package_caches,
+    synthetic_home_environment,
+)
 
 
 class SkillTreeProtectionPlugin:
@@ -33,6 +37,7 @@ class SkillTreeProtectionPlugin:
         self.baseline = baseline
         self.guard = AuditGuard(inventory)
         self.guard.install()
+        self._package_caches = shared_package_caches(os.environ)
         self._homes_storage = tempfile.TemporaryDirectory(prefix="panels-synthetic-homes-")
         self.final: Manifest | None = None
         self.differences: tuple[ManifestDifference, ...] = ()
@@ -60,7 +65,7 @@ class SkillTreeProtectionPlugin:
         try:
             # Fixture scope does not determine when native profiles first resolve.
             # Route before pytest sets up even session- and module-scoped fixtures.
-            with synthetic_home_environment(homes):
+            with synthetic_home_environment({**self._package_caches, **homes}):
                 yield
         finally:
             self.guard.set_context("session after test teardown")

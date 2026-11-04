@@ -10,8 +10,9 @@
   let error = $state<string | null>(null);
   const request = $derived(status.request);
   const active = $derived(activeUpdateRequest(request));
+  const canceled = $derived(request?.detail === "Update canceled before installation. The previous version stayed active.");
   const hasContent = $derived(active || confirming !== null ||
-    (status.configured && usableUpdate(status.available, now)) || ["failed", "cancelled"].includes(request?.state ?? "") || error !== null);
+    (status.configured && usableUpdate(status.available, now)) || request?.state === "failed" || error !== null);
 
   async function submit(release: PublishedUpdate, mode: UpdateMode, confirmed = false): Promise<void> {
     if (submitting) return;
@@ -51,10 +52,11 @@
 
 {#if hasContent}
 <div class="update-actions" data-update-activity={status.activity}>
-  {#if !active && request?.state === "cancelled"}<span>Update canceled before installation. The previous version stayed active.</span>{/if}
-  {#if !active && request?.state === "failed"}<span role="alert">Update failed</span>{/if}
+  {#if !active && request?.state === "failed"}
+    {#if canceled}<span>{request.detail}</span>{:else}<span role="alert">{request.detail ?? "Update failed"}</span>{/if}
+  {/if}
   {#if active && request}
-    <span>{request.state === "applying" ? "Update in progress" : request.mode === "idle" && request.state === "pending" ? "Update waits for idle" : "Update requested"}</span>
+    <span>{request.state === "installing" ? "Update in progress" : request.mode === "idle" && request.state === "requested" ? "Update waits for idle" : "Update requested"}</span>
     {#if canCancelUpdate(request)}<button type="button" class="ghost" disabled={submitting} onclick={cancel}>Cancel update</button>{/if}
   {:else if confirming}
     <span>{status.activity === "busy" ? "Work is active. The update can interrupt it." : "Activity is unknown. The update can interrupt work."}</span>
@@ -63,10 +65,6 @@
     {:else}<span>This update expired. Refresh its availability.</span>{/if}
     <button type="button" class="ghost" disabled={submitting} onclick={() => { confirming = null; }}>Go back</button>
   {:else if status.configured && usableUpdate(status.available, now)}
-    <!-- Availability is independent of request state. Only pending, dispatched, and
-         applying block a new request. After a failed request, the change-stream
-         refetch restores both actions while the release remains usable. If the
-         release expired or disappeared, the failure has no retry actions. -->
     <button type="button" class="primary" disabled={submitting} onclick={() => submit(status.available!, "idle")}>Update when idle</button>
     <button type="button" class="ghost" disabled={submitting} onclick={() => submit(status.available!, "now")}>Start update</button>
   {/if}

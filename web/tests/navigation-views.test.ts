@@ -3,7 +3,7 @@ import {applyFrame} from '../src/lib/navigation/views/applyFrame';
 import {createNavigationPresentationCache,navigationReviewPresentation,navigationWorkingAgentCount} from '../src/lib/navigation/presentation';
 import {WORK_ITEM_TICKET_GROUPS} from '../src/lib/workItemPresentation';
 import {createScopedNavigationOwner,viewWindow,defaultViewRequest} from '../src/lib/navigation/views/owner';
-import type {CurrentViewSnapshot,ViewFrame,ViewRequest,Fence} from '../src/lib/navigation/contracts';
+import type {CurrentViewSnapshot,ViewFrame,ViewRequest} from '../src/lib/navigation/contracts';
 import type {ViewTransport} from '../src/lib/navigation/views/transport';
 import {reviewReturnLabel} from '../src/lib/review/return';
 import {authority,continuity,conversation} from './support/navigation/fixtures';
@@ -12,7 +12,7 @@ function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapsh
   const source=conversation('c');
   return {event:'snapshot',wire_version:3,projection_version:7,view_id:`view-${request.scope_generation}`,
     scope_generation:request.scope_generation,ordering_generation:'fixture',coverage:{...continuity,revision},
-    content_version:name,mode:'current',authority:authority(),proof:null,
+    content_version:name,mode:'current',authority:authority(),
     content:{review_context:[],review_summary:{skipped:0,new:0},records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{first_unread_owner_message_at:source.value.first_unread_owner_message_at,attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
 }
 function fixture(options:{reconnectDelayMs?:number}={reconnectDelayMs:100000}) {
@@ -51,21 +51,6 @@ describe('bounded navigation owner',()=>{
       replacement.error();expect(owner.getState().health).toBeNull();
     } finally {stop();owner.dispose();vi.useRealTimers();}
   });
-  it('ignores an obsolete certification response',async()=>{
-    const {owner,connections,transport}=fixture();
-    try {
-      const started=owner.start();connections[0].send(snapshot(connections[0].request));await started;
-      const observer=owner.registerObserver('certification');
-      const fence:Fence={version:1,...continuity,coverage:'complete',witnesses:[],signature:'fixture'};
-      let release!:(value:CurrentViewSnapshot)=>void;
-      transport.snapshot=()=>new Promise(resolve=>{release=resolve;});
-      const pending=owner.waitForVisibility(fence,{requiredObservers:[observer]});await flush();
-      const stale=snapshot(owner.getRequest());
-      const replacement=owner.recover();connections[1].send(snapshot(connections[1].request));await replacement;
-      release(stale);expect((await pending).status).toBe('unknown');
-      expect(owner.getState().health).toBeNull();
-    } finally {owner.dispose();}
-  });
   it('supplies the global working count beyond resident pointers and preserves unknown through runtime loss',async()=>{
     const {owner,connections}=fixture();
     try {
@@ -79,7 +64,7 @@ describe('bounded navigation owner',()=>{
       expect(count()).toBe(7);
       expect(navigationReviewPresentation(owner.getState().effective!)).toMatchObject({runningConversationCount:7,currentConversationIds:new Set(['c'])});
       let revision=0;
-      for(const total of [9,0,6]) {
+      for(const total of [9,0,null,6]) {
         const previous=owner.getState().publication!;
         source.send({event:'patch',wire_version:3,projection_version:7,view_id:initial.view_id,
           scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
@@ -101,23 +86,16 @@ describe('bounded navigation owner',()=>{
       expect(count()).toBe(12);
     } finally {owner.dispose();}
   });
-  it('advances a checkpoint without selector work while requiring new DOM evidence for changed content',async()=>{
+  it('advances a checkpoint without selector work and publishes changed content',async()=>{
     const {owner,connections}=fixture();let notifications=0;const stop=owner.subscribe(()=>notifications++);
     try{
       const started=owner.start();const source=connections[0];const initial=snapshot(source.request);source.send(initial);await started;
-      const observer=owner.registerObserver('actual-surface');const first=owner.getState().publication!;
-      const token=observer.observeSelectors(first,owner.getState().generation);observer.acknowledgeRender(first,token);
-      const fence:Fence={version:1,...continuity,revision:'1',coverage:'complete',witnesses:['a'.repeat(64)],signature:'fixture'};
       const before=notifications;
       const checkpoint={...initial,event:'checkpoint' as const,previous_coverage:initial.coverage,coverage:{...continuity,revision:'1'}};
       source.send(checkpoint);
       expect(notifications).toBe(before);expect(owner.getState().publication!.continuity.revision).toBe('1');
-      expect(await owner.waitForVisibility(fence,{requiredObservers:[observer],timeoutMs:100})).toEqual({status:'included',reason:null});
       source.send({...checkpoint,event:'patch',previous_coverage:checkpoint.coverage,coverage:{...continuity,revision:'2'},content_version:'two',previous_content_version:'one',upserts:[{kind:'project',id:'p',value:{name:'two'}}],evictions:[],windows:[],review_context:[],review_summary:{skipped:0,new:0},counts:initial.content.counts});
-      let resolved=false;const pending=owner.waitForVisibility({...fence,revision:'2'},{requiredObservers:[observer],timeoutMs:100}).then(value=>{resolved=true;return value;});
-      await flush();expect(resolved).toBe(false);
-      const next=owner.getState().publication!;const observed=observer.observeSelectors(next,owner.getState().generation);observer.acknowledgeRender(next,observed);
-      expect((await pending).status).toBe('included');
+      expect(owner.getState().publication!.continuity.revision).toBe('2');
     }finally{stop();owner.dispose();}
   });
   it('settles cancelled startup and coalesces scope changes; queued obsolete replies cannot repopulate a replaced view',async()=>{
@@ -133,12 +111,11 @@ describe('bounded navigation owner',()=>{
       expect(owner.getState().connection).toBe('subscribed');
     }finally{owner.dispose();}
   });
-  it('keeps accepted signals during deliberate scope admission, then requires fresh render evidence after atomic handoff',async()=>{
+  it('keeps accepted signals during deliberate scope admission and atomic handoff',async()=>{
     const {owner,connections}=fixture();
     try{
       const started=owner.start();connections[0].send(snapshot(connections[0].request,'1'));await started;
-      const original=owner.getState();const observer=owner.registerObserver('scope');
-      const observation=observer.observeSelectors(original.publication!,original.generation);observer.acknowledgeRender(original.publication!,observation);
+      const original=owner.getState();
       owner.setDemand('selected',{selected:{kind:'ticket',id:'next'},windows:[]});await flush();
       expect(owner.getState()).toBe(original);expect(connections[0].closed).toBe(false);
       expect(owner.getState().effective!.runtimeCurrent).toBe(true);
@@ -153,11 +130,7 @@ describe('bounded navigation owner',()=>{
       expect(connections[0].closed).toBe(true);expect(owner.getState().generation).toBe(original.generation+1);
       expect(owner.getState().effective!.runtimeCurrent).toBe(true);
       expect(owner.getState().effective!.conversations.get('c')!.working).toMatchObject({state:'fresh',value:true});
-      let resolved=false;const fence:Fence={version:1,...continuity,revision:'2',coverage:'complete',witnesses:['a'.repeat(64)],signature:'fixture'};
-      const pending=owner.waitForVisibility(fence,{requiredObservers:[observer],timeoutMs:100}).then(result=>{resolved=true;return result;});
-      await flush();expect(resolved).toBe(false);
-      const next=owner.getState();const painted=observer.observeSelectors(next.publication!,next.generation);observer.acknowledgeRender(next.publication!,painted);
-      expect((await pending).status).toBe('included');
+
     }finally{owner.dispose();}
   });
   it('replaces lean/full records under one key',async()=>{

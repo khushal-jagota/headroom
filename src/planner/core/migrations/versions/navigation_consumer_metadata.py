@@ -5,7 +5,7 @@ from typing import cast
 
 from alembic import op
 
-from planner.navigation.data import upgrade_consumer_metadata
+from planner.core.migrations.historical_navigation.data import upgrade_consumer_metadata
 
 revision = "navigation_consumer_metadata"
 down_revision = "reconcile_navigation_staging"

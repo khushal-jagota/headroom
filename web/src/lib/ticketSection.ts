@@ -1,4 +1,4 @@
-import type { TicketRecord, TicketValue } from './navigation/contracts';
+import type { TicketValue } from './navigation/contracts';
 import type { EffectiveNavigationView } from './navigation/knowledge';
 import type { TicketDetail } from './types';
 import type { WorkerTypeManifest } from './lifecycle';
@@ -27,20 +27,6 @@ export function ticketSection(detail:TicketDetail | undefined,configuration:Work
     proposal_field:detail.pending_proposal?.field ?? null,proposal_created_at:detail.pending_proposal?.created_at ?? null,
     proposal_revision:detail.pending_proposal?.revision ?? 0,
   }}};
-}
-
-/** Compare the displayed body only for render observation, never for action admission. */
-export function ticketSectionDetailMatches(record:TicketRecord,detail:TicketDetail):boolean {
-  const row=record.value;
-  if('integrity_error' in row) return false;
-  if(detail.id!==record.id || detail.worker_type!==row.worker_type || detail.stage!==row.stage
-    || detail.ticket_status!==row.ticket_status || detail.ceiling!==row.ceiling
-    || detail.ceiling_holder.kind!==row.ceiling_holder.kind || detail.ceiling_holder.id!==row.ceiling_holder.id
-    || detail.is_backlogged!==row.is_backlogged || detail.blocked!==row.blocked
-    || detail.manager_id!==row.manager_id || detail.conversation_id!==row.conversation_id) return false;
-  const proposal=detail.pending_proposal;
-  return proposal===null ? row.proposal_field===null && row.proposal_created_at===null
-    : proposal.field===row.proposal_field && proposal.created_at===row.proposal_created_at && proposal.revision===row.proposal_revision;
 }
 
 /** Conversation facts reproject independently from the loaded Ticket. */

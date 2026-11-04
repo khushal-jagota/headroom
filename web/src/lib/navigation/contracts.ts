@@ -260,23 +260,6 @@ export interface JournalPage {
   has_more: boolean;
 }
 
-export interface Fence {
-  version: 1;
-  scope: string;
-  schema_version: number;
-  semantics: string;
-  epoch: string;
-  revision: string;
-  coverage: "complete" | "unknown";
-  witnesses: Array<string>;
-  signature: string;
-}
-
-export interface ProofResult {
-  status: "included" | "no_op" | "unknown";
-  reason: string | null;
-}
-
 export type ResetReason = "invalid_cursor" | "incompatible_continuity" | "expired_history" | "future_cursor" | "journal_gap" | "subscriber_overflow";
 
 export interface Cursor {
@@ -313,7 +296,6 @@ export interface CurrentSnapshotResponse {
   authority: CurrentAuthority;
   cursor: string;
   snapshot: Snapshot;
-  proof: ProofResult | null;
 }
 
 export type SnapshotResponse = CurrentSnapshotResponse;
@@ -538,7 +520,6 @@ export interface CurrentViewSnapshot {
   mode: "current";
   authority: CurrentAuthority;
   content: ViewContent;
-  proof: ProofResult | null;
 }
 
 export type ViewSnapshot = CurrentViewSnapshot;

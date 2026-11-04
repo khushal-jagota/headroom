@@ -933,7 +933,14 @@ def _database_before_calendar_removal(
 ) -> tuple[sqlite3.Connection, Path]:
     shipped = db_module.MIGRATIONS_DIRECTORY
     tree = _migration_tree_through(tmp_path, monkeypatch, "diagnostic_expiry_metadata")
-    conn = connect(str(tmp_path / "before-calendar-removal.db"))
+    # Historical fixtures must not run current transaction participants against
+    # their old schema. The migration itself installs its matching projections.
+    conn = sqlite3.connect(str(tmp_path / "before-calendar-removal.db"))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    from planner.core.migrations.historical_navigation.data import attach
+
+    attach(conn)
     create_schema(conn)
     seed_historical_coding_definition(conn)
     project_id = str(conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0])
@@ -1222,17 +1229,22 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         conn.execute(f"SELECT {ticket_columns} FROM tickets WHERE id='t_item'").fetchone()
     )
     unchanged_tables = (
-        "agents",
         "conversations",
         "ticket_conversations",
         "ticket_blocks",
         "manager_wake_batch_members",
         "managed_skill_versions",
     )
-    # Compare retained columns. The independent workspace migration appends its
-    # explicit legacy policy without changing the previously stored values.
+    agents = [tuple(row) for row in conn.execute("SELECT * FROM agents")]
+    # The integrated migration changes Manager identity and role, while the
+    # workspace migration appends its policy. All other stored values remain.
     retained_columns = {
-        table: ",".join(f'"{row[1]}"' for row in conn.execute(f'PRAGMA table_info("{table}")'))
+        table: ",".join(
+            f'"{row[1]}"'
+            for row in conn.execute(f'PRAGMA table_info("{table}")')
+            if table != "conversations"
+            or row[1] not in {"identity_environment_variables", "role_text"}
+        )
         for table in unchanged_tables
     }
     unchanged = {
@@ -1243,13 +1255,28 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
     }
     create_schema(conn)
     assert _revision(conn) == head_revision()
+    assert [tuple(row) for row in conn.execute("SELECT * FROM agents")] == [
+        (key.replace("sprint_item_supervisor_", "manager_", 1), conversation_id)
+        for key, conversation_id in agents
+    ]
+    identity, role = conn.execute(
+        "SELECT identity_environment_variables,role_text FROM conversations "
+        "WHERE conversation_id='kept-conversation'"
+    ).fetchone()
+    assert dict(json.loads(identity)) == {
+        "PLAN_ACTOR": "manager",
+        "PLAN_MANAGER_ID": "si_kept",
+    }
+    from planner.runtime.logic.conversation_start_resolution import MANAGER_ROLE_TEXT
+
+    assert role == MANAGER_ROLE_TEXT
     # Later approved removals delete timer and skill-binding evidence, not Tickets.
     for table in (
         "scheduled_ticket_schedules", "scheduled_ticket_occurrences",
         "worker_step_skill_bindings",
     ):
         assert conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
         ).fetchone() is None
     assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
     assert (
@@ -1439,6 +1466,45 @@ def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE conversations SET workspace_path_policy = 'guess'")
     conn.close()
+
+
+def test_feedback_removal_upgrade_keeps_ticket_revision_feedback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A database upgrade drops the inbox without deleting the separate review channel."""
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    _migration_tree_through(tmp_path, monkeypatch, "remove_ticket_approvers")
+    conn = connect(str(tmp_path / "feedback-removal.db"))
+    try:
+        create_schema(conn)
+        conn.execute(
+            "INSERT INTO feedback_notes(id,text,state,created_at,updated_at) "
+            "VALUES ('old-note','Unused note','open',1,1)"
+        )
+        conn.execute(
+            "INSERT INTO tickets (id,title,worker_type,employee_backend,ceiling,field_values,"
+            "worker_step_claim,stage,created_at,updated_at) "
+            "VALUES ('t_feedback_kept','Keep','coding','hermes','needs_brief','{}',"
+            "'none','needs_brief',1,1)"
+        )
+        conn.execute(
+            "INSERT INTO ticket_revision_feedback VALUES "
+            "('t_feedback_kept','needs_success','{\"feedback\":\"Keep this review\"}',1,1,1)"
+        )
+        before = list(conn.execute("SELECT * FROM tickets"))
+        reviews = list(conn.execute("SELECT * FROM ticket_revision_feedback"))
+        conn.commit()
+        monkeypatch.setattr(db_module, "MIGRATIONS_DIRECTORY", shipped)
+        create_schema(conn)
+        assert conn.execute(
+            "SELECT name FROM sqlite_master WHERE name IN "
+            "('feedback_notes','idx_feedback_notes_state_created','idx_feedback_notes_ticket_id')"
+        ).fetchall() == []
+        assert list(conn.execute("SELECT * FROM tickets")) == before
+        assert list(conn.execute("SELECT * FROM ticket_revision_feedback")) == reviews
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()
 
 
 def test_skill_binding_removal_preserves_skill_history_and_conversation_rows(

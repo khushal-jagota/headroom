@@ -14,8 +14,8 @@ from zoneinfo import TZPATH, ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.support.api_app import _app
 from starlette.requests import Request
+from tests.support.api_app import _app
 from tests.unit.test_manual_measures import manual_measure
 from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 

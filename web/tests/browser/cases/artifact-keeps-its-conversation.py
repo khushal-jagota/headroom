@@ -205,7 +205,6 @@ def run(browser, urls):
         f"/api/managers/{MANAGER_ID}/workspace-content": {"goal": "Ship the rollout.", "recap": "The Manager's own conversation names another Ticket's artifact."},
         "/api/worker-types?supported=true": manifest,
         "/api/worker-types": manifest,
-        "/api/feedback/count": {"open_count": 0},
         "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
         "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None},
         "/api/meta": {"test_mode": True, "app_sha": None},

@@ -341,7 +341,7 @@ def test_rebuild_refreshes_ownership_within_transaction_and_preserves_incrementa
         conn.execute("INSERT INTO ticket_conversations VALUES('old','t')")
         conn.execute(
             "UPDATE conversations SET identity_environment_variables=? WHERE conversation_id='old'",
-            ('[["PLAN_ACTOR","manager"],["PLAN_SPRINT_ITEM_ID","a"]]',),
+            ('[["PLAN_ACTOR","manager"],["PLAN_MANAGER_ID","a"]]',),
         )
         conn.execute("INSERT INTO agents VALUES('manager_a','old')")
         rebuild(conn)

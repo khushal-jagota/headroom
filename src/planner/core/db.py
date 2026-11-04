@@ -29,7 +29,6 @@ from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.engine import URL
 
 from planner.core import change_signal
-from planner.core.commit_observers import CommitObserver, observe
 from planner.core.transaction_participants import TransactionParticipant, finalize
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
@@ -189,8 +188,6 @@ class ChangeSignallingConnection(sqlite3.Connection):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._participants: tuple[TransactionParticipant, ...] = ()
-        self._commit_observers: tuple[CommitObserver, ...] = ()
-        self._participant_results: tuple[object, ...] = ()
         self._finalizing = False
         self._rows_changed_at_transaction_start: int | None = None
         self._savepoints: list[str] = []
@@ -336,10 +333,7 @@ class ChangeSignallingConnection(sqlite3.Connection):
                 self._rows_changed_at_transaction_start = before
         elif had_transaction:
             wrote = self._open_transaction_wrote()
-            results = self._participant_results
             self._clear_transaction()
-            if commits:
-                observe(self, results, self._commit_observers)
             if commits and wrote:
                 change_signal.emit()
         elif self.total_changes != before:
@@ -354,7 +348,7 @@ class ChangeSignallingConnection(sqlite3.Connection):
             raise RuntimeError("transaction participants cannot commit")
         self._finalizing = True
         try:
-            self._participant_results = finalize(self, self._participants)
+            finalize(self, self._participants)
         except BaseException:
             self._rollback_failed()
             raise
@@ -372,10 +366,7 @@ class ChangeSignallingConnection(sqlite3.Connection):
         except BaseException as error:
             self._failed_commit(error)
             raise
-        results = self._participant_results
         self._clear_transaction()
-        if had_transaction:
-            observe(self, results, self._commit_observers)
         if announce and had_transaction and wrote:
             change_signal.emit()
 
@@ -421,7 +412,6 @@ class ChangeSignallingConnection(sqlite3.Connection):
         return False
 
     def _clear_transaction(self) -> None:
-        self._participant_results = ()
         self._rows_changed_at_transaction_start = None
         self._savepoints.clear()
         self._savepoint_transaction = False
@@ -471,10 +461,10 @@ def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
-    from planner.database_modules import attach, commit_observers
+
+    from planner.database_modules import attach
 
     conn._participants = attach(conn)
-    conn._commit_observers = commit_observers()
     return conn
 
 

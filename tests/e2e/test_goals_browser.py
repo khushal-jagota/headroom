@@ -563,6 +563,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     # The newly interactive overview must use the real goal writer.
     # Reuse this connected scenario: component tests cannot prove persisted API
     # acceptance, effective completion, or reload reads from a card-originated edit.
+    overview_revision = api.get(server, path)["revision"]
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
         timeout=WAIT_MS,
@@ -663,6 +664,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
 
     # Reuse this connected host to prove a real native title commit and reload.
     # Frontend-only cases cannot prove API acceptance and persisted browser reads.
+    before_title = api.get(server, path)
     title_editor = page.get_by_role("textbox", name="Goal title", exact=True)
     title_editor.fill("Owner title", timeout=WAIT_MS)
     with page.expect_response(
@@ -1149,7 +1151,6 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     expect(rate).to_contain_text("50%", timeout=WAIT_MS)
 
     page.locator("[data-goal-page]").evaluate("node => node.dataset.outcomeProof = 'retained'")
-    current = api.get(server, path)
     changed = api.direct_patch(
         server,
         path,
@@ -1174,7 +1175,6 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     capture_success(page, "goal-result-hit-preview.png")
 
     # The same mounted preview must also replace a previously completed result.
-    current = api.get(server, path)
     reopened = api.direct_patch(
         server,
         path,

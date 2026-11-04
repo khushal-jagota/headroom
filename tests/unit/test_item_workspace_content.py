@@ -41,7 +41,7 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
             "identity_environment_variables TEXT,created_at INTEGER)"
         )
         identity = json.dumps(
-            [["PLAN_ACTOR", "manager"], ["PLAN_SPRINT_ITEM_ID", "item"]]
+            [["PLAN_ACTOR", "manager"], ["PLAN_MANAGER_ID", "item"]]
         )
         conn.executemany(
             "INSERT INTO conversations VALUES(?,?,?)",
@@ -105,7 +105,7 @@ def test_content_keeps_exact_document_without_unopened_catalog_or_summary_work(
             owner = await client.get("/api/managers/item/workspace-content")
             supervisor = await client.get(
                 "/api/managers/item/workspace-content",
-                headers={"X-Plan-Actor": "manager", "X-Plan-Sprint-Item-ID": "item"},
+                headers={"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "item"},
             )
             versioned = await client.get(
                 "/api/resource-body", params={"key": "/api/managers/item/workspace-content"}
@@ -144,7 +144,7 @@ def test_content_checks_authority_before_read_and_preserves_missing_identity(
                     "/api/managers/item/workspace-content",
                     headers={
                         "X-Plan-Actor": "manager",
-                        "X-Plan-Sprint-Item-ID": "foreign",
+                        "X-Plan-Manager-ID": "foreign",
                     },
                 )
                 foreign_versioned = await client.get(
@@ -152,7 +152,7 @@ def test_content_checks_authority_before_read_and_preserves_missing_identity(
                     params={"key": "/api/managers/item/workspace-content"},
                     headers={
                         "X-Plan-Actor": "manager",
-                        "X-Plan-Sprint-Item-ID": "foreign",
+                        "X-Plan-Manager-ID": "foreign",
                     },
                 )
             assert foreign.status_code == 400  # Existing agent_forbidden HTTP mapping.

@@ -792,10 +792,7 @@ jobs:
             --working-directory="$GITHUB_WORKSPACE" \
             --setenv=GH_TOKEN --setenv=GITHUB_REPOSITORY --setenv=PANELS_DEPLOYMENT_ID \
             "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.update_runner apply \
-            --request-id "$UPDATE_REQUEST_ID" --publication-run-id "$UPDATE_PUBLICATION_RUN_ID" \
-            --artifact-id "$UPDATE_ARTIFACT_ID" --proof-artifact-id "$UPDATE_PROOF_ARTIFACT_ID" \
-            --app-sha "$UPDATE_APP_SHA" --artifact-digest "$UPDATE_ARTIFACT_DIGEST" \
-            --archive-sha256 "$UPDATE_ARCHIVE_SHA256"
+            --request-id "$UPDATE_REQUEST_ID"
       - name: Provision agent skills after local adoption
         id: owner_provision
         run: |

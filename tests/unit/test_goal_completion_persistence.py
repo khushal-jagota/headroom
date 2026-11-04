@@ -321,7 +321,7 @@ def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Conn
     context = RequestContext(OWNER_PRINCIPAL)
 
     async def responses(completed: bool) -> None:
-        saved = data.read_goal(tmp_db, goal.id)
+        data.read_goal(tmp_db, goal.id)
         write = await api.update_goal(
             goal.id,
             {"completed": completed},

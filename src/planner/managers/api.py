@@ -6,7 +6,6 @@ from functools import partial
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response
-from fastapi.routing import APIRoute
 
 from planner.conversation.api import (
     OwnerSendBody,
@@ -433,16 +432,3 @@ async def settle_item(
         conn, item_id, settled=raw["settled"], principal=ctx.principal, clock=clk
     )
     return managers_views.manager_detail(conn, item_id)
-
-
-# Previously issued addresses keep one implementation and canonical output.
-legacy_router = APIRouter()
-for _route in router.routes:
-    if not isinstance(_route, APIRoute):
-        continue
-    legacy_router.add_api_route(
-        _route.path.replace("/managers", "/items", 1),
-        _route.endpoint,
-        methods=list(_route.methods or []),
-        include_in_schema=False,
-    )

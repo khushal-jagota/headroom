@@ -32,11 +32,16 @@ def test_calendar_reads_and_commands_are_removed(tmp_path: Path) -> None:
         assert client.get("/api/ideas?detail=full").json() == {"ideas": []}
 
     runner = CliRunner()
-    for arguments in (("day", "show", "today"), ("sprint", "list"), ("sprint", "show")):
+    for arguments in (
+        ("day", "show", "today"),
+        ("sprint", "list"),
+        ("sprint", "show"),
+        ("sprint", "item", "--help"),
+    ):
         result = runner.invoke(main, arguments)
         assert result.exit_code != 0
         assert "is not a command" in result.output
-    for arguments in (("manager", "--help"), ("sprint", "item", "--help")):
+    for arguments in (("manager", "--help"),):
         result = runner.invoke(main, arguments)
         assert result.exit_code == 0, result.output
         assert "workspace" in result.output

@@ -1,10 +1,8 @@
 import { getContext, onDestroy, onMount, setContext } from 'svelte';
 import type { ScopedNavigationOwnerState } from './owner';
 import { createScopedNavigationOwner } from './views/owner';
-import { createCommandEvidence } from './commandEvidence';
 import { navigationConfiguration } from './configuration';
 import { createNavigationPresentationCache } from './presentation';
-export type { RecordImpact,CommandImpact,CommandEvidence,ResponseMetadata } from './commandEvidence';
 
 const applicationContext = Symbol('navigation application');
 
@@ -19,22 +17,14 @@ export function provideNavigationApplication() {
     get effective(){return state.effective ?? null;},
     recordsOfKind(kind:string){return state.publication?.records.filter(record=>record.kind===kind) ?? [];},
   };
-  const commands=createCommandEvidence(owner,navigationConfiguration.maximumCommandEvidence);
   const presentationFor=createNavigationPresentationCache();
   const application = {
     owner, selectors, get state() { return state; },
     presentationFor,
-    registerRenderBoundary:commands.register,
-    disposeRenderBoundary:commands.dispose,
-    captureRenderBoundaries:commands.capture,
-    runCommand:commands.runCommand,
-    get commandEvidence(){return commands.evidence;},
-    subscribeCommandEvidence:commands.subscribe,
   };
   setContext(applicationContext, application);
   onMount(() => { void owner.start().catch(() => undefined); });
   onDestroy(() => {
-    commands.clear();
     owner.dispose();
     unsubscribe();
   });

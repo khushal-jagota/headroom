@@ -9,8 +9,8 @@ from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.unit.test_measure_persistence import NOW, source, taken
 from tests.support.api_app import _app
+from tests.unit.test_measure_persistence import NOW, source, taken
 
 from planner.core import db
 from planner.core.clock import TestClock as FakeClock

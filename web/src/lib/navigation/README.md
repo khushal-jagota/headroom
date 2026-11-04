@@ -22,10 +22,6 @@ Obsolete callbacks cannot update health or restore healthy status.
 Generation changes, runtime knowledge loss, and retry timing retain their existing rules.
 The application passes this health to both shell status mounts, alongside deployment and update messages.
 
-Feature modules own their DOM assertions and command dependencies. Register render observers with `registerRenderBoundary` and dispose them with `disposeRenderBoundary`. Capture relevant mounted observers before a command starts. A new route instance cannot acknowledge a publication for an old observer.
-
-Use `application.runCommand(impact, request, label)` for commands. Pass its response metadata to the existing HTTP helper. Command visibility reports `included`, `no_op`, or `unknown`. It never delays domain success, resends a command, or infers display from the domain result. A Svelte `tick()` alone does not prove that the expected DOM appears.
-
 Successful owner reads request shared-owner recovery before the unread-message optimization. Failures retain their existing behavior. Current frames from an older active scope cannot clear a warning for its pending replacement.
 
 Review membership groups proposals and unread conversations for each Ticket before page boundaries and counts. A settled Manager excludes only its own messages. An explicit null canonical address records absence. A missing address in an unrelated page does not establish removal.

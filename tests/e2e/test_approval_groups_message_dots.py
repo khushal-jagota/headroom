@@ -54,7 +54,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     project = _post(server, "/api/projects", {"name": "Message proof"})
     item = _post(
         server,
-        "/api/items",
+        "/api/managers",
         {"title": "Approval and message proof", "project_id": project["id"]},
     )
     tickets = []

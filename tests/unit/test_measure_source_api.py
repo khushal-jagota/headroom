@@ -14,8 +14,8 @@ from fastapi.params import Body as BodyParameter
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
-from tests.support.measure_sources import configured_source
 from tests.support.api_app import _app
+from tests.support.measure_sources import configured_source
 
 from planner.cli.main import main
 from planner.core.clock import TestClock as FakeClock
@@ -631,8 +631,8 @@ def test_explicit_participants_constructor_executes_registered_lifespan(tmp_db: 
     from planner.core.server import create_app
     from planner.credentials.contracts import CredentialResolver
     from planner.measure_sources.contracts import RunAdmission, RunMetrics, RunResult
-    from planner.measures.contracts import CandidateObservation
     from planner.measure_sources.registry import build_participants
+    from planner.measures.contracts import CandidateObservation
 
     class FixtureRuntime:
         def __init__(self) -> None:

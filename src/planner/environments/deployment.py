@@ -251,9 +251,7 @@ def deploy_app(
             except (OSError, ValueError) as exc:
                 raise DeploymentError(str(exc)) from exc
         _validate_current_root(root)
-        candidate_manifest = _validate_app(
-            candidate_app, "candidate app", require_runtime=True
-        )
+        candidate_manifest = _validate_app(candidate_app, "candidate app", require_runtime=True)
         _admit_candidate(candidate_app, candidate_manifest)
         prior_manifest = _validate_optional_current_app(current_app)
         if prior_manifest is None:
@@ -311,8 +309,7 @@ def deploy_app(
             if staged_manifest != candidate_manifest:
                 raise DeploymentError("copied candidate differs from admitted manifest")
             _admit_candidate(staged, staged_manifest)
-            # Admission closes only after staging succeeds. A refused claim exits
-            # through staging cleanup without entering stop/recovery handling.
+            # Check database compatibility before any service action.
             if before_stop is not None:
                 before_stop()
             try:
@@ -452,7 +449,10 @@ def deploy_app(
                 serving_sha=candidate_manifest.app_sha,
             )
             try:
-                shutil.rmtree(fallback)
+                previous = root / "app-previous"
+                if previous.exists():
+                    shutil.rmtree(previous)
+                os.replace(fallback, previous)
             except OSError as exc:
                 _publish_lifecycle(
                     lifecycle_transition,
@@ -462,8 +462,8 @@ def deploy_app(
                     detail="The requested app is healthy, but deployment cleanup failed.",
                 )
                 raise DeploymentError(
-                    f"candidate is healthy at {current_app}, but fallback cleanup failed: "
-                    f"{exc}; retained fallback: {fallback}"
+                    f"candidate is healthy at {current_app}, but app retention cleanup failed: "
+                    f"{exc}; rollback paths: {previous}, {fallback}"
                 ) from exc
             return DeploymentResult(
                 "succeeded", candidate_manifest.app_sha, prior_manifest.app_sha, None

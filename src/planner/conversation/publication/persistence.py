@@ -50,11 +50,8 @@ def decode_publication(value: str) -> ConversationSignalPublicationV1:
 
 
 def decode_association(value: str) -> SignalAssociationEffect:
-    """Normalize historical structured kinds without altering stored receipt bytes."""
-    data = json.loads(value)
-    if data.get("owner_kind") == "orchestrator":
-        data["owner_kind"] = "manager"
-    return SignalAssociationEffect(**data)
+    """Decode a structured association receipt."""
+    return SignalAssociationEffect(**json.loads(value))
 
 
 def values(connection: sqlite3.Connection) -> tuple[ConversationSignalPublicationV1, ...]:
@@ -101,12 +98,19 @@ def _association_capture(
         owner = (
             f"CASE WHEN {key}='chief_of_staff' THEN 'chief' "
             f"WHEN substr({key},1,5)='goal_' THEN substr({key},6) "
-            f"WHEN substr({key},1,8)='manager_' THEN substr({key},9) "
+            f"ELSE substr({key},9) END"
+            if current else
+            f"CASE WHEN {key}='chief_of_staff' THEN 'chief' "
+            f"WHEN substr({key},1,5)='goal_' THEN substr({key},6) "
             f"ELSE substr({key},24) END"
         )
+        manager_key = (
+            f"substr({key},1,8)='manager_'" if current
+            else f"substr({key},1,23)='sprint_item_supervisor_'"
+        )
         condition += (
-            f" AND ({key}='chief_of_staff' OR substr({key},1,8)='manager_' "
-            f"OR substr({key},1,5)='goal_' OR substr({key},1,23)='sprint_item_supervisor_')"
+            f" AND ({key}='chief_of_staff' OR {manager_key} "
+            f"OR substr({key},1,5)='goal_')"
         )
     else:
         kind = "'ticket'"
