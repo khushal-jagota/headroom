@@ -577,15 +577,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 '"Measured Alpha edited in actual App"',
                 arg=seed["managers"][0],
             )
-            ui_fence = ui_response.headers.get("panels-navigation-fence")
-            if args.mode == "candidate":
-                assert ui_fence is not None
             samples.append(
                 {
                     "scenario": "owner-ui",
                     "action_started_ns": ui_started,
                     "dom_observed_ns": time.perf_counter_ns(),
-                    "navigation_fence": ui_fence,
                     "note": "Actual InlineEdit Enter/blur command to connected pane+rail DOM; "
                     "not a precise owner commit timestamp or private visibility result.",
                 }
@@ -613,7 +609,6 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         "note": (
                             "Request-to-DOM interval, not an instrumented owner commit timestamp."
                         ),
-                        "navigation_fence": owner_response.headers.get("panels-navigation-fence"),
                     }
                 )
             # One source transaction changes every row. The observer retains the
