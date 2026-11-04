@@ -10,7 +10,7 @@ The skill editor keeps saved versions of skill text in the database. Worker step
 
 ## Who may change one
 
-Khushal and Chief stand above skills, so both may edit them. A Worker or a Manager that wants a live skill changed hands the exact text to the owner or the Chief. They do not write the row themselves. `PATCH /api/skills/<name>` updates one skill. `POST /api/skills/apply` applies a reviewed batch in one transaction, each entry named with the full text and the hash the editor expected. A stale hash is refused. If the row commits and the file copy fails, the error says so. Read the current skill and retry. The committed row is not rolled back by a later copy failure.
+Khushal and Chief stand above skills, so both may edit them. A Worker or a Manager that wants a live skill changed hands the exact text to the owner or the Chief. They do not write the row themselves. `PATCH /api/skills/<name>` updates one skill. `POST /api/skills/apply` applies a reviewed batch in one transaction, each entry named with the full text. If the row commits and the file copy fails, the error says so. Read the current skill and retry. The committed row is not rolled back by a later copy failure.
 
 `panels skill check` and the stale-skill read report a row that names a command, stage, or skill this build lacks. They report. They do not rewrite.
 

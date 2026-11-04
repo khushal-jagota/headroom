@@ -721,7 +721,7 @@ def run(browser, urls):
     expect(page.get_by_role("button", name="Resume ticket", exact=True)).to_be_visible()
     assert lifecycle_writes[-1] == {
         "action": "backlog",
-        "body": {"expected_record_sha256": "record-before-backlog"},
+        "body": {},
     }
     page.get_by_role("button", name="Resume ticket", exact=True).click()
     expect(page.get_by_text("Resume refused. Retry with this record.", exact=False)).to_be_visible()
@@ -734,7 +734,7 @@ def run(browser, urls):
     expect(page.get_by_role("button", name="Backlog ticket", exact=True)).to_be_visible()
     assert lifecycle_writes[-1] == {
         "action": "resume",
-        "body": {"expected_record_sha256": "record-after-backlog"},
+        "body": {},
     }
     expect(block().locator("[contenteditable]")).to_have_text("Retained proposal body")
     assert lifecycle["pending_proposal"] == {

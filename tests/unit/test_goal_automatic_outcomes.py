@@ -106,7 +106,7 @@ def test_background_clock_persists_and_corrects_an_inactive_achievement_without_
     saved = actions.update_goal(
         tmp_db,
         goal.id,
-        {"expected_revision": saved.revision, "completion_rule": rule},
+        {"completion_rule": rule},
         principal=OWNER_PRINCIPAL,
         now=NOW,
     )
