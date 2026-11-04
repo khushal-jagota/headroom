@@ -82,7 +82,7 @@ def test_chief_assignment_is_explicit_and_preserves_identity_and_owner_holder(
     )
 
 
-def test_normal_assignment_inherits_project_and_retains_chief_holder(tmp_db: Connection) -> None:
+def test_normal_assignment_inherits_project_and_releases_chief_holder(tmp_db: Connection) -> None:
     ticket = _ticket(tmp_db)
     ticket = data.edit_ticket(
         tmp_db,
@@ -103,7 +103,7 @@ def test_normal_assignment_inherits_project_and_retains_chief_holder(tmp_db: Con
     )
     assert moved.manager_kind == "manager"
     assert moved.manager_id == item_id
-    assert moved.ceiling_holder == CHIEF
+    assert moved.ceiling_holder == OWNER_PRINCIPAL
     assert moved.project_id == managers_data.read_manager(tmp_db, item_id).item.project_id
     assert (
         tmp_db.execute("SELECT project_id FROM tickets WHERE id=?", (ticket.id,)).fetchone()[0]
@@ -149,3 +149,17 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     )
     with TestClient(app) as test_client:
         yield test_client
+
+
+def test_chief_can_assign_under_a_manager_with_the_manager_holding_review(
+    tmp_db: Connection,
+) -> None:
+    ticket = _ticket(tmp_db)
+    manager_id = _item(tmp_db)
+    manager = Principal(PrincipalKind.manager, manager_id)
+    moved = data.edit_ticket(
+        tmp_db, ticket.id, edit={"manager": manager, "ceiling_holder": manager},
+        title_max_chars=200, principal=CHIEF, now=2,
+    )
+    assert moved.manager_id == manager_id
+    assert moved.ceiling_holder == manager

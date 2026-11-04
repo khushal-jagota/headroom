@@ -8,6 +8,14 @@ from planner.conversation.views.projection_contracts import EventEffect
 
 def event_effect(payload: event.ConversationEventPayload) -> EventEffect:
     visible = in_focus(payload)
+    if isinstance(payload, event.CredentialRequestEventPayload):
+        return EventEffect(
+            "credential_request",
+            True,
+            "credential_request",
+            payload.request["request_id"],
+            settlement=True,
+        )
     if isinstance(payload, event.PromptEventPayload):
         return EventEffect(
             "prompt",
@@ -30,6 +38,8 @@ def event_effect(payload: event.ConversationEventPayload) -> EventEffect:
         return EventEffect("tool_call", False, "tool", payload.tool_call_id)
     if isinstance(payload, event.ToolCallFinishedEventPayload):
         return EventEffect("tool_call", False, "tool", payload.tool_call_id, settlement=True)
+    if isinstance(payload, event.AnswerAppliedEventPayload):
+        return EventEffect(None, True)
     if isinstance(payload, event.PermissionAskedEventPayload):
         return EventEffect("permission_ask", True, "permission", payload.ask_id)
     if isinstance(payload, event.PermissionAnsweredEventPayload):

@@ -22,6 +22,7 @@
     conversationId,
     hidden = false,
     showAll = false,
+    activityUncertain = false,
     openRows,
     wholeDetails
   }: {
@@ -32,6 +33,7 @@
     hidden?: boolean;
     /** Full reads every recorded tool call without another nested disclosure. */
     showAll?: boolean;
+    activityUncertain?: boolean;
     /** Which rows are open, and what they fetched. Both belong to the thread: this run
      *  goes behind its turn's fold and takes its rows with it. */
     openRows: SvelteSet<string>;
@@ -57,7 +59,7 @@
   >
     <div class="acp-steps" data-conversation-work-entries>
       {#each visible as entry (entry.key)}
-        <ToolCallRow row={entry} {conversationId} {openRows} {wholeDetails} />
+        <ToolCallRow row={entry} {conversationId} {openRows} {wholeDetails} {activityUncertain} />
       {/each}
     </div>
     {#if !showAll && hiddenCount > 0}

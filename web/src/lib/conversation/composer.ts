@@ -136,6 +136,8 @@ export function askPlaceholder(
 // --- what a picker changes ---------------------------------------------------------------
 
 export type RunValues = {
+  /** Absent is untouched; true with null explicitly requests provider default. */
+  effortIsSet?: boolean;
   model: string | null;
   reasoningEffort: string | null;
   /** Which backend a message that has to create a conversation would create it on. It is
@@ -154,12 +156,12 @@ export function armedChangeFor(
   current: RunValues,
   picked: RunValues,
   _mode: PromptDeliveryMode
-): { model_change?: string; reasoning_effort_change?: string } {
-  const change: { model_change?: string; reasoning_effort_change?: string } = {};
+): { model_change?: string; reasoning_effort_change?: string | null } {
+  const change: { model_change?: string; reasoning_effort_change?: string | null } = {};
   if (picked.model !== null && picked.model !== current.model) {
     change.model_change = picked.model;
   }
-  if (picked.reasoningEffort !== null && picked.reasoningEffort !== current.reasoningEffort) {
+  if (picked.effortIsSet === true || (picked.effortIsSet === undefined && picked.reasoningEffort !== null && picked.reasoningEffort !== current.reasoningEffort)) {
     change.reasoning_effort_change = picked.reasoningEffort;
   }
   return change;
@@ -213,9 +215,9 @@ export function whatThisMessageRunsUnder(
   current: RunValues,
   picked: RunValues,
   mode: PromptDeliveryMode
-): { model?: string; reasoning_effort?: string } {
+): { model?: string; reasoning_effort?: string | null } {
   const armed = armedChangeFor(current, picked, mode);
-  const runsUnder: { model?: string; reasoning_effort?: string } = {};
+  const runsUnder: { model?: string; reasoning_effort?: string | null } = {};
   if (armed.model_change !== undefined) runsUnder.model = armed.model_change;
   if (armed.reasoning_effort_change !== undefined) {
     runsUnder.reasoning_effort = armed.reasoning_effort_change;
@@ -265,19 +267,18 @@ export function preselectedValue(
 
 /** The reasoning efforts on offer for the model actually in force.
  *
- * Effort is a per-backend list until a backend says otherwise per model — claude's
- * smallest models take none at all. A model that names its own list is believed, including
- * when that list is empty, because "this model takes no effort" is an answer. A model that
- * names nothing falls back to the backend's list, which is where every backend started.
+ * A selected model uses only its own capability metadata. Unknown support does not
+ * inherit a sibling model's efforts. Without a selected model, backend defaults remain
+ * available for the unselected control.
  */
 export function effortOptionsFor(
-  models: readonly { model_id: string; reasoning_effort_options?: string[] }[],
+  models: readonly { model_id: string; reasoning_effort_options?: string[] | null }[],
   modelInForce: string | null,
   backendOptions: readonly string[]
 ): readonly string[] {
   if (modelInForce === null) return backendOptions;
   const model = models.find((candidate) => candidate.model_id === modelInForce);
-  return model?.reasoning_effort_options ?? backendOptions;
+  return model?.reasoning_effort_options ?? [];
 }
 
 // --- what shape of ask this is -------------------------------------------------------------

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from planner.conversation import events as event
-from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.contracts import AnswerFate, ConversationBackendKey
 from planner.conversation.message_content import (
     MessageContent,
     MessageFile,
@@ -18,6 +18,8 @@ from planner.conversation.views.configuration import (
 )
 from planner.conversation.views.contracts import (
     AskDeadReason,
+    PermissionRowBody,
+    UserInputRowBody,
     ViewMessagePiece,
     ViewRowBody,
 )
@@ -84,6 +86,7 @@ def in_focus(payload: event.ConversationEventPayload, owner_label: str = "owner"
     return isinstance(
         payload,
         (
+            event.CredentialRequestEventPayload,
             event.ExplicitReplyMissingEventPayload,
             event.PermissionAskedEventPayload,
             event.PermissionAnsweredEventPayload,
@@ -105,6 +108,11 @@ def row_body(
     backend_key: ConversationBackendKey = ConversationBackendKey.hermes,
 ) -> ViewRowBody | None:
     """No history scan: callers supply at most the row and its indexed settlement."""
+    if isinstance(source, event.CredentialRequestEventPayload):
+        current = (
+            settlement if isinstance(settlement, event.CredentialRequestEventPayload) else source
+        )
+        return current.request
     if isinstance(source, event.PromptEventPayload):
         return {
             "kind": "prompt",
@@ -176,7 +184,7 @@ def row_body(
         answer = (
             settlement if isinstance(settlement, event.PermissionAnsweredEventPayload) else None
         )
-        return {
+        permission_body: PermissionRowBody = {
             "kind": "permission_ask",
             "ask_id": source.ask_id,
             "title": source.title,
@@ -193,6 +201,13 @@ def row_body(
                 answer.option_id if answer else None,
             ),
         }
+        if answer and answer.answer_id:
+            permission_body["answer_fate"] = (
+                ("unconfirmed" if dead_reason else "saved")
+                if answer.fate is AnswerFate.saved
+                else "applied"
+            )
+        return permission_body
     if isinstance(
         source, (event.UserInputRequestedEventPayload, event.UserInputFailedEventPayload)
     ):
@@ -204,7 +219,7 @@ def row_body(
             if isinstance(settlement, event.UserInputFailedEventPayload)
             else (source if isinstance(source, event.UserInputFailedEventPayload) else None)
         )
-        return {
+        input_body: UserInputRowBody = {
             "kind": "user_input",
             "request_id": source.request_id,
             "questions": list(source.questions)
@@ -217,6 +232,13 @@ def row_body(
             "answers": list(input_answer.answers) if input_answer else None,
             "failure_detail": failure.detail if failure else None,
         }
+        if input_answer and input_answer.answer_id:
+            input_body["answer_fate"] = (
+                ("unconfirmed" if dead_reason else "saved")
+                if input_answer.fate is AnswerFate.saved
+                else "applied"
+            )
+        return input_body
     if isinstance(source, event.ModelChangedEventPayload):
         return {
             "kind": "model_changed",

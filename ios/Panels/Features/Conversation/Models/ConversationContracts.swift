@@ -64,6 +64,15 @@ struct ConversationBody: Equatable, Decodable, Sendable {
     let reason: String?
     let questions: [Question]?
     var senderLabel: String? = nil
+    var answerFate: String? = nil
+    var answerSentence: String? {
+        switch answerFate {
+        case "saved": "Answer saved on VPS; delivery to Mac is pending."
+        case "applied": "Answer applied on Mac."
+        case "unconfirmed": "Answer saved on VPS; the original Mac request is gone. Application is unconfirmed."
+        default: nil
+        }
+    }
     struct Piece: Equatable, Decodable, Sendable { let piece: String; let text: String?; let fileName: String? }
     struct Question: Equatable, Decodable, Sendable { let question: String }
     var text: String {

@@ -8,7 +8,7 @@ PREPARED_SCHEMA_VERSION = 7
 SCHEMA_VERSION = 9
 SUPPORTED_SEMANTICS = "attention-knowledge-v9-review-messages"
 RecordKind = Literal[
-    "ticket", "manager", "chief", "conversation", "address", "totals", "project"
+    "ticket", "manager", "chief", "goal", "conversation", "address", "totals", "project"
 ]
 
 
@@ -50,6 +50,29 @@ class TicketValue(TypedDict):
     locale: str
 
 
+class NavigationTicketIntegrityIssue(TypedDict):
+    reason: str
+
+
+class BrokenTicketValue(TypedDict):
+    title: str
+    recap: str
+    recap_preview: str
+    worker_type: str
+    stage: str
+    ticket_status: Literal["errored"]
+    integrity_error: NavigationTicketIntegrityIssue
+    deadline: str | None
+    project_id: str | None
+    manager_kind: str
+    manager_id: str | None
+    conversation_id: str | None
+    locale: str
+    updated_at: int
+    created_at: int
+    is_backlogged: bool
+
+
 class ManagerValue(TypedDict):
     updated_at: int
     title: str
@@ -59,6 +82,21 @@ class ManagerValue(TypedDict):
     project_id: str
     settled: bool
     conversation_id: str | None
+
+
+class GoalValue(TypedDict):
+    title: str
+    conversation_id: str | None
+    active: bool
+    completed: bool
+    created_at: int
+    updated_at: int
+
+
+class GoalRecord(TypedDict):
+    kind: Literal["goal"]
+    id: str
+    value: GoalValue
 
 
 class ChiefValue(TypedDict):
@@ -135,7 +173,7 @@ class ConversationValue(TypedDict):
 
 
 class AddressValue(TypedDict):
-    owner_kind: Literal["ticket", "manager", "chief"]
+    owner_kind: Literal["ticket", "manager", "chief", "goal"]
     owner_id: str
     conversation_id: str
     current: bool
@@ -155,7 +193,7 @@ class ProjectValue(TypedDict):
 class TicketRecord(TypedDict):
     kind: Literal["ticket"]
     id: str
-    value: TicketValue
+    value: TicketValue | BrokenTicketValue
 
 
 class ManagerRecord(TypedDict):
@@ -198,6 +236,7 @@ type NavigationRecord = (
     TicketRecord
     | ManagerRecord
     | ChiefRecord
+    | GoalRecord
     | ConversationRecord
     | AddressRecord
     | TotalsRecord

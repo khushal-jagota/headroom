@@ -1,25 +1,5 @@
 import SwiftUI
 
-struct TicketBackendCatalog: Decodable, Sendable {
-    let backends: [TicketBackend]
-}
-struct TicketBackend: Decodable, Identifiable, Sendable {
-    struct Model: Decodable, Identifiable, Sendable {
-        let modelId: String
-        let displayName: String?
-        let enabled: Bool
-        let reasoningEffortOptions: [String]?
-        var id: String { modelId }
-    }
-    let backendKey: String
-    let installed: Bool
-    let availableModels: [Model]
-    let reasoningEffortOptions: [String]
-    let defaultModelId: String?
-    let defaultReasoningEffort: String?
-    var id: String { backendKey }
-}
-
 struct TicketWorkerSetup: View {
     let ticket: TicketDetail
     let refresh: () async -> Void
@@ -43,6 +23,7 @@ struct TicketWorkerSetup: View {
     var body: some View {
         NavigationStack {
             Form {
+                TicketMachineLabel(locale: ticket.locale)
                 if backends.isEmpty && error == nil { RingSpinner("Loading models…") }
                 Picker("Backend", selection: $backend) {
                     ForEach(backends) { item in Text(item.id.capitalized).tag(item.id).disabled(!item.installed) }
@@ -76,7 +57,7 @@ struct TicketWorkerSetup: View {
                 }
         }.interactiveDismissDisabled(busy)
             .task {
-                do { let catalog: TicketBackendCatalog = try await store.client.get("/api/conversation/backends"); backends = catalog.backends }
+                do { let catalog = try await store.client.conversationBackends(owner: .ticket(ticket.id)); backends = catalog.backends }
                 catch { self.error = error.localizedDescription }
             }
             .onChange(of: backend) { _, _ in model = selected?.defaultModelId ?? ""; effort = selected?.defaultReasoningEffort ?? "" }

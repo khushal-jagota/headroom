@@ -18,7 +18,17 @@ class ServedObservation(TypedDict):
     base_sha: str | None
 
 
-class GateEvidence(TypedDict):
+class LegacyGateEvidence(TypedDict):
     requested_sha: str
     artifact_digest: str
     observation: ServedObservation
+
+
+class PublicationGateEvidence(TypedDict):
+    requested_sha: str
+    artifact_digest: str
+    publication_run_id: int
+    archive_sha256: str
+
+
+type GateEvidence = LegacyGateEvidence | PublicationGateEvidence

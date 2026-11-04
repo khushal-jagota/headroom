@@ -79,6 +79,8 @@ def project(
 
 
 def group(value: dict[str, Any], attention: dict[str, Any] | None, *, rail: bool) -> str:
+    if "integrity_error" in value:
+        return "errored"
     if value["is_backlogged"]:
         return "backlog"
     owner = value["ceiling_holder"] == {"kind": "owner", "id": "owner"}

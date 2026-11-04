@@ -145,3 +145,14 @@ def _invoke_participant(
         if inspect.iscoroutine(result):
             result.close()
         raise TypeError("conversation transaction participants must be synchronous")
+
+
+def retained_run_is_unresolved(conn: sqlite3.Connection, conversation_id: str) -> bool:
+    """A VPS restart does not prove that an independently hosted child stopped."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM mac_runs WHERE conversation_id=? AND stop_state!='closed'",
+            (conversation_id,),
+        ).fetchone()
+        is not None
+    )

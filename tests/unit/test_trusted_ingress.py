@@ -212,9 +212,14 @@ def test_hosted_owner_strips_both_manager_identity_generations(tmp_path: Path) -
     app, _db_path = _make_app(tmp_path)
 
     @app.get("/identity-boundary-proof")
-    def identity_boundary(request: Request) -> dict[str, str]:
-        principal = request_context(request).principal
-        return {"kind": principal.kind.value, "id": principal.id}
+    def identity_boundary(request: Request) -> dict[str, str | None]:
+        context = request_context(request)
+        principal = context.principal
+        return {
+            "kind": principal.kind.value,
+            "id": principal.id,
+            "conversation_id": context.conversation_id,
+        }
 
     with TestClient(app) as client:
         response = client.get(
@@ -222,8 +227,79 @@ def test_hosted_owner_strips_both_manager_identity_generations(tmp_path: Path) -
             headers={
                 **REMOTE,
                 "X-Plan-Actor": "manager",
+                "X-Plan-Conversation-ID": "spoofed_employee_origin",
                 "X-Plan-Manager-ID": "si_one",
                 "X-Plan-Sprint-Item-ID": "si_other",
             },
         )
-    assert response.json() == {"kind": "owner", "id": "owner"}
+    assert response.json() == {"kind": "owner", "id": "owner", "conversation_id": None}
+
+
+def test_native_routes_require_hosted_identity_and_reject_browser_origin() -> None:
+    """Internal owner defaults must not grant executor transport authority."""
+    from fastapi import HTTPException
+
+    from planner.core.trusted_ingress import (
+        TrustedIngressConfig,
+        TrustedIngressMiddleware,
+        require_executor_ingress,
+    )
+
+    app = FastAPI()
+    app.add_middleware(
+        TrustedIngressMiddleware,
+        config=TrustedIngressConfig(
+            "tailscale",
+            ALLOWED_LOGIN,
+            CANONICAL_ORIGIN,
+        ),
+    )
+
+    @app.get("/native-admission")
+    def native(request: Request) -> dict[str, str]:
+        try:
+            return {"executor_id": require_executor_ingress(request.scope, "owner-mac")}
+        except ValueError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+
+    valid = [
+        *((key, value) for key, value in REMOTE.items()),
+        ("X-Panels-Executor-ID", "owner-mac"),
+    ]
+    with TestClient(app) as client:
+        assert client.get("/native-admission", headers=valid).json() == {"executor_id": "owner-mac"}
+        for headers in (
+            [],
+            [("Tailscale-User-Login", "other@example.com"), ("X-Panels-Executor-ID", "owner-mac")],
+            [*REMOTE.items(), ("X-Panels-Executor-ID", "another-mac")],
+            [*valid, ("Origin", CANONICAL_ORIGIN)],
+        ):
+            assert client.get("/native-admission", headers=headers).status_code == 403
+
+def test_preview_gate_requires_explicit_edge_evidence_even_on_safe_reads() -> None:
+    """Ordinary local-owner access must never accidentally admit application traffic."""
+    import pytest
+
+    from planner.core.errors import PlannerError
+    from planner.core.trusted_ingress import TrustedIngressConfig, require_preview_ingress
+
+    config = TrustedIngressConfig("tailscale", ALLOWED_LOGIN, CANONICAL_ORIGIN)
+    valid = [(b"host", b"panels.tailnet.ts.net"), (b"tailscale-user-login", ALLOWED_LOGIN.encode())]
+    require_preview_ingress({"type": "http", "method": "GET", "headers": valid}, config)
+    require_preview_ingress(
+        {"type": "websocket", "headers": valid + [(b"origin", CANONICAL_ORIGIN.encode())]}, config
+    )
+    rejected = [
+        [],
+        [(b"host", b"panels.tailnet.ts.net")],
+        valid + [(b"tailscale-user-login", ALLOWED_LOGIN.encode())],
+        valid + [(b"host", b"panels.tailnet.ts.net")],
+        valid + [(b"origin", b"https://foreign.example")],
+        [(b"host", b"127.0.0.1:8767"), valid[1]],
+        [valid[0], (b"tailscale-user-login", b"someone-else")],
+    ]
+    for headers in rejected:
+        with pytest.raises(PlannerError):
+            require_preview_ingress({"type": "http", "method": "GET", "headers": headers}, config)
+    with pytest.raises(PlannerError):
+        require_preview_ingress({"headers": valid}, TrustedIngressConfig(None, None, None))

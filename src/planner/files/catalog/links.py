@@ -60,11 +60,15 @@ def managed_href(href: str, origin: str) -> str | None:
             if source == "ticket"
             else "managers"
             if source in {"manager", "sprint-item"}
+            else "goals"
+            if source == "goal"
             else ""
         )
         owner_key = (
             "ticket" if kind == "tickets" else "item" if source == "sprint-item" else "manager"
         )
+        if kind == "goals":
+            owner_key = "goal"
         owner = params.get(owner_key, [""])[0]
         file_path = params.get("path", [""])[0]
     else:
@@ -81,7 +85,7 @@ def managed_href(href: str, origin: str) -> str | None:
         if (
             len(parts) != 5
             or parts[1] != "files"
-            or parts[2] not in {"tickets", "managers", "sprint-items"}
+            or parts[2] not in {"tickets", "managers", "sprint-items", "goals"}
         ):
             return None
         try:
@@ -93,7 +97,9 @@ def managed_href(href: str, origin: str) -> str | None:
         except UnicodeError:
             return None
     kind = "managers" if kind == "sprint-items" else kind
-    expected = r"t_[a-z0-9]+" if kind == "tickets" else r"si_[a-z0-9]+"
+    expected = {
+        "tickets": r"t_[a-z0-9]+", "managers": r"si_[a-z0-9]+", "goals": r"goal_[a-z0-9]+"
+    }.get(kind, "")
     if not kind or not re.fullmatch(expected, owner) or not file_path or file_path.startswith("/"):
         return None
     if (

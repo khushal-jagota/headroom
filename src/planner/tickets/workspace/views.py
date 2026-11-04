@@ -8,6 +8,7 @@ from typing import cast
 from planner.core import ticket_blocks
 from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets import data
+from planner.tickets.integrity import diagnostic_projection, issue_for_ticket
 from planner.tickets.views import _coherent_read, blocker_summary_json, ticket_json
 from planner.tickets.workspace.contracts import WorkspaceFieldBody, WorkspaceTicket
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -15,6 +16,9 @@ from planner.worker_types.configuration import configured_worker_type_registry
 
 def workspace_ticket(conn: sqlite3.Connection, ticket_id: str) -> WorkspaceTicket:
     with _coherent_read(conn):
+        issue = issue_for_ticket(conn, ticket_id)
+        if issue is not None:
+            return diagnostic_projection(conn, ticket_id, issue)
         ticket = data.read_ticket(conn, ticket_id)
         definition = configured_worker_type_registry().require(ticket.worker_type)
         gate = definition.gating_field(ticket.stage)
@@ -45,7 +49,13 @@ def field_revision(conn: sqlite3.Connection, ticket_id: str, field: str) -> str:
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
     definition = configured_worker_type_registry().require(str(row[0]))
-    if field not in definition.field_ids():
+    # A type amendment closes removed fields to writes, but retains their text.
+    # Read eligibility follows that stored key, not the current type's write gates.
+    if not definition.has_field(field) and conn.execute(
+        "SELECT 1 FROM tickets,json_each(tickets.field_values) "
+        "WHERE tickets.id=? AND key=?",
+        (ticket_id, field),
+    ).fetchone() is None:
         raise PlannerError(ErrorCode.not_found, "Ticket field not found", {"field": field})
     row = conn.execute(
         "SELECT revision FROM ticket_workspace_fields WHERE ticket_id=? AND field=?",

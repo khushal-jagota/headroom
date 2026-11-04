@@ -20,7 +20,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import Browser, BrowserContext, Page
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    sync_playwright,
+)
 from tests.e2e.harness import (
     BOOT_BUDGET_S,
     FAKE_NOW,
@@ -56,6 +62,27 @@ __all__ = [
 
 
 BROWSER_CHECK_FAILED = pytest.StashKey[bool]()
+
+
+# Capture Linux's browser-cache location during collection, before test setup
+# replaces HOME. Honor a caller's explicit Playwright override, including 0.
+_BROWSER_CACHE = os.environ.get(
+    "PLAYWRIGHT_BROWSERS_PATH",
+    str(Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"),
+)
+
+
+@pytest.fixture(scope="session")
+def playwright() -> Iterator[Playwright]:
+    # The driver snapshots its environment at startup; launch args are too late.
+    # Keep the private HOME and restore this process's environment immediately.
+    with pytest.MonkeyPatch.context() as environment:
+        environment.setenv("PLAYWRIGHT_BROWSERS_PATH", _BROWSER_CACHE)
+        driver = sync_playwright().start()
+    try:
+        yield driver
+    finally:
+        driver.stop()
 
 
 @pytest.fixture

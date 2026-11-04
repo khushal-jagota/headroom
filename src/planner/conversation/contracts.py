@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Final, Literal, Protocol, TypedDict
 
 from planner.conversation.message_content import MessageContent
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
@@ -104,7 +105,7 @@ class SignalDeletion:
 class SignalAssociationEffect:
     """Both sides of an address change in its source transaction."""
 
-    owner_kind: Literal["ticket", "manager", "chief"]
+    owner_kind: Literal["ticket", "manager", "chief", "goal"]
     owner_id: str
     relation: Literal["current", "historical"]
     before_conversation_id: str | None
@@ -368,6 +369,18 @@ class ConversationRoleMaterials:
     identity_environment_variables: tuple[tuple[str, str], ...] = ()
 
 
+class WorkspacePathPolicy(StrEnum):
+    """Select a mapped path, an absolute path, or the executor-owned workspace.
+
+    For executor_default, workspace_folder is an unused absolute placeholder.
+    Only native admission resolves and provisions that workspace.
+    """
+
+    home_relative = "home_relative"
+    absolute = "absolute"
+    executor_default = "executor_default"
+
+
 @dataclass(frozen=True, slots=True)
 class ConversationStartRequest:
     """The concrete, already-resolved values a conversation is created from.
@@ -384,7 +397,8 @@ class ConversationStartRequest:
     no floor default: absent means the conversation is started without them, and for
     reasoning effort that is a real answer — some models take none.
 
-    ``workspace_folder`` is the folder the agent runs in.
+    ``workspace_folder`` is the folder the agent runs in, except for executor_default.
+    That policy carries an unused placeholder until native admission resolves it.
     """
 
     conversation_id: str
@@ -394,6 +408,7 @@ class ConversationStartRequest:
     role_materials: ConversationRoleMaterials | None = None
     workspace_folder: Path | None = None
     access: ConversationAccess | None = None
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,7 +420,8 @@ class ResolvedConversationStart:
     here because each has a floor default; ``model`` is always concrete because the
     request had to name one. ``reasoning_effort`` and ``role_materials`` stay optional
     because neither has a floor default — there is nothing to fall back to, so absent
-    stays absent.
+    stays absent. For executor_default, native admission must replace the folder
+    placeholder and policy before a local backend adapter can use this request.
     """
 
     conversation_id: str
@@ -415,6 +431,15 @@ class ResolvedConversationStart:
     role_materials: ConversationRoleMaterials | None
     workspace_folder: Path
     access: ConversationAccess
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
+
+
+class AnswerFate(StrEnum):
+    """Applied by the backend, saved in this process, or refused."""
+
+    applied = "applied"
+    saved = "saved"
+    refused = "refused"
 
 
 class PromptDeliveryMode(StrEnum):
@@ -499,6 +524,7 @@ class PromptDeliveryRefusalReason(StrEnum):
     running_turn_cannot_accept_steer = "running_turn_cannot_accept_steer"
     message_cannot_be_steered = "message_cannot_be_steered"
     backend_rejected_steer = "backend_rejected_steer"
+    backend_rejected_prompt = "backend_rejected_prompt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -620,6 +646,24 @@ type PromptDeliveryFate = (
 )
 
 
+@dataclass(slots=True)
+class NativeMessageOperation:
+    """One executor-origin send's reply credit, shared with its canonical append."""
+
+    sender_id: str
+    submission_id: str
+    composed_confirmed: bool = False
+    in_commit: (
+        Callable[[sqlite3.Connection, str, object, NativeMessageAdmission | None], None] | None
+    ) = None
+
+
+@dataclass(frozen=True, slots=True)
+class NativeMessageAdmission:
+    fate: PromptDeliveryFate
+    composed_content_delivered: bool
+
+
 @dataclass(frozen=True, slots=True)
 class AddressedPromptDeliveryReceipt:
     """An internal receipt for reply attribution after one addressed send.
@@ -660,6 +704,7 @@ class HeldPrompt:
     sender: Principal | None = None
     recipient: Principal | None = None
     queue_reason: PromptQueueReason = PromptQueueReason.requested
+    delivery_uncertain: bool = False
 
 
 class ConversationAlreadyStarted(Exception):
@@ -695,13 +740,22 @@ class ConversationSystem(Protocol):
     locking, so all four are awaited.
     """
 
-    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
-        """Run a synchronous canonical write under the conversation admission lock.
+    @property
+    def workspace_admission(self) -> WorkspaceAdmission:
+        """Shared admission for background starts and conversation operations."""
+        ...
 
-        Refuse immediately when any turn, held prompt, or delivery is outstanding.
-        The callback must do no backend I/O and cannot await. A missing conversation
-        counts as idle; callers serialize its association when creating or unlinking it.
-        """
+    def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
+        """Return complete workspace activity without admitting new work."""
+        ...
+
+    async def run_with_workspace_admission(
+        self,
+        operation: Callable[[], None],
+        *,
+        require_idle: bool,
+    ) -> bool:
+        """Atomically recheck activity, claim adoption, and close start/send admission."""
         ...
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
@@ -733,12 +787,14 @@ class ConversationSystem(Protocol):
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -789,6 +845,7 @@ class ConversationSystem(Protocol):
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
@@ -796,6 +853,7 @@ class ConversationSystem(Protocol):
         reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> AddressedPromptDeliveryReceipt:
         """Run the canonical send and expose replay freshness to addressed-send wiring.
 
@@ -818,6 +876,7 @@ class ConversationSystem(Protocol):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         credit_explicit_reply: bool = True,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
         """Record one addressed message that no backend receives.
 
@@ -879,6 +938,13 @@ class ConversationSystem(Protocol):
         """Discard one held message, or return false if it is no longer held."""
         ...
 
+    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
+        """Whether this conversation's exact child is proven stopped or never started.
+
+        A disconnect, a queued stop, or an interrupted transcript is not proof.
+        """
+        ...
+
     async def kill(self, conversation_id: str) -> None:
         """Kill this conversation's activity outright: stop the running turn AND discard
         every held message. Nothing runs afterwards until someone sends again.
@@ -894,6 +960,13 @@ class ConversationSystem(Protocol):
 
         There is nothing to return. If the conversation is idle with nothing held, or
         the id names no conversation, nothing happens.
+
+        An initial remote delivery is also cancellable while its start or prompt lacks
+        an outcome. Shutdown suppresses a provably untransmitted prompt; possible
+        transmission retains uncertain delivery. The local operation can finish before
+        native termination is confirmed. The original child remains quarantined until
+        its ordinary stop succeeds; no later prompt runs beside uncertain native work.
+        Cancellation does not undo effects that an accepted operation already produced.
         """
         ...
 

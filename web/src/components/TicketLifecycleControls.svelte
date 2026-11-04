@@ -31,9 +31,10 @@
   }
 </script>
 
-<div class="ticket-lifecycle" data-ticket-lifecycle>
+<div class="ticket-lifecycle" data-ticket-lifecycle hidden={terminal}>
   {#if !terminal}
     <div class="actions">
+      {#if !terminal}
       {@render leading?.()}
       {#if leading}<span class="separator" aria-hidden="true">·</span>{/if}
       {#if ticket.is_backlogged}<span class="state" data-ticket-backlogged>Backlogged</span>{/if}
@@ -42,8 +43,9 @@
       {:else}
         <button type="button" class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</button>
       {/if}
+      {/if}
     </div>
-    {#if ticket.is_backlogged}<p class="hint">Automatic work is paused. Messages and approvals remain available.</p>{/if}
+    {#if !terminal && ticket.is_backlogged}<p class="hint">Automatic work is paused. Messages and approvals remain available.</p>{/if}
   {/if}
   {#if error}<ErrorLine {error} />{/if}
 </div>

@@ -30,13 +30,30 @@ from planner.conversation.backends.codex_app_server.login import (
     RememberedCodexLoginRejection,
 )
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    AgentMessageDelta,
+    BackendEventValue,
     BackendPermissionAsk,
     BackendUserInputRequest,
+    ComposerCatalogReported,
+    ContextCompacted,
+    ModelThinkingHappened,
+    PermissionAskRaised,
+    PlanUpdated,
+    TokenUsageReported,
+    ToolCallFinished,
+    ToolCallProgress,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
+    UserInputFailed,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ConversationAccess,
+    ConversationBackendKey,
     ConversationRoleMaterials,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -66,7 +83,6 @@ def _run(exercise: Callable[[], Awaitable[None]], *, seconds: float = 30.0) -> N
 
 
 def _resolved_start(workspace: Path) -> ResolvedConversationStart:
-    from planner.conversation.contracts import ConversationBackendKey
 
     return ResolvedConversationStart(
         conversation_id="c",
@@ -144,103 +160,57 @@ class _RecordingSink:
         self._user_input_failure.clear()
         return self.user_input_failures[-1]
 
-    async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
-        self.deltas.append(text_delta)
-        self.delta_tokens.append(turn_token)
-
-    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
-        self.thinking_pulses += 1
-
-    async def plan_updated(self, turn_token: TurnToken, entries: Any) -> None:
-        self.plans.append([(entry.text, str(entry.status)) for entry in entries])
-
-    async def token_usage_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        cached_input_tokens: int | None,
-        cost_usd: float | None,
-    ) -> None:
-        self.token_usages.append((input_tokens, output_tokens, cached_input_tokens, cost_usd))
-
-    async def context_compacted(self, turn_token: TurnToken) -> None:
-        self.compactions += 1
+    async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
+        if isinstance(event, AgentMessageDelta):
+            self.deltas.append(event.text_delta)
+            assert turn is not None
+            self.delta_tokens.append(turn)
+        elif isinstance(event, ModelThinkingHappened):
+            self.thinking_pulses += 1
+        elif isinstance(event, PlanUpdated):
+            self.plans.append([(entry.text, str(entry.status)) for entry in event.entries])
+        elif isinstance(event, TokenUsageReported):
+            self.token_usages.append(
+                (event.input_tokens, event.output_tokens, event.cached_input_tokens, event.cost_usd)
+            )
+        elif isinstance(event, ContextCompacted):
+            self.compactions += 1
+        elif isinstance(event, AgentMessageCompleted):
+            self.agent_contents.append(event.content)
+            assert turn is not None
+            self.agent_content_tokens.append(turn)
+        elif isinstance(event, ToolCallStarted):
+            self.tool_calls_started.append((event.tool_call_id, event.title, event.tool_kind))
+        elif isinstance(event, ToolCallProgress):
+            self.tool_calls_progressed.append((event.tool_call_id, event.detail))
+        elif isinstance(event, ToolCallFinished):
+            self.tool_calls_finished.append((event.tool_call_id, event.tool_call_status))
+        elif isinstance(event, PermissionAskRaised):
+            self.asks.append(event.ask)
+            self._an_ask.set()
+        elif isinstance(event, UserInputRequested):
+            self.user_inputs.append(event.request)
+            self._user_input.set()
+        elif isinstance(event, UserInputFailed):
+            self.user_input_failures.append((event.request_id, event.detail))
+            self._user_input_failure.set()
+        elif isinstance(event, TurnEnded):
+            self.endings.append(event.ending)
+            assert turn is not None
+            self.ending_tokens.append(turn)
+            self.error_summaries.append(event.error_summary)
+            self.standard_error_tails.append(event.standard_error_tail)
+            self._turn_over.set()
+        elif isinstance(event, VendorSessionCursorRebound):
+            self.vendor_session_cursor = event.vendor_session_cursor
+        elif isinstance(event, ComposerCatalogReported):
+            self.composer_catalog_reports.append(event.composer_catalog)
+            self._catalog_changed.set()
 
     @property
     def agent_message_texts(self) -> list[str]:
         """The words of each finished message. The messages themselves are above."""
         return [message_content_text(content) for content in self.agent_contents]
-
-    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
-        self.agent_contents.append(content)
-        self.agent_content_tokens.append(turn_token)
-
-    async def tool_call_started(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        title: str,
-        tool_kind: str,
-        detail: str | None,
-    ) -> None:
-        self.tool_calls_started.append((tool_call_id, title, tool_kind))
-
-    async def tool_call_progress(
-        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
-    ) -> None:
-        self.tool_calls_progressed.append((tool_call_id, detail))
-
-    async def tool_call_finished(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        tool_call_status: ToolCallStatus,
-        detail: str | None,
-    ) -> None:
-        self.tool_calls_finished.append((tool_call_id, tool_call_status))
-
-    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
-        self.asks.append(ask)
-        self._an_ask.set()
-
-    async def user_input_requested(
-        self, turn_token: TurnToken, request: BackendUserInputRequest
-    ) -> None:
-        self.user_inputs.append(request)
-        self._user_input.set()
-
-    async def user_input_failed(
-        self, turn_token: TurnToken, *, request_id: str, detail: str
-    ) -> None:
-        self.user_input_failures.append((request_id, detail))
-        self._user_input_failure.set()
-
-    async def turn_ended(
-        self,
-        turn_token: TurnToken,
-        *,
-        ending: ConversationTurnEnding,
-        error_summary: str | None,
-        standard_error_tail: str | None,
-    ) -> None:
-        self.endings.append(ending)
-        self.ending_tokens.append(turn_token)
-        self.error_summaries.append(error_summary)
-        self.standard_error_tails.append(standard_error_tail)
-        self._turn_over.set()
-
-    async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
-        self.vendor_session_cursor = vendor_session_cursor
-
-    async def composer_catalog_reported(
-        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        self.composer_catalog_reports.append(composer_catalog)
-        self._catalog_changed.set()
 
 
 @dataclass
@@ -265,6 +235,7 @@ class _ScriptedChild:
         *,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        reasoning_effort_is_set: bool = False,
     ) -> None:
         await self.child.write_prompt(
             TurnToken(conversation_id="c", turn_number=turn_number),
@@ -274,6 +245,7 @@ class _ScriptedChild:
             mode=PromptDeliveryMode.queue,
             model_change=model,
             reasoning_effort_change=reasoning_effort,
+            reasoning_effort_is_set=reasoning_effort_is_set,
         )
 
     def transcript(self) -> list[dict[str, Any]]:

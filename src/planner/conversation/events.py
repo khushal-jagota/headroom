@@ -28,6 +28,7 @@ from enum import StrEnum
 from typing import Any, ClassVar, Final, assert_never
 
 from planner.conversation.contracts import (
+    AnswerFate,
     DeploymentRecoveryReference,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
@@ -38,6 +39,7 @@ from planner.conversation.message_content import (
     message_content_json_entries,
 )
 from planner.core.contracts import Principal, PrincipalKind
+from planner.credentials.requests.contracts import CredentialRequestRowBody
 
 
 class ConversationEventKind(StrEnum):
@@ -49,6 +51,7 @@ class ConversationEventKind(StrEnum):
     live tail frame, which is not a row.
     """
 
+    credential_request = "credential_request"
     prompt = "prompt"
     prompt_delivery_refused = "prompt_delivery_refused"
     prompt_delivery_uncertain = "prompt_delivery_uncertain"
@@ -60,6 +63,7 @@ class ConversationEventKind(StrEnum):
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
+    answer_applied = "answer_applied"
     user_input_requested = "user_input_requested"
     user_input_answered = "user_input_answered"
     user_input_failed = "user_input_failed"
@@ -384,6 +388,16 @@ class PermissionAnsweredEventPayload:
 
     ask_id: str
     option_id: str
+    fate: AnswerFate = AnswerFate.applied
+    answer_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerAppliedEventPayload:
+    """Proof that the original callback took a previously saved answer."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.answer_applied
+    answer_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,6 +418,8 @@ class UserInputAnsweredEventPayload:
 
     request_id: str
     answers: tuple[UserInputAnswer, ...]
+    fate: AnswerFate = AnswerFate.applied
+    answer_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,8 +517,17 @@ class TurnEndedEventPayload:
     automatic_compaction_result: AutomaticCompactionResult | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CredentialRequestEventPayload:
+    """A metadata-only snapshot of one durable credential request."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.credential_request
+    request: CredentialRequestRowBody
+
+
 type ConversationEventPayload = (
-    PromptEventPayload
+    CredentialRequestEventPayload
+    | PromptEventPayload
     | PromptDeliveryRefusedEventPayload
     | PromptDeliveryUncertainEventPayload
     | PromptDiscardedEventPayload
@@ -512,6 +537,7 @@ type ConversationEventPayload = (
     | ToolCallStartedEventPayload
     | ToolCallFinishedEventPayload
     | PermissionAskedEventPayload
+    | AnswerAppliedEventPayload
     | PermissionAnsweredEventPayload
     | UserInputRequestedEventPayload
     | UserInputAnsweredEventPayload
@@ -596,6 +622,8 @@ def conversation_event_payload_from_canonical_json(
 
 def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
     match payload:
+        case CredentialRequestEventPayload():
+            return {"request": payload.request}
         case PromptEventPayload():
             return {
                 **message_content_json_entries(payload.content),
@@ -732,7 +760,17 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 ],
             }
         case PermissionAnsweredEventPayload():
-            return {"ask_id": payload.ask_id, "option_id": payload.option_id}
+            return {
+                "ask_id": payload.ask_id,
+                "option_id": payload.option_id,
+                **(
+                    {"fate": payload.fate.value, "answer_id": payload.answer_id}
+                    if payload.answer_id is not None
+                    else {}
+                ),
+            }
+        case AnswerAppliedEventPayload():
+            return {"answer_id": payload.answer_id}
         case UserInputRequestedEventPayload():
             return {
                 "request_id": payload.request_id,
@@ -756,6 +794,11 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case UserInputAnsweredEventPayload():
             return {
+                **(
+                    {"fate": payload.fate.value, "answer_id": payload.answer_id}
+                    if payload.answer_id is not None
+                    else {}
+                ),
                 "request_id": payload.request_id,
                 "answers": {
                     answer.question_id: {"answers": list(answer.answers)}
@@ -917,8 +960,13 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.permission_answered:
             return PermissionAnsweredEventPayload(
-                ask_id=_text(stored, "ask_id"), option_id=_text(stored, "option_id")
+                ask_id=_text(stored, "ask_id"),
+                option_id=_text(stored, "option_id"),
+                fate=AnswerFate(stored.get("fate", "applied")),
+                answer_id=stored.get("answer_id"),
             )
+        case ConversationEventKind.answer_applied:
+            return AnswerAppliedEventPayload(answer_id=_text(stored, "answer_id"))
         case ConversationEventKind.user_input_requested:
             return UserInputRequestedEventPayload(
                 request_id=_text(stored, "request_id"),
@@ -945,6 +993,8 @@ def _payload_from_json_object(
             if not isinstance(answers, dict):
                 raise ValueError("answers must be an object")
             return UserInputAnsweredEventPayload(
+                fate=AnswerFate(stored.get("fate", "applied")),
+                answer_id=stored.get("answer_id"),
                 request_id=_text(stored, "request_id"),
                 answers=tuple(
                     UserInputAnswer(
@@ -955,6 +1005,10 @@ def _payload_from_json_object(
                     if isinstance(question_id, str) and isinstance(answer, dict)
                 ),
             )
+        case ConversationEventKind.credential_request:
+            from planner.credentials.requests.logic.validation import decode_snapshot
+
+            return CredentialRequestEventPayload(decode_snapshot(stored["request"]))
         case ConversationEventKind.user_input_failed:
             return UserInputFailedEventPayload(
                 request_id=_text(stored, "request_id"),

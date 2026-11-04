@@ -163,6 +163,7 @@ def test_a_child_pointed_at_a_copy_of_the_live_login_is_refused(
     """The one door every Panels-launched codex goes through stops the duplicate."""
     fake_user_home = tmp_path / "user"
     _write_login(fake_user_home / ".codex", refresh_token="the-one-token")
+    monkeypatch.setenv("CODEX_HOME", str(fake_user_home / ".codex"))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_user_home))
     copied = tmp_path / "scratch"
     _write_login(copied, refresh_token="the-one-token")

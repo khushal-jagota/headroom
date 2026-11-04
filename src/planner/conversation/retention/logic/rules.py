@@ -49,7 +49,9 @@ def identity_values(identity_json: str) -> dict[str, str]:
         key, value = pair
         if key in values or key not in {
             "PLAN_ACTOR",
+            "PLAN_CONVERSATION_ID",
             "PLAN_TICKET_ID",
+            "PLAN_GOAL_ID",
             "PLAN_MANAGER_ID",
             "PLAN_SPRINT_ITEM_ID",
         }:
@@ -79,6 +81,8 @@ def classify_conversation(
     source: ConversationRetentionInput, *, cutoff_unix: int
 ) -> ConversationRetentionDecision:
     reasons: set[str] = set()
+    if source.native_execution_unresolved:
+        reasons.add("unsettled_native_execution")
     terminal_statuses = {
         LifecycleKind.turn: {
             LifecycleStatus.completed,
@@ -104,6 +108,9 @@ def classify_conversation(
             reasons.add("unknown_lifecycle_fact")
     try:
         identity = identity_values(source.identity_json)
+        origin = identity.pop("PLAN_CONVERSATION_ID", source.conversation_id)
+        if origin != source.conversation_id:
+            raise ValueError("conversation origin differs")
     except (ValueError, TypeError):
         identity = {}
         reasons.add("unknown_identity")

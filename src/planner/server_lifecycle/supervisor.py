@@ -44,8 +44,36 @@ class _ControlRequestSuperseded(RuntimeError):
 
 
 def resolve_planner_launch_root() -> Path:
-    """Resolve the repository root that owns the imported planner package."""
-    return Path(__file__).resolve().parents[3]
+    """Resolve the checkout or application that owns the imported package."""
+    module_path = Path(__file__).resolve()
+    if module_path.parts[-4:] == ("src", "planner", "server_lifecycle", "supervisor.py"):
+        return module_path.parents[3]
+
+    application_identity = os.environ.get("PLAN_APP_ROOT", "")
+    if application_identity and Path(application_identity).is_absolute():
+        application_root = Path(application_identity).resolve()
+        virtualenv_root = (application_root / ".venv").resolve()
+        if (
+            virtualenv_root != application_root
+            and virtualenv_root.is_relative_to(application_root)
+            and module_path.is_relative_to(virtualenv_root)
+        ):
+            package_parts = module_path.relative_to(virtualenv_root).parts
+            if (
+                len(package_parts) == 6
+                and package_parts[0] == "lib"
+                and package_parts[1].startswith("python")
+                and package_parts[2:]
+                == ("site-packages", "planner", "server_lifecycle", "supervisor.py")
+            ):
+                return application_root
+
+    raise ServerLifecycleError(
+        f"Cannot resolve the application that owns Panels module {module_path} "
+        f"with PLAN_APP_ROOT={application_identity!r}. "
+        "Use the owning application's bin/panels-launcher serve to start Panels, "
+        "or bin/panels restart to restart it."
+    )
 
 
 class PortScopedServerLifecycleLease:
@@ -187,13 +215,6 @@ class ServerSupervisor:
 
     def _spawn_application_child(self) -> None:
         environment = dict(self._environ)
-        source_path = str(self._launch_root / "src")
-        existing_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            source_path
-            if not existing_pythonpath
-            else os.pathsep.join((source_path, existing_pythonpath))
-        )
         environment["PLAN_SERVER_CONTROL_SOCKET"] = str(self._control_socket_path)
         original_mask = sorted(int(item) for item in self._signals.child_signal_mask)
         try:

@@ -18,7 +18,7 @@ def _stored(
     claim: WorkerStepClaim = WorkerStepClaim.none,
     proposal: bool = False,
     blocker: bool = False,
-    stage: str = "needs_success_condition",
+    stage: str = "needs_what_changes",
 ) -> StoredTicketFacts:
     return StoredTicketFacts(
         ticket_id="t_rule",

@@ -41,6 +41,8 @@ EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
         "PLAN_HERMES_PYTHON",
         "PLAN_CLAUDE_EXECUTABLE",
         "PLAN_SERVER_CONTROL_SOCKET",
+        "PLAN_UPDATE_REPOSITORY",
+        "PLAN_UPDATE_TOKEN_FILE",
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
         "GOOGLE_API_KEY",
@@ -48,7 +50,11 @@ EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
 )
 
 
-def build_app_launch_env(app_root: Path, *, ambient: Mapping[str, str]) -> dict[str, str]:
+def build_app_launch_env(
+    app_root: Path,
+    *,
+    ambient: Mapping[str, str],
+) -> dict[str, str]:
     root = app_root.expanduser().resolve()
     manifest = validate_app_manifest(root / "manifest.json", require_runtime=True)
     allowed = {
@@ -61,9 +67,15 @@ def build_app_launch_env(app_root: Path, *, ambient: Mapping[str, str]) -> dict[
 
 
 def launch_app(
-    app_root: Path, argv: list[str], *, ambient: Mapping[str, str] | None = None
+    app_root: Path,
+    argv: list[str],
+    *,
+    ambient: Mapping[str, str] | None = None,
 ) -> None:
-    env = build_app_launch_env(app_root, ambient=os.environ if ambient is None else ambient)
+    env = build_app_launch_env(
+        app_root,
+        ambient=os.environ if ambient is None else ambient,
+    )
     os.execve(str(app_root / ".venv" / "bin" / "python"), argv, env)
 
 
@@ -71,7 +83,10 @@ def main() -> None:
     if len(sys.argv) < 2:
         raise SystemExit("usage: app_launcher APP_ROOT [planner arguments]")
     root = Path(sys.argv[1]).expanduser().resolve()
-    launch_app(root, [str(root / ".venv" / "bin" / "python"), "-m", "planner", *sys.argv[2:]])
+    launch_app(
+        root,
+        [str(root / ".venv" / "bin" / "python"), "-m", "planner", *sys.argv[2:]],
+    )
 
 
 if __name__ == "__main__":

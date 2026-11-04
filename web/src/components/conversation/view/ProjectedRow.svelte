@@ -6,10 +6,12 @@
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
   import { rowForBody } from '../../../lib/conversation/view/presentation';
   import ConversationTranscript from '../ConversationTranscript.svelte';
+  import ConversationCredentialRequestCard from '../ConversationCredentialRequestCard.svelte';
   import ToolCallRow from '../ToolCallRow.svelte';
   import type { BackendModel } from '../../../lib/conversation/wire';
   import type { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  let { item, reader, models, ownSenderLabel, openRows, wholeDetails, onEmptyEnding }: {
+  let { activityUncertain = false, item, reader, models, ownSenderLabel, openRows, wholeDetails, onEmptyEnding }: {
+      activityUncertain?: boolean;
       item: ConversationViewRow;
       reader: ConversationViewReader;
       models: readonly BackendModel[];
@@ -24,7 +26,7 @@
   const presentationAttempt = $derived(reader.restorationAnchor?.key === item.key ? reader.restorationAttempt : 0);
   const body = $derived(item.body.kind === 'inline' ? item.body.value : deferred?.reference.body_id === item.body.reference.body_id && deferred.reference.version === item.body.reference.version ? deferred.body : null);
   const row = $derived(body === null ? null : rowForBody(item, body));
-  $effect(() => { if (body !== null) { reader.entryBodyReady(item.key); reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); } if (error && reader.entryTarget?.key === item.key) reader.failEntry(); });
+  $effect(() => { if (body !== null) { reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); } });
   $effect(() => {
       if (item.body.kind === 'deferred' && body?.kind === 'turn_ended' && body.ending === 'completed' && body.automatic_compaction_result !== 'not_compacted')
           onEmptyEnding(item.body.reference);
@@ -57,10 +59,12 @@
 </script>
 <SkeletonRegion shape="block" loading={row === null && !error} loadingText="Loading conversation detail…">
 {#if row?.kind==='tool_call' && reader.lens==='full'}
-  <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
+  <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow {activityUncertain} row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
+{:else if row?.kind==='credential_request'}
+  <ConversationCredentialRequestCard request={row.request}/>
 {:else if row!==null}
   {#key presentationAttempt}
-  <ConversationTranscript rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
+  <ConversationTranscript {activityUncertain} rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
   {/key}
 {:else}
   <div aria-busy={!error} role="status">{error ?? ""}</div>

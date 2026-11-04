@@ -14,6 +14,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from re import fullmatch
 
+from planner.environments.runtime_contracts import (
+    RUNTIME_CONTRACT_PATH,
+    RUNTIME_INVENTORY_PATH,
+    RuntimeContract,
+    parse_optional_runtime_contract,
+    runtime_bytes_digest,
+)
+
 APP_FORMAT = "panels-app-v1"
 FULL_SHA_PATTERN = r"[0-9a-f]{40}"
 HEX_DIGEST_PATTERN = r"[0-9a-f]{64}"
@@ -28,13 +36,15 @@ class AppManifest:
     app_sha: str
     source_digest: str
     artifact_digest: str
+    runtime_contract: RuntimeContract | None = None
 
-    def as_dict(self) -> dict[str, str]:
+    def as_dict(self) -> dict[str, object]:
         return {
             "format": APP_FORMAT,
             "app_sha": self.app_sha,
             "source_digest": self.source_digest,
             "artifact_digest": self.artifact_digest,
+            "runtime_contract": self.runtime_contract.as_dict() if self.runtime_contract else None,
         }
 
 
@@ -93,7 +103,20 @@ def validate_app_manifest(
     _validate_app_tree(app_root)
     if require_runtime:
         _validate_runtime_tree(app_root)
-    return AppManifest(app_sha, source_digest, artifact_digest)
+    try:
+        contract = parse_optional_runtime_contract(value.get("runtime_contract"))
+        if contract is not None:
+            payload = json.loads((app_root / RUNTIME_CONTRACT_PATH).read_text())
+            if payload != contract.as_dict():
+                raise ValueError("manifest runtime contract differs from payload")
+            if (
+                runtime_bytes_digest((app_root / RUNTIME_INVENTORY_PATH).read_bytes())
+                != contract.inventory_sha256
+            ):
+                raise ValueError("runtime inventory differs from contract")
+    except (OSError, ValueError) as exc:
+        raise AppValidationError(f"invalid runtime contract: {exc}") from exc
+    return AppManifest(app_sha, source_digest, artifact_digest, contract)
 
 
 def digest_app_source(app_root: Path) -> str:
@@ -157,6 +180,7 @@ def _validate_app_tree(root: Path) -> None:
 
 
 def _validate_runtime_tree(root: Path) -> None:
+    """Check structure only. Shared admission checks the host before execution."""
     python = root / ".venv" / "bin" / "python"
     required_files = (
         python,
@@ -174,27 +198,6 @@ def _validate_runtime_tree(root: Path) -> None:
     ):
         if not path.is_file():
             raise AppValidationError(f"runtime file is missing: {path.relative_to(root)}")
-    environment = dict(os.environ)
-    environment.pop("PYTHONPATH", None)
-    try:
-        imported = subprocess.run(
-            [
-                str(python),
-                "-c",
-                "import pathlib, planner; print(pathlib.Path(planner.__file__).resolve())",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=root,
-            env=environment,
-        ).stdout.strip()
-        imported_path = Path(imported).resolve()
-        imported_path.relative_to(root.resolve())
-    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
-        raise AppValidationError("app interpreter does not import planner from its app") from exc
-    if not imported_path.is_file():
-        raise AppValidationError("app interpreter resolved a missing planner package")
 
 
 def build_exported_app(
@@ -230,10 +233,19 @@ def build_exported_app(
         with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:") as tar:
             tar.extractall(staging, filter="data")
         source_digest = digest_app_source(staging)
+        runtime_contract = None
         if install_dependencies:
             _install_app_dependencies(staging)
+            from planner.environments.runtime_packaging import complete_private_runtime
+
+            runtime_contract = complete_private_runtime(staging)
         _write_app_entrypoints(staging, app_sha=requested_sha)
-        manifest = AppManifest(requested_sha, source_digest, digest_app_artifact(staging))
+        manifest = AppManifest(
+            requested_sha,
+            source_digest,
+            digest_app_artifact(staging),
+            runtime_contract=runtime_contract,
+        )
         (staging / "manifest.json").write_text(
             json.dumps(manifest.as_dict(), sort_keys=True, indent=2) + "\n",
             encoding="utf-8",

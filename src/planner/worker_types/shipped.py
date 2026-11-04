@@ -19,7 +19,7 @@ CHIEF_EMPLOYEE_ID: Final = "chief_of_staff"
 CHIEF_LABEL: Final = "Chief of Staff"
 DEFAULT_CHIEF_LAUNCH: Final = {
     "employee_backend": "codex",
-    "employee_launch_model": "gpt-5.6-sol",
+    "employee_launch_model": "gpt-6.1-sol",
     "employee_launch_reasoning_effort": "medium",
 }
 

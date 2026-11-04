@@ -6,6 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
@@ -16,16 +18,15 @@ from planner.scheduled_tickets.contracts import (
     ScheduleCadence,
     ScheduledTicketTemplate,
 )
+from planner.tickets import data as tickets_data
 from planner.tickets.api import (
     Clk,
     Ctx,
     DbConn,
-    ModelResolver,
     body_opt_str,
     body_str,
     body_str_list,
     parse_enum,
-    warm_ticket_creation_model,
 )
 from planner.tickets.contracts import TicketLocale
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -121,19 +122,19 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
 
 @router.post("/schedules")
 async def create_schedule(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk, model_resolver: ModelResolver
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     authority.require_above(conn, ctx.principal, authority.owner_only("scheduled_ticket_schedules"))
     raw = normalize_assignment(raw)
     _reject_unknown(raw, _CREATE_KEYS)
     template = _template_from_create(raw, conn)
-    await warm_ticket_creation_model(
-        conn,
-        model_resolver,
-        worker_type=template.worker_type,
+    launch = tickets_data.requested_ticket_launch_configuration(
+        template.worker_type,
         employee_backend=template.employee_backend,
         employee_launch_model=template.employee_launch_model,
     )
+    require_enabled_model(conn, require_conversation_backend_key(launch.employee_backend),
+                          launch.employee_launch_model or "")
     schedule = actions.create_schedule(
         conn,
         principal=ctx.principal,
@@ -170,7 +171,6 @@ async def patch_schedule(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    model_resolver: ModelResolver,
 ) -> JsonDict:
     authority.require_above(conn, ctx.principal, authority.owner_only("scheduled_ticket_schedules"))
     raw = normalize_assignment(raw)
@@ -209,10 +209,8 @@ async def patch_schedule(
         changes["manager_id"] = assignment.manager_id
     if {"worker_type", "employee_backend", "employee_launch_model"} & changes.keys():
         existing = data.read_schedule(conn, schedule_id).template
-        await warm_ticket_creation_model(
-            conn,
-            model_resolver,
-            worker_type=body_str(raw, "worker_type", existing.worker_type),
+        launch = tickets_data.requested_ticket_launch_configuration(
+            body_str(raw, "worker_type", existing.worker_type),
             employee_backend=(
                 body_opt_str(raw, "employee_backend")
                 if "employee_backend" in raw
@@ -223,10 +221,9 @@ async def patch_schedule(
                 if "employee_launch_model" in raw
                 else existing.employee_launch_model
             ),
-            model_source_is_historical=not (
-                {"employee_backend", "employee_launch_model"} & changes.keys()
-            ),
         )
+        require_enabled_model(conn, require_conversation_backend_key(launch.employee_backend),
+                              launch.employee_launch_model or "")
     schedule = actions.update_schedule(
         conn, schedule_id, changes, principal=ctx.principal, now=clk.now_unix()
     )

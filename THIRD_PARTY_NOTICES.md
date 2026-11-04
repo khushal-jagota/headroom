@@ -1,16 +1,12 @@
-# Third-party notices
+Usage implementation and tests include substantial copies and mechanical translations from T3 Code.
 
-## T3 Code Usage interface and price calculation
+Source: https://github.com/pingdotgg/t3code
 
-The Usage header, provider allowance cards, recorded usage composition, chart presentation,
-and model price calculation adapt T3 Code.
+Pinned revision: `75e4ceb96489a2fe92c710c79dbea59778cccfd1`.
 
-Source: https://github.com/pingdotgg/t3code/tree/e58a4857130a93cc58b45dd6ebee14cf08df04ec/apps/web/src/components/usage
+The full MIT copyright and permission notice is retained in [third_party/t3code/LICENSE](third_party/t3code/LICENSE).
 
-Price calculation source:
-https://github.com/pingdotgg/t3code/blob/e58a4857130a93cc58b45dd6ebee14cf08df04ec/apps/server/src/usage/usagePricing.ts
-
-The integration uses Panels tokens and data contracts.
+The module map, substitution records, literal-copy hashes, and test correspondence are under `orchestration/tickets/t_qtqjcup2/`.
 
 ```text
 MIT License

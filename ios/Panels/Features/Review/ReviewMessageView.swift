@@ -24,6 +24,7 @@ struct ReviewMessageView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
+                    TicketMachineLabel(locale: decision.composer.machineLocale)
                     Text(item.title).font(ReviewStyle.title).foregroundStyle(PanelsTheme.strong)
                     if let recap = item.recap, !recap.isEmpty {
                         Button { withAnimation { recapExpanded.toggle() } } label: {
@@ -61,6 +62,14 @@ struct ReviewMessageView: View {
                                     .buttonStyle(ReviewActionStyle(context: .message)).accessibilityIdentifier("review.openConversation")
                             }
                         }
+                    } else if item.owner == nil {
+                        Text("This message belongs to a page that is available on the web.")
+                            .foregroundStyle(PanelsTheme.muted)
+                        if item.ownerKind == "goal", let id = item.ownerId,
+                           let url = URL(string: "/#/workspace/goal/" + id, relativeTo: store.baseURL) {
+                            Link("Open on web", destination: url)
+                        }
+                        Button("Skip", action: onSkip)
                     } else if decision.error == nil { ScreenLoadingView(title: "messages") }
                     if let error = decision.error {
                         Text(error).foregroundStyle(PanelsTheme.error)

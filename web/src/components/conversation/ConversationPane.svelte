@@ -1,10 +1,12 @@
 <script lang="ts">
+  import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import ConversationHistoryPicker from "./ConversationHistoryPicker.svelte";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** One composer and viewport survive movement between the reserved dock and full conversation. */
   import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
   import {progressFor,restFor} from '../../lib/conversation/view/presentation';
-  import { tick, type Snippet } from "svelte";
+  import { tick, setContext, type Snippet } from "svelte";
+  import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import TaskProgress from "./TaskProgress.svelte";
@@ -48,7 +50,14 @@
     ask = null,
     userInput = null,
     askNote = null,
+    userInputNote = null,
+    permissionAvailable = true,
+    userInputAvailable = true,
+    activityUncertain = false,
     current = { model: null, reasoningEffort: null },
+    readError = null,
+    onRetryModelChoices,
+    onPreviewRunSelection,
     models = [],
     backends = $bindable([]),
     ownSenderLabel = null,
@@ -79,6 +88,8 @@
     viewAnchor = $bindable(null),
     transcriptVisible = true,
     draftKey,
+    uploadDestination = null,
+    reconcileLocalSend,
     transcriptLoading = false,
     onSend,
     onStop,
@@ -98,9 +109,11 @@
     viewAnchor?: ViewReaderAnchor | null;
     transcriptVisible?: boolean;
     draftKey: string;
+    uploadDestination?: UploadDestination | null;
+    reconcileLocalSend?: (messageId: string) => Promise<boolean>;
     transcriptLoading?: boolean;
     conversationId: string;
-    roleLabel?: "Worker" | "Manager" | "Chief";
+    roleLabel?: "Worker" | "Manager" | "Chief" | "Goal";
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
      *  is not one existing, so only whoever has read the record can say. */
@@ -124,7 +137,14 @@
       questions: readonly UserInputQuestion[];
     } | null;
     askNote?: string | null;
+    userInputNote?: string | null;
+    permissionAvailable?: boolean;
+    userInputAvailable?: boolean;
+    activityUncertain?: boolean;
     current?: RunValues;
+    readError?: string | null;
+    onRetryModelChoices?: () => Promise<void>;
+    onPreviewRunSelection?: (selection: import("../../lib/conversation/runControls/contracts").ComposerRunSelection, backend?: ConversationBackendKey) => void;
     models?: readonly BackendModel[];
     /** Every backend this machine reported. The composer's rail chooses from them while
      *  there is no conversation to be fixed to one. */
@@ -170,7 +190,8 @@
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
-      picked: RunValues
+      picked: RunValues,
+      context?: ComposerSendContext
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
@@ -187,6 +208,9 @@
     onNewConversation?: () => void;
   } = $props();
 
+  setContext(CREDENTIAL_REQUEST_READ_ONLY, () => readOnly);
+  const credentialDrafts = $derived.by(() => { conversationId; return new Map() as CredentialRequestDrafts; });
+  setContext(CREDENTIAL_REQUEST_DRAFTS, () => credentialDrafts);
   let placementReady = $state(false);
   let entryPresentationPending = $state(true);
   let paneElement = $state<HTMLDivElement | null>(null);
@@ -197,6 +221,7 @@
 
   let headerException = $derived.by(() => {
     if (readOnly) return { text: "past · read only", accent: false };
+    if (activityUncertain) return {text:"activity unknown on Mac",accent:false};
     if (ask || userInput) return { text: "waiting for you", accent: true };
     if (running) return { text: "working", accent: false };
     return null;
@@ -252,7 +277,7 @@
     return kind && ["prompt_refused", "prompt_uncertain", "prompt_discarded", "explicit_reply_missing", "turn_stopped", "turn_ended"].includes(kind)
       ? restLine?.text ?? null : null;
   });
-  let activityKnown = $derived(reader ? typeof reader.status?.turn_running === "boolean" : true);
+  let activityKnown = $derived(!activityUncertain && (reader ? typeof reader.status?.turn_running === "boolean" : true));
 
   function closeMenu(): void {
     menuOpen = false;
@@ -467,8 +492,8 @@
        region that removes its children while it waits removes the transcript the
        reader is in, and with it everything the viewport knows about where they were. -->
   {#if reader?.entryPhase === 'error'}
-    <div class="chat-receipt" role="status" data-conversation-entry-status="error">Unread messages did not load.
-      <button type="button" class="chat-qrow-act" onclick={() => reader?.retryEntry()}>Retry unread messages</button>
+    <div class="chat-receipt" role="status" data-conversation-entry-status="error">The conversation did not load.
+      <button type="button" class="chat-qrow-act" onclick={() => { void reader?.connect().catch(() => undefined); }}>Retry conversation</button>
     </div>
   {/if}
   <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
@@ -492,6 +517,7 @@
     {models}
     {ownSenderLabel}
     {livenessPulse}
+    {activityUncertain}
     {conversationState}
     {emptyState}
   />
@@ -504,7 +530,7 @@
       progress={taskProgress}
       variant="strip"
       {running}
-      moving={running && ask === null && userInput === null}
+      moving={!activityUncertain && running && ask === null && userInput === null}
       composerGap={conversationState === "opened"}
     />
   {/if}
@@ -512,7 +538,7 @@
   <!-- Activity and the latest unread preview belong to the dock surface above the input. -->
   {#if conversationState === "rest"}
     <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
-      {connectionTrouble} {running} feedback={dockFeedback} onOpen={moveThroughTheStates} />
+      {connectionTrouble} running={running && !activityUncertain} feedback={activityUncertain ? "Current activity on Mac is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
   {#if readOnly}
@@ -522,13 +548,21 @@
   {:else}
     <ConversationComposer
       {draftKey}
+      {uploadDestination}
+      {reconcileLocalSend}
       conversationId={conversationExists ? conversationId : null}
       {backendKey}
       {conversationExists}
       {running}
       {ask}
       {askNote}
+    {userInputNote}
+    {permissionAvailable}
+    {userInputAvailable}
       {current}
+      {readError}
+      {onRetryModelChoices}
+      {onPreviewRunSelection}
       {models}
       bind:backends
       {effortOptions}

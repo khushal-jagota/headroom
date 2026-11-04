@@ -32,9 +32,14 @@ def _prove_dock_artifact_retention(page: Page, label: str, evidence: str | None)
     frame = artifact.frame_locator("iframe[data-file-preview-html]")
     pane = page.locator("[data-conversation-pane]")
     draft = pane.locator("[data-conversation-input]")
+    settled_dock = page.locator(
+        '[data-conversation-dock-state="rest"]:not([data-conversation-dock-transition])'
+    ).filter(has=pane)
     if pane.get_attribute("data-conversation-state") == "opened":
         page.locator("[data-conversation-collapse]").click(timeout=WAIT_MS)
     expect(pane).to_have_attribute("data-conversation-state", "rest", timeout=WAIT_MS)
+    # The state changes before the dock motion releases the retained reader height.
+    expect(settled_dock).to_have_count(1, timeout=WAIT_MS)
     draft.fill("Keep this draft through full conversation")
     expect(pane).to_have_attribute("data-conversation-state", "rest")
     frame.locator("[data-retained-form]").fill("Keep this artifact value")
@@ -66,6 +71,7 @@ def _prove_dock_artifact_retention(page: Page, label: str, evidence: str | None)
         page.screenshot(path=str(Path(evidence) / f"{label}-full.png"), full_page=True)
     page.locator("[data-conversation-collapse]").click(timeout=WAIT_MS)
     expect(pane).to_have_attribute("data-conversation-state", "rest", timeout=WAIT_MS)
+    expect(settled_dock).to_have_count(1, timeout=WAIT_MS)
     expect(draft).to_have_value("Keep this draft through full conversation")
     assert iframe.evaluate("node => node === window.__retainedArtifactFrame")
     assert iframe.get_attribute("src") == source
@@ -118,14 +124,14 @@ def _write_ticket_files(server: ServerHandle, ticket_id: str) -> None:
     (root / "archive.bin").write_bytes(b"download me")
 
 
-def _settle_success(server: ServerHandle, ticket_id: str, body: str) -> None:
+def _settle_what_changes(server: ServerHandle, ticket_id: str, body: str) -> None:
     """Seed saved Markdown through the same proposal/accept writers as ordinary work."""
     _propose(server, ticket_id, body)
-    ticket = _post(server, f"/api/tickets/{ticket_id}/accept/success_condition", {
+    ticket = _post(server, f"/api/tickets/{ticket_id}/accept/what_changes", {
         "next_ceiling": "none", "next_holder": {"kind": "owner", "id": "owner"},
     })
-    assert ticket["stage"] == "needs_what_changes"
-    assert ticket["field_values"]["success_condition"] == body
+    assert ticket["stage"] == "needs_implementation"
+    assert ticket["field_values"]["what_changes"] == body
     assert ticket["pending_proposal"] is None
 
 
@@ -204,7 +210,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         encoding="utf-8",
     )
     retained_document = document.read_text(encoding="utf-8")
-    _settle_success(
+    _settle_what_changes(
         server,
         ticket_id,
         f"[HTML](/files/tickets/{ticket_id}/previews/index.html)",
@@ -246,7 +252,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     # Check the combined staging UI through rendered controls, never source strings.
     for retired_text in ("Steer the work", "Everything", "Newsreader"):
         expect(page.get_by_text(retired_text, exact=True)).to_have_count(0)
-    _open_ticket_field(page, "success_condition")
+    _open_ticket_field(page, "what_changes")
     page.evaluate("window.__artifactInPlaceMarker = 'kept'")
     html_requests: list[str] = []
     page.on(
@@ -255,7 +261,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         if f"/files/tickets/{ticket_id}/" in request.url and request.url.endswith(".html")
         else None,
     )
-    page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
+    page.locator("a.pv-name:visible").filter(has_text="index.html").first.click()
     artifact_address = (
         f"{server.base}/#/workspace/{ticket_id}"
         f"?source=ticket&ticket={ticket_id}&path=previews%2Findex.html"
@@ -430,7 +436,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     page.goto(f"{server.base}/#/workspace/manager/{manager['id']}")
     page.locator("[data-goal-band]").wait_for(timeout=WAIT_MS)
     page.locator("[data-goal-band]").evaluate("node => { node.open = true; }")
-    page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
+    page.locator("a.pv-name:visible").filter(has_text="index.html").first.click()
     for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
         page.set_viewport_size({"width": width, "height": height})
         page.locator("[data-ticket-artifact]").frame_locator("iframe").get_by_role(
@@ -459,7 +465,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     )
     expect(page.locator("[data-conversation-unread-preview]")).to_contain_text("Dock artifact")
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
-    page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
+    page.locator("a.pv-name:visible").filter(has_text="index.html").first.click()
     for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
         page.set_viewport_size({"width": width, "height": height})
         page.locator("[data-ticket-artifact]").frame_locator("iframe").get_by_role(
@@ -499,7 +505,7 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
     root = _ticket_files_dir(server, ticket_id)
     clip = Path(__file__).parent / "fixtures" / "playable_clip.mp4"
     (root / "video" / "clip.mp4").write_bytes(clip.read_bytes())
-    _settle_success(
+    _settle_what_changes(
         server,
         ticket_id,
         f"Take a look.\n\n[clip.mp4](/files/tickets/{ticket_id}/video/clip.mp4)",
@@ -518,10 +524,11 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
     page.wait_for_selector(
         f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
-    _open_ticket_field(page, "success_condition")
-    video = page.locator("video").first
-    video.wait_for(timeout=WAIT_MS)
+    _open_ticket_field(page, "what_changes")
+    play = page.locator('[data-file-preview-kind="video"] [data-media-play]').first
+    play.wait_for(timeout=WAIT_MS)
     page.wait_for_timeout(1500)
+    assert page.locator("video").count() == 0
 
     # Nothing has been asked for: the reader has not asked for it.
     assert asked_for_the_clip == [], asked_for_the_clip
@@ -531,6 +538,8 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
     assert "clip.mp4" in name.inner_text()
 
     # It plays on the first action.
+    play.click()
+    video = page.locator("video").first
     video.evaluate("node => { node.muted = true; return node.play(); }")
     page.wait_for_function(
         "() => { const v = document.querySelector('video');"

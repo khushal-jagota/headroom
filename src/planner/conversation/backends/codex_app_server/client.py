@@ -115,12 +115,16 @@ class CodexWireFailed(CodexAppServerError):
 class CodexRequestRejected(CodexAppServerError):
     """The child answered the request with an error rather than a result."""
 
-    def __init__(self, method: str, code: int | None, message: str, data: Any = None) -> None:
+    def __init__(
+        self, method: str, code: int | None, message: str, data: Any = None,
+        *, request_id: str | None = None,
+    ) -> None:
         super().__init__(f"{method} was rejected: {message}")
         self.method = method
         self.code = code
         self.message = message
         self.data = data
+        self.request_id = request_id
 
 
 class CodexLoginIsDuplicated(CodexChildWouldNotStart):
@@ -180,6 +184,7 @@ class CodexAppServerClient:
         # it takes this count when it starts and asks for what arrived after it.
         self._standard_error_bytes_ever = 0
         self._wire_broken = False
+        self._write_lock = asyncio.Lock()
 
     # --- the process --------------------------------------------------------------------
 
@@ -312,7 +317,9 @@ class CodexAppServerClient:
         )
 
     async def begin_request(
-        self, method: str, params: Mapping[str, Any] | None = None
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
     ) -> asyncio.Future[dict[str, Any]]:
         """Put a request on the wire and hand back the answer that has not arrived yet.
 
@@ -368,6 +375,7 @@ class CodexAppServerClient:
                 error.get("code") if isinstance(error, dict) else None,
                 str(error.get("message")) if isinstance(error, dict) else str(error),
                 error.get("data") if isinstance(error, dict) else None,
+                request_id=str(envelope["id"]) if "id" in envelope else None,
             )
         return envelope.get("result")
 
@@ -391,15 +399,27 @@ class CodexAppServerClient:
         await self._write({"id": request_id, "error": {"code": code, "message": message}})
 
     async def _write(self, message: Mapping[str, Any]) -> None:
+        line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
+        async with self._write_lock:
+            self._write_prepared_line(line)
+            process = self._process
+            assert process is not None and process.stdin is not None
+            try:
+                await process.stdin.drain()
+            except Exception as did_not_reach:
+                self._wire_broken = True
+                raise CodexWireFailed(
+                    str(did_not_reach), request_may_have_been_written=True
+                ) from did_not_reach
+
+    def _write_prepared_line(self, line: str) -> None:
         process = self._process
         if process is None or process.stdin is None or self._wire_broken:
             raise CodexWireFailed(
                 "this child's wire is not usable", request_may_have_been_written=False
             )
-        line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
         try:
             process.stdin.write(line.encode("utf-8"))
-            await process.stdin.drain()
         except Exception as did_not_reach:
             self._wire_broken = True
             raise CodexWireFailed(

@@ -12,7 +12,7 @@ from typing import Literal, TypedDict
 CAPTURE_VERSION = 1
 CaptureState = Literal["captured", "unavailable"]
 RecoveryState = Literal["awaiting_action", "resumed", "unable_to_resume", "closed", "historical"]
-OwnerKind = Literal["ticket", "manager", "chief", "unknown"]
+OwnerKind = Literal["ticket", "manager", "chief", "goal", "unknown"]
 
 
 @dataclass(frozen=True, slots=True)

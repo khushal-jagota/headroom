@@ -43,6 +43,7 @@ MODELS = {"codex": "gpt-5.6-luna", "claude": "haiku", "hermes": "openai-codex:gp
 WAIT_SECONDS = 3.0
 
 
+@pytest.mark.real_provider_homes
 @pytest.mark.skipif(
     os.environ.get("PANELS_REAL_PERMISSION_TESTS") != "1",
     reason="set PANELS_REAL_PERMISSION_TESTS=1 for billable real-provider permission exercises",

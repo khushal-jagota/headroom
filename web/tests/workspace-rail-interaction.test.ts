@@ -3,10 +3,60 @@ import {
   clampRailWidth, createRailHoverController, createRailPreviewInput, railWidthForKey, readRailWidth,
   saveRailWidth, RAIL_WIDTH_STORAGE_KEY
 } from "../src/lib/workspaceRailInteraction";
+import {createGoalRailPreviewInput} from "../src/lib/goals/railPreview";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("approved rail interaction", () => {
+  it("keeps a completed goal hold through release blur and suppresses its retargeted overlay click", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window',{matchMedia:()=>({matches:true})});
+    vi.stubGlobal('document',{body:{}});
+    const row=Object.assign(new EventTarget(),{isConnected:true,matches:()=>true}) as unknown as HTMLElement;
+    let active:HTMLElement|null=null;
+    const leave=vi.fn();
+    const input=createGoalRailPreviewInput(()=>active);
+    const action=input.row(row,{show:target=>active=target,leave});
+    const pointer=(name:string,x=10)=>{
+      const event=Object.assign(new Event(name),{pointerType:'touch',clientX:x,clientY:10,pointerId:1});
+      Object.defineProperty(event,'currentTarget',{value:row});
+      return row.dispatchEvent(event);
+    };
+    pointer('pointerdown');vi.advanceTimersByTime(400);
+    expect(active).toBe(row);
+    pointer('pointerup');pointer('pointerleave');
+    row.dispatchEvent(Object.assign(new Event('blur'),{relatedTarget:null}));
+    expect(leave).not.toHaveBeenCalled();
+    const overlayClick={preventDefault:vi.fn(),stopImmediatePropagation:vi.fn()} as unknown as MouseEvent;
+    input.click(overlayClick);
+    expect(overlayClick.preventDefault).toHaveBeenCalledOnce();
+    expect(overlayClick.stopImmediatePropagation).toHaveBeenCalledOnce();
+    input.clearTouch();
+    pointer('pointerleave');
+    expect(leave).toHaveBeenLastCalledWith(row);
+    pointer('pointerdown');pointer('pointermove',19);vi.advanceTimersByTime(400);
+    input.click(overlayClick);
+    expect(overlayClick.preventDefault).toHaveBeenCalledOnce();
+    action.destroy();
+  });
+
+  it("attributes goal leave to its source row after another preview takes ownership", () => {
+    vi.stubGlobal('window',{matchMedia:()=>({matches:true})});
+    const first=Object.assign(new EventTarget(),{isConnected:true,matches:()=>true}) as unknown as HTMLElement;
+    const second=Object.assign(new EventTarget(),{isConnected:true,matches:()=>true}) as unknown as HTMLElement;
+    let active=first;
+    const hide=vi.fn();
+    const input=createGoalRailPreviewInput(()=>active);
+    const action=input.row(first,{show:()=>undefined,leave:source=>{if(source===active)hide();}});
+    active=second;
+    first.dispatchEvent(new Event('blur'));
+    expect(hide).not.toHaveBeenCalled();
+    active=first;
+    first.dispatchEvent(new Event('pointerleave'));
+    expect(hide).toHaveBeenCalledOnce();
+    action.destroy();
+  });
+
   it("clamps pointer and keyboard sizes and preserves the local preference", () => {
     const values = new Map<string, string>();
     const storage = {

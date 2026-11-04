@@ -7,8 +7,8 @@ it was, and nothing in it says so. Panels records the boundary, so Panels is the
 side that can say it.
 
 A boundary is *answered* once Panels has sent a worker-step message after it — a wake, or
-the notice sent here. That is what keeps a boundary from being reported twice without
-storing a second copy of it.
+the notice sent here. The automatic notice scan also leaves an uncertain notice alone;
+uncertainty does not answer the memory-loss note owed on the next wake.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ from typing import Final
 from uuid import uuid4
 
 from planner.conversation.contracts import HeldPrompt
+from planner.tickets import locale_configuration
+from planner.tickets.contracts import TicketLocale
 
 WORKER_STEP_MESSAGE_PREFIX: Final = "worker_step_message_"
 MEMORY_NOTICE_MESSAGE_PREFIX: Final = "worker_step_memory_notice_"
@@ -91,11 +93,7 @@ def ticket_ids_holding_an_unanswered_memory_loss(conn: sqlite3.Connection) -> tu
         "SELECT t.id, t.conversation_id FROM tickets t "
         "WHERE t.worker_step_claim = 'out' AND t.conversation_id IS NOT NULL"
     ).fetchall()
-    return tuple(
-        str(row[0])
-        for row in rows
-        if conversation_holds_an_unanswered_memory_loss(conn, str(row[1]))
-    )
+    return tuple(str(row[0]) for row in rows if ticket_needs_memory_notice(conn, str(row[0])))
 
 
 def _latest_answering_prompt_sequence(conn: sqlite3.Connection, conversation_id: str) -> int | None:
@@ -110,3 +108,29 @@ def _latest_answering_prompt_sequence(conn: sqlite3.Connection, conversation_id:
     if row is None or row[0] is None:
         return None
     return int(row[0])
+
+
+def ticket_needs_memory_notice(conn: sqlite3.Connection, ticket_id: str) -> bool:
+    """Check the automatic notice rule, without changing the next-wake memory rule."""
+    row = conn.execute(
+        "SELECT conversation_id,locale FROM tickets WHERE id=? AND worker_step_claim='out'",
+        (ticket_id,),
+    ).fetchone()
+    if row is None or not locale_configuration.can_execute_locale(conn, TicketLocale(row[1])):
+        return False
+    conversation_id = row[0]
+    if not conversation_holds_an_unanswered_memory_loss(conn, conversation_id):
+        return False
+    # A possibly sent notice must not be retried automatically. It is not a delivered
+    # prompt, so ordinary wakes still owe their memory-loss note. Uncertain owner
+    # messages and worker-step openers do not consume a notice either.
+    return (
+        conn.execute(
+            "SELECT 1 FROM conversation_events e JOIN conversations c USING(conversation_id) "
+            "WHERE e.conversation_id=? AND e.kind='prompt_delivery_uncertain' "
+            "AND e.sequence > c.automatically_compacted_through_sequence "
+            "AND substr(json_extract(e.payload,'$.sender_message_id'),1,?)=? LIMIT 1",
+            (conversation_id, len(MEMORY_NOTICE_MESSAGE_PREFIX), MEMORY_NOTICE_MESSAGE_PREFIX),
+        ).fetchone()
+        is None
+    )

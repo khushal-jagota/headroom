@@ -20,6 +20,7 @@ struct WorkspaceCard: View {
     let groups: [WorkspaceTicketGroup]
     let previewChanged: (Bool) -> Void
     let open: (AppRoute) -> Void
+    @Environment(AppStore.self) private var store
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private static let chiefPortrait: UIImage? = Bundle.main.url(forResource: "workspace-chief", withExtension: "png")
@@ -82,17 +83,18 @@ struct WorkspaceCard: View {
                 case .ticket(let ticket, let section):
                     NavigationLink(value: AppRoute.ticket(ticket.id)) {
                         HStack(spacing: 12) {
+                            TicketMachineLabel(locale: ticket.locale)
                             Text(ticket.title).panelsScaledFont(size: 16)
                                 .foregroundStyle(section.needsAttention || ticket.conversationSignal?.messageForOwner == true ? PanelsTheme.strong : PanelsTheme.faint)
                                 .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            ConversationSignalMark(signal: ticket.conversationSignal)
+                            TicketActivityMark(locale: ticket.locale, signal: ticket.conversationSignal, completed: ticket.stage == "done" || ticket.stage == "cancelled")
                         }.frame(minHeight: 44).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("workspace-ticket-\(ticket.id)")
-                    .conversationAccessibility(label: ticket.title, signal: ticket.conversationSignal)
+                    .conversationAccessibility(label: TicketMachine.accessibilityLabel(ticket.title, locale: ticket.locale, health: store.executorHealth), signal: TicketMachine.signal(ticket.conversationSignal, locale: ticket.locale, health: store.executorHealth, completed: ticket.stage == "done" || ticket.stage == "cancelled"))
                     .modifier(WorkspaceContextMenu(route: .ticket(ticket.id), title: ticket.title,
                                                    parent: title, ticket: ticket, signal: ticket.conversationSignal,
                                                    previewChanged: previewChanged, open: open))

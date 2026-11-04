@@ -1,7 +1,6 @@
 import { effortOptionsFor, modelDisplayName } from "./composer";
 import { resolvedModelPickerLabel } from "./modelPickerLabel";
 import {
-  CONVERSATION_BACKEND_KEYS,
   type BackendModel,
   type BackendSnapshot,
   type ConversationBackendKey
@@ -27,6 +26,7 @@ export type ModelPickerBackend = Readonly<{
 
 export type ModelPickerView = Readonly<{
   backendKey: ConversationBackendKey | null;
+  backendLocked?: boolean;
   backendName: string;
   modelValue: string;
   modelName: string;
@@ -34,12 +34,11 @@ export type ModelPickerView = Readonly<{
   face: string;
   backends: readonly ModelPickerBackend[];
   models: readonly ModelPickerChoice[];
+  olderModels: readonly ModelPickerChoice[];
+  emptyReason: string | null;
   efforts: readonly ModelPickerChoice[];
   defaultModel: string | null;
   defaultReasoningEffort: string | null;
-  staleModelReason: string | null;
-  reasoningUnavailableReason: string | null;
-  catalogueWarning: string | null;
 }>;
 
 export type ModelPickerInput = Readonly<{
@@ -74,13 +73,6 @@ function snapshotUnavailableReason(snapshot: BackendSnapshot | undefined): strin
     return snapshot.identity.detail
       ?? `${backendName(snapshot.backend_key)} is not signed in.`;
   }
-  if (
-    (snapshot.default_model_id === null || snapshot.default_model_id === undefined)
-    && !snapshot.available_models.some(modelIsEnabled)
-  ) {
-    return snapshot.diagnoses[0]
-      ?? `${backendName(snapshot.backend_key)} offers no models on this machine.`;
-  }
   return null;
 }
 
@@ -95,31 +87,34 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
   const defaultModel = input.defaultModel ?? snapshot?.default_model_id ?? null;
   const modelValue = input.model ?? defaultModel ?? "";
   const modelName = modelDisplayName(catalogModels, modelValue === "" ? null : modelValue) ?? "";
-  const selectedModel = catalogModels.find((candidate) => candidate.model_id === modelValue);
   const modelFace = resolvedModelPickerLabel(catalogModels, modelValue);
-  const efforts = effortOptionsFor(
+  const efforts = input.backendKey === "hermes" ? [] : effortOptionsFor(
     catalogModels,
     modelValue === "" ? null : modelValue,
     backendEffortOptions
   );
   const defaultReasoningEffort =
     input.defaultReasoningEffort ?? snapshot?.default_reasoning_effort ?? null;
-  const reasoningEffort = input.reasoningEffort
-    ?? (defaultReasoningEffort !== null && efforts.includes(defaultReasoningEffort)
-      ? defaultReasoningEffort
-      : "");
-  const staleModel = modelValue !== ""
-    && models.length > 0
-    && !models.some((candidate) => candidate.model_id === modelValue);
+  const reasoningEffort = input.backendKey === "hermes" ? "" : input.reasoningEffort ?? "";
   const name = backendName(input.backendKey);
 
+  const older = new Set(input.backendKey === "hermes" ? [] : models.filter(candidate => {
+    if (!candidate.selected_variant || !candidate.version?.length) return false;
+    return models.some(other => other.selected_variant === candidate.selected_variant
+      && compareVersions(other.version ?? [], candidate.version ?? []) > 0);
+  }));
+  const choice = (candidate: BackendModel): ModelPickerChoice => ({
+    value: candidate.model_id,
+    name: resolvedModelPickerLabel(catalogModels, candidate.model_id)
+  });
   return {
     backendKey: input.backendKey,
+    backendLocked: input.backendLocked ?? false,
     backendName: name,
     modelValue,
     modelName,
     reasoningEffort,
-    face: [modelFace, efforts.length > 0 ? reasoningEffort : ""].filter(Boolean).join(" "),
+    face: [modelFace, reasoningEffort].filter(Boolean).join(" "),
     backends: MODEL_PICKER_BACKEND_KEYS.map((key) => {
       const candidate = input.backends.find((item) => item.backend_key === key);
       const lockedReason = input.backendLocked && key !== input.backendKey
@@ -132,62 +127,22 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
         unavailableReason: lockedReason ?? snapshotUnavailableReason(candidate)
       };
     }),
-    models: models.map((candidate) => ({
-      value: candidate.model_id,
-      name: resolvedModelPickerLabel(catalogModels, candidate.model_id)
-    })),
+    models: models.filter(model => !older.has(model)).map(choice),
+    olderModels: models.filter(model => older.has(model)).map(choice),
+    emptyReason: models.length ? null : snapshot?.diagnoses[0]
+      ?? (snapshot ? `${name} offers no models on this machine.` : `${name} model list is unavailable.`),
     efforts: efforts.map((effort) => ({ value: effort, name: effort })),
     defaultModel,
     defaultReasoningEffort,
-    catalogueWarning: selectedModel?.catalogue_warning ?? null,
-    staleModelReason: staleModel
-      ? `${name || "This backend"} no longer offers ${modelValue}.`
-      : null,
-    reasoningUnavailableReason: efforts.length === 0
-      ? `${modelName || "This model"} takes no reasoning effort.`
-      : null
+
   };
 }
 
-export function backendSelectionDefaults(
-  backends: readonly BackendSnapshot[],
-  key: ConversationBackendKey
-): { model: string | null; reasoningEffort: string | null } {
-  const snapshot = backends.find((candidate) => candidate.backend_key === key);
-  if (snapshot === undefined || snapshotUnavailableReason(snapshot) !== null) {
-    return { model: null, reasoningEffort: null };
+/** A missing trailing component is zero: 6.1 outranks 6, while 6 equals 6.0. */
+function compareVersions(left: readonly number[], right: readonly number[]): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
   }
-  const enabledModels = snapshot.available_models.filter(modelIsEnabled);
-  const enabledDefault = enabledModels.some(
-    (candidate) => candidate.model_id === snapshot.default_model_id
-  ) ? snapshot.default_model_id ?? null : null;
-  const model = enabledDefault ?? enabledModels[0]?.model_id ?? null;
-  const efforts = effortOptionsFor(
-    enabledModels,
-    model,
-    snapshot.reasoning_effort_options
-  );
-  const preferred = snapshot.default_reasoning_effort ?? null;
-  return {
-    model,
-    reasoningEffort: preferred !== null && efforts.includes(preferred)
-      ? preferred
-      : (efforts[0] ?? null)
-  };
+  return 0;
 }
-
-export function modelSelectionEffort(
-  models: readonly BackendModel[],
-  backendEfforts: readonly string[],
-  model: string,
-  currentEffort: string | null,
-  defaultEffort: string | null
-): string | null {
-  const efforts = effortOptionsFor(models, model, backendEfforts);
-  if (currentEffort !== null && efforts.includes(currentEffort)) return currentEffort;
-  if (defaultEffort !== null && efforts.includes(defaultEffort)) return defaultEffort;
-  return efforts[0] ?? null;
-}
-
-// Keep this import checked against the closed wire contract if one list changes later.
-void CONVERSATION_BACKEND_KEYS;

@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick, untrack } from "svelte";
+  import { isBrokenTicket } from "../lib/ticketIntegrity";
+  import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
+  import MachineIdentity from "../components/machines/MachineIdentity.svelte";
+  import { machineName } from "../lib/ticketMachines";
+  import { onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
@@ -26,8 +30,6 @@
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
-    readBackends,
-    type BackendSnapshot,
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
@@ -56,12 +58,10 @@
     // holds the value itself.
     requestedConversationId = null,
     openFile = null,
-    onOpenFile = null,
-    navigationErrorHandledByParent = false
+    onOpenFile = null
   }: {
     id: string;
     requestedConversationId?: string | null;
-    navigationErrorHandledByParent?: boolean;
     openFile?: ManagedFileTarget | null;
     onOpenFile?: ((file: ManagedFileTarget | null) => void) | null;
   } = $props();
@@ -89,6 +89,8 @@
   let masthead=$derived(heldMasthead ? {...heldMasthead,
     conversation_signal:navigationConversationSignal(currentView,heldMasthead.conversation_id)} : undefined);
   const ticket = createQuery(() => queries.workspaceTicket(stableId));
+  let brokenTicket = $derived(isBrokenTicket(ticket.data) ? ticket.data : undefined);
+  let healthyTicket = $derived(ticket.data && !isBrokenTicket(ticket.data) ? ticket.data : undefined);
   // What a conversation for this Ticket's worker would start on, asked of the server
   // because the server is what resolves it: the Worker type's launch defaults and
   // whatever this Ticket last ran on, through the same code that will create it.
@@ -104,26 +106,26 @@
 
   // Conversation labels use configuration. The section below admits its controls
   // against the stored canonical Stage, gate, and ownership before display.
-  let conversationLifecycle = $derived(lifecycleFor(manifest.data, ticket.data?.worker_type));
+  let conversationLifecycle = $derived(lifecycleFor(manifest.data, healthyTicket?.worker_type));
   let manifestMissingWorkerType = $derived(
     Boolean(
-      ticket.data &&
+      healthyTicket &&
         manifest.data &&
-        !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
+        !manifest.data.worker_types.some((item) => item.worker_type === healthyTicket?.worker_type)
     )
   );
   let canonicalTicket=$derived(currentView ? navigation.presentationFor(currentView).rawTicketsById.get(stableId) : undefined);
   let sectionConfiguration=$derived(manifest.data?.worker_types.find(item=>item.worker_type===canonicalTicket?.value.worker_type));
-  let admittedSection=$derived(admitTicketSection(currentView,canonicalTicket,ticket.data,sectionConfiguration));
+  let admittedSection=$derived(admitTicketSection(currentView,canonicalTicket,healthyTicket,sectionConfiguration));
   let section=$state.raw<TicketSection | undefined>(undefined);
-  $effect(()=>{if(admittedSection) section=admittedSection;});
+  $effect(()=>{if(brokenTicket) section=undefined; else if(admittedSection) section=admittedSection;});
   let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
   // A changed public control tuple needs its matching exact detail/configuration.
   // One request per mismatch avoids a repeated refetch for an incompatible manifest.
   let refreshedMismatch='';
   $effect(()=>{
-    if(!canonicalTicket || admittedSection || !ticket.data || !manifest.data) return;
-    const key=JSON.stringify([canonicalTicket.value,ticket.data.record_sha256,sectionConfiguration]);
+    if(!canonicalTicket || admittedSection || !healthyTicket || !manifest.data) return;
+    const key=JSON.stringify([canonicalTicket.value,healthyTicket.record_sha256,sectionConfiguration]);
     if(key===refreshedMismatch) return;
     refreshedMismatch=key;
     void ticket.refetch();
@@ -134,8 +136,8 @@
     // Runtime uncertainty does not change structural action authority.
     const view = navigation.state.effective;
     const record = view ? navigation.presentationFor(view).rawTicketsById.get(stableId) : undefined;
-    if(!section || !record || !ticketSectionDetailMatches(record,section.detail) || !admitTicketSection(view,record,ticket.data,
-      manifest.data?.worker_types.find(item=>item.worker_type===ticket.data?.worker_type))) {
+    if(!section || !record || !ticketSectionDetailMatches(record,section.detail) || !admitTicketSection(view,record,healthyTicket,
+      manifest.data?.worker_types.find(item=>item.worker_type===healthyTicket?.worker_type))) {
       throw {code:'validation',message:'the Ticket changed; read it again before this action'};
     }
   }
@@ -180,7 +182,6 @@
   const emptyTicketFieldText = "Not written yet.";
 
   let headerError = $state<unknown>(null);
-  let conversationBackends = $state<readonly BackendSnapshot[]>([]);
 
   /** How far open this page's conversation is.
    *
@@ -197,7 +198,7 @@
    */
   let seededConversationStateFromStatus = false;
   $effect(() => {
-    const ownership = canonicalTicket?.value.stage_ownership;
+    const ownership = canonicalTicket && 'stage_ownership' in canonicalTicket.value ? canonicalTicket.value.stage_ownership : undefined;
     if (ownership === undefined || seededConversationStateFromStatus) return;
     seededConversationStateFromStatus = true;
     conversationState = requestedConversationId ? "opened" : initialTicketConversationState(ownership);
@@ -229,18 +230,6 @@
     }
     return draft;
   }
-
-  onMount(() => {
-    // What the conversation's model and effort pickers offer. Read once on arrival rather
-    // than through the query catalogue: it is a fact about the machine's agents, and
-    // nothing a person does to this Ticket changes it.
-    void readBackends()
-      .then((snapshots) => (conversationBackends = snapshots))
-      .catch(() => {
-        // The pickers fall back to showing the value already in force, which is the same
-        // thing they show before the catalog has arrived. Nothing here is worth a banner.
-      });
-  });
 
   /** Start this Ticket's conversation, so the first message has somewhere to go.
    *
@@ -374,7 +363,7 @@
     const view = currentView;
     const source = canonicalTicket;
     const root = screenElement;
-    const detail = ticket.data;
+    const detail = healthyTicket;
     const shown = section;
     const pointer = shownConversationId;
     const generation = navigation.state.generation;
@@ -441,23 +430,36 @@
   data-stage={section?.record.value.stage}
   onclick={artifact.claimPress}
 >
-  <ResourceState shape="document" layout="fill" error={ticket.error ?? (navigationErrorHandledByParent ? null : navigation.state.error)} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(ticket.data && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
-    {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
+  {#if brokenTicket}
+    <div class="ticket-page" data-broken-ticket>
+      <main class="ticket-doc">
+        <header class="ticket-head">
+          <p class="worker-eyebrow">Broken Ticket</p>
+          <h1 class="ticket-title">{brokenTicket.title}</h1>
+        </header>
+        <ErrorLine error={{message:brokenTicket.integrity_error.reason}} />
+      </main>
+    </div>
+  {:else}
+  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(healthyTicket && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
+    {#if healthyTicket && (manifest.error || manifestMissingWorkerType)}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
-          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${ticket.data.worker_type}"` }}
+          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${healthyTicket.worker_type}"` }}
         />
       </div>
-    {:else if ticket.data && masthead}
-      {@const detail = ticket.data}
+    {:else if healthyTicket && masthead}
+      {@const detail = healthyTicket}
       <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
       <main class="ticket-doc">
-        <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id}>
+        <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <div class="worker-eyebrow" data-ticket-identity>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
+            <span aria-hidden="true">·</span>
+            <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title" data-feedback-page-title>
@@ -466,7 +468,7 @@
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               />
-              <ConversationSignalMark signal={masthead.conversation_signal} conversationId={masthead.conversation_id} />
+              <MachineActivityMark locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} />
             </div>
             <RecapSlot>
             {#snippet children()}
@@ -518,9 +520,12 @@
         <div bind:this={sectionElement} use:sectionObservationEvents class="ticket-col" data-ticket-section={section.record.id} data-section-stage={section.record.value.stage}>
           {#snippet kickoffContextRow()}
             {#if detail.employee_configuration_editable}
-              <WorkerConfigurationSetup ticketId={stableId} employeeBackend={detail.employee_backend}
+              {#key JSON.stringify([stableId, detail.locale, conversationStartValues.data?.workspace_folder, conversationStartValues.data?.workspace_path_policy])}
+              <WorkerConfigurationSetup destination={detail.locale} ticketId={stableId} employeeBackend={detail.employee_backend}
                 employeeLaunchModel={detail.employee_launch_model} employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
+                workspace={conversationStartValues.data}
                 onSave={saveEmployeeConfiguration} />
+              {/key}
             {/if}
           {/snippet}
           {#if section}
@@ -601,15 +606,15 @@
         data-conversation-layer-host
       >
         <div class="conversation-column">
-          <LiveConversation
+          <LiveConversation locale={masthead.locale}
             bind:conversationState
             conversationId={shownConversationId}
             bind:selectedPastConversationId
             readOnly={selectedPastConversationId !== null}
             persistenceKey={`owner:ticket:${detail.id}`}
+            uploadOwner={{kind:"ticket",id:detail.id}}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
-            bind:backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"
             sendMessage={sendToTicketWorker}
@@ -620,11 +625,12 @@
     </div>
     {/if}
   </ResourceState>
+  {/if}
 </section>
 
 <style>
   .ticket-col { padding-top:0; }
-  .ticket-doc { scrollbar-gutter:auto; }
+  .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:48px; }
   .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .ticket-title-row { display:block; margin-top:var(--space-3); }

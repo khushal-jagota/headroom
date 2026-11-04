@@ -9,7 +9,6 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.probe import seed_probe_worker_type
 
@@ -39,7 +38,7 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     # The probe Worker type is stored like any other, so the app reads it from here.
     seed_probe_worker_type(boot)
     load_worker_runtime_definitions(boot)
-    seed_test_model_catalogue(boot)
+
     boot.commit()
     boot.close()
     config = load_config(
@@ -253,21 +252,26 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
 
         with connect(str(db_path)) as conn:
             before_invalid_holder = tuple(conn.iterdump())
-        invalid_holder = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={
-                "manager": {"kind": "manager", "id": personal_item["id"]},
-                "ceiling_holder": {"kind": "manager", "id": vylo_item["id"]},
-                "recap": "Must not persist",
-            },
-        )
-        assert invalid_holder.status_code == 400, invalid_holder.text
-        assert invalid_holder.json()["error"]["code"] == "validation"
-        assert invalid_holder.json()["error"]["message"] == (
-            "ceiling holder must have authority to decide this Ticket"
-        )
-        with connect(str(db_path)) as conn:
-            assert tuple(conn.iterdump()) == before_invalid_holder
+        for holder in (
+            {"kind": "manager", "id": vylo_item["id"]},
+            {"kind": "chief", "id": "chief"},
+        ):
+            invalid_holder = client.patch(
+                f"/api/tickets/{ticket_id}",
+                json={
+                    "manager": {"kind": "manager", "id": personal_item["id"]},
+                    "ceiling_holder": holder,
+                    "recap": "Must not persist",
+                },
+            )
+            assert invalid_holder.status_code == 400, invalid_holder.text
+            assert invalid_holder.json()["error"]["code"] == "validation"
+            assert invalid_holder.json()["error"]["message"] == (
+                "ceiling holder must be the user or the Ticket's direct manager; "
+                "name an eligible holder explicitly"
+            )
+            with connect(str(db_path)) as conn:
+                assert tuple(conn.iterdump()) == before_invalid_holder
 
         moved = client.patch(
             f"/api/tickets/{ticket_id}",

@@ -90,6 +90,13 @@ private struct ConversationSurface: View {
                 model.conversationID = saved?.conversationId
             }
             model.restore(owner: owner, api: store.client)
+            if case .ticket(let id) = owner {
+                let api = store.client
+                model.machineLocale = api.cachedTicket(id)?.locale
+                let ticket = try? await api.ticket(id)
+                guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
+                if let ticket { model.machineLocale = ticket.locale }
+            }
             if owner == .chief, model.conversationID == nil {
                 let currentID = try? await store.client.chiefConversation().conversationId
                 guard !Task.isCancelled else { return }
@@ -127,6 +134,16 @@ private struct ConversationSurface: View {
     private var conversation: some View {
         VStack(spacing: 0) {
             header
+            if isPage, model.machineLocale == "macos" {
+                VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
+                    TicketMachineLabel(locale: model.machineLocale)
+                    if TicketMachine.activityUnknown(model.machineLocale, health: store.executorHealth) {
+                        Text("Current activity on Mac is unknown.")
+                        Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.")
+                    }
+                }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, AgentPageLayout.gutter)
+            }
             if isPage {
                 ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active)
             }
@@ -167,7 +184,7 @@ private struct ConversationSurface: View {
                 Button(action: open) {
                     HStack(spacing: 8) {
                         Group {
-                            if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil {
+                            if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil && !TicketMachine.activityUnknown(model.machineLocale, health: store.executorHealth) {
                                 RingSpinner(size: .compact)
                             } else {
                                 Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0)
@@ -394,6 +411,7 @@ struct ConversationBackendMark: View {
 
 struct ConversationModelSheet: View {
     @Bindable var model: ConversationModel
+    let owner: ConversationOwner
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var backends: [TicketBackend] = []
@@ -432,7 +450,7 @@ struct ConversationModelSheet: View {
                 .task {
                     backend = model.backendKey ?? ""; selection = model.selectedModel ?? ""; effort = model.reasoningEffort ?? ""
                     do {
-                        let catalog: TicketBackendCatalog = try await store.client.get("/api/conversation/backends")
+                        let catalog = try await store.client.conversationBackends(owner: owner)
                         backends = catalog.backends
                         if backend.isEmpty { backend = backends.first(where: \.installed)?.id ?? "" }
                         if selection.isEmpty { selection = selected?.defaultModelId ?? "" }

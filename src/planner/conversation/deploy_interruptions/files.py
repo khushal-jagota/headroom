@@ -64,7 +64,7 @@ def manifest_from_dict(value: object) -> CaptureManifest:
         if not isinstance(turn, dict):
             raise ValueError("invalid captured turn")
         owner_kind = turn.get("owner_kind")
-        if owner_kind not in ("ticket", "manager", "chief", "unknown"):
+        if owner_kind not in ("ticket", "manager", "chief", "goal", "unknown"):
             raise ValueError("invalid captured owner")
         status = turn.get("original_status")
         if status not in ("running", "intent"):

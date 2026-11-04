@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { UsageDays } from "../../lib/conversation/recordedUsageWire";
-  import { USAGE_PERIODS, providerLabel } from "./usagePresentation";
+  import { PROVIDER_LABEL } from "../../lib/usage/usageProviders";
+  const USAGE_PERIODS = [{ days: 1, label: "24h" }, { days: 7, label: "7d" }, { days: 30, label: "30d" }, { days: 90, label: "90d" }] as const;
+  function providerLabel(value: string): string {
+    return ({ tokens: "Tokens", cost: "Cost", limits: "Limits", config: "Config", ...PROVIDER_LABEL } as Record<string, string>)[value] ?? value;
+  }
   import type { UsageTab } from "../../lib/usageAddress";
   import type { UtilityHref } from "../../lib/utilityAddress";
   let { tab, href, days, providerKeys, selectedProviders, busy, onDays, onProviders, onRefresh }: {
@@ -20,12 +24,12 @@
     <span class="slash" aria-hidden="true">/</span>
     {#if tab !== "limits"}<span class="source">Local CLI sources</span><span class="slash" aria-hidden="true">/</span>{/if}
     <details class="provider-filter">
-      <summary>{selectedProviders.length === providerKeys.length ? "All backends" : `${selectedProviders.length} backends`} <span aria-hidden="true">⌄</span></summary>
+      <summary>{selectedProviders.length === providerKeys.length ? "All providers" : `${selectedProviders.length} providers`} <span aria-hidden="true">⌄</span></summary>
       <div class="provider-popup">
         {#each providerKeys as provider (provider)}
           <label><input type="checkbox" checked={selectedProviders.includes(provider)} onchange={event => toggle(provider, event.currentTarget.checked)} />{providerLabel(provider)}</label>
         {/each}
-        {#if !providerKeys.length}<span>No backends reported</span>{/if}
+        {#if !providerKeys.length}<span>No providers reported</span>{/if}
       </div>
     </details>
     {/if}
@@ -45,7 +49,7 @@
     <select class="mobile-period" aria-label="Usage period" value={days} disabled={tab === "limits"} onchange={event => onDays(Number(event.currentTarget.value) as UsageDays)}>
       {#each USAGE_PERIODS as period}<option value={period.days}>{period.label}</option>{/each}
     </select>
-    <button class="refresh" aria-label="Refresh usage and allowances" aria-busy={busy} disabled={busy} onclick={onRefresh} data-backends-refresh title="Refresh local CLI records and provider allowances">{busy ? "…" : "↻"}</button>
+    <button class="refresh" aria-label="Refresh usage and allowances" aria-busy={busy} disabled={busy} onclick={onRefresh} data-backends-refresh title="Refresh local usage and allowances">{busy ? "…" : "↻"}</button>
     {/if}
   </div>
 </header>

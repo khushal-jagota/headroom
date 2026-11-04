@@ -1,9 +1,204 @@
 """Browser-only proof of immediate ready content, wait cancellation and layout ownership."""
 import json
 import os
+import re
+import time
 from pathlib import Path
 
 from playwright.sync_api import expect
+
+
+def checklist_header_and_presentations(page):
+    # One existing component host isolates header hits and recursive presentation.
+    # Opposite edge midpoints test whitespace inside the rounded header target.
+    checklist = page.locator('[data-checklist-fixture] [data-block="checklist"]')
+    page.emulate_media(reduced_motion="no-preference")
+    for variant in ("empty", "partial", "complete"):
+        page.evaluate(
+            "window.__checklist(false);window.__checklistVariant("
+            + json.dumps(variant)
+            + ");window.__checklist(true)"
+        )
+        toggle = checklist.locator('[data-checklist-toggle]')
+        expect(toggle).to_have_count(1)
+        expect(toggle).to_have_accessible_name('Hide checklist')
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        expect(checklist.get_by_role('progressbar')).to_have_count(1)
+        assert (
+            toggle.locator('button,input,[contenteditable],h1,h2,h3,[role=progressbar]').count()
+            == 0
+        )
+        target = toggle.get_attribute('aria-controls')
+        assert target and checklist.locator('[id="' + target + '"]').count() == 1
+        box = toggle.bounding_box()
+        assert box and box['width'] > 200 and box['height'] >= 40, box
+        toggle.click(position={'x': 2, 'y': box['height'] / 2})
+        expect(toggle).to_have_accessible_name('Show checklist')
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        expect(checklist.locator('[data-checklist-body]')).to_have_attribute('aria-hidden', 'true')
+        expect(checklist.get_by_role('checkbox')).to_have_count(0)
+        toggle.click(position={'x': box['width'] - 2, 'y': box['height'] / 2})
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        toggle.focus()
+        toggle.press('Space')
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        expect(toggle).to_be_focused()
+        toggle.press('Enter')
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        if variant == 'complete':
+            checklist.get_by_role('button', name='2 completed', exact=True).click()
+            expect(
+                checklist.get_by_role('list', name='Completed items').get_by_role('checkbox')
+            ).to_have_count(2)
+    page.evaluate("window.__checklist(false);window.__checklistVariant('partial');window.__checklistOptions(true);window.__checklist(true)")
+    expect(checklist).to_have_attribute('data-presentation', 'normal')
+    expect(checklist.get_by_role('checkbox', name='Publish', exact=True)).to_be_visible()
+    page.evaluate("window.__checklistOptions(true,false,'small')")
+    expect(checklist).to_have_attribute('data-presentation', 'small')
+    expect(checklist.get_by_role('checkbox', name='Publish', exact=True)).to_be_visible()
+    page.evaluate("window.__checklist(false);window.__checklistOptions(false,true);window.__checklist(true)")
+    expect(checklist).to_have_attribute('data-presentation', 'small')
+    publish = checklist.get_by_role('checkbox', name='Publish', exact=True)
+    publish.focus()
+    # A responsive collapse must not strand focus in an inert body.
+    page.evaluate("window.__checklistOptions(true,true)")
+    expect(checklist).to_have_attribute('data-presentation', 'smallest')
+    expect(checklist.locator('[data-checklist-toggle]')).to_be_focused()
+    checklist.locator('[data-checklist-toggle]').click()
+    expect(checklist).to_have_attribute('data-presentation', 'small')
+    expect(publish).to_be_visible()
+    page.evaluate("window.__checklist(false);window.__nestedChecklists(true)")
+    nested = page.locator('[data-nested-checklists] [data-block="checklist"]')
+    expect(nested).to_have_count(4)
+    for item in nested.all():
+        expect(item).to_have_attribute('data-presentation', 'smallest')
+        expect(item.get_by_role('checkbox')).to_have_count(0)
+        item.locator('[data-checklist-toggle]').click()
+        expect(item).to_have_attribute('data-presentation', 'small')
+        expect(item.get_by_role('checkbox')).to_be_visible()
+        expect(item.get_by_role('textbox')).to_have_count(0)
+    page.evaluate("window.__nestedChecklists(false);window.__checklistOptions(false)")
+
+
+def checklist_saved_mount_and_motion(page):
+    # The existing native host catches transient outro DOM, which settled-state
+    # component tests cannot see. Both first mount and remount use accepted data.
+    for reduced in ("no-preference", "reduce"):
+        page.emulate_media(reduced_motion=reduced)
+        for complete in (False, True):
+            page.evaluate("window.__checklistSaved(" + str(complete).lower() + ")")
+            for _ in range(2):
+                frames = page.evaluate(
+                    """async complete => {
+                  const frames=[];
+                  const sample=()=>frames.push([...document.querySelectorAll(
+                    '[data-checklist-fixture] [aria-label="Open items"] [data-step]')]
+                    .map(node=>node.dataset.step));
+                  window.__checklist(true); sample();
+                  for(let n=0;n<5;n++){await new Promise(requestAnimationFrame);sample();}
+                  return frames;
+                }""",
+                    complete,
+                )
+                expected = [] if complete else ["publish"]
+                assert all(frame == expected for frame in frames), (reduced, complete, frames)
+                page.evaluate("window.__checklist(false)")
+
+    page.emulate_media(reduced_motion="no-preference")
+    page.evaluate("window.__checklistSaved(false);window.__checklist(true)")
+    checklist = page.locator("[data-checklist-fixture]")
+    publish = checklist.locator('[data-step="publish"]')
+    publish.get_by_role("checkbox").click()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    # A real edit retains the struck row before the normal delayed disclosure.
+    expect(publish).to_have_class(re.compile(".*struck.*"))
+    expect(publish).to_be_visible()
+    assert (
+        publish.locator(".title-text").evaluate("node => getComputedStyle(node).transitionDuration")
+        != "0s"
+    )
+    expect(checklist.get_by_role("button", name="2 completed", exact=True)).to_be_visible()
+    expect(publish).to_have_count(0)
+    checklist.get_by_role("button", name="2 completed", exact=True).click()
+    checklist.get_by_role("list", name="Completed items").get_by_role(
+        "checkbox", name="Publish", exact=True
+    ).click()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(publish.get_by_role("checkbox")).to_have_attribute("aria-checked", "false")
+    page.emulate_media(reduced_motion="reduce")
+    page.wait_for_function("document.querySelector('[data-checklist-fixture] .reduced')")
+    assert (
+        publish.locator(".title-text").evaluate("node => getComputedStyle(node).transitionDuration")
+        == "0s"
+    )
+    publish.get_by_role("checkbox").click()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(publish).to_have_count(0)
+    page.evaluate("window.__checklist(false);window.__checklistSaved(false)")
+
+
+def checklist_save_feedback(page):
+    # Reuse this component host and browser. No backend is needed to reject a save.
+    page.evaluate("window.__checklist(true)")
+    checklist = page.locator('[data-checklist-fixture]')
+    progress = checklist.get_by_role('progressbar')
+    publish = (
+        checklist.get_by_role('list', name='Open items').get_by_role('checkbox', name='Publish')
+    )
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    publish.click()
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    expect(checklist.locator('[data-block=checklist]')).not_to_have_attribute(
+        'data-complete', 'true'
+    )
+    assert 'All 2 items done.' not in checklist.inner_text()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(false)")
+    expect(publish).to_have_attribute('aria-checked', 'false')
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    expect(checklist.get_by_role('alert')).to_contain_text('Save rejected')
+    expect(checklist.get_by_role('heading', name='Delivery', exact=True)).to_be_visible()
+    assert 'All 2 items done.' not in checklist.inner_text()
+    checklist.get_by_role('button', name='Retry save').click()
+    expect(checklist.get_by_role('alert')).to_have_count(0)
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(progress).to_have_attribute('aria-valuenow', '2')
+    expect(checklist.locator('[data-block=checklist]')).to_have_attribute('data-complete', 'true')
+    expect(checklist.get_by_role('heading', name='Delivery complete', exact=True)).to_be_visible()
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    expect(checklist.get_by_role('status')).to_have_text('All 2 items done.')
+    # An accepted uncheck reopens the checklist through the same writer queue.
+    checklist.get_by_role('button', name='2 completed', exact=True).click()
+    (
+        checklist.get_by_role('list', name='Completed items')
+        .get_by_role('checkbox', name='Publish').click()
+    )
+    expect(progress).to_have_attribute('aria-valuenow', '2')
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    expect(publish).to_have_attribute('aria-checked', 'false')
+    # Equal first/last intents must not let an old rejection clear the last click.
+    publish.click()
+    publish.click()
+    publish.click()
+    for _ in range(2):
+        page.wait_for_function("typeof window.__checklistReply === 'function'")
+        page.evaluate("window.__checklistReply(false)")
+        expect(checklist.get_by_role('alert')).to_have_count(0)
+        expect(publish).to_have_attribute('aria-checked', 'true')
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(progress).to_have_attribute('aria-valuenow', '2')
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    page.evaluate("window.__checklist(false)")
 
 
 def run(browser, urls):
@@ -22,6 +217,15 @@ def run(browser, urls):
     assert page.locator('[data-fixed] [role=status]').inner_text() == "Loading document"
     assert page.evaluate("!window.__status.closest('[aria-busy=true]')")
     page.emulate_media(reduced_motion="reduce")
+    checklist_started = time.monotonic()
+    checklist_header_and_presentations(page)
+    checklist_saved_mount_and_motion(page)
+    page.emulate_media(reduced_motion="reduce")
+    checklist_save_feedback(page)
+    print(
+        f"checklist save feedback: passed ({time.monotonic() - checklist_started:.2f}s)",
+        flush=True,
+    )
     page.evaluate("window.__load(false)")
     page.wait_for_function("!document.querySelector('.skeleton')")
     page.emulate_media(reduced_motion="no-preference")
@@ -584,12 +788,292 @@ def run(browser, urls):
     assert page.evaluate("window.__frameBox()") == {
         'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
 
-    # A missing file keeps the box and puts its message inside it.
+    # An embedded failure names the file and collapses to a line.
     assert page.evaluate("path => window.__mountHeld(path)", 'site/missing.html')['height'] == 288
-    expect(html.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 404')
+    expect(html.locator('[data-html-fetch-notice]')).to_have_text(
+        'missing.html — file fetch failed: 404'
+    )
     assert html.locator('[data-html-navigation-notice]').count() == 0
-    assert page.evaluate("window.__frameBox()") == {
-        'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+    assert html.locator('[data-shape=frame]').count() == 0
+    assert html.locator('[data-file-preview]').evaluate(
+        'node => node.getBoundingClientRect().height'
+    ) < 60
+    page.evaluate("window.__html('full','site/missing.html')")
+    expect(html.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 404')
     page.evaluate("window.__html('')")
+    _preview_cards(page)
     assert not errors, errors
     page.close()
+
+
+def _preview_cards(page):
+    """Existing host proves real layout clipping, keyboard focus and media engine wiring.
+
+    No connected server is needed: route/range playback remains in its existing E2E.
+    """
+    import io
+    import wave
+
+    page.route(
+        "**/files/tickets/t_card/proof.md",
+        lambda route: route.fulfill(
+            content_type="text/markdown",
+            body="[Inner link](https://example.test) " + "Readable words " * 60,
+        ),
+    )
+    page.route(
+        "**/files/tickets/t_card/proof-long.md",
+        lambda route: route.fulfill(
+            content_type="text/markdown",
+            body="# The preview card\n\n"
+            + "A document is a card with its identity at the floor. " * 200,
+        ),
+    )
+    page.route("**/files/tickets/t_card/missing.md", lambda route: route.fulfill(status=404))
+    page.route(
+        "**/api/conversation/conversations/proof/files/proof.txt",
+        lambda route: route.fulfill(content_type="text/plain", body="Small attachment"),
+    )
+    page.route(
+        "**/files/tickets/t_card/proof.png",
+        lambda route: route.fulfill(
+            content_type="image/svg+xml",
+            body=(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640">'
+                '<rect width="640" height="640"/></svg>'
+            ),
+        ),
+    )
+    audio = io.BytesIO()
+    with wave.open(audio, "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(8000)
+        stream.writeframes(b"\0\0" * 8000 * 8)
+    clip_file = Path(__file__).resolve().parents[4] / "tests/e2e/fixtures/playable_clip.mp4"
+    page.route(
+        "**/files/tickets/t_card/proof.mp4",
+        lambda route: route.fulfill(content_type="video/mp4", body=clip_file.read_bytes()),
+    )
+    proof_directory = os.environ.get("PANELS_UI_PROOF_DIR")
+
+    def screenshot(name):
+        if proof_directory:
+            directory = Path(proof_directory)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.locator("[data-card-fixture]").screenshot(path=str(directory / name))
+
+    audio_requests = []
+
+    def serve_audio(route):
+        audio_requests.append(route.request.url)
+        body = audio.getvalue()
+        range_header = route.request.headers.get("range")
+        if range_header:
+            start_text, end_text = range_header.removeprefix("bytes=").split("-", 1)
+            start = int(start_text or 0)
+            end = min(int(end_text) if end_text else len(body) - 1, len(body) - 1)
+            route.fulfill(
+                status=206,
+                content_type="audio/wav",
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Range": f"bytes {start}-{end}/{len(body)}",
+                },
+                body=body[start : end + 1],
+            )
+        else:
+            route.fulfill(content_type="audio/wav", headers={"Accept-Ranges": "bytes"}, body=body)
+
+    page.route("**/files/tickets/t_card/proof.wav", serve_audio)
+    page.route(
+        "**/files/tickets/t_card/invalid.wav",
+        lambda route: route.fulfill(content_type="audio/wav", body=b"not an audio resource"),
+    )
+    page.set_viewport_size({"width": 1100, "height": 900})
+    page.evaluate("window.__preview('proof.md')")
+    fixture = page.locator("[data-card-fixture]")
+    fixture.scroll_into_view_if_needed()
+    expect(fixture.locator(".markdown-block")).to_contain_text("Readable words")
+    clip = fixture.locator(".file-preview-clip")
+    expect(clip).not_to_have_class(re.compile("file-preview-clip--cut"))
+    fixture.evaluate("node => node.style.width='240px'")
+    expect(clip).to_have_class(re.compile("file-preview-clip--cut"))
+    fixture.evaluate("node => node.style.width='800px'")
+    page.evaluate("window.__preview('proof-long.md')")
+    expect(fixture.locator(".markdown-block")).to_contain_text("A document is a card")
+    expect(clip).to_have_class(re.compile("file-preview-clip--cut"))
+    screenshot("preview-markdown-clipped-desktop.png")
+    assert clip.evaluate("node => getComputedStyle(node).overflowY") in ("hidden", "clip")
+    fixture.evaluate("node => node.style.width='1000px'")
+    page.evaluate("window.__preview('proof.md')")
+    expect(clip).not_to_have_class(re.compile("file-preview-clip--cut"))
+    screenshot("preview-markdown-desktop.png")
+    name = fixture.locator(".pv-name")
+    name.focus()
+    expect(name).to_be_focused()
+    assert (
+        fixture.locator(".file-preview-card").evaluate(
+            "node => getComputedStyle(node).outlineStyle"
+        )
+        == "solid"
+    )
+    name.press("Tab")
+    assert not fixture.locator(".markdown-block a").evaluate_all(
+        "nodes=>nodes.includes(document.activeElement)"
+    )
+    assert (
+        fixture.locator(".file-preview-card").evaluate(
+            "node => getComputedStyle(node).borderTopWidth"
+        )
+        == "1px"
+    )
+    page.evaluate("window.__preview('proof.txt',false,true)")
+    expect(fixture.locator(".pv-name")).to_have_text("proof.txt")
+    expect(fixture.locator(".file-preview-kind")).to_contain_text("1.0 KiB")
+    fixture.locator(".pv-name").focus()
+    page.keyboard.press("Tab")
+    expect(fixture.locator(".pv-act")).to_be_focused()
+    assert fixture.locator(".pv-act").evaluate("node => !node.closest('a a')")
+    page.set_viewport_size({"width": 390, "height": 900})
+    fixture.evaluate("node => node.style.width=''")
+    expect(fixture.locator(".file-preview-clip")).to_be_visible()
+    screenshot("preview-attachment-phone.png")
+    page.evaluate("window.__preview('proof.png')")
+    expect(fixture.locator("img")).to_be_visible()
+    expect(fixture.get_by_role("link", name="Download", exact=True)).to_be_visible()
+    assert fixture.locator("img").evaluate("node => node.getBoundingClientRect().height") <= 160
+    page.evaluate("window.__preview('missing.md')")
+    expect(fixture.locator(".quiet-line")).to_contain_text("missing.md — file fetch failed: 404")
+    expect(fixture.get_by_role("link", name="Download", exact=True)).to_be_visible()
+    page.evaluate("window.__preview('proof.mp4')")
+    expect(fixture.locator("[data-media-play]")).to_be_visible()
+    screenshot("preview-video-phone.png")
+    page.set_viewport_size({"width": 1100, "height": 900})
+    screenshot("preview-video-desktop.png")
+    page.set_viewport_size({"width": 390, "height": 900})
+    assert fixture.locator("video").count() == 0
+    # The native media stack receives keyboard activation and focus after replacement.
+    fixture.locator("[data-media-play]").focus()
+    page.keyboard.press("Enter")
+    expect(fixture.locator("video")).to_be_focused()
+    page.evaluate("window.__preview('proof.mp4',true)")
+    expect(fixture.locator("video[controls]")).to_be_visible()
+    assert fixture.locator("[data-media-play]").count() == 0
+    page.evaluate("window.__preview('proof.wav')")
+    expect(fixture.locator("[data-media-play]")).to_be_visible()
+    assert fixture.locator("audio").count() == 0 and audio_requests == []
+    slider = fixture.locator("[data-audio-seek]")
+    expect(slider).to_have_attribute("aria-disabled", "true")
+    # Keep the original native promise: immediate pause must cancel a real start.
+    page.evaluate("""() => {
+      const nativePlay = HTMLMediaElement.prototype.play;
+      window.__audioCancellation = {nativePlay};
+      HTMLMediaElement.prototype.play = function(...args) {
+        const proof = window.__audioCancellation;
+        proof.player = this;
+        proof.slider = document.querySelector('[data-card-fixture] [data-audio-seek]');
+        const pending = nativePlay.apply(this, args);
+        this.pause();
+        pending.catch(error => {
+          proof.rejection = {isDOMException: error instanceof DOMException, name: error.name};
+        });
+        return pending;
+      };
+    }""")
+    try:
+        fixture.locator("[data-media-play]").click()
+        page.wait_for_function("window.__audioCancellation.rejection")
+        assert page.evaluate("window.__audioCancellation.rejection") == {
+            "isDOMException": True,
+            "name": "AbortError",
+        }
+        assert page.evaluate("""() => {
+          const proof = window.__audioCancellation;
+          return proof.player === document.querySelector('[data-card-fixture] audio')
+            && proof.slider === document.querySelector('[data-card-fixture] [data-audio-seek]');
+        }""")
+        expect(slider).to_have_attribute("role", "slider")
+        expect(fixture.locator("[data-visible-content-failed]")).to_have_count(0)
+        expect(fixture.locator(".quiet-line")).to_have_count(0)
+        screenshot("audio-after-cancellation.png")
+    finally:
+        page.evaluate("""() => {
+          HTMLMediaElement.prototype.play = window.__audioCancellation.nativePlay;
+        }""")
+    fixture.get_by_role("button", name="Play proof.wav", exact=True).click()
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio')?.currentTime > .1")
+    assert page.evaluate(
+        "window.__audioCancellation.player === document.querySelector('[data-card-fixture] audio')"
+    )
+    page.evaluate("delete window.__audioCancellation")
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio')?.duration >= 8")
+    expect(slider).to_have_attribute("aria-disabled", "false")
+    screenshot("preview-audio-phone.png")
+    fixture.get_by_role("button", name="Pause proof.wav").click()
+    slider.focus()
+    slider.press("Home")
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio').currentTime < .1")
+    slider.press("ArrowRight")
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio').currentTime >= 4.9")
+    expect(slider).to_have_attribute("aria-valuenow", "5")
+    assert "0:05" in slider.get_attribute("aria-valuetext")
+    slider.press("End")
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio').currentTime >= 7.9")
+    box = slider.bounding_box()
+    slider.click(position={"x": box["width"] / 2, "y": box["height"] / 2})
+    page.wait_for_function(
+        "Math.abs(document.querySelector('[data-card-fixture] audio').currentTime - 4) < .3"
+    )
+    assert audio_requests
+    page.set_viewport_size({"width": 1100, "height": 900})
+    screenshot("preview-audio-desktop.png")
+    page.evaluate("window.__preview('replacement.wav')")
+    expect(fixture.locator("audio")).to_have_count(0)
+    expect(fixture.locator("[data-audio-seek]")).to_have_attribute("aria-disabled", "true")
+    expect(fixture.locator("[data-audio-seek]")).to_have_attribute("aria-valuenow", "0")
+    # Policy rejection must still reach FilePreview's failure state.
+    page.evaluate("""() => {
+      window.__audioNativePlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function() {
+        return Promise.reject(new DOMException('Playback denied', 'NotAllowedError'));
+      };
+    }""")
+    try:
+        page.evaluate("window.__preview('proof.wav')")
+        fixture.get_by_role("button", name="Play proof.wav", exact=True).click()
+        expect(fixture.locator("[data-visible-content-failed]")).to_have_count(1)
+        expect(fixture.locator(".quiet-line")).to_contain_text("proof.wav — file fetch failed")
+        expect(fixture.locator("[data-audio-seek]")).to_have_count(0)
+        screenshot("preview-audio-policy-failure.png")
+    finally:
+        page.evaluate("""() => {
+          HTMLMediaElement.prototype.play = window.__audioNativePlay;
+          delete window.__audioNativePlay;
+        }""")
+    # An invalid resource must emit a native media error and retain the failure UI.
+    page.evaluate("""() => {
+      window.__audioResourceError = null;
+      window.__observeAudioError = event => {
+        if (event.target instanceof HTMLAudioElement) {
+          window.__audioResourceError = {trusted: event.isTrusted, code: event.target.error?.code};
+        }
+      };
+      document.addEventListener('error', window.__observeAudioError, true);
+      window.__preview('invalid.wav');
+    }""")
+    try:
+        fixture.get_by_role("button", name="Play invalid.wav", exact=True).click()
+        page.wait_for_function("window.__audioResourceError")
+        assert page.evaluate("window.__audioResourceError") == {"trusted": True, "code": 4}
+        expect(fixture.locator("[data-visible-content-failed]")).to_have_count(1)
+        expect(fixture.locator(".quiet-line")).to_contain_text("invalid.wav — file fetch failed")
+        expect(fixture.locator("[data-audio-seek]")).to_have_count(0)
+        screenshot("preview-audio-resource-failure.png")
+    finally:
+        page.evaluate("""() => {
+          document.removeEventListener('error', window.__observeAudioError, true);
+          delete window.__observeAudioError;
+          delete window.__audioResourceError;
+        }""")
+    page.evaluate("window.__preview('')")

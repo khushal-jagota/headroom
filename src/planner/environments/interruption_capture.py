@@ -18,7 +18,10 @@ from uuid import uuid4
 
 from planner.conversation.deploy_interruptions.contracts import CapturedTurn, CaptureManifest
 from planner.conversation.deploy_interruptions.files import write_manifest
-from planner.conversation.lifecycle_storage import acquire_runtime_ownership
+from planner.conversation.lifecycle_storage import (
+    acquire_runtime_ownership,
+    retained_run_is_unresolved,
+)
 from planner.environments.interruption_capture_configuration import (
     INTERRUPTION_CAPTURE_BUDGET_SECONDS,
 )
@@ -92,6 +95,8 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
     captured: list[CapturedTurn] = []
     for fact in facts:
         conversation_id = str(fact["conversation_id"])
+        if retained_run_is_unresolved(conn, conversation_id):
+            continue
         occurrence = (
             conn.execute(
                 "SELECT occurrence_id,runtime_epoch FROM conversation_turn_occurrences "
@@ -143,6 +148,33 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
                     str(historical_ticket[1]),
                     "ticket",
                     str(historical_ticket[0]),
+                    None,
+                    None,
+                )
+            )
+            continue
+        # Capture also reads pre-goal deployments without migrating their database.
+        goal = (
+            conn.execute(
+                "SELECT h.owner_id,g.title FROM conversation_history_catalog h "
+                "JOIN goals g ON g.id=h.owner_id WHERE h.conversation_id=? "
+                "AND h.owner_kind='goal' LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            if "goals" in tables
+            else None
+        )
+        if goal is not None:
+            captured.append(
+                CapturedTurn(
+                    conversation_id,
+                    int(fact["turn_number"]),
+                    occurrence_id,
+                    turn_epoch,
+                    str(fact["status"]),
+                    str(goal[1]),
+                    "goal",
+                    str(goal[0]),
                     None,
                     None,
                 )

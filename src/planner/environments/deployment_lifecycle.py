@@ -55,9 +55,11 @@ DeploymentPhase = Literal[
     "succeeded",
     "failed",
     "rolled_back",
+    "cancelled",
+    "unknown",
 ]
 ProjectionState = Literal["idle", "preparing", "restarting", "back_up", "problem", "unknown"]
-DeploymentOutcome = Literal["succeeded", "failed", "rolled_back"]
+DeploymentOutcome = Literal["succeeded", "failed", "rolled_back", "cancelled"]
 
 _PHASES: frozenset[str] = frozenset(
     {
@@ -68,6 +70,8 @@ _PHASES: frozenset[str] = frozenset(
         "succeeded",
         "failed",
         "rolled_back",
+        "cancelled",
+        "unknown",
     }
 )
 _NONTERMINAL_PHASES = frozenset({"preparing", "restarting", "verifying", "app_healthy"})
@@ -75,17 +79,21 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _DEPLOYMENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _CODE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "preparing": frozenset({"preparing", "restarting", "verifying", "failed"}),
+    "preparing": frozenset(
+        {"preparing", "restarting", "verifying", "failed", "cancelled", "unknown"}
+    ),
     "restarting": frozenset(
-        {"restarting", "verifying", "app_healthy", "failed", "rolled_back"}
+        {"restarting", "verifying", "app_healthy", "failed", "rolled_back", "unknown"}
     ),
     "verifying": frozenset(
-        {"restarting", "verifying", "app_healthy", "failed", "rolled_back"}
+        {"restarting", "verifying", "app_healthy", "failed", "rolled_back", "unknown"}
     ),
-    "app_healthy": frozenset({"app_healthy", "succeeded", "failed", "rolled_back"}),
+    "app_healthy": frozenset({"app_healthy", "succeeded", "failed", "rolled_back", "unknown"}),
     "succeeded": frozenset(),
     "failed": frozenset(),
     "rolled_back": frozenset(),
+    "cancelled": frozenset(),
+    "unknown": frozenset(),
 }
 
 
@@ -146,6 +154,9 @@ class LifecycleProjection:
     detail: str | None = None
     valid_until: str | None = None
     success_display_until: str | None = None
+    installation_confirmed: bool = False
+    work_paused: bool = False
+    unknown_display_until: str | None = None
 
     def to_public_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -276,7 +287,9 @@ class DeploymentLifecycleStore:
                     f"stale deployment {deployment_id!r}; current is "
                     f"{current.deployment_id!r}"
                 )
-            if preserve_terminal and current.phase in {"succeeded", "failed", "rolled_back"}:
+            if preserve_terminal and current.phase in {
+                "succeeded", "failed", "rolled_back", "cancelled", "unknown"
+            }:
                 return current
             if phase not in _ALLOWED_TRANSITIONS[current.phase]:
                 raise DeploymentLifecycleError(
@@ -300,7 +313,9 @@ class DeploymentLifecycleStore:
             _atomic_write(self.path, lifecycle.to_public_dict())
             return lifecycle
 
-    def project(self, deployed_sha: str | None) -> LifecycleProjection:
+    def project(
+        self, deployed_sha: str | None, *, admission_open: bool = False
+    ) -> LifecycleProjection:
         _validate_optional_sha(deployed_sha, "deployed_sha")
         read = self.read()
         if not read.available or read.lifecycle is None:
@@ -314,9 +329,25 @@ class DeploymentLifecycleStore:
                 deployed_sha=deployed_sha,
                 target_sha=None,
                 outcome=None,
-                detail=None if state == "idle" else read.reason,
+                detail=(None if state == "idle" else
+                        "Deployment status is unavailable. Chief review is required."),
+                work_paused=not admission_open,
             )
         lifecycle = read.lifecycle
+        installation_confirmed = bool(
+            admission_open
+            and deployed_sha is not None
+            and lifecycle.requested_sha == lifecycle.serving_sha == deployed_sha
+            and lifecycle.phase in {"app_healthy", "succeeded", "failed", "unknown"}
+        )
+        unknown_display_until = (
+            _format_time(
+                (lifecycle.updated_at if lifecycle.phase == "unknown" else lifecycle.expires_at)
+                + timedelta(seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS)
+            )
+            if installation_confirmed and lifecycle.phase in {"app_healthy", "unknown"}
+            else None
+        )
         now = _utc_now(self._now)
         valid_until = _format_time(lifecycle.expires_at)
         success_display_until = (
@@ -330,7 +361,12 @@ class DeploymentLifecycleStore:
                 deployed_sha=deployed_sha,
                 target_sha=lifecycle.requested_sha,
                 outcome=None,
-                detail="Deployment progress expired before completion was confirmed.",
+                detail=_unknown_detail(
+                    lifecycle, deployed_sha, installation_confirmed, admission_open
+                ),
+                installation_confirmed=installation_confirmed,
+                work_paused=not admission_open,
+                unknown_display_until=unknown_display_until,
             )
         if lifecycle.phase == "preparing":
             state = "preparing"
@@ -346,6 +382,12 @@ class DeploymentLifecycleStore:
                 state = "back_up"
             else:
                 state = "idle"
+        elif lifecycle.phase == "cancelled":
+            state = "idle"
+            outcome = "cancelled"
+        elif lifecycle.phase == "unknown":
+            state = "unknown"
+            outcome = None
         elif lifecycle.phase == "rolled_back":
             state = "problem"
             outcome = "rolled_back"
@@ -353,6 +395,10 @@ class DeploymentLifecycleStore:
             state = "problem"
             outcome = "failed"
         detail = lifecycle.detail
+        if lifecycle.phase == "unknown":
+            detail = _unknown_detail(
+                lifecycle, deployed_sha, installation_confirmed, admission_open
+            )
         if lifecycle.phase == "succeeded" and state == "problem":
             detail = "Recorded deployment success does not match the running app."
         return LifecycleProjection(
@@ -361,6 +407,9 @@ class DeploymentLifecycleStore:
             target_sha=lifecycle.requested_sha,
             outcome=outcome,
             detail=detail,
+            installation_confirmed=installation_confirmed,
+            work_paused=not admission_open,
+            unknown_display_until=unknown_display_until,
             success_display_until=(
                 _format_time(success_display_until)
                 if success_display_until is not None and state == "back_up"
@@ -373,6 +422,21 @@ class DeploymentLifecycleStore:
                 else None
             ),
         )
+
+
+def _unknown_detail(
+    lifecycle: DeploymentLifecycle, deployed_sha: str | None, installation_confirmed: bool,
+    admission_open: bool,
+) -> str:
+    if installation_confirmed:
+        return ("The requested app is installed and available. Its final report is unconfirmed. "
+                "No action is needed from you.")
+    if lifecycle.serving_sha == lifecycle.requested_sha and deployed_sha != lifecycle.requested_sha:
+        return ("The running app does not match the recorded installation. "
+                "Chief review is required.")
+    if not admission_open:
+        return "Installation is unconfirmed. Work remains paused. Chief review is required."
+    return "Installation is unconfirmed. Chief review is required."
 
 
 def _read_lifecycle(path: Path) -> LifecycleRead:
@@ -481,9 +545,9 @@ def _validate_serving_proof(
 
 
 def _ttl_for_phase(phase: DeploymentPhase) -> timedelta:
-    if phase == "succeeded":
+    if phase in {"succeeded", "cancelled"}:
         return SUCCESS_TTL
-    if phase in {"failed", "rolled_back"}:
+    if phase in {"failed", "rolled_back", "unknown"}:
         return PROBLEM_TTL
     return NONTERMINAL_TTL
 

@@ -20,6 +20,7 @@ from planner.conversation.contracts import (
     PromptDeliveryStarted,
 )
 from planner.conversation.events import (
+    AgentMessageEventPayload,
     ConversationTurnEnding,
     PromptDiscardedEventPayload,
     PromptEventPayload,
@@ -56,6 +57,27 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
 
 
+@pytest.mark.parametrize(
+    "source_kind",
+    (WakeSourceKind.proposal, WakeSourceKind.worker_error, WakeSourceKind.turn_failure),
+)
+def test_ticket_notice_requires_ticket_before_insert(
+    tmp_db: Connection, source_kind: WakeSourceKind
+) -> None:
+    with pytest.raises(ValueError, match="ticket notice requires a Ticket"):
+        wake_data.create_wake(
+            tmp_db,
+            manager_id=None,
+            ticket_id=None,
+            source_kind=source_kind,
+            source_revision=1,
+            summary="Invalid ticket notice",
+            now=1,
+            target=CHIEF_PRINCIPAL,
+        )
+    assert tmp_db.execute("SELECT COUNT(*) FROM manager_wakes").fetchone()[0] == 0
+
+
 def _item_and_ticket(conn: Connection, clock: FakeClock) -> tuple[str, str]:
     item = managers_data.create_manager(
         conn, title="Managed manager", project_id="project_vylo", clock=clock
@@ -69,7 +91,7 @@ def _item_and_ticket(conn: Connection, clock: FakeClock) -> tuple[str, str]:
         worker_type="coding",
         brief="Start",
         manager_id=item.id,
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     return item.id, ticket.id
 
@@ -93,7 +115,10 @@ def _append_failed_turn(store: ConversationStore, conversation_id: str) -> None:
     asyncio.run(
         store.append_turn_ending(
             conversation_id,
-            (TurnEndedEventPayload(ConversationTurnEnding.failed, "provider unavailable"),),
+            (
+                AgentMessageEventPayload(text_message_content("progress before failure")),
+                TurnEndedEventPayload(ConversationTurnEnding.failed, "provider unavailable"),
+            ),
             agent_activity=True,
             automatic_compaction_confirmed=False,
             automatic_compaction_result=None,
@@ -119,7 +144,7 @@ def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="coding",
             brief="Start",
-            stated_ceiling="needs_success_condition",
+            stated_ceiling="needs_what_changes",
         ).id
     tmp_db.execute(
         "UPDATE tickets SET ceiling_holder=? WHERE id=?",
@@ -132,7 +157,7 @@ def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
 
     row = _wake_rows(tmp_db)[0]
     assert (row["target_kind"], row["target_id"]) == (holder_kind, holder_id)
-    assert (row["source_conversation_id"], row["source_revision"]) == ("conv-failed", 1)
+    assert (row["source_conversation_id"], row["source_revision"]) == ("conv-failed", 2)
     assert "provider unavailable" in str(row["summary"])
 
 
@@ -174,7 +199,7 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     ).id
     if target_kind == "ticket":
         target_id = tickets_data.create_ticket(
@@ -185,7 +210,7 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="coding",
             brief="Start",
-            stated_ceiling="needs_success_condition",
+            stated_ceiling="needs_what_changes",
         ).id
     assert target_id is not None
     target = Principal(PrincipalKind(target_kind), target_id)
@@ -233,7 +258,7 @@ def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     target = tickets_data.create_ticket(
         tmp_db,
@@ -243,7 +268,7 @@ def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     _current_ticket_conversation(tmp_db, target.id, "conv-before-reset")
     wake_data.create_turn_failure_wake(
@@ -297,7 +322,7 @@ def test_busy_ticket_target_releases_batch_and_restart_recovery_is_target_agnost
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     target = tickets_data.create_ticket(
         tmp_db,
@@ -307,7 +332,7 @@ def test_busy_ticket_target_releases_batch_and_restart_recovery_is_target_agnost
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     _current_ticket_conversation(tmp_db, target.id, "conv-busy-ticket")
     wake_data.create_turn_failure_wake(
@@ -533,10 +558,10 @@ def test_moving_a_parked_proposal_wakes_the_new_manager_and_removes_old_authorit
         tickets_data.accept_proposal(
             tmp_db,
             ticket_id,
-            field="success_condition",
+            field="what_changes",
             principal=old_manager,
             now=4,
-            next_ceiling="needs_what_changes",
+            next_ceiling="needs_implementation",
             next_holder=old_manager,
         )
     assert forbidden.value.code is ErrorCode.agent_forbidden
@@ -594,7 +619,9 @@ def test_batches_group_wakes_and_close_only_for_the_exact_prompt(
         now=11,
     )
     tmp_db.execute("UPDATE manager_wakes SET summary='Event 1' WHERE ticket_id=?", (ticket_id,))
-    for revision, kind in enumerate(list(WakeSourceKind)[1:], start=2):
+    for revision, kind in enumerate(
+        (WakeSourceKind.worker_error, WakeSourceKind.turn_failure), start=2
+    ):
         wake_data.create_wake(
             tmp_db,
             manager_id=item_id,
@@ -841,7 +868,7 @@ def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batc
         worker_type="coding",
         brief="Start",
         manager_id=item_id,
-        stated_ceiling="needs_success_condition",
+        stated_ceiling="needs_what_changes",
     )
     wake_data.create_worker_error_wake(
         tmp_db,
@@ -1071,12 +1098,12 @@ def test_delivery_uses_the_supervisor_boundary_and_closes_on_its_prompt(
 def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
     tmp_db: Connection, fake_clock: FakeClock, source: str
 ) -> None:
-    item_id, existing_id = _item_and_ticket(tmp_db, fake_clock)
+    _item_id, existing_id = _item_and_ticket(tmp_db, fake_clock)
     if source == "kickoff":
         ticket = tickets_data.create_ticket(
             tmp_db, title="Chief kickoff review", principal=OWNER_PRINCIPAL,
             now=10, title_max_chars=TITLE_MAX_CHARS, worker_type="coding",
-            brief="Chief must see this canonical proposal", manager_id=item_id,
+            brief="Chief must see this canonical proposal", manager_kind="chief",
             stated_holder=CHIEF_PRINCIPAL,
         )
         ticket_id = ticket.id
@@ -1084,7 +1111,10 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
         ticket_id = existing_id
         tickets_data.edit_ticket(
             tmp_db, ticket_id,
-            edit={"ceiling_holder": CHIEF_PRINCIPAL if source == "file" else OWNER_PRINCIPAL},
+            edit={
+                "manager": CHIEF_PRINCIPAL,
+                "ceiling_holder": CHIEF_PRINCIPAL if source == "file" else OWNER_PRINCIPAL,
+            },
             title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=10,
         )
         ticket = tickets_data.file_current_proposal(
@@ -1098,7 +1128,8 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
                 title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=12,
             )
     assert ticket.ceiling_holder == CHIEF_PRINCIPAL
-    assert ticket.manager_id == item_id
+    assert ticket.manager_kind == "chief"
+    assert ticket.manager_id is None
     assert ticket.pending_proposal is not None
     initial_stage = ticket.stage
     expected_revision = 2 if source == "readdress" else 1
@@ -1135,7 +1166,8 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
     unchanged = tickets_data.read_ticket(tmp_db, ticket_id)
     assert unchanged.stage == initial_stage
     assert unchanged.pending_proposal == ticket.pending_proposal
-    assert unchanged.manager_id == item_id
+    assert unchanged.manager_kind == "chief"
+    assert unchanged.manager_id is None
     # A later explicit owner reroute is still an address change, not employee delivery.
     tickets_data.edit_ticket(
         tmp_db, ticket_id, edit={"ceiling_holder": OWNER_PRINCIPAL},
@@ -1170,11 +1202,11 @@ def test_obsolete_sources_retire_before_batching_with_compared_facts(
         tickets_data.accept_proposal(
             tmp_db,
             ticket_id,
-            field="success_condition",
+            field="what_changes",
             principal=OWNER_PRINCIPAL,
             now=3,
             next_holder=OWNER_PRINCIPAL,
-            next_ceiling="needs_what_changes",
+            next_ceiling="needs_implementation",
         )
     elif change in ("reject", "resolve_transfer"):
         tickets_data.reject_proposal(
@@ -1188,7 +1220,7 @@ def test_obsolete_sources_retire_before_batching_with_compared_facts(
             tickets_data.edit_ticket(
                 tmp_db,
                 ticket_id,
-                edit={"ceiling_holder": CHIEF_PRINCIPAL},
+                edit={"manager": CHIEF_PRINCIPAL, "ceiling_holder": CHIEF_PRINCIPAL},
                 title_max_chars=TITLE_MAX_CHARS,
                 principal=OWNER_PRINCIPAL,
                 now=4,
@@ -1207,7 +1239,7 @@ def test_obsolete_sources_retire_before_batching_with_compared_facts(
         tickets_data.edit_ticket(
             tmp_db,
             ticket_id,
-            edit={"ceiling_holder": CHIEF_PRINCIPAL},
+            edit={"manager": CHIEF_PRINCIPAL, "ceiling_holder": CHIEF_PRINCIPAL},
             title_max_chars=TITLE_MAX_CHARS,
             principal=OWNER_PRINCIPAL,
             now=3,

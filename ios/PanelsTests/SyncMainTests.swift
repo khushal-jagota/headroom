@@ -18,9 +18,24 @@ final class SyncMainTests: XCTestCase {
         XCTAssertEqual(visible(future, future, connected: false), .reconnecting)
     }
 
+    func testDeploymentDistinguishesUnconfirmedInstallationFromUnconfirmedReport() {
+        let now = Date(timeIntervalSince1970: 1000)
+        var status = DeploymentStatus(state: "preparing", deployedSha: nil, targetSha: nil, outcome: nil, detail: nil, validUntil: "1970-01-01T00:16:00Z")
+        XCTAssertEqual(DeploymentStatusPresentation.resolve(status, connected: true, readFailed: false, now: now), .unknown)
+        XCTAssertTrue(DeploymentStatusPresentation.detail(status, state: .unknown)!.contains("Chief review is required"))
+        status.installationConfirmed = true
+        status.unknownDisplayUntil = "1970-01-01T00:20:00Z"
+        XCTAssertEqual(DeploymentStatusPresentation.resolve(status, connected: true, readFailed: false, now: now), .unknown)
+        XCTAssertTrue(DeploymentStatusPresentation.detail(status, state: .unknown)!.contains("installed and available"))
+        status.unknownDisplayUntil = "1970-01-01T00:16:40Z"
+        XCTAssertNil(DeploymentStatusPresentation.resolve(status, connected: true, readFailed: false, now: now))
+        XCTAssertEqual(DeploymentStatusPresentation.resolve(status, connected: false, readFailed: false, now: now), .reconnecting)
+    }
+
     func testDependencyBlockedAgentGoesInBlockedOnPageButStaysOutOfRail() throws {
-        let json = #"{"id":"t1","title":"Blocked","worker_type":"coding","stage":"implementation","ticket_status":"agent","is_backlogged":false,"blocked":true,"recap_preview":"","awaiting_reply":false,"awaiting_answer":false,"awaiting_approval":false,"awaiting_agent_approval":false,"assigned":false,"agent_state":"working"}"#
+        let json = #"{"id":"t1","title":"Blocked","locale":"macos","worker_type":"coding","stage":"implementation","ticket_status":"agent","is_backlogged":false,"blocked":true,"recap_preview":"","awaiting_reply":false,"awaiting_answer":false,"awaiting_approval":false,"awaiting_agent_approval":false,"assigned":false,"agent_state":"working"}"#
         let ticket = try APIClient.decoder().decode(TicketSummary.self, from: Data(json.utf8))
+        XCTAssertEqual(ticket.locale, "macos")
         XCTAssertEqual(WorkerGroup.classify(ticket), .blocked)
         XCTAssertNil(WorkspaceGrouping.section(for: ticket))
     }

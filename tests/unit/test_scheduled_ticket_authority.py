@@ -7,7 +7,6 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
-from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -20,6 +19,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
+from planner.goals.actions import create_goal
 from planner.managers import data as managers_data
 from planner.scheduled_tickets import actions, api, data
 from planner.scheduled_tickets.contracts import (
@@ -114,11 +114,19 @@ def test_canonical_actions_require_schedule_authority(
     tmp_db: Connection, chain: tuple[str, str, str], kind: PrincipalKind
 ) -> None:
     own, _unrelated, worker = chain
+    goal = create_goal(
+        tmp_db,
+        {"project_id": "project_vylo", "title": "Goal caller", "kind": "binary",
+         "primary_checklist_block_id": None},
+        principal=OWNER_PRINCIPAL,
+        now=1,
+    )
     principal = {
         PrincipalKind.owner: OWNER_PRINCIPAL,
         PrincipalKind.chief: CHIEF_PRINCIPAL,
         PrincipalKind.manager: Principal(PrincipalKind.manager, own),
         PrincipalKind.ticket: Principal(PrincipalKind.ticket, worker),
+        PrincipalKind.goal: Principal(PrincipalKind.goal, goal.id),
     }[kind]
     # Raw storage supplies history without attributing historical authorship.
     original = data.create_schedule(
@@ -222,7 +230,7 @@ def test_schedule_routes_require_consistent_actor_identity(
     assert _snapshot(tmp_db) == before
 
 
-def test_assignment_allows_direct_creation_but_denied_schedules_cannot_change_due_work(
+def test_direct_creation_checks_holder_and_denied_schedules_cannot_change_due_work(
     tmp_db: Connection,
     client: TestClient,
     chain: tuple[str, str, str],
@@ -251,12 +259,25 @@ def test_assignment_allows_direct_creation_but_denied_schedules_cannot_change_du
     )
     for headers in headers_by_actor:
         direct = {"title": "Direct work", "worker_type": "coding"}
-        allowed = client.post(
+        before_direct = _snapshot(tmp_db)
+        direct_response = client.post(
             "/api/tickets",
             json={**direct, "manager": {"kind": "manager", "id": own}},
             headers=headers,
         )
-        assert allowed.status_code == 200, allowed.text
+        if headers["X-Plan-Actor"] == "manager":
+            assert direct_response.status_code == 200, direct_response.text
+            assert direct_response.json()["ceiling_holder"] == {"kind": "manager", "id": own}
+        else:
+            # Same-chain creation authority does not make a Worker an eligible reviewer.
+            assert direct_response.status_code == 400, direct_response.text
+            error = direct_response.json()["error"]
+            assert error["code"] == "validation"
+            assert error["message"] == (
+                "ceiling holder must be the user or the Ticket's direct manager; "
+                "name an eligible holder explicitly"
+            )
+            assert _snapshot(tmp_db) == before_direct
         denied = client.post(
             "/api/tickets",
             json={**direct, "manager": {"kind": "manager", "id": unrelated}},
@@ -265,10 +286,10 @@ def test_assignment_allows_direct_creation_but_denied_schedules_cannot_change_du
         assert denied.status_code == 400, denied.text
         assert denied.json()["error"]["code"] == "agent_forbidden"
 
-    async def refuse_model_resolution(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("Denied callers must not reach model resolution")
+    def refuse_template_resolution(*args: object, **kwargs: object) -> None:
+        raise AssertionError("Denied callers must not reach template resolution")
 
-    monkeypatch.setattr(api, "warm_ticket_creation_model", refuse_model_resolution)
+    monkeypatch.setattr(api, "_template_from_create", refuse_template_resolution)
     before = _snapshot(tmp_db)
     for headers in headers_by_actor:
         for destination in (own, unrelated):

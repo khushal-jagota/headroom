@@ -1,4 +1,3 @@
-"""Catalogue freshness and bounded cold-start policy."""
+"""Bounded advisory catalog reads."""
 
-CATALOGUE_FRESH_SECONDS = 300
 CATALOGUE_COLD_START_TIMEOUT_SECONDS = 35

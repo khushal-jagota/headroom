@@ -9,6 +9,7 @@ import Observation
     var tickets: [TicketSummary] = []
     var chief: ChiefDetail?
     var review: ReviewResponse?
+    var executorHealth: ExecutorHealth?
     var deployment: DeploymentStatus?
     var managerPage: PageFacts?
     var ticketPage: PageFacts?
@@ -46,7 +47,7 @@ import Observation
         self.baseURL = baseURL
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
         managers = []; tickets = []; chief = nil; review = nil; deployment = nil
-        managerPage = nil; ticketPage = nil; errors = [:]
+        managerPage = nil; ticketPage = nil; errors = [:]; executorHealth = nil
         resourceVersions = ResourceVersionState()
         restore()
     }
@@ -102,8 +103,11 @@ import Observation
         async let ticketRead: () = readIf(workspace, "Tickets", from: api) { try await api.ticketWindow(through: ticketOffset) } apply: { self.tickets = $0.tickets; self.ticketPage = $0.page }
         async let chiefRead: () = readVersioned("Chief", path: keys[0], api: api, probe: probe, force: !changesOnly) { self.chief = $0 }
         async let reviewRead: () = read("Review", from: api) { try await api.review() } apply: { self.review = $0 }
+        async let machineRead = api.executorHealth()
         async let deployRead: () = readVersioned("Deployment", path: keys[1], api: api, probe: probe, force: !changesOnly) { self.deployment = $0 }
         _ = await (managerRead, ticketRead, chiefRead, reviewRead, deployRead)
+        guard !Task.isCancelled, api.baseURL == baseURL else { return }
+        executorHealth = try? await machineRead
         guard !Task.isCancelled, api.baseURL == baseURL else { return }
         revision += 1
         if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }

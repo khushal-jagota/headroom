@@ -50,10 +50,10 @@ class DeadlineStreamingResponse(StreamingResponse):
             if message["type"] == "http.response.start":
                 started = True
 
+        # A timeout must reach the server so it closes the failed transport.
+        # Silence hid an existing send failure and left the response incomplete.
         try:
             await super().stream_response(bounded_send)
-        except TimeoutError:
-            pass
         except DeliveryUnavailable:
             if not started:
                 response = JSONResponse(
@@ -65,6 +65,11 @@ class DeadlineStreamingResponse(StreamingResponse):
                     {"type": "http.response.start", "status": 503, "headers": response.raw_headers}
                 )
                 await send({"type": "http.response.body", "body": response.body})
+            else:
+                await asyncio.wait_for(
+                    send({"type": "http.response.body", "body": b"", "more_body": False}),
+                    self.send_timeout,
+                )
         finally:
             # Closing the async iterator releases the signal and shutdown subscriptions.
             close = getattr(self.body_iterator, "aclose", None)

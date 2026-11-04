@@ -3,6 +3,7 @@ import {
   readBackends,
   refreshBackends,
   type BackendSnapshot,
+  type BackendUsageRefreshOutcome,
   type BackendsRefreshResult
 } from "./wire";
 
@@ -10,6 +11,14 @@ export type BackendRefreshAttempt = Readonly<{
   snapshots: BackendSnapshot[] | null;
   error: string | null;
 }>;
+
+export type BackendUsageRefreshAttempt = BackendRefreshAttempt & Readonly<{
+  outcomes: BackendUsageRefreshOutcome[];
+}>;
+
+export function backendUsageOutcomeLabel(outcome: BackendUsageRefreshOutcome["outcome"]): string | null {
+  return { succeeded: null, failed: "Failed", unauthenticated: "Unauthenticated", unavailable: "Unavailable" }[outcome];
+}
 
 export function backendRefreshControl(refreshing: boolean): Readonly<{
   label: string;
@@ -23,20 +32,18 @@ type BackendRefreshRequest = () => Promise<BackendsRefreshResult>;
 
 export async function refreshBackendSnapshots(
   request: BackendRefreshRequest = refreshBackends
-): Promise<BackendRefreshAttempt> {
+): Promise<BackendUsageRefreshAttempt> {
   try {
     const result = await request();
-    const failures = result.usage_outcomes
-      .filter((outcome) => outcome.outcome === "failed")
-      .map((outcome) => outcome.detail)
-      .filter((detail): detail is string => detail !== null);
     return {
       snapshots: result.backends,
-      error: failures.length === 0 ? null : failures.join(" ")
+      outcomes: result.usage_outcomes,
+      error: null
     };
   } catch (problem) {
     return {
       snapshots: null,
+      outcomes: [],
       error: problem instanceof ConversationWireError
         ? problem.message
         : problem instanceof Error

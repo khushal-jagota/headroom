@@ -1,0 +1,88 @@
+{
+  "fields": [
+    {
+      "id": "brief",
+      "label": "Brief"
+    },
+    {
+      "id": "success_condition",
+      "label": "Success Condition"
+    },
+    {
+      "id": "what_changes",
+      "label": "What Changes"
+    },
+    {
+      "id": "plan",
+      "label": "Plan"
+    },
+    {
+      "id": "implementation",
+      "label": "Implementation"
+    },
+    {
+      "id": "consequences",
+      "label": "Consequences"
+    }
+  ],
+  "label": "Coding",
+  "profile": {
+    "default_backend": "codex",
+    "default_model": "gpt-5.6-sol",
+    "default_reasoning_effort": "medium",
+    "specialist_skill": "panels-worker-coding",
+    "toolset_profile": "default"
+  },
+  "stages": [
+    {
+      "gating_field": "brief",
+      "id": "needs_brief",
+      "is_terminal": false,
+      "label": "Brief",
+      "ownership_mode": "worker"
+    },
+    {
+      "gating_field": "success_condition",
+      "id": "needs_success_condition",
+      "is_terminal": false,
+      "label": "Success Condition",
+      "ownership_mode": "worker"
+    },
+    {
+      "gating_field": "what_changes",
+      "id": "needs_what_changes",
+      "is_terminal": false,
+      "label": "What Changes",
+      "ownership_mode": "worker"
+    },
+    {
+      "gating_field": "plan",
+      "id": "needs_plan",
+      "is_terminal": false,
+      "label": "Plan",
+      "ownership_mode": "worker"
+    },
+    {
+      "gating_field": "implementation",
+      "id": "needs_implementation",
+      "is_terminal": false,
+      "label": "Implementation",
+      "ownership_mode": "worker"
+    },
+    {
+      "gating_field": "consequences",
+      "id": "needs_consequences",
+      "is_terminal": false,
+      "label": "Consequences",
+      "ownership_mode": "worker"
+    },
+    {
+      "gating_field": null,
+      "id": "done",
+      "is_terminal": true,
+      "label": "Done",
+      "ownership_mode": null
+    }
+  ],
+  "worker_type": "coding"
+}

@@ -1,4 +1,5 @@
 import multiprocessing
+import os
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -20,6 +21,7 @@ from planner.managed_skills import (
 from planner.skill_sources import (
     RETIRED_PANELS_SKILL_NAMES,
     provision_native_backend_skills,
+    provision_workspace_skills,
 )
 from planner.skill_versions import reconcile_managed_skill_versions
 from planner.worker_settings import service
@@ -444,3 +446,103 @@ def test_manager_skill_primary_identity_matches_the_generated_role() -> None:
         "If PLAN_MANAGER_ID is absent, use the retained PLAN_SPRINT_ITEM_ID "
         "for the same Manager."
     ) in plain_source
+
+
+def test_workspace_skill_link_is_repeatable_and_reads_live_managed_edits(
+    tmp_path: Path, database: sqlite3.Connection
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    managed = managed_skills_home(tmp_path)
+    provision_workspace_skills(workspace, tmp_path)
+    exposed = workspace / ".agents/skills"
+    assert exposed.is_symlink()
+    assert exposed.resolve() == managed.resolve()
+    original_link = exposed.lstat().st_ino
+    provision_workspace_skills(workspace, tmp_path)
+    assert exposed.lstat().st_ino == original_link
+    service.save_skill(
+        database,
+        "panels",
+        {"description": "Workspace sees this managed revision"},
+        now=1,
+        database_parent=tmp_path,
+    )
+    assert "Workspace sees this managed revision" in (exposed / "panels/SKILL.md").read_text()
+    assert not (workspace / "AGENTS.md").exists()
+
+
+@pytest.mark.parametrize(
+    "conflict_kind",
+    [
+        "parent-file",
+        "parent-link",
+        "skills-file",
+        "skills-directory",
+        "dangling-link",
+        "foreign-link",
+    ],
+)
+def test_workspace_skill_setup_preserves_every_existing_conflict(
+    tmp_path: Path, database: sqlite3.Connection, conflict_kind: str
+) -> None:
+    del database
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    parent = workspace / ".agents"
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    retained = foreign / "keep.txt"
+    retained.write_text("foreign content")
+    if conflict_kind == "parent-file":
+        conflict = parent
+        conflict.write_text("parent content")
+    elif conflict_kind == "parent-link":
+        conflict = parent
+        conflict.symlink_to(foreign, target_is_directory=True)
+    else:
+        parent.mkdir()
+        conflict = parent / "skills"
+        if conflict_kind == "skills-file":
+            conflict.write_text("skills content")
+        elif conflict_kind == "skills-directory":
+            conflict.mkdir()
+            (conflict / "custom.txt").write_text("custom skill")
+        else:
+            conflict.symlink_to(
+                foreign if conflict_kind == "foreign-link" else tmp_path / "missing"
+            )
+    before = conflict.lstat()
+    link_target = conflict.readlink() if conflict.is_symlink() else None
+    with pytest.raises(FileExistsError) as caught:
+        provision_workspace_skills(workspace, tmp_path)
+    assert str(conflict) in str(caught.value)
+    assert str(managed_skills_home(tmp_path)) in str(caught.value)
+    assert conflict.lstat().st_ino == before.st_ino
+    assert retained.read_text() == "foreign content"
+    if link_target is not None:
+        assert conflict.readlink() == link_target
+    elif conflict.is_file():
+        assert conflict.read_text() == (
+            "parent content" if conflict_kind == "parent-file" else "skills content"
+        )
+    else:
+        assert (conflict / "custom.txt").read_text() == "custom skill"
+
+
+def test_workspace_skill_setup_rechecks_exclusive_creation_race(
+    tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del database
+    workspace = tmp_path / "workspace"
+    (workspace / ".agents").mkdir(parents=True)
+    exposed = workspace / ".agents/skills"
+    real_symlink = os.symlink
+
+    def concurrent_creator(src: str | Path, dst: str, *, dir_fd: int | None = None) -> None:
+        real_symlink(src, dst, dir_fd=dir_fd)
+        raise FileExistsError(dst)
+
+    monkeypatch.setattr("planner.skill_sources.os.symlink", concurrent_creator)
+    provision_workspace_skills(workspace, tmp_path)
+    assert exposed.resolve() == managed_skills_home(tmp_path).resolve()

@@ -1,0 +1,294 @@
+{
+  "outcome": "failed",
+  "cases": [
+    {
+      "id": "feedback-inbox",
+      "entry": "shell-feedback",
+      "status": "passed",
+      "seconds": 24.072320007020608,
+      "timing": {
+        "navigationSeconds": 1.3443457380635664,
+        "screenshotSeconds": 0.8572990963002667,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 2,
+        "screenshots": 18,
+        "fixedWaits": 0,
+        "unattributedSeconds": 21.870675172656775
+      }
+    },
+    {
+      "id": "workspace-utility-pane",
+      "entry": "shell-feedback",
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/web/tests/browser/support/state_barriers.py\", line 30, in establish_scrollback\n    page.wait_for_function(\"token=>window[token].sample()\", arg=token, timeout=remaining())\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/.venv/lib/python3.13/site-packages/playwright/sync_api/_generated.py\", line 12594, in wait_for_function\n    self._sync(\n    ~~~~~~~~~~^\n        self._impl_obj.wait_for_function(\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<4 lines>...\n        )\n        ^\n    )\n    ^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/.venv/lib/python3.13/site-packages/playwright/_impl/_sync_base.py\", line 115, in _sync\n    return task.result()\n           ~~~~~~~~~~~^^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/.venv/lib/python3.13/site-packages/playwright/_impl/_page.py\", line 1144, in wait_for_function\n    return await self._main_frame.wait_for_function(**locals_to_params(locals()))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/.venv/lib/python3.13/site-packages/playwright/_impl/_frame.py\", line 932, in wait_for_function\n    await self._channel.send(\"waitForFunction\", self._timeout, params)\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/.venv/lib/python3.13/site-packages/playwright/_impl/_connection.py\", line 69, in send\n    return await self._connection.wrap_api_call(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<3 lines>...\n    )\n    ^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/.venv/lib/python3.13/site-packages/playwright/_impl/_connection.py\", line 563, in wrap_api_call\n    raise rewrite_error(error, f\"{parsed_st['apiName']}: {error}\") from None\nplaywright._impl._errors.TimeoutError: Page.wait_for_function: Timeout 4988.355839974247ms exceeded.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/web/tests/browser/execute.py\", line 59, in main\n    module.run(browser, case[\"urls\"])\n    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/web/tests/browser/cases/workspace-utility-pane.py\", line 30, in run\n    verify_conversation_overlay(browser, url)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/web/tests/browser/cases/workspace-utility-pane.py\", line 1199, in verify_conversation_overlay\n    establish_scrollback(page, lambda page=page: page.keyboard.press('PageUp'),\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                         min_clearance=growth + 2, input_kind='keydown', key='PageUp')\n                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/web/tests/browser/support/state_barriers.py\", line 34, in establish_scrollback\n    raise AssertionError({\"barrier\": \"scrollback\", \"evidence\": evidence}) from error\nAssertionError: {'barrier': 'scrollback', 'evidence': {'failure': 'no scrollend', 'before': {'connected': True, 'visible': True, 'ready': 'true', 'entry': 'complete', 'busy': 'false', 'owner': 'manual', 'motion': False, 'scrollTop': 13576, 'scrollHeight': 14206, 'clientHeight': 630, 'top': 44, 'left': 700, 'width': 720, 'height': 630, 'gap': 0}, 'after': {'connected': True, 'visible': True, 'ready': 'true', 'entry': 'complete', 'busy': 'false', 'owner': 'manual', 'motion': False, 'scrollTop': 13025, 'scrollHeight': 14206, 'clientHeight': 630, 'top': 44, 'left': 700, 'width': 720, 'height': 630, 'gap': 551}, 'events': [{'type': 'keydown', 'trusted': True, 'key': 'PageUp', 'deltaY': None, 'target': {'tag': 'DIV', 'thread': True}, 'at': 1669.4000000953674, 'defaultPrevented': False}, {'type': 'scroll', 'at': 1681.2000000476837, 'scrollTop': 13573}, {'type': 'scroll', 'at': 1697.5, 'scrollTop': 13545}, {'type': 'scroll', 'at': 1715, 'scrollTop': 13488}, {'type': 'scroll', 'at': 1734.5, 'scrollTop': 13403}, {'type': 'scroll', 'at': 1752.2000000476837, 'scrollTop': 13300}, {'type': 'scroll', 'at': 1764.2000000476837, 'scrollTop': 13198}, {'type': 'scroll', 'at': 1782.6000000238419, 'scrollTop': 13113}, {'type': 'scroll', 'at': 1798.4000000953674, 'scrollTop': 13056}, {'type': 'scroll', 'at': 1816.8000000715256, 'scrollTop': 13028}, {'type': 'scrollend', 'at': 1829.4000000953674, 'scrollTop': 13025}, {'type': 'scroll', 'at': 1832.4000000953674, 'scrollTop': 13025}], 'ended': False, 'stableIntervals': 0, 'sameTranscript': True, 'requiredClearance': 122}}\n",
+      "seconds": 7.203662001062185,
+      "timing": {
+        "navigationSeconds": 0.34798137401230633,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.5104262640234083,
+        "fixedWaitRequestedSeconds": 0.5,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 2,
+        "unattributedSeconds": 6.34525436302647
+      }
+    },
+    {
+      "id": "stage-owner",
+      "entry": "ticket-review",
+      "status": "passed",
+      "seconds": 0.5517906899331138,
+      "timing": {
+        "navigationSeconds": 0.10531571810133755,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.06609906302765012,
+        "fixedWaitRequestedSeconds": 0.06000000000000005,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 3,
+        "unattributedSeconds": 0.3803759088041261
+      }
+    },
+    {
+      "id": "approve-default",
+      "entry": "ticket-review",
+      "status": "passed",
+      "seconds": 9.751258280011825,
+      "timing": {
+        "navigationSeconds": 0.48842028609942645,
+        "screenshotSeconds": 0.2531332609942183,
+        "fixedWaitSeconds": 0.02522327797487378,
+        "fixedWaitRequestedSeconds": 0.020000000000000018,
+        "navigations": 3,
+        "screenshots": 4,
+        "fixedWaits": 1,
+        "unattributedSeconds": 8.984481454943307
+      }
+    },
+    {
+      "id": "ticket-review-flow",
+      "entry": "ticket-review",
+      "status": "passed",
+      "seconds": 29.029304028954357,
+      "timing": {
+        "navigationSeconds": 0.20630379393696785,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.5778171027777717,
+        "fixedWaitRequestedSeconds": 0.56,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 6,
+        "unattributedSeconds": 28.245183132239617
+      }
+    },
+    {
+      "id": "scheduled-tasks",
+      "entry": "configuration-schedules",
+      "status": "passed",
+      "seconds": 2.929545324994251,
+      "timing": {
+        "navigationSeconds": 0.7054599300026894,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 0,
+        "unattributedSeconds": 2.2240853949915618
+      }
+    },
+    {
+      "id": "skill-editors",
+      "entry": "configuration-schedules",
+      "status": "passed",
+      "seconds": 1.592970211058855,
+      "timing": {
+        "navigationSeconds": 0.3834574819775298,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 4,
+        "screenshots": 0,
+        "fixedWaits": 0,
+        "unattributedSeconds": 1.2095127290813252
+      }
+    },
+    {
+      "id": "conversation-pane",
+      "entry": "conversation",
+      "status": "passed",
+      "seconds": 192.503104785108,
+      "timing": {
+        "navigationSeconds": 12.009128799196333,
+        "screenshotSeconds": 2.9225873787654564,
+        "fixedWaitSeconds": 20.774525056942366,
+        "fixedWaitRequestedSeconds": 20.47999999999998,
+        "navigations": 79,
+        "screenshots": 44,
+        "fixedWaits": 110,
+        "unattributedSeconds": 156.79686355020385
+      }
+    },
+    {
+      "id": "live-conversation-switch",
+      "entry": "conversation",
+      "status": "passed",
+      "seconds": 1.9593472419073805,
+      "timing": {
+        "navigationSeconds": 0.024706933996640146,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.7616393020143732,
+        "fixedWaitRequestedSeconds": 0.7500000000000071,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 7,
+        "unattributedSeconds": 1.1730010058963671
+      }
+    },
+    {
+      "id": "live-conversation-unanswered-send",
+      "entry": "conversation",
+      "status": "passed",
+      "seconds": 51.10217376193032,
+      "timing": {
+        "navigationSeconds": 0.3453436290146783,
+        "screenshotSeconds": 0.30270140909124166,
+        "fixedWaitSeconds": 30.944353176630102,
+        "fixedWaitRequestedSeconds": 30.70500000000001,
+        "navigations": 14,
+        "screenshots": 5,
+        "fixedWaits": 115,
+        "unattributedSeconds": 19.509775547194295
+      }
+    },
+    {
+      "id": "conversation-composer",
+      "entry": "composer-voice",
+      "status": "passed",
+      "seconds": 3.9843649689573795,
+      "timing": {
+        "navigationSeconds": 1.1724091063952073,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.10212582594249398,
+        "fixedWaitRequestedSeconds": 0.09999999999999432,
+        "navigations": 27,
+        "screenshots": 0,
+        "fixedWaits": 2,
+        "unattributedSeconds": 2.709830036619678
+      }
+    },
+    {
+      "id": "skeleton-regions",
+      "entry": "skeleton",
+      "status": "passed",
+      "seconds": 9.03454695106484,
+      "timing": {
+        "navigationSeconds": 0.5553517430089414,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 0,
+        "unattributedSeconds": 8.479195208055899
+      }
+    },
+    {
+      "id": "vps-page",
+      "entry": "vps",
+      "status": "passed",
+      "seconds": 2.2182269759941846,
+      "timing": {
+        "navigationSeconds": 0.06500293198041618,
+        "screenshotSeconds": 0.5426393249072134,
+        "fixedWaitSeconds": 0.18606403307057917,
+        "fixedWaitRequestedSeconds": 0.17000000000002302,
+        "navigations": 1,
+        "screenshots": 10,
+        "fixedWaits": 8,
+        "unattributedSeconds": 1.4245206860359758
+      }
+    },
+    {
+      "id": "artifact-keeps-its-conversation",
+      "entry": "artifact-in-place",
+      "status": "passed",
+      "seconds": 2.313920021057129,
+      "timing": {
+        "navigationSeconds": 0.21085675002541393,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 2,
+        "screenshots": 0,
+        "fixedWaits": 0,
+        "unattributedSeconds": 2.103063271031715
+      }
+    }
+  ],
+  "companion": {
+    "schema": 1,
+    "invocationId": "c90a471b-e6f6-444c-9f54-81cfdf43a266",
+    "revision": "3d104edd94a8b52e85ab32ae2192ff80c2ec3d32",
+    "outcome": "passed",
+    "compiler": "passed",
+    "runtime": [
+      {
+        "path": "web/tests/artifact-press.test.ts",
+        "cases": [
+          {
+            "name": "the press that opens an artifact where it was named > takes a preview address, which exists to ask for the viewer",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > takes a managed link whose format has something to show",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > leaves a managed file with nothing to preview as the download it is",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > takes a preview address even for a file the viewer can only offer",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > leaves a link the writer marked as a download",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > leaves a press asking for another tab, and one asking for a new window",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > leaves every other address alone",
+            "status": "passed"
+          }
+        ]
+      }
+    ]
+  },
+  "schema": 1,
+  "revision": "3d104edd94a8b52e85ab32ae2192ff80c2ec3d32",
+  "invocationId": "c90a471b-e6f6-444c-9f54-81cfdf43a266",
+  "selected": [
+    "web/tests/shell-feedback-browser.test.mjs",
+    "web/tests/ticket-review-browser.test.mjs",
+    "web/tests/configuration-schedules-browser.test.mjs",
+    "web/tests/conversation-browser.test.mjs",
+    "web/tests/composer-voice-browser.test.mjs",
+    "web/tests/skeleton-regions-browser.test.mjs",
+    "web/tests/vps-browser.test.mjs",
+    "web/tests/artifact-in-place-browser.test.mjs"
+  ],
+  "timing": {
+    "companionSeconds": 6.580324993,
+    "prepareSeconds": 0.08798698300000068,
+    "sharedBuildSeconds": 9.793057333,
+    "sharedServerSeconds": 0.005703966000000946,
+    "browserStartupSeconds": 0.10402968106791377,
+    "teardownSeconds": 0.013654771999979857,
+    "invocationSeconds": 356.593960402
+  }
+}
