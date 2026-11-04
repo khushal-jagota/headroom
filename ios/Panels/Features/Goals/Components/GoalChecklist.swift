@@ -108,11 +108,11 @@ struct GoalChecklist: View {
     private func tick(_ item: GoalJSON, done: Bool) {
         guard !preview, !session.busy else { return }
         optimistic[item.id] = done; if done { held.insert(item.id) }
-        let started = ContinuousClock.now
         Task {
             await session.updateBlock(block.id) { old in old.setting("items", .array(old["items"].array.map { $0.id == item.id ? $0.setting("state", .string(done ? "done" : "open")) : $0 })) }
             guard session.saveError == nil else { optimistic[item.id] = nil; held.remove(item.id); return }
-            if done, !reduceMotion { try? await Task.sleep(until: started.advanced(by: .seconds(PanelsTheme.Goal.checkedHold)), clock: .continuous) }
+            // PageChecklist.svelte holds a ticked item for 720 ms once its write is accepted.
+            if done, !reduceMotion { try? await Task.sleep(for: .seconds(PanelsTheme.Goal.checkedHold)) }
             guard !Task.isCancelled else { return }
             withAnimation(reduceMotion ? .linear(duration: 0.15) : PanelsTheme.Goal.cubicOut(PanelsTheme.Goal.itemCollapse)) {
                 optimistic[item.id] = nil; held.remove(item.id)

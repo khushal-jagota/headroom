@@ -270,6 +270,7 @@ struct GoalRing: View {
                     GoalCounter(block: displayBlock, value: display, size: 32).minimumScaleFactor(0.6).lineLimit(1)
                     Text(active.flatMap { entries.indices.contains($0) ? entries[$0].0 : nil } ?? (block.kind == "time-budget" ? "Spent" : block["total_label"].string ?? "Total"))
                         .font(.footnote).foregroundStyle(PanelsTheme.Goal.faint)
+                        .transaction { $0.animation = nil } // The web swaps this label at once.
                 }
             }.padding(14).frame(width: 144, height: 144)
                 .contentShape(Circle())
