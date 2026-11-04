@@ -55,10 +55,38 @@ _ROLE_REPLY_REQUIREMENT: Final = (
 WORKER_ROLE_TEXT: Final = (
     f"{_ROLE_DIRECTIVE_PREFIX} You are a ticket worker.{_ROLE_REPLY_REQUIREMENT}"
 )
-CHIEF_ROLE_TEXT: Final = (
-    f"{_ROLE_DIRECTIVE_PREFIX} You are a chief of staff.{_ROLE_REPLY_REQUIREMENT}"
-)
-MANAGER_ROLE_TEXT: Final = f"{_ROLE_DIRECTIVE_PREFIX} You are a Manager.{_ROLE_REPLY_REQUIREMENT}"
+
+
+def _home_folder_text(shared_workspace_folder: Path, *, extra: str = "") -> str:
+    """What the Chief and a Manager are told about the folder they start in.
+
+    They start in a folder of their own rather than the shared workspace, so they are told
+    that it is theirs and where the shared workspace went. The owner approved this wording.
+    """
+    return (
+        " Your start folder is your own. Use it to keep things for yourself: notes, scratch "
+        "files, and rules you want to remember. Don't copy what is already recorded in "
+        f"Tickets or elsewhere in Panels.{extra} The repositories are under "
+        f"{shared_workspace_folder}."
+    )
+
+
+def chief_role_text(shared_workspace_folder: Path) -> str:
+    return (
+        f"{_ROLE_DIRECTIVE_PREFIX} You are a chief of staff."
+        f"{_home_folder_text(shared_workspace_folder)}{_ROLE_REPLY_REQUIREMENT}"
+    )
+
+
+def manager_role_text(shared_workspace_folder: Path) -> str:
+    return (
+        f"{_ROLE_DIRECTIVE_PREFIX} You are a Manager."
+        + _home_folder_text(
+            shared_workspace_folder,
+            extra=" Keep it out of artifacts/, which is what the owner sees.",
+        )
+        + _ROLE_REPLY_REQUIREMENT
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,19 +149,22 @@ def worker_conversation_role_materials(ticket_id: str) -> ConversationRoleMateri
     )
 
 
-def chief_conversation_role_materials() -> ConversationRoleMaterials:
+def chief_conversation_role_materials(
+    shared_workspace_folder: Path,
+) -> ConversationRoleMaterials:
     """What the Chief is told to be, and the identity its process runs under."""
     return ConversationRoleMaterials(
-        role_text=CHIEF_ROLE_TEXT,
+        role_text=chief_role_text(shared_workspace_folder),
         identity_environment_variables=(("PLAN_ACTOR", "chief"),),
     )
 
 
 def manager_role_materials(
     manager_id: str,
+    shared_workspace_folder: Path,
 ) -> ConversationRoleMaterials:
     return ConversationRoleMaterials(
-        role_text=MANAGER_ROLE_TEXT,
+        role_text=manager_role_text(shared_workspace_folder),
         identity_environment_variables=(
             ("PLAN_ACTOR", "manager"),
             ("PLAN_MANAGER_ID", manager_id),
@@ -147,13 +178,14 @@ def resolve_manager_conversation_start(
     launch_configuration: ConversationStartConfiguration,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     workspace_folder: Path,
+    shared_workspace_folder: Path,
 ) -> ConversationStartValues:
     resolved = _with_overrides(launch_configuration, overrides)
     return ConversationStartValues(
         backend_key=resolved.backend_key,
         model=resolved.model,
         reasoning_effort=resolved.reasoning_effort,
-        role_materials=manager_role_materials(manager_id),
+        role_materials=manager_role_materials(manager_id, shared_workspace_folder),
         workspace_folder=workspace_folder,
         access=FLOOR_DEFAULT_ACCESS,
     )
@@ -226,6 +258,7 @@ def resolve_agent_conversation_start(
     chief_launch_defaults: ConversationStartConfiguration,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     workspace_folder: Path,
+    shared_workspace_folder: Path,
 ) -> ConversationStartValues:
     """Resolve what the Chief's conversation starts on.
 
@@ -238,7 +271,7 @@ def resolve_agent_conversation_start(
         backend_key=resolved.backend_key,
         model=resolved.model,
         reasoning_effort=resolved.reasoning_effort,
-        role_materials=chief_conversation_role_materials(),
+        role_materials=chief_conversation_role_materials(shared_workspace_folder),
         workspace_folder=workspace_folder,
         access=FLOOR_DEFAULT_ACCESS,
     )
