@@ -1,6 +1,6 @@
 import type { CurrentAuthority, DegradedAuthority, Snapshot, CurrentSnapshotResponse, DegradedSnapshotResponse, RevisionBatch, BatchEnvelope, ConversationRecord, Continuity } from '../../../src/lib/navigation/contracts';
 import { SCHEMA_VERSION, SUPPORTED_SEMANTICS, WIRE_VERSION } from '../../../src/lib/navigation/contracts';
-import { encodeCursor } from '../../../src/lib/navigation/validation';
+import { encodeCursor } from '../../../src/lib/navigation/identity';
 
 export const authority = (scope = 'signal-workspace', generation = '1', session = 'delivery'): CurrentAuthority => ({
   delivery_session_id:session,availability:{state:'current',generation,reason:null},

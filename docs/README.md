@@ -17,7 +17,6 @@ The word list for Ticket, Stage, Review, Conversation, and the rest lives in [`C
 - [Proposals and gates](proposals.md) — the single door that settles a stage and the ceiling that decides who must look.
 - [Worker types](worker-types.md) — the workflows Headroom ships, and where each one pulls a person in.
 - [Worker steps](worker-steps.md) — how a ready Ticket receives its next prompt, and why nothing watches the turn end.
-- [Schedules](schedules.md) — exact-time supply of ordinary Tickets.
 - [Skills](skills.md) — the instructions an agent actually reads, and who may change them.
 
 ## People, attention, and screens
@@ -53,6 +52,6 @@ The word list for Ticket, Stage, Review, Conversation, and the rest lives in [`C
 - [Backups](backups.md) — verified snapshots and the stopped restore.
 - [Previews](previews.md) — one tailnet link to a Ticket’s own dev server.
 - [VPS](vps.md) — machine measurements, and the smaller status summary.
-- [Maintenance](maintenance.md) — diagnostic history, which waits for an explicit owner decision.
+- [Maintenance](maintenance.md) — offline database recovery.
 
 _Last verified: 2026-10-30._

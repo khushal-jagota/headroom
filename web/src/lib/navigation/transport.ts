@@ -1,12 +1,11 @@
-import type { SnapshotResponse } from './contracts';
-import { parseSnapshotResponse } from './validation';
+import type { BatchEnvelope, SnapshotResponse } from './contracts';
 import { PlannerFetchError } from '../api';
 
 /** An ordinary failed read, distinct from internal protocol and recovery state. */
 export class NavigationRequestError extends PlannerFetchError {}
 
 export interface NavigationStreamHandlers {
-  batch(data: unknown, cursor: string): void;
+  batch(data: BatchEnvelope, cursor: string): void;
   reset(): void;
   error(): void;
 }
@@ -45,7 +44,7 @@ export function createNavigationTransport(options: {
       let parsed: unknown;
       try { parsed = await response.json(); }
       catch { throw new NavigationRequestError('invalid JSON in response','bad_json',{status:response.status}); }
-      return parseSnapshotResponse(parsed);
+      return parsed as SnapshotResponse;
     },
     connect(cursor, handlers, signal) {
       const stream = source(`/api/navigation/events?cursor=${encodeURIComponent(cursor)}`);

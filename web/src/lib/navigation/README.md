@@ -8,7 +8,7 @@ The workspace sidebar, ordinary Manager headers and child lists, Chief child pag
 
 The provider shares one presentation result per effective view identity. One pass indexes parent membership, identity joins, addresses, and Review facts. A knowledge-only change creates a new effective view and invalidates that result even when the publication stays the same.
 
-The Ticket current-stage section admits private detail only when its public identity, gate, proposal revision, and control facts match the shared record. Worker configuration must describe that exact stage. The retained section preserves its original detail and local edits. It cannot authorize a gesture against a replaced identity. Private bodies remain detail reads.
+The Ticket current-stage section displays its loaded detail and Worker configuration. The server decides whether an action is valid. Private bodies remain detail reads.
 
 The Ticket masthead joins the assigned Manager's Project when a parent exists. Otherwise it uses the Ticket's own Project. Its title, type, and exact current conversation mark remain separate from the detail object that authorizes actions and supplies bodies. The shell reports navigation health. Independent detail or content errors keep their own existing error lines.
 

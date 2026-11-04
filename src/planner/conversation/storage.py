@@ -57,7 +57,6 @@ from planner.conversation.events import (
     ConversationEventPayload,
     ExplicitReplyMissingEventPayload,
     ModelChangedEventPayload,
-    PromptDeliveryRefusedEventPayload,
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
@@ -104,7 +103,6 @@ from planner.notifications.attention import (
     conversation_attention_snapshot,
     conversation_attention_snapshot_is_current,
 )
-from planner.skill_versions import settle_worker_step_skill_bindings
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
 
@@ -1032,7 +1030,7 @@ class ConversationStore:
         return await asyncio.to_thread(self._expiry_sync, conversation_id, sequence)
 
     def _expiry_sync(self, conversation_id: str, sequence: int | None) -> bool:
-        from planner.conversation.retention.read import diagnostics_expired, sequence_expired
+        from planner.conversation.views.omissions import diagnostics_expired, sequence_expired
 
         conn = self._connect()
         try:
@@ -1515,20 +1513,6 @@ class ConversationStore:
                     created_at=created_at,
                 )
             )
-            if isinstance(payload, PromptEventPayload) and payload.sender_message_id is not None:
-                settle_worker_step_skill_bindings(conn, payload.sender_message_id, delivered=True)
-            elif (
-                isinstance(
-                    payload,
-                    (
-                        PromptDeliveryRefusedEventPayload,
-                        PromptDeliveryUncertainEventPayload,
-                        PromptDiscardedEventPayload,
-                    ),
-                )
-                and payload.sender_message_id is not None
-            ):
-                settle_worker_step_skill_bindings(conn, payload.sender_message_id, delivered=False)
         conn.execute(
             "UPDATE conversations SET latest_sequence = ? WHERE conversation_id = ?",
             (latest_sequence + len(payloads), conversation_id),

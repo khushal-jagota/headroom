@@ -5,7 +5,7 @@
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
-  let { ticket, terminal, assertCurrent, leading }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; leading?: Snippet } = $props();
+  let { ticket, terminal, leading }: { ticket: TicketDetail; terminal: boolean; leading?: Snippet } = $props();
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -14,12 +14,9 @@
     busy = true;
     error = null;
     try {
-      assertCurrent?.();
       await mutateJson(`/api/tickets/${encodeURIComponent(ticket.id)}/${action}`, {
         method: "POST",
-        body: {
-          ...(ticket.record_sha256 ? { expected_record_sha256: ticket.record_sha256 } : {})
-        }
+        body: {}
       });
 
     } catch (err) {

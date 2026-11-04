@@ -180,13 +180,6 @@ class _World:
         with self.connect() as conn:
             return tickets_data.read_ticket(conn, ticket_id)
 
-    def skill_bindings(self) -> list[sqlite3.Row]:
-        with self.connect() as conn:
-            return conn.execute(
-                "SELECT sender_message_id, skill_role, binding_status "
-                "FROM worker_step_skill_bindings ORDER BY skill_role"
-            ).fetchall()
-
     def start_step(self, ticket_id: str) -> WorkerStepStartResult:
         return asyncio.run(
             start_ready_worker_step(
@@ -316,7 +309,6 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert ticket_id in message
     assert "conv-refuse" in message
     assert "write_to_backend_failed" in message
-    assert world.skill_bindings() == []
 
 
 def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
@@ -345,7 +337,6 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
     assert ticket.worker_step_claim is WorkerStepClaim.errored
     assert ticket.ticket_status is TicketStatus.errored
     assert world.conversations.backend_prompt_writes("conv-uncertain") == ()
-    assert world.skill_bindings() == []
     with closing(world.connect()) as conn:
         assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
         uncertain_restart = asyncio.run(
@@ -433,7 +424,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
                 )
             )
 
-    assert raised.value.code is ErrorCode.already_running
+    assert raised.value.code is ErrorCode.validation
     ticket = world.ticket(ticket_id)
     assert ticket.pending_proposal is not None
     assert ticket.pending_proposal.body == "Completed while restart waited."
@@ -441,7 +432,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
     assert ticket.conversation_id == "conv-restart-race"
 
 
-def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _World) -> None:
+def test_restart_uses_the_current_errored_claim_generation_after_kill(world: _World) -> None:
     ticket_id = world.ready_ticket(conversation_id="conv-restart-error-race")
     world.start_conversation("conv-restart-error-race")
     assert world.start_step(ticket_id).started is True
@@ -471,33 +462,38 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
                 now=world.clock.now_unix(),
             )
 
-    async def unexpected_start() -> WorkerStepStartResult:
-        raise AssertionError("a moved Ticket must not start another worker step")
+    async def start_current_step() -> WorkerStepStartResult:
+        return await start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=cast(ConversationSystem, world.conversations),
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
 
     with closing(world.connect()) as conn:
-        with pytest.raises(PlannerError) as raised:
-            asyncio.run(
-                worker_restart.restart_worker(
-                    cast(
-                        ConversationSystem,
-                        _MutateOnKillConversationSystem(
-                            world.conversations,
-                            replace_errored_generation,
-                        ),
+        result = asyncio.run(
+            worker_restart.restart_worker(
+                cast(
+                    ConversationSystem,
+                    _MutateOnKillConversationSystem(
+                        world.conversations,
+                        replace_errored_generation,
                     ),
-                    conn,
-                    OWNER_PRINCIPAL,
-                    ticket_id,
-                    start_worker_step=unexpected_start,
-                    now=world.clock.now_unix,
-                )
+                ),
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                start_worker_step=start_current_step,
+                now=world.clock.now_unix,
             )
+        )
 
-    assert raised.value.code is ErrorCode.already_running
+    assert result["started"] is True
     ticket = world.ticket(ticket_id)
-    assert ticket.worker_step_claim is WorkerStepClaim.errored
+    assert ticket.worker_step_claim is WorkerStepClaim.out
     assert ticket.worker_step_claim_revision > admitted.worker_step_claim_revision
-    assert ticket.conversation_id == "conv-restart-error-race"
+    assert ticket.conversation_id != "conv-restart-error-race"
 
 
 def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) -> None:
@@ -560,7 +556,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
 
     restart_error, next_step = asyncio.run(run_race())
 
-    assert restart_error.code is ErrorCode.already_running
+    assert restart_error.code is ErrorCode.validation
     assert next_step.started is True
     ticket = world.ticket(ticket_id)
     assert ticket.stage == "needs_implementation"
@@ -766,7 +762,6 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     assert [write.sender_label for write in writes] == ["browser"]
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
     assert world.pending_revision_feedback(ticket_id) is False
-    assert {row["binding_status"] for row in world.skill_bindings()} == {"provisional"}
 
 
 class _QueueingConversationSystem(_RetirementDelegate):
@@ -1078,7 +1073,6 @@ def test_definite_start_failure_stays_failed_until_one_explicit_retry(
             failed = world.ticket(ticket_id)
             assert failed.ticket_status is TicketStatus.errored
             assert failed.conversation_id == "native-refusal-detail"
-            assert world.skill_bindings() == []
             rows = await harness.events(failed.conversation_id)
             refusals = [
                 r.payload for r in rows if isinstance(r.payload, PromptDeliveryRefusedEventPayload)
