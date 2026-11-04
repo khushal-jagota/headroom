@@ -135,6 +135,8 @@ import pytest
 @pytest.hookimpl(wrapper=True, tryfirst=True)
 def pytest_sessionfinish(session, exitstatus):
     yield
+    if hasattr(session.config, 'workerinput'):
+        return  # Only the controller writes the report.
     report = Path(session.config.option.xmlpath)
     if os.environ.get('GATE_FAULT') == 'missing-report':
         report.unlink()
@@ -241,6 +243,8 @@ await run(['gate']);
         "PANELS_DEPLOY_VENV": str(source / ".venv"), "GITHUB_WORKSPACE": str(ROOT),
         "PANELS_REQUESTED_SHA": revision, "GITHUB_RUN_ID": "gate-proof", "GITHUB_RUN_ATTEMPT": "1",
         "PYTHONPATH": str(source / "src"), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        # The suite commands run on several workers; load only that plugin.
+        "PYTEST_PLUGINS": "xdist.plugin",
         "PLAYWRIGHT_BROWSERS_PATH": _BROWSER_CACHE,
         "GATE_PROTECTED_MARKER": str(shadow / "marker"),
         "GATE_LEGACY_MARKER": str(gate / "legacy-route"),
