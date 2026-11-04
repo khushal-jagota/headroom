@@ -79,6 +79,7 @@ from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
 from planner.goals.conversation_api import router as goal_conversation_router
 from planner.ideas.api import router as ideas_router
+from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
 from planner.managers.api import legacy_router as legacy_managers_router
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
@@ -556,6 +557,7 @@ def create_app(
         can_refresh=lambda: not app.state.update_startup_pending,
     )
 
+    app.add_middleware(IOSBuildGateMiddleware)
     app.add_middleware(UpdateAdmissionMiddleware, config=config)
 
     app.state.resource_version_epoch = str(uuid4())

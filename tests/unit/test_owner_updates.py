@@ -393,11 +393,14 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     cleaned: list[bool] = []
     monkeypatch.setattr(VideoUploadService, "recover_and_cleanup", lambda _: cleaned.append(True))
     app = create_app(config, build_clock(config), lambda: connect(str(database)))
+    from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
+
     # Preserve the complete registered stack. This baseline has no CORS middleware.
     registered: list[object] = [middleware.cls for middleware in app.user_middleware]
     expected: list[object] = [
         CompressExceptEventStreams,
         UpdateAdmissionMiddleware,
+        IOSBuildGateMiddleware,
         TrustedIngressMiddleware,
         ConversationSendBodyLimitMiddleware,
         NavigationCommandFenceMiddleware,
@@ -406,6 +409,9 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     with TestClient(app) as client:
         assert client.get("/api/health", params={"expected_sha": SHA_B}).status_code == 200
         assert client.get("/api/worker-types").status_code == 503
+        assert (
+            client.get("/api/worker-types", headers={"X-Panels-iOS-Build": "0"}).status_code == 503
+        )
         assert app.state.conversation is None
         assert cleaned == []
         assert (old_epoch / "retained.json").read_text() == "prior output"

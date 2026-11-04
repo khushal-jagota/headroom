@@ -33,6 +33,8 @@ jobs:
           printf 'Merged tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
           printf 'Event base revision: %s\n' "$PANELS_BASE_SHA"
           printf 'Event head revision: %s\n' "$PANELS_HEAD_SHA"
+      - name: Check native iOS compatibility review
+        run: python3 scripts/check_ios_compatibility.py
       - name: Install pinned Python environment
         run: |
           python -m venv .venv

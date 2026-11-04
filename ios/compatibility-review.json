@@ -1,0 +1,6 @@
+{
+  "oldest_supported_build": 1,
+  "decision": "compatible",
+  "contract_sha256": "43e2bf1c75d09139886d010d6855a2525d33efc5216e75307a595e229d81c84b",
+  "evidence": "Build 1 source compatibility review after rebase onto feature/make-updates-work at f7c81350c. The Mac status change adds mac_status to the updates response; native deployment reads and existing decoder contracts remain unchanged. Native migration now follows mac_contact_status. Focused combined gate/APNs/Mac tests and full merged-tree mypy provide integration evidence. Prior native CI on 1cf0a07d0 passed 65 host tests including old-store migration and unsigned Simulator build; native source is unchanged by this rebase. Signed TestFlight, live Tailscale ingress, and actual Apple delivery remain owner checks."
+}
