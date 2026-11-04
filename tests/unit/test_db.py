@@ -1226,7 +1226,6 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         "conversations",
         "ticket_conversations",
         "ticket_blocks",
-        "scheduled_ticket_occurrences",
         "manager_wake_batch_members",
         "managed_skill_versions",
     )
@@ -1244,6 +1243,14 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
     }
     create_schema(conn)
     assert _revision(conn) == head_revision()
+    # Later approved removals delete timer and skill-binding evidence, not Tickets.
+    for table in (
+        "scheduled_ticket_schedules", "scheduled_ticket_occurrences",
+        "worker_step_skill_bindings",
+    ):
+        assert conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is None
     assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
     assert (
         tuple(conn.execute(f"SELECT {ticket_columns} FROM tickets WHERE id='t_item'").fetchone())
@@ -1305,7 +1312,6 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         "UPDATE tickets SET manager_kind='sprint_item' WHERE id='t_item'",
         "UPDATE tickets SET manager_kind='chief' WHERE id='t_item'",
         "UPDATE manager_wakes SET target_kind='sprint_item' WHERE id=41",
-        "UPDATE scheduled_ticket_schedules SET manager_kind='chief' WHERE id='assigned'",
         "UPDATE notification_preferences SET subject_key='sprint_item_supervisors'",
     ):
         with pytest.raises(sqlite3.IntegrityError):

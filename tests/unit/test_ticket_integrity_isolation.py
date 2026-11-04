@@ -29,7 +29,8 @@ from planner.tickets.workspace.views import workspace_ticket
         ("worker_type", "SENSITIVE_TEST_worker"),
         ("stage", "SENSITIVE_TEST_stage"),
         ("ceiling", "SENSITIVE_TEST_ceiling"),
-        ("ceiling_holder", '{"kind":"ticket","id":"SENSITIVE_TEST_holder"}'),
+        # A missing Manager passes the SQL shape check but fails registry integrity.
+        ("ceiling_holder", '{"kind":"manager","id":"SENSITIVE_TEST_holder"}'),
         ("field_values", "{SENSITIVE_TEST_json"),
         ("pending_proposal", "{SENSITIVE_TEST_json"),
         ("employee_backend", "SENSITIVE_TEST_backend"),

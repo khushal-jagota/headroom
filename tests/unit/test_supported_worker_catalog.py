@@ -47,5 +47,5 @@ def test_retired_types_are_refused_by_all_creation_writers(
             worker_type=worker_type,
         ),
     ):
-        with pytest.raises(PlannerError, match="retired"):
+        with pytest.raises(PlannerError, match="unknown worker type"):
             create()
