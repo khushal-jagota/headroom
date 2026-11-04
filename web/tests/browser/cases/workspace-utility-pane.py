@@ -1779,14 +1779,20 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             before_notice_posts = len(posts)
             card.get_by_role("button", name="Start update", exact=True).click()
             expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+            # Progress notices remain progress after their old validity timestamp.
+            # Only an explicit unknown lifecycle report uses the unknown notice.
             for state in ("preparing", "restarting"):
-                deployment.update(state=state, valid_until="2000-01-01T00:00:00Z")
+                progress = "The update is in progress."
+                deployment.update(state=state, detail=progress,
+                                  valid_until="2000-01-01T00:00:00Z")
                 signal()
-                expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_be_visible()
+                expect(card.get_by_text("Deploying", exact=True)).to_be_visible()
+                expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_have_count(0)
+                expect(card.locator(".deployment-detail")).to_have_text(progress)
                 expect(card.locator(".deployment-detail")).to_be_visible()
                 expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
             assert len(posts) == before_notice_posts
-            page.screenshot(path=str(evidence / "expired-notice-with-confirmation.png"))
+            page.screenshot(path=str(evidence / "progress-notice-with-confirmation.png"))
             deployment.update(state="unknown")
             installed = "The requested app is installed and available. Its final report is unconfirmed. No action is needed from you."
             deployment.update(installation_confirmed=True, detail=installed,
