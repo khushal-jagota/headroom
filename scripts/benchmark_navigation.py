@@ -115,9 +115,11 @@ def seed(db: Path) -> dict[str, Any]:
     )
     from planner.conversation.message_content import MessageText
     from planner.core.db import connect, create_schema
+    from planner.worker_types.store import read_definition, workflow_from_preset, workflow_to_json
 
     conn = connect(str(db))
     create_schema(conn)
+    coding_workflow = workflow_to_json(workflow_from_preset(read_definition(conn, "coding")))
     payload = conversation_event_payload_to_canonical_json(
         AgentMessageEventPayload((MessageText("Synthetic historical event."),))
     )
@@ -183,9 +185,9 @@ def seed(db: Path) -> dict[str, Any]:
                 "INSERT INTO tickets(id,title,worker_type,employee_backend,"
                 "employee_launch_model,stage,"
                 "ceiling,project_id,manager_id,manager_kind,field_values,created_at,updated_at,"
-                "conversation_id,pending_proposal,pending_proposal_revision) "
+                "conversation_id,pending_proposal,pending_proposal_revision,workflow_json) "
                 "VALUES (?,?,'coding','codex','gpt-5.6-sol','needs_what_changes',"
-                "'needs_what_changes','project_other',?,'manager','{}',1,1,?,?,?)",
+                "'needs_what_changes','project_other',?,'manager','{}',1,1,?,?,?,?)",
                 (
                     f"t_benchmark_{i:04d}",
                     f"Synthetic ticket {i}",
@@ -193,6 +195,7 @@ def seed(db: Path) -> dict[str, Any]:
                     conversation,
                     proposal,
                     1 if proposal else 0,
+                    coding_workflow,
                 ),
             )
             # Current aliases deliberately share conversations. The canonical history table

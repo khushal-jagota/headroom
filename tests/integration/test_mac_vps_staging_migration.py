@@ -18,11 +18,12 @@ from tests.integration.test_navigation_cumulative_migration import (
     _raw,
     _seed_pre_lifecycle,
 )
+from tests.support.migration_head import shipped_migration_head
 
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "manager_launch_defaults"
+FINAL_HEAD = shipped_migration_head()
 SENTINELS: dict[str, tuple[object, ...]] = {
     "mac_inbox_positions": (
         "sender",
@@ -207,10 +208,14 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
             rows = {name: list(conn.execute(f'SELECT * FROM "{name}"')) for name in tables}
             ticket_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(tickets)"))
             manager_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(managers)"))
+            # remove_macos_requirements drops this one column from both tables.
+            macos_columns = {
+                table: [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+                for table in ("projects", "worker_types")
+            }
             assert [row[0] for row in conn.execute("SELECT id FROM tickets ORDER BY id")] == [
                 "alias", "blocker", "held",
             ]
-            refresh_rows = {("tickets", "alias"), ("tickets", "blocker"), ("tickets", "held")}
             schema = list(
                 conn.execute(
                     "SELECT name,sql FROM sqlite_master WHERE type IN ('index','trigger') "
@@ -220,19 +225,42 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
             command.upgrade(config, "head")
             for name, before in rows.items():
                 current = list(conn.execute(f'SELECT * FROM "{name}"'))
-                if name == "navigation_dirty":
-                    # The integrity migration queues exactly these existing Tickets
-                    # for a later projection refresh. Every prior dirty row survives.
-                    expected = set(before) | refresh_rows
-                    assert len(current) == len(expected), name
-                    assert set(current) == expected, name
+                if name.startswith("navigation_"):
+                    # ticket_owned_workflows rebuilds every navigation projection from
+                    # the saved Ticket workflows, which also settles all dirty rows.
+                    if name == "navigation_dirty":
+                        assert current == [], name
+                    continue
                 elif name == "tickets":
-                    # Keep every old column exact and prove the sole added column is
-                    # nullable, rather than excluding the Ticket table from comparison.
+                    # Keep every old column exact. The integrity reason stays empty and
+                    # each Ticket gains its saved workflow from its own Worker type.
                     assert tuple(
                         row[1] for row in conn.execute("PRAGMA table_info(tickets)")
-                    ) == (*ticket_columns, "integrity_error_reason")
-                    assert current == [(*row, None) for row in before], name
+                    ) == (*ticket_columns, "integrity_error_reason", "workflow_json")
+                    assert [row[:-1] for row in current] == [(*row, None) for row in before]
+                    assert all(row[-1] for row in current), name
+                elif name in macos_columns:
+                    kept = [
+                        index
+                        for index, column in enumerate(macos_columns[name])
+                        if column != "requires_macos"
+                    ]
+                    old_rows = [tuple(row[index] for index in kept) for row in before]
+                    if name == "worker_types":
+                        # The workflow migration converts each definition in place and
+                        # keeps its stages and fields. Every other column stays exact.
+                        definition = macos_columns[name].index("definition_json")
+                        position = kept.index(definition)
+                        for old_row, new_row in zip(old_rows, current, strict=True):
+                            old_definition = json.loads(old_row[position])
+                            new_definition = json.loads(new_row[position])
+                            assert [stage["id"] for stage in new_definition["stages"]] == [
+                                stage["id"] for stage in old_definition["stages"]
+                            ], name
+                            assert new_definition["fields"] == old_definition["fields"], name
+                        old_rows = [row[:position] + row[position + 1 :] for row in old_rows]
+                        current = [row[:position] + row[position + 1 :] for row in current]
+                    assert current == old_rows, name
                 elif name == "managers":
                     # The new flag defaults to false. Every historical field stays exact.
                     assert tuple(

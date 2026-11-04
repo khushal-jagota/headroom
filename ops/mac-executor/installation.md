@@ -135,7 +135,7 @@ PY
 
 Check that the resolved commit equals the reviewed full SHA.
 Record the constants printed from the exact candidate source; they govern compatibility.
-At the time of writing the candidate uses wire protocol 18 and outbox format 5.
+At the time of writing the candidate uses wire protocol 19 and outbox format 5.
 Both Mac and VPS peers must match the candidate's wire protocol before work, and
 the existing journal must pass the candidate's SQLite version check below. Plan the
 VPS and Mac updates together when the protocol changes.

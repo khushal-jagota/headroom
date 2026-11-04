@@ -684,7 +684,7 @@ def run(browser, urls):
         "recap": f"Read the [artifact]({MANAGER_ARTIFACT}).",
     } for index in range(31)]
     proposal_board["managers"][0]["tickets"] = proposal_rows
-    values["/api/worker-types/coding/manifest"] = manifest
+    # Each Ticket carries its own saved workflow, which the review card reads.
     for item in proposal_rows:
         values[f"/api/tickets/{item['id']}/workspace"] = {
             "id": item["id"], "title": item["title"], "worker_type": "coding",
@@ -694,6 +694,7 @@ def run(browser, urls):
             "manager_id": MANAGER_ID, "manager_title": MANAGER_TITLE,
             "recap": "", "field_summaries": {},
             "pending_proposal": {"field": "implementation", "body": "A reviewed result", "revision": 1, "created_at": 1},
+            "workflow": manifest["worker_types"][0],
         }
     source = fixture["navigation_response"](proposal_board, {"chief_of_staff": {
         "label": "Chief", "conversation_id": CHIEF_CONVERSATION}})

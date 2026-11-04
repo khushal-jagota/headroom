@@ -6,6 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from tests.support.migration_head import shipped_migration_head
 from tests.unit.test_db import _migration_tree_through
 
 from planner.core import db
@@ -54,7 +55,7 @@ def _assert_upgrade_to_current(
     monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
     db.create_schema(conn)
     assert [row[0] for row in conn.execute("SELECT version_num FROM alembic_version")] == [
-        "goal_outcomes"
+        shipped_migration_head()
     ]
     for table, rows in before.items():
         current = [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]

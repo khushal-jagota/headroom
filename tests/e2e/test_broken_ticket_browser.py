@@ -15,6 +15,7 @@ from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, expect
 from tests.e2e.harness import WAIT_MS, ServerHandle
+from tests.support.ticket_workflows import preset_workflow_json
 
 from planner.core.db import connect
 from planner.database_modules import attach
@@ -28,18 +29,25 @@ def test_broken_ticket_diagnostic_and_healthy_navigation(
 ) -> None:
     def seed(database: Path) -> None:
         with closing(connect(str(database))) as conn:
+            workflow = preset_workflow_json(conn)
             conn.executemany(
                 "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
-                "field_values,created_at,updated_at) VALUES (?,?,'coding','codex',"
-                "'needs_brief','needs_brief','{}',1,1)",
-                (("broken", "Broken Ticket example"), ("healthy", "Healthy Ticket example")),
+                "field_values,created_at,updated_at,workflow_json) VALUES (?,?,'coding','codex',"
+                "'needs_brief','needs_brief','{}',1,1,?)",
+                (
+                    ("broken", "Broken Ticket example", workflow),
+                    ("healthy", "Healthy Ticket example", workflow),
+                ),
             )
         # Seed preexisting corruption through a separate raw connection. The running
         # server must record its mark before ordinary projections read this row.
         with closing(sqlite3.connect(database)) as raw:
             attach(raw)
             raw.execute("BEGIN")
-            raw.execute("UPDATE tickets SET worker_type='removed_worker' WHERE id='broken'")
+            # The Ticket's own saved workflow is its stage authority, so break that.
+            raw.execute(
+                "UPDATE tickets SET workflow_json='{\"removed_worker\": true}' WHERE id='broken'"
+            )
             raw.commit()
 
     server = server_factory(seed_db=seed)
@@ -54,7 +62,7 @@ def test_broken_ticket_diagnostic_and_healthy_navigation(
     diagnostic = page.locator("[data-broken-ticket]")
     expect(diagnostic.get_by_role("heading", name="Broken Ticket example")).to_be_visible()
     expect(diagnostic.locator(".error-message")).to_contain_text(
-        "unknown worker type", timeout=WAIT_MS
+        "invalid stored Ticket structure", timeout=WAIT_MS
     )
     expect(diagnostic.locator(".error-message")).not_to_contain_text("removed_worker")
     expect(diagnostic.get_by_role("button")).to_have_count(0)
