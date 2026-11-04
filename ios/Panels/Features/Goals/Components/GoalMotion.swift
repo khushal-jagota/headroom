@@ -1,77 +1,89 @@
 import SwiftUI
 
-/// Place-value keyed wheels keep 9→0 travelling in the direction of the reading.
+/// The web's rolling number (animated-counter.tsx): one wheel per place value.
+/// Every wheel turns the way the whole number moved, wrapping 9 → 0, on the smooth
+/// spring; columns that appear or vanish morph their width on the morph spring.
 struct GoalCounter: View {
     let block: GoalJSON
     let value: Double?
     var size: CGFloat = PanelsTheme.Goal.reading
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .largeTitle) private var scale: CGFloat = 1
-    @State private var previous: Double?
+    /// Unbounded wheel positions keyed by place value; position mod 10 is the digit on show.
+    @State private var wheels: [String: Double] = [:]
     private var formatted: String { GoalChartPresentation.format(block, value) }
+    private var parts: [GoalCounterPart] { GoalChartPresentation.counterParts(block, value: value) }
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(GoalChartPresentation.counterParts(block, value: value)) { part in
-                if let digit = part.digit, !reduceMotion {
-                    GoalDigit(digit: digit, increasing: (value ?? 0) >= (previous ?? value ?? 0), size: size * scale)
-                        .transition(.opacity.combined(with: .scale(scale: 0.01, anchor: .trailing)))
-                } else { Text(part.text).font(.system(size: size * scale, weight: .medium)).monospacedDigit() }
+        let font = size * scale
+        HStack(alignment: .center, spacing: 0) {
+            ForEach(parts) { part in
+                Group {
+                    if let digit = part.digit {
+                        GoalDigitWheel(position: wheels[part.id] ?? Double(digit), size: font)
+                    } else {
+                        Text(part.text).font(.system(size: font, weight: .medium)).monospacedDigit().fixedSize().frame(height: font)
+                    }
+                }.transition(reduceMotion ? .identity : .goalWidth)
             }
         }
         .contentShape(Rectangle())
         .foregroundStyle(PanelsTheme.strong)
-        .animation(reduceMotion ? nil : PanelsTheme.Goal.morph, value: formatted.count)
+        .animation(reduceMotion ? nil : PanelsTheme.Goal.morph, value: parts.map(\.id))
         .accessibilityElement(children: .ignore).accessibilityLabel(formatted)
-        .onChange(of: value) { old, _ in previous = old }
+        .onAppear { roll(from: nil, to: value) }
+        .onChange(of: value) { old, next in roll(from: old, to: next) }
     }
-}
-
-private struct GoalDigit: View {
-    let digit: Int
-    let increasing: Bool
-    let size: CGFloat
-    @State private var position = 10.0
-    init(digit: Int, increasing: Bool, size: CGFloat) {
-        self.digit = digit; self.increasing = increasing; self.size = size
-        _position = State(initialValue: Double(digit + 10))
-    }
-    private var height: CGFloat { size * 1.18 }
-    var body: some View {
-        Color.clear.frame(width: size * 0.64, height: height)
-            .overlay(alignment: .top) {
-                GoalDigitWindow(position: position, size: size)
-                    .allowsHitTesting(false).accessibilityHidden(true)
-            }
-            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.12), .init(color: .black, location: 0.88), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
-            .clipped().contentShape(Rectangle())
-        .task(id: digit) {
-            let old = (Int(position.rounded()) % 10 + 10) % 10
-            let delta = increasing ? (digit - old + 10) % 10 : -((old - digit + 10) % 10)
-            guard delta != 0 else { return }
-            withAnimation(PanelsTheme.Goal.smooth) { position += Double(delta) }
+    private func roll(from old: Double?, to next: Double?) {
+        let fresh = GoalChartPresentation.counterParts(block, value: next)
+        guard let old, let next, old.isFinite, next.isFinite else {
+            wheels = Dictionary(fresh.compactMap { part in part.digit.map { (part.id, Double($0)) } }, uniquingKeysWith: { a, _ in a })
+            return
         }
+        let direction = next > old ? 1 : -1
+        var targets: [String: Double] = [:]
+        for part in fresh {
+            guard let digit = part.digit else { continue }
+            guard let position = wheels[part.id] else { targets[part.id] = Double(digit); continue }
+            let shown = ((Int(position.rounded()) % 10) + 10) % 10
+            targets[part.id] = position + Double(direction < 0 ? -((shown - digit + 10) % 10) : (digit - shown + 10) % 10)
+        }
+        if reduceMotion { wheels = targets; return }
+        // New columns start on their digit; existing ones roll from where they stand.
+        var placed = wheels
+        for (key, target) in targets where wheels[key] == nil { placed[key] = target }
+        wheels = placed
+        withAnimation(PanelsTheme.Goal.smooth) { wheels = targets }
     }
 }
 
-/// A bounded drawing surface keeps offscreen wheel digits out of hit testing
-/// and accessibility. The counter supplies one formatted spoken reading.
-private struct GoalDigitWindow: View, @MainActor Animatable {
+/// One digit wheel. Layout is one em tall and one tabular zero wide; the window
+/// reaches 0.16 em past the line box and feathers, as `.column` does on the web.
+private struct GoalDigitWheel: View, @MainActor Animatable {
     var position: Double
     let size: CGFloat
     var animatableData: Double { get { position } set { position = newValue } }
+    private static let feather = 0.16
     var body: some View {
-        Canvas { context, bounds in
-            let height = size * 1.18
-            for index in (Int(floor(position)) - 1)...(Int(ceil(position)) + 1) {
-                let y = (Double(index) - position + 0.5) * height
-                let offset = abs(Double(index) - position)
-                guard offset < 1 else { continue }
-                var glyph = context
-                glyph.opacity = 1 - offset
-                if offset > 0.02 { glyph.addFilter(.blur(radius: offset * 2)) }
-                glyph.draw(Text(String((index % 10 + 10) % 10)).font(.system(size: size, weight: .medium)).monospacedDigit().foregroundStyle(PanelsTheme.strong), at: CGPoint(x: bounds.width / 2, y: y))
+        Text("0").font(.system(size: size, weight: .medium)).monospacedDigit().hidden()
+            .frame(height: size)
+            .overlay {
+                Canvas { context, bounds in
+                    let middle = bounds.height / 2
+                    for digit in 0..<10 {
+                        let raw = (Double(digit) - position).truncatingRemainder(dividingBy: 10)
+                        let offset = ((raw + 15).truncatingRemainder(dividingBy: 10) + 10).truncatingRemainder(dividingBy: 10) - 5
+                        guard abs(offset) < 1 else { continue }
+                        var glyph = context
+                        glyph.opacity = max(0, 1 - abs(offset))
+                        if abs(offset) >= 0.02 { glyph.addFilter(.blur(radius: abs(offset) * 2)) }
+                        glyph.draw(Text(String(digit)).font(.system(size: size, weight: .medium)).monospacedDigit().foregroundStyle(PanelsTheme.strong),
+                                   at: CGPoint(x: bounds.width / 2, y: middle + offset * size))
+                    }
+                }
+                .frame(height: size * (1 + 2 * Self.feather))
+                .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 1.5 * Self.feather / (1 + 2 * Self.feather)), .init(color: .black, location: 1 - 1.5 * Self.feather / (1 + 2 * Self.feather)), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+                .allowsHitTesting(false).accessibilityHidden(true)
             }
-        }
     }
 }
 

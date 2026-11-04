@@ -242,12 +242,25 @@ extension PanelsTheme {
         static let pressDuration = 0.11
         static let tickDelay = 0.05
         static let tickDuration = 0.15
-        static let snappy = Animation.spring(duration: 0.26, bounce: 0)
-        static let smooth = Animation.spring(duration: smoothDuration, bounce: 0)
-        static let morph = Animation.spring(duration: 0.42, bounce: 0)
+        /// Motion's `visualDuration` springs, written as the stiffness and damping Motion derives
+        /// from them (`motion-dom` spring generator): root = 2π / (visualDuration × 1.2).
+        static func visualSpring(_ visualDuration: Double, bounce: Double = 0) -> Animation {
+            let root = 2 * Double.pi / (visualDuration * 1.2)
+            return .interpolatingSpring(mass: 1, stiffness: root * root, damping: 2 * (1 - bounce) * root)
+        }
+        static let snappy = visualSpring(0.26)
+        static let smooth = visualSpring(smoothDuration)
+        static let morph = visualSpring(0.42)
+        /// A gauge's first fill: the smooth spring stretched to the reveal duration.
+        static let gaugeRevealSpring = visualSpring(gaugeReveal)
         static let disclosure = Animation.interpolatingSpring(mass: 1, stiffness: 280, damping: 34)
         static let standard = Animation.timingCurve(0.22, 1, 0.36, 1, duration: standardDuration)
-        static let bars = Animation.timingCurve(0.65, 0, 0.35, 1, duration: barDuration)
+        /// Motion's tween default when a transition names only a duration.
+        static func easeInOut(_ duration: Double) -> Animation { .timingCurve(0.42, 0, 0.58, 1, duration: duration) }
+        static func standardEase(_ duration: Double) -> Animation { .timingCurve(0.22, 1, 0.36, 1, duration: duration) }
+        static func enter(_ duration: Double) -> Animation { .timingCurve(0.16, 1, 0.3, 1, duration: duration) }
+        /// Chart.js `easeInOutCubic`, the read-only bar chart's 0.6 s update.
+        static let bars = Animation(GoalCubicInOut(duration: barDuration))
         static let reveal = Animation.timingCurve(0.65, 0, 0.35, 1, duration: lineReveal)
         static func tone(_ name: String) -> Color {
             switch name { case "good": PanelsTheme.success; case "bad": PanelsTheme.error; case "attention": attention; case "info": PanelsTheme.accent; default: PanelsTheme.muted }
