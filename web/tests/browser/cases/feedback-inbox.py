@@ -259,6 +259,9 @@ def run(browser, urls):
           const utilities = document.querySelector('.rail-utilities').getBoundingClientRect();
           const foot = document.querySelector('.rail-foot').getBoundingClientRect();
           const box = slot.getBoundingClientRect();
+          const heightAnimation = slot.getAnimations()
+            .find((animation) => animation.transitionProperty === undefined);
+          const heightFrames = heightAnimation?.effect?.getKeyframes() ?? [];
           samples.push({
             ms: Math.round(ms),
             height: Number(box.height.toFixed(2)),
@@ -271,9 +274,10 @@ def run(browser, urls):
             // on the slot can be a height animation that outlived its swap.
             heightEffects: slot.getAnimations()
               .filter((animation) => animation.transitionProperty === undefined).length,
-            heightDuration: slot.getAnimations()
-              .find((animation) => animation.transitionProperty === undefined)
-              ?.effect?.getTiming().duration ?? null,
+            heightDuration: heightAnimation?.effect?.getTiming().duration ?? null,
+            heightDistance: heightFrames.length > 1
+              ? Math.abs(parseFloat(heightFrames.at(-1).height) - parseFloat(heightFrames[0].height))
+              : null,
           });
           if (ms < duration) requestAnimationFrame(step);
           else { window.__slotFrames = samples; window.__slotDone = true; }
@@ -295,6 +299,24 @@ def run(browser, urls):
         page.wait_for_function("window.__slotDone")
         return page.evaluate("window.__slotFrames")
 
+    def bounded_height_progress(samples, label):
+        # Scripted height effects use cubic-bezier(.4,.02,.2,1), with slope below
+        # three. Use their real keyframe distance and duration, not copy-sized
+        # pixel limits. Interrupted collapse still aims at zero, even if only
+        # part of that distance appears in the samples before the return.
+        durations = [sample["heightDuration"] for sample in samples
+                     if isinstance(sample["heightDuration"], (int, float))
+                     and sample["heightDuration"] > 0]
+        distances = [sample["heightDistance"] for sample in samples
+                     if isinstance(sample["heightDistance"], (int, float))
+                     and sample["heightDistance"] > 0]
+        assert durations and distances, (label, samples)
+        heights = [sample["height"] for sample in samples]
+        distance = max(max(heights) - min(heights), *distances)
+        assert all(abs(current["height"] - previous["height"])
+                   < 3 * distance * max(1, current["ms"] - previous["ms"]) / min(durations) + 1
+                   for previous, current in zip(samples, samples[1:], strict=False)), (label, samples)
+
     def smooth(samples, label):
         heights = [sample["height"] for sample in samples]
         low, high = sorted((heights[0], heights[-1]))
@@ -306,8 +328,7 @@ def run(browser, urls):
         assert samples[-1]["heightEffects"] == 0, (label, samples[-4:])
         between = sum(low + 1 < value < high - 1 for value in heights)
         assert between >= 3, (label, between, samples)
-        assert all(abs(current["height"] - previous["height"]) < 6
-                   for previous, current in zip(samples, samples[1:], strict=False)), (label, samples)
+        bounded_height_progress(samples, label)
         # The utility row is pinned to the foot of the rail, so the foot's own top takes
         # the whole distance. It never travels through the card.
         settled = samples[-1]["footTop"] + samples[-1]["height"]
@@ -386,20 +407,10 @@ def run(browser, urls):
     expect(status).to_contain_text("Deployment outcome unknown")
     card = status.bounding_box()
     assert card and abs(entering[-1]["height"] - (card["height"] + 8)) < 1.5, (card, entering[-1])
-    # The height effect uses cubic-bezier(.4,.02,.2,1), whose progress slope is
-    # below three. Scale that bound by the observed distance and effect duration,
-    # rather than the old copy's pixel velocity. Keep one pixel for rounded geometry.
-    height_durations = [sample["heightDuration"] for sample in entering
-                        if isinstance(sample["heightDuration"], (int, float))
-                        and sample["heightDuration"] > 0]
-    assert height_durations, entering
-    distance = max(sample["height"] for sample in entering) - min(sample["height"] for sample in entering)
-    assert distance > 2, entering
+    assert max(sample["height"] for sample in entering) - min(sample["height"] for sample in entering) > 2, entering
     assert sum(1 < sample["height"] < entering[-1]["height"] - 1
                for sample in entering) >= 3, entering
-    assert all(abs(current["height"] - previous["height"])
-               < 3 * distance * max(1, current["ms"] - previous["ms"]) / min(height_durations) + 1
-               for previous, current in zip(entering, entering[1:], strict=False)), entering
+    bounded_height_progress(entering, "swapDuringEntrance")
     assert abs(entering[-1]["height"] - entering[-3]["height"]) < 1, entering[-4:]
     assert entering[-1]["heightEffects"] == 0, entering[-4:]
     interrupted["swapDuringEntrance"] = entering
@@ -407,11 +418,7 @@ def run(browser, urls):
     # A card returning mid-close reverses the row, but the scripted collapse is what is
     # on screen. Cancelling it there exposed the taller grid height before the reopen.
     def continuous(samples, label, interrupted_at):
-        # The fixture records elapsed milliseconds for each sample. Keep the
-        # eight-pixel bound per 16ms when Chromium delivers a delayed frame.
-        assert all(abs(current["height"] - previous["height"])
-                   < 8 * max(1, (current["ms"] - previous["ms"]) / 16)
-                   for previous, current in zip(samples, samples[1:], strict=False)), (label, samples)
+        bounded_height_progress(samples, label)
         # The return has to travel. Cancelling the scripted collapse instead handed the
         # height straight to the row, which during the exit delay is still at full size,
         # so the slot arrived within a frame or two rather than easing there.
