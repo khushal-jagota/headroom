@@ -31,6 +31,11 @@ def manager_files_root(db_path: str | Path) -> Path:
     return Path(db_path).parent / "files" / "sprint-items"
 
 
+def chief_files_root(db_path: str | Path) -> Path:
+    """The Chief's own folder: where its conversation starts, and where it keeps notes."""
+    return Path(db_path).parent / "files" / "chief"
+
+
 def goal_files_root(db_path: str | Path) -> Path:
     return Path(db_path).parent / "files" / "goals"
 

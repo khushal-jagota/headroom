@@ -75,7 +75,7 @@ Permission asks are always shown and always wait for an answer. Headroom does no
 
 ## The workspace for an agent
 
-Each conversation starts in one folder and keeps it through resume and restart. The folder is an explicit workspace when one is given, otherwise the Ticket's Project folder, otherwise the server's default workspace. A Mac Worker without either uses the executor's own Panels workspace on the Mac. A new configuration applies to new conversations. [Environments](environments.md) covers the server default.
+Each conversation starts in one folder and keeps it through resume and restart. The folder is an explicit workspace when one is given, otherwise the Ticket's Project folder, otherwise the server's default workspace. A Mac Worker without either uses the executor's own Panels workspace on the Mac. The Chief and each Manager instead start in a home folder of their own, made on their first start: `data/files/chief/` for the Chief, and the Manager's files folder for a Manager, beside the `artifacts/` the owner sees. They keep notes and their own CLAUDE.md there, and their role text names the server's default workspace, where the repositories are. A new configuration applies to new conversations. [Environments](environments.md) covers the server default.
 
 ## What comes back out
 
