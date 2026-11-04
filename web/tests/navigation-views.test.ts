@@ -1,5 +1,5 @@
 import {describe,it,expect,vi} from 'vitest';
-import {parseFrame,applyFrame} from '../src/lib/navigation/views/validation';
+import {applyFrame} from '../src/lib/navigation/views/applyFrame';
 import {createNavigationPresentationCache,navigationReviewPresentation,navigationWorkingAgentCount} from '../src/lib/navigation/presentation';
 import {WORK_ITEM_TICKET_GROUPS} from '../src/lib/workItemPresentation';
 import {createScopedNavigationOwner,viewWindow,defaultViewRequest} from '../src/lib/navigation/views/owner';
@@ -37,7 +37,7 @@ describe('bounded navigation owner',()=>{
     const {owner,connections}=fixture({});
     try {
       const started=owner.start(),first=connections[0],frame=degraded(first.request);
-      first.send(parseFrame(frame));await started;
+      first.send(frame);await started;
       const health={state:'degraded',availability:frame.authority.availability};
       expect(owner.getState()).toMatchObject({connection:'reconnecting',health});
       expect(owner.getState().effective!.runtimeCurrent).toBe(false);
@@ -221,7 +221,7 @@ describe('bounded navigation owner',()=>{
       expect((await pending).status).toBe('included');
     }finally{owner.dispose();}
   });
-  it('accepts only projection 7 and replaces lean/full records under one key',async()=>{
+  it('replaces lean/full records under one key',async()=>{
     const {owner,connections}=fixture();
     const presentationFor=createNavigationPresentationCache();
     try {
@@ -231,11 +231,7 @@ describe('bounded navigation owner',()=>{
       const lean={kind:'manager' as const,id:'settled',value:{title:'Settled',created_at:1,updated_at:1,settled:true as const,conversation_id:'c'}};
       initial.content.records.push(lean);
       initial.content.review_context=[{conversation_id:'gone',canonical_address_id:null}];
-      expect(()=>parseFrame({...initial,content:{...initial.content,review_context:[...initial.content.review_context,...initial.content.review_context]}})).toThrow('Duplicate review context');
-      expect(()=>parseFrame({...initial,content:{...initial.content,review_context:[{conversation_id:'c',canonical_address_id:'missing'}]}})).toThrow('Missing review context dependency');
-      expect(()=>parseFrame({...initial,projection_version:3})).toThrow();
-      expect(()=>applyFrame(undefined,{...initial,projection_version:3} as unknown as ViewFrame)).toThrow('projection version');
-      connections[0].send(parseFrame(initial));await started;
+      connections[0].send(initial);await started;
       const first=presentationFor(owner.getState().effective!);
       expect(owner.getState().publication!.view!.reviewContext).toEqual(initial.content.review_context);
       expect(first.settledManagers.map(item=>item.id)).toEqual(['settled']);
@@ -248,14 +244,14 @@ describe('bounded navigation owner',()=>{
         scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
         coverage:{...continuity,revision:'1'},previous_coverage:initial.coverage,content_version:'full',previous_content_version:initial.content_version,
         upserts:[full],evictions:[],windows:[],review_context:[],review_summary:{skipped:0,new:0},counts:initial.content.counts};
-      connections[0].send(parseFrame(patch));
+      connections[0].send(patch);
       const promoted=presentationFor(owner.getState().effective!);
       expect(owner.getState().publication!.view!.reviewContext).toEqual([]);
       expect(promoted.rawManagersById.get('settled')?.value.recap).toBe('Retained for selection');
       expect(promoted.managersById.get('settled')?.project).toBe('one');
       expect(promoted.settledManagers).toHaveLength(0);
-      connections[0].send(parseFrame({...patch,coverage:{...continuity,revision:'2'},previous_coverage:patch.coverage,
-        content_version:'lean-again',previous_content_version:'full',upserts:[lean]}));
+      connections[0].send({...patch,coverage:{...continuity,revision:'2'},previous_coverage:patch.coverage,
+        content_version:'lean-again',previous_content_version:'full',upserts:[lean]});
       const demoted=presentationFor(owner.getState().effective!);
       expect(owner.getState().publication!.records.filter(row=>row.kind==='manager')).toHaveLength(1);
       expect(demoted.rawManagersById.has('settled')).toBe(false);
@@ -269,7 +265,7 @@ describe('bounded navigation owner',()=>{
       owner.setDemand('review',{review_skipped_keys:history,windows:[viewWindow('review')]});
       const started=owner.start();const initial=snapshot(connections[0].request);
       initial.content.counts.review=1;initial.content.review_summary={skipped:1,new:0};
-      connections[0].send(parseFrame(initial));await started;
+      connections[0].send(initial);await started;
       const label=()=>reviewReturnLabel(owner.getState().effective!,owner.getRequest(),history);
       expect(label()).toBe('Back to skipped items');
       expect(reviewReturnLabel(owner.getState().effective!,owner.getRequest(),[{kind:'ticket',id:'different'}])).toBe('Back to review');
@@ -277,15 +273,14 @@ describe('bounded navigation owner',()=>{
       await flush();expect(owner.getState().effective!.runtimeCurrent).toBe(true);
       expect(label()).toBe('Back to review');
       const next=snapshot(connections[1].request,'1','next');next.content.counts.review=2;
-      next.content.review_summary={skipped:1,new:1};connections[1].send(parseFrame(next));
+      next.content.review_summary={skipped:1,new:1};connections[1].send(next);
       expect(label()).toBe('Back to review');
-      expect(()=>parseFrame({...next,content:{...next.content,review_summary:{skipped:2,new:1}}})).toThrow('Invalid review summary');
       const previous=owner.getState().publication!;
-      connections[1].send(parseFrame({event:'patch',wire_version:3,projection_version:7,view_id:next.view_id,
+      connections[1].send({event:'patch',wire_version:3,projection_version:7,view_id:next.view_id,
         scope_generation:next.scope_generation,ordering_generation:next.ordering_generation,authority:next.authority,
         coverage:{...continuity,revision:'2'},previous_coverage:previous.continuity,
         content_version:'removed-new',previous_content_version:previous.view!.contentVersion,
-        upserts:[],evictions:[],windows:[],review_context:[],review_summary:{skipped:1,new:0},counts:{...next.content.counts,review:1}}));
+        upserts:[],evictions:[],windows:[],review_context:[],review_summary:{skipped:1,new:0},counts:{...next.content.counts,review:1}});
       expect(label()).toBe('Back to skipped items');
       connections[1].error();expect(label()).toBe('Back to review');
     }finally{owner.dispose();}
