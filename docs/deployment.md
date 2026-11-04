@@ -65,6 +65,12 @@ The deploy workflow never changes Tailscale Serve. A separate manual workflow re
 - Data is restorable only until the new app is proven. A later code rollback is a new install and does not rewind data.
 - Uncertain evidence stays uncertain. Nothing guesses success, re-dispatches, or replays a prompt.
 
+## Older cancelled Tickets
+
+An upgrade refuses a database that contains cancelled Tickets. Resolve these records through the prior supported version before retry.
+
+Each browser write carries its loaded page version. The server rejects an outdated version. Saves do not request the server version first.
+
 ## When `scripts/dev` refuses
 
 Development worktrees must never share dependency storage with the installed app, because a shared `node_modules` or `.venv` can write into the deployed tree and break its integrity proof. `scripts/dev` guards setup, npm, pytest, and mypy before the tool starts. No flag turns it off.

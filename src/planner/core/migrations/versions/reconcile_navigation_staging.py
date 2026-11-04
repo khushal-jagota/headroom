@@ -5,7 +5,7 @@ from typing import cast
 
 from alembic import op
 
-from planner.navigation.data import rebuild
+from planner.core.migrations.historical_navigation.data import rebuild
 
 revision = "reconcile_navigation_staging"
 down_revision = ("navigation_delivery_proof", "remove_ticket_retirement")

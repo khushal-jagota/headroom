@@ -1,4 +1,4 @@
-"""Transaction-owned navigation records, dependencies, and revision batches."""
+"""Frozen pre-Manager navigation backfill for historical Alembic revisions only."""
 
 from __future__ import annotations
 
@@ -7,21 +7,14 @@ import sqlite3
 import uuid
 from typing import Any, cast
 
-from planner.core.ticket_blocks import LIVE_BLOCKER_PREDICATE
-from planner.navigation.historical_contracts import (
+from planner.core.migrations.historical_navigation.contracts import (
     PREPARED_SCHEMA_VERSION,
     SCHEMA_VERSION,
-    SUPPORTED_SEMANTICS,
-    Continuity,
-    HistoryUnavailable,
-    JournalPage,
     NavigationRecord,
     RecordKey,
-    RevisionBatch,
-    Snapshot,
-    parse_revision,
 )
-from planner.navigation.legacy_v1 import lifecycle_payload
+from planner.core.migrations.historical_navigation.legacy_v1 import lifecycle_payload
+from planner.core.ticket_blocks import LIVE_BLOCKER_PREDICATE
 from planner.navigation.lifecycle_summary import INDEXES, read_summary
 from planner.navigation.schema import SCHEMA
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
@@ -63,13 +56,6 @@ def rows(conn: sqlite3.Connection, sql: str, args: tuple[Any, ...] = ()) -> list
 
 def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def available(conn: sqlite3.Connection) -> bool:
-    return (
-        conn.execute("SELECT 1 FROM sqlite_master WHERE name='navigation_meta'").fetchone()
-        is not None
-    )
 
 
 def attach(conn: sqlite3.Connection) -> None:
@@ -221,16 +207,6 @@ def _parent(ticket: dict[str, Any]) -> Key:
     )
 
 
-def _root_dependencies(conn: sqlite3.Connection, source: Key) -> set[Key]:
-    return {
-        (str(row[0]), str(row[1]))
-        for row in conn.execute(
-            "SELECT kind,id FROM navigation_dependencies WHERE source_kind=? AND source_id=?",
-            source,
-        )
-    }
-
-
 def _conversation_ids(conn: sqlite3.Connection, ticket_id: str) -> set[str]:
     return {
         str(row[0])
@@ -240,62 +216,6 @@ def _conversation_ids(conn: sqlite3.Connection, ticket_id: str) -> set[str]:
             (ticket_id, ticket_id),
         )
     }
-
-
-def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
-    roots: set[Key] = set()
-    if table == "@totals":
-        return {("totals", identity)}
-    if table == "tickets":
-        roots.add(("ticket", identity))
-        roots.update(("conversation", item) for item in _conversation_ids(conn, identity))
-        for row in rows(conn, "SELECT sprint_item_id FROM tickets WHERE id=?", (identity,)):
-            p = _parent(row)
-            roots.add(("totals", ":".join(p)))
-        roots.update(
-            ("ticket", str(row[0]))
-            for row in conn.execute(
-                "SELECT blocked_ticket_id FROM ticket_blocks WHERE blocking_ticket_id=?",
-                (identity,),
-            )
-        )
-        roots.add(("totals", "workspace"))
-    elif table == "sprint_items":
-        roots.add(("orchestrator", identity))
-        roots.add(("totals", "orchestrator:" + identity))
-        for row in conn.execute("SELECT id FROM tickets WHERE sprint_item_id=?", (identity,)):
-            roots.update(_new_roots(conn, "tickets", str(row[0])))
-        for row in conn.execute(
-            "SELECT conversation_id FROM agents WHERE agent_key=? AND conversation_id IS NOT NULL",
-            ("sprint_item_supervisor_" + identity,),
-        ):
-            roots.add(("conversation", str(row[0])))
-    elif table == "projects":
-        roots.add(("project", identity))
-    elif table == "worker_types":
-        roots.update(
-            ("ticket", str(row[0]))
-            for row in conn.execute("SELECT id FROM tickets WHERE worker_type=?", (identity,))
-        )
-    elif table == "chief_settings":
-        roots.add(("chief", "chief"))
-    elif table == "agents":
-        if identity == "chief_of_staff":
-            roots.add(("chief", "chief"))
-        elif identity.startswith("sprint_item_supervisor_"):
-            roots.add(("orchestrator", identity.removeprefix("sprint_item_supervisor_")))
-        for row in conn.execute(
-            "SELECT conversation_id FROM agents WHERE agent_key=? AND conversation_id IS NOT NULL",
-            (identity,),
-        ):
-            roots.add(("conversation", str(row[0])))
-    elif table == "ticket_blocks":
-        roots.add(("ticket", identity))
-    elif table in ("ticket_conversations", "navigation_signal_publications") or table.startswith(
-        "conversation"
-    ):
-        roots.add(("conversation", identity))
-    return roots
 
 
 def _ticket_owners_by_conversation(conn: sqlite3.Connection) -> TicketOwners:
@@ -721,86 +641,6 @@ def _put_root(
     return changed, deleted
 
 
-def _continuity(conn: sqlite3.Connection) -> dict[str, Any]:
-    row = rows(conn, "SELECT * FROM navigation_meta WHERE singleton=1")[0]
-    return {
-        "scope": row["scope"],
-        "schema_version": row["schema_version"],
-        "semantics": (
-            SUPPORTED_SEMANTICS
-            if row["schema_version"] == SCHEMA_VERSION
-            else "attention-knowledge-v4"
-            if row["schema_version"] == 4
-            else f"generic-source-facts-v{row['schema_version']}"
-        ),
-        "epoch": row["epoch"],
-        "revision": str(row["revision"]),
-    }
-
-
-def finalize(conn: sqlite3.Connection) -> None:
-    if not available(conn):
-        return
-    dirty = {(str(r[0]), str(r[1])) for r in conn.execute("SELECT kind,id FROM navigation_dirty")}
-    if not dirty:
-        return
-    if not conn.in_transaction:
-        raise RuntimeError("navigation finalization requires a transaction")
-    roots: set[Key] = set()
-    for source in dirty:
-        roots.update(_root_dependencies(conn, source))
-        roots.update(_new_roots(conn, *source))
-    definitions: dict[str, WorkerTypeDefinition] = {}
-    derived: dict[Key, tuple[list[NavigationRecord], set[Key]]] = {}
-    # Every touched conversation can change memberships or counts. Previous address
-    # parents survive in the projection until all affected roots are derived.
-    for root in list(roots):
-        if root[0] == "conversation":
-            for row in rows(
-                conn,
-                "SELECT value FROM navigation_records WHERE kind='address' "
-                "AND json_extract(value,'$.conversation_id')=?",
-                (root[1],),
-            ):
-                a = json.loads(row["value"])
-                parent = (
-                    (a["parent_kind"], a["parent_id"])
-                    if a["parent_kind"]
-                    else (a["owner_kind"], a["owner_id"])
-                )
-                if parent[0] in ("chief", "orchestrator"):
-                    roots.add(("totals", ":".join(str(part) for part in parent)))
-            derived[root] = _derive(conn, root, definitions)
-            new, _ = derived[root]
-            for rec in new:
-                if rec["kind"] == "address":
-                    a = rec["value"]
-                    parent = (
-                        (a["parent_kind"], a["parent_id"])
-                        if a["parent_kind"]
-                        else (a["owner_kind"], a["owner_id"])
-                    )
-                    if parent[0] in ("chief", "orchestrator"):
-                        roots.add(("totals", ":".join(str(part) for part in parent)))
-            roots.add(("totals", "workspace"))
-    upserts: list[NavigationRecord] = []
-    deletes: list[RecordKey] = []
-    for root in sorted(roots, key=lambda key: (key[0] == "totals", key)):
-        changed, removed = _put_root(conn, root, derived=derived.get(root), definitions=definitions)
-        upserts.extend(changed)
-        deletes.extend(removed)
-    continuity = _continuity(conn)
-    base = parse_revision(continuity["revision"])
-    batch = {
-        **continuity,
-        "base_revision": str(base),
-        "revision": str(base + 1),
-        "upserts": upserts,
-        "deletes": deletes,
-    }
-    conn.execute("INSERT INTO navigation_journal VALUES(?,?)", (base + 1, _json(batch)))
-    conn.execute("UPDATE navigation_meta SET revision=? WHERE singleton=1", (base + 1,))
-    conn.execute("DELETE FROM navigation_dirty")
     # Historical revisions only prepare source records. The rename installs current views.
 
 
@@ -811,15 +651,6 @@ def _replace_epoch(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE navigation_meta SET epoch=?,revision=0 WHERE singleton=1", (str(uuid.uuid4()),)
     )
-
-
-def reset_epoch(conn: sqlite3.Connection) -> Continuity:
-    _require_current_schema(conn)
-    _replace_epoch(conn)
-
-    # Historical preparation never publishes current Manager views.
-    pass
-    return cast(Continuity, _continuity(conn))
 
 
 def rebuild(conn: sqlite3.Connection) -> None:
@@ -860,70 +691,3 @@ def rebuild(conn: sqlite3.Connection) -> None:
     pass
 
 
-def _require_current_schema(conn: sqlite3.Connection) -> None:
-    version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
-    if version != SCHEMA_VERSION:
-        raise RuntimeError("navigation public reads require the current schema")
-
-
-def _require_clean_read(conn: sqlite3.Connection) -> None:
-    _require_current_schema(conn)
-    if conn.execute("SELECT 1 FROM navigation_dirty LIMIT 1").fetchone():
-        raise RuntimeError("navigation read requires a transaction with no pending source writes")
-
-
-def snapshot(conn: sqlite3.Connection) -> Snapshot:
-    owns = not conn.in_transaction
-    if owns:
-        conn.execute("BEGIN")
-    try:
-        _require_clean_read(conn)
-        continuity = cast(Continuity, _continuity(conn))
-        records = [
-            cast(
-                NavigationRecord,
-                {"kind": r["kind"], "id": r["id"], "value": json.loads(r["value"])},
-            )
-            for r in rows(conn, "SELECT * FROM navigation_records ORDER BY kind,id")
-        ]
-        return {**continuity, "records": records}
-    finally:
-        if owns:
-            conn.rollback()
-
-
-def journal(
-    conn: sqlite3.Connection, epoch: str, after_revision: str, limit: int = 100
-) -> JournalPage:
-    if not 1 <= limit <= 1000:
-        raise ValueError("journal limit must be between 1 and 1000")
-    after = parse_revision(after_revision)
-    owns = not conn.in_transaction
-    if owns:
-        conn.execute("BEGIN")
-    try:
-        _require_clean_read(conn)
-        continuity = cast(Continuity, _continuity(conn))
-        current = parse_revision(continuity["revision"])
-        if continuity["epoch"] != epoch or after > current:
-            raise HistoryUnavailable("navigation cursor does not match current continuity")
-        fetched = conn.execute(
-            "SELECT revision,body FROM navigation_journal WHERE revision>? "
-            "ORDER BY revision LIMIT ?",
-            (after, limit + 1),
-        ).fetchall()
-        expected = after + 1
-        for row in fetched:
-            if row[0] != expected:
-                raise HistoryUnavailable("navigation journal history is missing")
-            expected += 1
-        if expected <= current and len(fetched) < limit + 1:
-            raise HistoryUnavailable("navigation journal history is missing")
-        return {
-            **continuity,
-            "batches": [cast(RevisionBatch, json.loads(row[1])) for row in fetched[:limit]],
-            "has_more": len(fetched) > limit,
-        }
-    finally:
-        if owns:
-            conn.rollback()

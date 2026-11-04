@@ -25,7 +25,7 @@ import click
 from planner.attention.cli import attention as attention_group
 from planner.cli import http
 from planner.cli.artifact_io import read_artifact_source
-from planner.cli.errors import CompatibilityChoice, CompatibilityOption, PanelsGroup
+from planner.cli.errors import PanelsGroup
 from planner.cli.record_projection import (
     RecordPart,
     parse_part_names,
@@ -33,7 +33,6 @@ from planner.cli.record_projection import (
     project_record,
     render_text,
 )
-from planner.core.authctx import normalize_manager_identity
 from planner.credentials.cli import credential as credential_group
 from planner.datasets.cli import dataset as dataset_group
 from planner.environments.cli import environment as environment_group
@@ -71,16 +70,14 @@ def caller_principal() -> dict[str, str]:
     """
     actor = os.environ.get(_ACTOR_ENV, "").strip()
     ticket_id = os.environ.get(_TICKET_ID_ENV, "").strip()
-    manager_id = normalize_manager_identity(
-        os.environ.get(_MANAGER_ID_ENV), os.environ.get("PLAN_SPRINT_ITEM_ID")
-    )
+    manager_id = os.environ.get(_MANAGER_ID_ENV, "").strip()
     if actor == "goal" and os.environ.get("PLAN_GOAL_ID", "").strip():
         return {"kind": "goal", "id": os.environ["PLAN_GOAL_ID"].strip()}
     if actor == "chief":
         return {"kind": "chief", "id": "chief"}
     if actor == "worker" and ticket_id:
         return {"kind": "ticket", "id": ticket_id}
-    if actor in {"manager", "sprint_item_supervisor"} and manager_id:
+    if actor == "manager" and manager_id:
         return {"kind": "manager", "id": manager_id}
     return {"kind": "owner", "id": "owner"}
 
@@ -449,9 +446,7 @@ environment_group.hidden = True
 @click.option("--ticket", "ticket_id", default=None, help="Send to a Ticket worker.")
 @click.option(
     "--manager",
-    "--sprint-item",
     "manager_id",
-    cls=CompatibilityOption,
     default=None,
     help="Send to a Manager.",
 )
@@ -985,10 +980,7 @@ def ticket_delete(ticket_id: str | None, force: bool, as_json: bool) -> None:
 @click.option("--project-id", default=None, help="Only show project id.")
 @click.option(
     "--manager",
-    "--sprint-item",
-    "--orchestrator",
     "manager",
-    cls=CompatibilityOption,
     default=None,
     help="Only show tickets in this item.",
 )
@@ -1344,15 +1336,10 @@ def ticket_unblock(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     http.emit(data, as_json, f"{ticket_id} unblocked from {blocker_id}")
 
 
-# --- sprint -------------------------------------------------------------------
+# --- managers -----------------------------------------------------------------
 
 
-@main.group("sprint", hidden=True)
-def sprint() -> None:
-    """Compatibility command group for Managers."""
-
-
-@sprint.group("item")
+@main.group("manager")
 def manager() -> None:
     """Manage ordinary Managers. Settled Managers are finished destinations.
 
@@ -1791,9 +1778,7 @@ def _request_ticket_help(
 @click.option("--ticket", "recipient_ticket_id", default=None, help="Ask another Ticket worker.")
 @click.option(
     "--manager",
-    "--sprint-item",
     "recipient_manager_id",
-    cls=CompatibilityOption,
     default=None,
     help="Ask a Manager.",
 )
@@ -1883,10 +1868,7 @@ def ticket_proposal(
 @click.option("--ticket", "recipient_ticket_id", default=None, help="Ask another Worker.")
 @click.option(
     "--manager",
-    "--sprint-item",
-    "--orchestrator",
     "recipient_manager_id",
-    cls=CompatibilityOption,
     default=None,
     help="Ask a Manager.",
 )
@@ -1938,37 +1920,35 @@ _PUBLIC_COMMAND_HELP = {
         "ticket",
         "request-help",
     ): "Record and send one Ticket help request from standard input.",
-    ("sprint", "item", "create"): "Create one Manager.",
-    ("sprint", "item", "list"): (
+    ("manager", "create"): "Create one Manager.",
+    ("manager", "list"): (
         "List Managers as bounded summaries with the settled boolean. "
         "Without --active or --settled, include both states. Settled Managers are finished "
         "destinations. Choose an active Manager for new work. "
         "An absent settled field does not establish active state."
     ),
-    ("sprint", "item", "show"): (
+    ("manager", "show"): (
         "Read one Manager record or selected parts, including the settled boolean. "
         "Settled Managers are finished destinations. Choose an active Manager "
         "for new work. An absent settled field does not establish active state."
     ),
-    ("sprint", "item", "set"): "Change one Manager field.",
-    ("sprint", "item", "delete"): "Permanently delete one empty Manager.",
-    ("sprint", "item", "add-ticket"): "Classify one Ticket under one Manager.",
+    ("manager", "set"): "Change one Manager field.",
+    ("manager", "delete"): "Permanently delete one empty Manager.",
+    ("manager", "add-ticket"): "Classify one Ticket under one Manager.",
     (
-        "sprint",
-        "item",
+        "manager",
         "remove-ticket",
     ): "Remove one Ticket's Manager classification.",
     (
-        "sprint",
-        "item",
+        "manager",
         "workspace",
     ): "Read one Manager, its artifacts, and child Tickets.",
-    ("sprint", "item", "artifact", "list"): (
+    ("manager", "artifact", "list"): (
         "List openable artifact paths from the workspace. Index folders hide supporting files."
     ),
-    ("sprint", "item", "artifact", "read"): "Read one Manager artifact as exact text.",
-    ("sprint", "item", "artifact", "write"): "Write one Manager artifact.",
-    ("sprint", "item", "artifact", "delete"): "Delete one Manager artifact.",
+    ("manager", "artifact", "read"): "Read one Manager artifact as exact text.",
+    ("manager", "artifact", "write"): "Write one Manager artifact.",
+    ("manager", "artifact", "delete"): "Delete one Manager artifact.",
 }
 
 
@@ -1990,10 +1970,7 @@ def _set_public_command_help() -> None:
 @click.option("--chief", is_flag=True, default=False, help="Assign to Chief.")
 @click.option(
     "--manager",
-    "--sprint-item",
-    "--orchestrator",
     "item_id",
-    cls=CompatibilityOption,
     default=None,
     help="Ordinary manager id.",
 )
@@ -2034,9 +2011,6 @@ def manager_settle(item_id: str, active: bool, as_json: bool) -> None:
 
 _set_public_command_help()
 
-# Keep the existing Item alias and its conversation identities.
-main.add_command(manager, "manager")
-main.add_command(manager, "orchestrator")
 
 
 if __name__ == "__main__":

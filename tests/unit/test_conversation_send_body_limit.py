@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
 
 _SEND_PATH = "/api/conversation/conversations/c/send"
 
 
-def test_content_length_rejects_every_send_before_body_or_downstream_read() -> None:
+@pytest.mark.parametrize("path", [_SEND_PATH, "/api/managers/si_example/conversation/send"])
+def test_content_length_rejects_every_send_before_body_or_downstream_read(path: str) -> None:
     downstream_called = False
     receive_called = False
     sent: list[dict[str, Any]] = []
@@ -28,7 +31,7 @@ def test_content_length_rejects_every_send_before_body_or_downstream_read() -> N
     middleware = ConversationSendBodyLimitMiddleware(downstream, max_bytes=5)
     asyncio.run(
         middleware(
-            _scope(headers=[(b"content-length", b"6")]),
+            _scope(path=path, headers=[(b"content-length", b"6")]),
             receive,
             send,
         )

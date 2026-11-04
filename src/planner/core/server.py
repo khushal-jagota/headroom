@@ -78,7 +78,6 @@ from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
 from planner.goals.conversation_api import router as goal_conversation_router
 from planner.ideas.api import router as ideas_router
-from planner.managers.api import legacy_router as legacy_managers_router
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
 from planner.measure_sources.participants import SlotParticipantFactory
@@ -561,7 +560,6 @@ def create_app(
         conversation_history_router,
         projects_router,
         managers_router,
-        legacy_managers_router,
         ideas_router,
         measure_sources_router,
         measures_router,

@@ -14,7 +14,6 @@ describe("historical shell addresses", () => {
     ["#/config/chief-of-staff", "#/settings/config/chief-of-staff"],
     ["#/config/worker-skill", "#/settings/config/worker-skill"],
     ["#/config/manager", "#/settings/config/manager"],
-    ["#/config/sprint-item-supervisor", "#/settings/config/manager"],
     ["#/workspace/item/si_existing?view=items", "#/workspace/manager/si_existing?view=managers"],
     ["#/workers", "#/settings/config"],
     ["#/workers?legacy=true", "#/settings/config?legacy=true"],
@@ -31,6 +30,8 @@ describe("historical shell addresses", () => {
   it("leaves unknown routes explicit", () => {
     expect(canonicalShellHash("#/config/unknown/detail")).toBe("#/settings/config/unknown/detail");
     expect(canonicalShellHash("#/agents/unknown")).toBe("#/agents/unknown");
+    expect(canonicalShellHash("#/settings/config/sprint-item-supervisor"))
+      .toBe("#/settings/config/sprint-item-supervisor");
   });
 });
 
@@ -79,6 +80,7 @@ describe("where a utility screen can be", () => {
     ["settings", ["unknown"]],
     ["settings", ["notifications", "detail"]],
     ["settings", ["config", "unknown"]],
+    ["settings", ["config", "sprint-item-supervisor"]],
     ["usage", ["unknown"]],
     ["ideas", ["anything"]]
   ] as const)("refuses %s/%j", (utility, path) => {

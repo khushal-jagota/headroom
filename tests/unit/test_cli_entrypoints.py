@@ -143,9 +143,7 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
     assert requested_paths == [path, path]
 
 
-def test_issued_manager_reply_alias_remains_executable_without_teaching_old_flags(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_manager_commands_reject_old_names(monkeypatch: pytest.MonkeyPatch) -> None:
     targets: list[dict[str, str]] = []
 
     def sent(method: str, path: str, **kwargs: Any) -> dict[str, str]:
@@ -155,23 +153,22 @@ def test_issued_manager_reply_alias_remains_executable_without_teaching_old_flag
 
     monkeypatch.setattr(http, "send", sent)
     runner = CliRunner()
-    for option in ("--manager", "--sprint-item"):
-        result = runner.invoke(
-            cli_main.main, ["send-message", option, "si_same", "--message", "Reply."]
-        )
-        assert result.exit_code == 0, result.output
-    assert targets == [{"kind": "manager", "id": "si_same"}] * 2
-    help_text = runner.invoke(cli_main.main, ["send-message", "--help"]).output
-    assert "--manager" in help_text and "--sprint-item" not in help_text
-    refused = runner.invoke(
-        cli_main.main,
-        ["send-message", "--manager", "si_one", "--sprint-item", "si_other", "--message", "Reply."],
+    result = runner.invoke(
+        cli_main.main, ["send-message", "--manager", "si_same", "--message", "Reply."]
     )
-    assert refused.exit_code != 0
-    assert len(targets) == 2
+    assert result.exit_code == 0, result.output
+    for args in (
+        ["send-message", "--sprint-item", "si_same", "--message", "Reply."],
+        ["orchestrator", "list"],
+        ["sprint", "item", "list"],
+        ["schedule", "set", "schedule_example", "sprint-item", "--value", "si_same"],
+    ):
+        refused = runner.invoke(cli_main.main, args)
+        assert refused.exit_code != 0, refused.output
+    assert targets == [{"kind": "manager", "id": "si_same"}]
 
 
-@pytest.mark.parametrize("prefix", [("manager",), ("orchestrator",), ("sprint", "item")])
+@pytest.mark.parametrize("prefix", [("manager",)])
 def test_manager_state_survives_cli_reads_and_filters(
     monkeypatch: pytest.MonkeyPatch, prefix: tuple[str, ...]
 ) -> None:
@@ -232,12 +229,6 @@ def test_manager_help_explains_assignment_state() -> None:
         ("manager",),
         ("manager", "list"),
         ("manager", "show"),
-        ("orchestrator",),
-        ("orchestrator", "list"),
-        ("orchestrator", "show"),
-        ("sprint", "item"),
-        ("sprint", "item", "list"),
-        ("sprint", "item", "show"),
         ("ticket", "create"),
         ("ticket", "assign"),
     ):

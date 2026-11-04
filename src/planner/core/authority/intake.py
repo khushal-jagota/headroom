@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from email.message import Message
 from collections.abc import Mapping
 from contextlib import closing
+from email.message import Message
 from typing import Any
 from urllib.parse import unquote
 
@@ -70,9 +70,6 @@ def admit_command(
     from planner.message_delivery.api import _principal
     from planner.tickets.logic.admission import TICKET_FIELDS_ONLY_FROM_ABOVE
 
-    route = route.replace('/api/items', '/api/managers', 1)
-    if route.startswith('/items/') or route == '/items':
-        route = route.replace('/items', '/managers', 1)
     parts = route.strip('/').split('/')
     family = parts[1] if parts[0] == 'api' and len(parts) > 1 else parts[0]
     writing = method not in ('GET', 'HEAD', 'OPTIONS')
@@ -82,9 +79,6 @@ def admit_command(
         admit_message(conn, principal, _principal(body.get('target')))
         return
     if family == 'tickets':
-        from planner.managers.assignment import normalize_assignment
-
-        body = normalize_assignment(dict(body))
         ticket_id = path_params.get('ticket_id')
         if ticket_id is None:
             if method == 'POST':
@@ -136,8 +130,6 @@ def admit_command(
             target = authority.owner_only('goals')
     elif family in ('artifact-catalog', 'conversation-history', 'files'):
         kind = path_params.get('kind')
-        if kind == 'sprint_item' or family == 'conversation-history' and kind == 'orchestrator':
-            kind = 'manager'
         if family == 'files':
             kind = ('manager' if 'manager_id' in path_params
                     else 'goal' if 'goal_id' in path_params else 'ticket')
@@ -159,9 +151,9 @@ def admit_command(
         target = authority.owner_only('credentials')
     elif (family in ('measure-sources', 'measures', 'datasets')
           and writing and not route.endswith('/read')):
+        from planner.datasets import data as datasets
         from planner.measure_sources import data as sources
         from planner.measures import data as measures
-        from planner.datasets import data as datasets
 
         source_id = path_params.get('source_id')
         if family == 'measure-sources':
@@ -194,24 +186,25 @@ def admit_command(
             )
             return
     if target is not None:
-        (authority.require_above_or_self if own else authority.require_above)(conn, principal, target)
+        check_rank = authority.require_above_or_self if own else authority.require_above
+        check_rank(conn, principal, target)
 
 
 async def request_admission(request: Request) -> None:
     """FastAPI runs this once after route matching and before the command handler."""
-    route = request.scope['route'].path
+    # Included FastAPI routes expose the unprefixed template. Admission needs
+    # the served path, including /api, for resource and command families.
+    route = request.url.path
     if request.method in ('GET', 'HEAD', 'OPTIONS'):
         protected = (
             route in ('/api/resource-body', '/api/resource-versions')
-            or ('/managers/' in route or '/items/' in route or '/goals/' in route)
+            or ('/managers/' in route or '/goals/' in route)
             and route.endswith((
                 '/launch-defaults', '/workspace', '/workspace-content', '/conversation/start-values'
             ))
             or route.startswith('/files/')
             and ('manager_id' in request.path_params or 'goal_id' in request.path_params)
-            or request.path_params.get('kind') in ('manager', 'goal', 'sprint_item')
-            or '/conversation-history/' in route
-            and request.path_params.get('kind') == 'orchestrator'
+            or request.path_params.get('kind') in ('manager', 'goal')
         )
         if not protected:
             return
@@ -244,7 +237,7 @@ async def request_admission(request: Request) -> None:
             if isinstance(keys, list):
                 for key in keys:
                     match = (re.fullmatch(
-                        r'/api/(?:managers|items)/([^/?]+)/workspace-content', key
+                        r'/api/managers/([^/?]+)/workspace-content', key
                     ) if isinstance(key, str) else None)
                     if match:
                         authority.require_above_or_self(

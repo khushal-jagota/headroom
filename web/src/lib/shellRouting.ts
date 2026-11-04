@@ -9,7 +9,7 @@ export function parseConfigSelection(detail: readonly string[]): ConfigSelection
   if (detail[0] === "chief-of-staff" && detail.length === 1) {
     return { roleKind: "agent", roleId: "chief_of_staff" };
   }
-  if (["worker-skill", "manager", "sprint-item-supervisor"].includes(detail[0]) && detail.length === 1) {
+  if (["worker-skill", "manager"].includes(detail[0]) && detail.length === 1) {
     return {
       roleKind: "skill",
       roleId: detail[0] === "worker-skill" ? "panels-worker" : "panels-manager"
@@ -28,7 +28,6 @@ export function canonicalShellHash(hash: string): string {
   const queryIndex = hash.indexOf("?");
   const path = queryIndex < 0 ? hash : hash.slice(0, queryIndex);
   const query = queryIndex < 0 ? "" : hash.slice(queryIndex);
-  if (path.includes("/sprint-item-supervisor")) return canonicalShellHash(path.replace("/sprint-item-supervisor", "/manager") + query);
   if (path.startsWith("#/workspace/item/")) return canonicalShellHash(path.replace("#/workspace/item/", "#/workspace/manager/") + query);
   if (new URLSearchParams(query.slice(1)).get("view") === "items") {
     const params = new URLSearchParams(query.slice(1));

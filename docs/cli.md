@@ -6,6 +6,8 @@
 
 The command name grants nothing. The process environment says who is calling: Headroom sets the actor, the Ticket, Manager, or goal id, and the conversation id when it starts an agent. The server admits or refuses that caller with the same rule as the browser. See [Who may act](authority.md).
 
+Manager commands accept `panels manager` and `--manager`. The old Sprint Item and Orchestrator spellings are removed.
+
 ## What it is made of
 
 - **Ordinary roots**, shown in help, for people and supervising agents:

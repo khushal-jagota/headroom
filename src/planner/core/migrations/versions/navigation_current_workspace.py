@@ -5,7 +5,7 @@ from typing import cast
 
 from alembic import op
 
-from planner.navigation.data import upgrade_current_workspace
+from planner.core.migrations.historical_navigation.data import upgrade_current_workspace
 
 revision = "navigation_current_workspace"
 down_revision = ("prepare_navigation_attention", "remove_priority")

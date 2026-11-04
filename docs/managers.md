@@ -11,6 +11,12 @@ A Manager is an agent that holds one direction and the Tickets that serve it. It
 - **Artifacts** and **its own conversation**, on the ordinary [conversation system](conversations.md).
 - **A launch setup**: the backend, model, and reasoning its conversation uses.
 
+## Manager identity
+
+Current agent identities use `PLAN_ACTOR=manager` and `PLAN_MANAGER_ID`. The forward migration preserves each Manager and its conversation. Retained conversations receive the current role instructions on their next turn. Old actor names, command aliases, request headers, and environment names do not select a Manager.
+
+Manager files retain `/files/sprint-items/` addresses so that existing Ticket links still open. Historical migration backfills remain isolated from current navigation writes.
+
 ## Chief
 
 Chief is the special case. It is a global principal that stands above everything, with its own retained conversation and settings. Tickets can be assigned to Chief directly. Chief is not stored as an ordinary Manager, has no goal field, and can never be settled.

@@ -37,6 +37,7 @@ from planner.conversation.events import (
 from planner.conversation.message_content import text_message_content
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import _alembic_config, _migration_engine
+from planner.core.migrations.historical_navigation import data as historical_data
 from planner.navigation import data, journal, snapshot
 from planner.navigation.contracts import HistoryUnavailable
 from planner.projects.data import seed_default_projects
@@ -385,7 +386,7 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
     seed_path = seed_root / "pre-lifecycle.db"
     _seed_pre_lifecycle(seed_path).dispose()
     by_order: list[list[dict[str, Any]]] = []
-    real_rebuild = data.rebuild
+    real_rebuild = historical_data.rebuild
 
     def fail_reconcile(conn: sqlite3.Connection) -> None:
         real_rebuild(conn)
@@ -419,7 +420,7 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
                 before = list(conn.iterdump())
             # This immediate checkpoint spans only the reconciliation transaction.
             with monkeypatch.context() as patch:
-                patch.setattr(data, "rebuild", fail_reconcile)
+                patch.setattr(historical_data, "rebuild", fail_reconcile)
                 with pytest.raises(RuntimeError, match="cumulative reconciliation failure"):
                     with engine.begin() as connection:
                         command.upgrade(_alembic_config(connection), "reconcile_navigation_staging")

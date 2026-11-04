@@ -8,6 +8,8 @@ Khushal, Chief, Managers, Workers, and goal agents all call the same routes. The
 
 The server knows five kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, a **Ticket** (its Worker), and a **goal** (its agent). The browser and an ordinary `panels` call are the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
 
+Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
+
 ## Position
 
 ```text

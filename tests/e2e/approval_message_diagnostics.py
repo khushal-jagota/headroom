@@ -125,7 +125,7 @@ class ApprovalMessageDiagnostics:
         path = urlsplit(url).path
         return path in ("/api/board", "/api/changes") or (
             path.startswith("/api/conversation/conversations/dot-")
-        ) or (path.startswith("/api/items/") and path.endswith("/workspace"))
+        ) or (path.startswith("/api/managers/") and path.endswith("/workspace"))
 
     @staticmethod
     def _projection(value: Any) -> list[dict[str, Any]]:

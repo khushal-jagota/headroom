@@ -161,51 +161,30 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
     assert allowed_ticket_file.status_code == 200
 
 
-def test_manager_identity_generations_agree_and_conflicts_refuse() -> None:
+def test_manager_identity_accepts_only_current_names() -> None:
     import pytest
 
-    from planner.core.authctx import request_context
+    from planner.core.authctx import RequestContext, request_context
     from planner.core.errors import PlannerError
 
-    def principal(headers: dict[str, str]) -> str:
-        request = Request(
-            {
-                "type": "http",
-                "headers": [
-                    (key.lower().encode(), value.encode()) for key, value in headers.items()
-                ],
-            }
-        )
-        result = request_context(request).principal
-        assert result.kind.value == "manager"
-        return result.id
+    def context(headers: dict[str, str]) -> RequestContext:
+        return request_context(Request({
+            "type": "http",
+            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+        }))
 
-    assert principal({"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_one"}) == "si_one"
-    assert (
-        principal({"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_one"})
-        == "si_one"
-    )
-    assert (
-        principal(
-            {
-                "X-Plan-Actor": "manager",
-                "X-Plan-Manager-ID": "si_one",
-                "X-Plan-Sprint-Item-ID": "si_one",
-            }
-        )
-        == "si_one"
-    )
-    with pytest.raises(PlannerError, match="conflicting Manager"):
-        principal(
-            {
-                "X-Plan-Actor": "manager",
-                "X-Plan-Manager-ID": "si_one",
-                "X-Plan-Sprint-Item-ID": "si_other",
-            }
-        )
+    current = context({"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_one"})
+    assert current.principal.kind.value == "manager"
+    assert current.principal.id == "si_one"
+    for headers in (
+        {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_one"},
+        {"X-Plan-Actor": "manager", "X-Plan-Sprint-Item-ID": "si_one"},
+    ):
+        with pytest.raises(PlannerError, match="does not name a Panels principal"):
+            context(headers)
 
 
-def test_hosted_owner_strips_both_manager_identity_generations(tmp_path: Path) -> None:
+def test_hosted_owner_strips_manager_identity(tmp_path: Path) -> None:
 
     from planner.core.authctx import request_context
 
