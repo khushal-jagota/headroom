@@ -20,11 +20,16 @@ def upgrade() -> None:
     # Capture triggers before SQLite's nullable-column rebuild. Alembic retains indexes
     # and constraints, but SQLite drops attached triggers with the old table.
     triggers = [
-        str(row[0])
+        (str(row[0]), str(row[1]))
         for row in conn.exec_driver_sql(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name='tickets' AND sql IS NOT NULL"
+            "SELECT name,sql FROM sqlite_master "
+            "WHERE type='trigger' AND tbl_name='tickets' AND sql IS NOT NULL"
         )
     ]
+    # Runtime publication callbacks do not exist on the migration connection. Suspend
+    # these triggers before backfill writes, then restore their exact SQL after rebuild.
+    for name, _sql in triggers:
+        conn.exec_driver_sql('DROP TRIGGER "' + name.replace('"', '""') + '"')
     op.add_column("tickets", sa.Column("workflow_json", sa.Text(), nullable=True))
     # Decode historical documents directly: migration preserves saved text and references
     # and does not depend on a mutable runtime registry or current model catalogue.
@@ -79,7 +84,7 @@ def upgrade() -> None:
     with op.batch_alter_table("tickets", recreate="always") as batch:
         batch.alter_column("worker_type", existing_type=sa.Text(), nullable=True)
         batch.alter_column("workflow_json", existing_type=sa.Text(), nullable=False)
-    for trigger in triggers:
+    for _name, trigger in triggers:
         conn.exec_driver_sql(trigger)
 
     # New nullable provenance and saved labels change the navigation wire contract.

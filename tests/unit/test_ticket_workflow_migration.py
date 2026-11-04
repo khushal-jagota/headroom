@@ -54,6 +54,14 @@ def test_upgrade_copies_workflows_and_preserves_ticket_state_and_triggers(
             "VALUES ('t_orphan','Missing preset','coding','codex',"
             "'needs_brief','needs_brief','{}',1,2)"
         )
+        # The ordinary connection owns this callback. The separate migration connection
+        # does not, just like a runtime signal-publication admission callback.
+        conn.create_function("workflow_fixture_admitted", 0, lambda: 1)
+        conn.execute(
+            "CREATE TRIGGER workflow_migration_admission BEFORE UPDATE ON tickets "
+            "BEGIN SELECT CASE WHEN workflow_fixture_admitted()=0 "
+            "THEN RAISE(ABORT,'not admitted') END; END"
+        )
         conn.execute("CREATE TABLE workflow_migration_audit(ticket_id TEXT)")
         conn.execute(
             "CREATE TRIGGER workflow_migration_probe AFTER UPDATE OF title ON tickets "
@@ -81,6 +89,7 @@ def test_upgrade_copies_workflows_and_preserves_ticket_state_and_triggers(
         conn.commit()
         with closing(sqlite3.connect(str(tmp_path / "workflow-upgrade.db"))) as raw:
             attach(raw)
+            raw.create_function("workflow_fixture_admitted", 0, lambda: 1)
             raw.execute("BEGIN")
             raw.execute("UPDATE tickets SET worker_type='missing_type' WHERE id='t_orphan'")
             raw.commit()

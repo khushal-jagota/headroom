@@ -40,3 +40,11 @@ No live skill edits, deployment, or integration into staging occur during Implem
 The review found three concrete gaps. The Mac executor still resolved the current preset, manual first chat omitted the custom guide, and workspace hover labels used current presets. Repairs switch executor skill requirements and workspace descriptions to snapshots, and place custom kickoff guidance in canonical conversation role materials. Focused checks and a recheck of those repairs form the final review evidence.
 
 The navigation protocol adds saved stage and workflow labels. A schema/semantics bump rebuilds persisted snapshots and resets the epoch for the new required fields. Compact Ticket controls omit instruction bodies to retain the existing response size budget.
+
+## Compatibility follow-up
+
+The current schema requires a saved workflow. Existing direct-SQL fixtures now supply one explicitly. Historical migration fixtures retain their original schemas. Existing navigation ownership tests now distinguish a Ticket snapshot update from a preset edit.
+
+An offline diagnostic maintenance case exposed runtime-only SQLite callbacks in Ticket triggers during backfill. The migration now captures and drops those triggers before backfill, then restores their exact SQL after the table rebuild. The existing migration test includes a callback absent from the migration connection. Independent review confirmed that the surrounding BEGIN IMMEDIATE transaction also rolls back trigger removal on failure.
+
+The implementation review reports no unresolved findings. Its three original findings and the later trigger repair received focused rechecks.
