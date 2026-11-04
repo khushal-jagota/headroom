@@ -61,12 +61,13 @@ def _home_folder_text(shared_workspace_folder: Path, *, extra: str = "") -> str:
     """What the Chief and a Manager are told about the folder they start in.
 
     They start in a folder of their own rather than the shared workspace, so they are told
-    that it is theirs and where the shared workspace went.
+    that it is theirs and where the shared workspace went. The owner approved this wording.
     """
     return (
-        " Your start folder is your own home folder. Keep your notes, scratch files and your "
-        f"own rules in a CLAUDE.md there.{extra} The repositories are under "
-        f"`{shared_workspace_folder}`."
+        " Your start folder is your own. Use it to keep things for yourself: notes, scratch "
+        "files, and rules you want to remember. Don't copy what is already recorded in "
+        f"Tickets or elsewhere in Panels.{extra} The repositories are under "
+        f"{shared_workspace_folder}."
     )
 
 
@@ -82,7 +83,7 @@ def manager_role_text(shared_workspace_folder: Path) -> str:
         f"{_ROLE_DIRECTIVE_PREFIX} You are a Manager."
         + _home_folder_text(
             shared_workspace_folder,
-            extra=" Keep them out of `artifacts/`, which is what the owner sees.",
+            extra=" Keep it out of artifacts/, which is what the owner sees.",
         )
         + _ROLE_REPLY_REQUIREMENT
     )

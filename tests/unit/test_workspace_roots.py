@@ -153,9 +153,9 @@ def test_unconfigured_workspace_preserves_both_existing_fallbacks(
     application.mkdir()
     monkeypatch.setattr(server, "_PREFERRED_WORKER_WORKSPACE_ROOT", preferred)
     monkeypatch.setattr(server, "_REPO_ROOT", application)
-    assert f"`{application}`" in agent_resolve(tmp_db).role_materials.role_text
+    assert f"are under {application}." in agent_resolve(tmp_db).role_materials.role_text
     preferred.mkdir()
-    assert f"`{preferred}`" in agent_resolve(tmp_db).role_materials.role_text
+    assert f"are under {preferred}." in agent_resolve(tmp_db).role_materials.role_text
 
 
 def test_lifespans_isolate_databases_and_reject_duplicate_database_aliases(
@@ -193,7 +193,7 @@ def test_lifespans_isolate_databases_and_reject_duplicate_database_aliases(
             with closing(connect(str(paths[1]))) as conn:
                 assert workspace_root_for_connection(conn) is None
                 assert (
-                    f"`{server.resolve_worker_workspace_root()}`"
+                    f"are under {server.resolve_worker_workspace_root()}."
                     in agent_resolve(conn).role_materials.role_text
                 )
             alias = tmp_path / "database-alias"
