@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from playwright.sync_api import BrowserContext, Page, expect
+from playwright.sync_api import BrowserContext, Locator, Page, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle, capture_success
 from tests.support.server_fixtures import signal_server as signal_server
 
@@ -979,11 +979,11 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
 ) -> None:
-    """Prove accepted completion facts reach mounted Svelte pages and aggregates.
+    """Prove saved results stay consistent across mounted goal surfaces.
 
-    Engine tests prove automatic reconciliation without a GET. Renderer tests prove
-    individual labels. Neither proves API wire names and resource invalidation reach
-    both mounted surfaces. Reuse the ordinary server and browser host for one case.
+    Rule and renderer tests cannot prove that live API changes replace painted
+    deadline colors and obsolete numeric status in the page, overview, rail, and
+    preview. Extend the existing flow and reuse its ordinary server/browser host.
     """
     project = api.direct_post(server, "/api/projects", {"name": "Goal outcome proof"})
     measure = api.direct_post(
@@ -1065,26 +1065,86 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     page = open_page(context, server, f"#/workspace/goal/{goal['id']}", "[data-goal-page]")
     page.emulate_media(reduced_motion="reduce")
     outcome = page.locator('[data-goal-page] [aria-label="Completion and result"]')
-    expect(outcome).to_contain_text("Completed Jul 3, 2026", timeout=WAIT_MS)
-    expect(outcome.locator('[data-outcome="miss"]')).to_have_text("Miss", timeout=WAIT_MS)
+    rail = page.locator(f'a[data-goal-id="{goal["id"]}"]')
+    preview = page.locator(f'[data-goal-preview="{goal["id"]}"]')
+
+    def assert_color(element: Locator, tone: str) -> None:
+        token = {
+            "bad": "--accent-error", "good": "--accent-done", "neutral": "--text-muted",
+        }[tone]
+        expected_color = element.evaluate(
+            """(node, token) => {
+                const probe = node.ownerDocument.createElement('span');
+                probe.style.color = `var(${token})`;
+                node.ownerDocument.body.append(probe);
+                const color = getComputedStyle(probe).color;
+                probe.remove();
+                return color;
+            }""",
+            token,
+        )
+        expect(element).to_have_css("color", expected_color, timeout=WAIT_MS)
+
+    def assert_page_and_rail(completion: str, result: str, tone: str, status: str) -> None:
+        expect(outcome).to_contain_text(completion, timeout=WAIT_MS)
+        expect(outcome.locator("[data-outcome]")).to_have_text(result, timeout=WAIT_MS)
+        deadline = page.locator("[data-goal-page] .metadata.deadline")
+        expect(deadline).to_have_attribute("data-deadline-tone", tone, timeout=WAIT_MS)
+        assert_color(deadline.locator("input"), tone)
+        expect(rail.locator("[data-goal-status]")).to_have_text(status, timeout=WAIT_MS)
+        expect(rail).not_to_contain_text("Below target", timeout=WAIT_MS)
+        expect(rail.locator("time")).to_have_attribute(
+            "data-deadline-tone", tone, timeout=WAIT_MS
+        )
+        assert_color(rail.locator("time"), tone)
+
+    def assert_preview(completion: str, result: str, tone: str) -> None:
+        expect(preview).to_be_visible(timeout=WAIT_MS)
+        saved_result = preview.locator('[aria-label="Completion and result"]')
+        expect(saved_result).to_contain_text(completion, timeout=WAIT_MS)
+        expect(saved_result.locator("[data-outcome]")).to_have_text(result, timeout=WAIT_MS)
+        deadline = preview.locator(".preview-date [data-deadline-tone]")
+        expect(deadline).to_have_attribute("data-deadline-tone", tone, timeout=WAIT_MS)
+        assert_color(deadline, tone)
+
+    def dismiss_preview() -> None:
+        page.mouse.move(1200, 650)
+        expect(preview).not_to_be_visible(timeout=WAIT_MS)
+
+    assert_page_and_rail("Completed Jul 3, 2026", "Miss", "bad", "Completed late · Miss")
     expect(
         page.locator("[data-goal-page]").get_by_role("button", name="Mark done", exact=True)
     ).to_have_count(0)
-    capture_success(page, "goal-outcome-late-desktop.png")
+    capture_success(page, "goal-result-late-page.png")
+    rail.hover(timeout=WAIT_MS)
+    assert_preview("Completed Jul 3, 2026", "Miss", "bad")
+    capture_success(page, "goal-result-late-preview.png")
+    dismiss_preview()
     page.set_viewport_size({"width": 390, "height": 844})
     expect(outcome).to_be_visible(timeout=WAIT_MS)
-    capture_success(page, "goal-outcome-late-phone.png")
+    capture_success(page, "goal-result-late-phone.png")
+    page.set_viewport_size({"width": 1280, "height": 720})
 
     overview = open_page(context, server, "#/workspace/goals", ".goals-overview")
     rate = overview.locator('[aria-label="Overall goal hit rate"]')
+    row = overview.locator(".goals-overview tbody tr").filter(
+        has=overview.get_by_role("link", name=goal["title"], exact=True)
+    )
+
+    def assert_overview(completion: str, result: str, tone: str) -> None:
+        saved_result = row.locator('[aria-label="Completion and result"]')
+        expect(saved_result).to_contain_text(completion, timeout=WAIT_MS)
+        expect(saved_result.locator("[data-outcome]")).to_have_text(result, timeout=WAIT_MS)
+        expect(saved_result).to_be_in_viewport(ratio=1, timeout=WAIT_MS)
+        deadline = row.locator("[data-deadline-tone]")
+        expect(deadline).to_have_attribute("data-deadline-tone", tone, timeout=WAIT_MS)
+        assert_color(deadline, tone)
+
     expect(rate).to_contain_text("50%", timeout=WAIT_MS)
     expect(rate).to_contain_text("1 hit · 1 miss", timeout=WAIT_MS)
     expect(overview.locator(".goals-overview tbody tr")).to_have_count(2, timeout=WAIT_MS)
-    for row_outcome in overview.locator(
-        '.goals-overview tbody tr [aria-label="Completion and result"]'
-    ).all():
-        expect(row_outcome).to_be_in_viewport(ratio=1, timeout=WAIT_MS)
-    capture_success(overview, "goal-outcome-overview-desktop.png")
+    assert_overview("Completed Jul 3, 2026", "Miss", "bad")
+    capture_success(overview, "goal-result-late-overview.png")
     overview.get_by_role("button", name="State filter", exact=True).click(timeout=WAIT_MS)
     state_filter = overview.get_by_role("dialog", name="State filter", exact=True)
     state_filter.get_by_role("combobox", name=re.compile("^State")).select_option(
@@ -1100,30 +1160,48 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     changed = api.direct_patch(
         server,
         path,
-        {
-            "expected_revision": current["revision"],
-            "completion_rule": {**rule, "target": {"op": "constant", "value": 9000}},
-        },
+        {"expected_revision": current["revision"], "deadline": "2026-07-03"},
     )
-    assert changed["completion_date"] == "2026-07-02"
+    assert changed["completion_date"] == "2026-07-03"
     assert changed["outcome"] == "hit"
-    expect(outcome).to_contain_text("Completed Jul 2, 2026", timeout=WAIT_MS)
-    expect(outcome.locator('[data-outcome="hit"]')).to_have_text("Hit", timeout=WAIT_MS)
+    assert_page_and_rail("Completed Jul 3, 2026", "Hit", "good", "Completed · Hit")
     expect(page.locator("[data-goal-page]")).to_have_attribute(
         "data-outcome-proof", "retained", timeout=WAIT_MS
     )
+    assert_overview("Completed Jul 3, 2026", "Hit", "good")
     expect(rate).to_contain_text("100%", timeout=WAIT_MS)
     expect(rate).to_contain_text("2 hits · 0 misses", timeout=WAIT_MS)
-    expect(overview.locator(".goals-overview tbody tr")).to_contain_text(
-        "Completed Jul 2, 2026", timeout=WAIT_MS
-    )
     assert cli(server, "goal", "list")["outcome_summary"] == {
         "hits": 2, "misses": 0, "rate": 1.0,
     }
-    expect(
-        overview.locator('.goals-overview tbody tr [aria-label="Completion and result"]')
-    ).to_be_in_viewport(ratio=1, timeout=WAIT_MS)
-    capture_success(overview, "goal-outcome-overview-updated.png")
+    capture_success(page, "goal-result-hit-page.png")
+    capture_success(overview, "goal-result-hit-overview.png")
+    rail.hover(timeout=WAIT_MS)
+    assert_preview("Completed Jul 3, 2026", "Hit", "good")
+    capture_success(page, "goal-result-hit-preview.png")
+
+    # The same mounted preview must also replace a previously completed result.
+    current = api.get(server, path)
+    reopened = api.direct_patch(
+        server,
+        path,
+        {
+            "expected_revision": current["revision"],
+            "completion_rule": {**rule, "first_date": "2026-07-04"},
+            "deadline": "2026-07-06",
+        },
+    )
+    assert reopened["completed"] is False
+    assert reopened["completion_date"] is None
+    assert reopened["outcome"] == "pending"
+    assert_page_and_rail("Open", "Pending", "neutral", "Open")
+    assert_preview("Open", "Pending", "neutral")
+    capture_success(page, "goal-result-open-preview.png")
+    dismiss_preview()
+    assert_overview("Open", "Pending", "neutral")
+    expect(rate).to_contain_text("100%", timeout=WAIT_MS)
+    expect(rate).to_contain_text("1 hit · 0 misses", timeout=WAIT_MS)
+    capture_success(page, "goal-result-open-page.png")
+    capture_success(overview, "goal-result-open-overview.png")
     page.reload()
-    expect(outcome).to_contain_text("Completed Jul 2, 2026", timeout=WAIT_MS)
-    expect(outcome.locator('[data-outcome="hit"]')).to_have_text("Hit", timeout=WAIT_MS)
+    assert_page_and_rail("Open", "Pending", "neutral", "Open")
