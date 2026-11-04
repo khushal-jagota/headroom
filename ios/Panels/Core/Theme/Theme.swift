@@ -234,11 +234,16 @@ extension PanelsTheme {
         static let panelCollapse = 0.26
         static let bodyCollapse = 0.32
         static let completedCollapse = 0.24
+        static let summaryEnterDuration = 0.22
+        static let headingExitDuration = 0.15
+        static let countExitDuration = 0.14
+        static let chevronDuration = 0.15
+        static let smoothDuration = 0.4
         static let pressDuration = 0.11
         static let tickDelay = 0.05
         static let tickDuration = 0.15
         static let snappy = Animation.spring(duration: 0.26, bounce: 0)
-        static let smooth = Animation.spring(duration: 0.4, bounce: 0)
+        static let smooth = Animation.spring(duration: smoothDuration, bounce: 0)
         static let morph = Animation.spring(duration: 0.42, bounce: 0)
         static let disclosure = Animation.interpolatingSpring(mass: 1, stiffness: 280, damping: 34)
         static let standard = Animation.timingCurve(0.22, 1, 0.36, 1, duration: standardDuration)

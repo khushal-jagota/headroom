@@ -188,7 +188,7 @@ struct GoalPlot: View {
                     Text(GoalChartPresentation.axisTick(block, tick))
                         .font(.system(size: 9)).foregroundStyle(PanelsTheme.faint).frame(width: 30, alignment: .leading)
                         .offset(x: geometry.size.width + 6, y: geometry.size.height * fraction - 6)
-                }.transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: reduceMotion ? 0 : 0.24)), removal: .opacity.animation(.easeOut(duration: reduceMotion ? 0 : 0.12))))
+                }.transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: reduceMotion ? 0 : PanelsTheme.Goal.standardDuration)), removal: .opacity.animation(.easeOut(duration: reduceMotion ? 0 : PanelsTheme.Goal.instantDuration))))
             }
         }.animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: bounds.1)
     }

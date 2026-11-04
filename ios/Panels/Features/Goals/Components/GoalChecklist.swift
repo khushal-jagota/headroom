@@ -31,12 +31,12 @@ struct GoalChecklist: View {
                     }.frame(width: 32, height: 32)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(allDone ? block["doneTitle"].string ?? "All items done" : block["title"].string ?? "Checklist")
-                            .id(allDone).panelsScaledFont(size: 17, weight: .medium).foregroundStyle(PanelsTheme.strong).transition(.asymmetric(insertion: .offset(y: reduceMotion ? 0 : 6).combined(with: .opacity).animation(.easeOut(duration: 0.22)), removal: .offset(y: reduceMotion ? 0 : -6).combined(with: .opacity).animation(.easeOut(duration: 0.15))))
+                            .id(allDone).panelsScaledFont(size: 17, weight: .medium).foregroundStyle(PanelsTheme.strong).transition(.asymmetric(insertion: .offset(y: reduceMotion ? 0 : 6).combined(with: .opacity).animation(.easeOut(duration: PanelsTheme.Goal.summaryEnterDuration)), removal: .offset(y: reduceMotion ? 0 : -6).combined(with: .opacity).animation(.easeOut(duration: PanelsTheme.Goal.headingExitDuration))))
                         Text("\(doneCount) of \(items.count) done").id(doneCount).panelsScaledFont(size: 12).foregroundStyle(PanelsTheme.Goal.faint)
-                            .transition(.asymmetric(insertion: .offset(y: reduceMotion ? 0 : 8).combined(with: .opacity).animation(.easeOut(duration: 0.22)), removal: .offset(y: reduceMotion ? 0 : -8).combined(with: .opacity).animation(.easeOut(duration: 0.14))))
+                            .transition(.asymmetric(insertion: .offset(y: reduceMotion ? 0 : 8).combined(with: .opacity).animation(.easeOut(duration: PanelsTheme.Goal.summaryEnterDuration)), removal: .offset(y: reduceMotion ? 0 : -8).combined(with: .opacity).animation(.easeOut(duration: PanelsTheme.Goal.countExitDuration))))
                     }
                     Spacer(minLength: 4)
-                    Image(systemName: "chevron.up").font(.system(size: 12)).rotationEffect(.degrees(opened ? 0 : 180)).foregroundStyle(PanelsTheme.Goal.faint).animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: opened)
+                    Image(systemName: "chevron.up").font(.system(size: 12)).rotationEffect(.degrees(opened ? 0 : 180)).foregroundStyle(PanelsTheme.Goal.faint).animation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Goal.chevronDuration), value: opened)
                 }.padding(supplementary ? 16 : 24).contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityValue(opened ? "Expanded" : "Collapsed")
             if opened {

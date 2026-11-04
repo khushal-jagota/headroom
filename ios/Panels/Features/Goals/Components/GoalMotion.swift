@@ -51,7 +51,7 @@ private struct GoalDigit: View {
             if !increasing, digit > old { destination -= 10 }
             moving = true
             withAnimation(PanelsTheme.Goal.smooth) { position = Double(destination) }
-            try? await Task.sleep(for: .seconds(0.4))
+            try? await Task.sleep(for: .seconds(PanelsTheme.Goal.smoothDuration))
             guard !Task.isCancelled else { return }
             moving = false
             withTransaction(transaction) { position = Double(digit + 10) }
