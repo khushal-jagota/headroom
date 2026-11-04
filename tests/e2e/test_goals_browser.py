@@ -448,7 +448,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         server.base + path,
         headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
         json={
-            "expected_revision": current["revision"],
             "primary_checklist_block_id": "approach",
         },
         timeout=10,
@@ -478,7 +477,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         assert date_saved.value.ok
         body = date_saved.value.request.post_data_json
         assert isinstance(body, dict)
-        assert body["expected_revision"] == before["revision"]
+        assert "expected_revision" not in body
         accepted = api.get(server, path)
         expected_page = before["page"]
         expected_page["blocks"][0]["items"][1]["deadline"] = value
@@ -539,7 +538,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         server.base + path,
         headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
         json={
-            "expected_revision": current["revision"],
             "page": updated_page,
             "active": True,
         },
@@ -562,10 +560,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )
-    # The newly interactive overview must use the real revision-checked writer.
+    # The newly interactive overview must use the real goal writer.
     # Reuse this connected scenario: component tests cannot prove persisted API
     # acceptance, effective completion, or reload reads from a card-originated edit.
-    overview_revision = api.get(server, path)["revision"]
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
         timeout=WAIT_MS,
@@ -576,7 +573,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert overview_saved.value.ok
     overview_body = overview_saved.value.request.post_data_json
     assert isinstance(overview_body, dict)
-    assert overview_body["expected_revision"] == overview_revision
+    assert "expected_revision" not in overview_body
     overview_accepted = api.get(server, path)
     assert overview_accepted["revision"] == overview_revision + 1
     assert overview_accepted["page"]["blocks"][0]["items"][1]["state"] == "done"
@@ -667,7 +664,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     # Reuse this connected host to prove a real native title commit and reload.
     # Frontend-only cases cannot prove API acceptance and persisted browser reads.
     title_editor = page.get_by_role("textbox", name="Goal title", exact=True)
-    before_title = api.get(server, path)
     title_editor.fill("Owner title", timeout=WAIT_MS)
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
@@ -676,7 +672,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         title_editor.press("Enter", timeout=WAIT_MS)
     assert titled.value.ok, titled.value.text()
     assert titled.value.request.post_data_json == {
-        "expected_revision": before_title["revision"],
         "title": "Owner title",
     }
     accepted_title = api.get(server, path)
@@ -706,7 +701,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             server.base + path,
             headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
             json={
-                "expected_revision": current["revision"],
                 "title": "Agent title",
                 "page": reordered,
             },
@@ -727,7 +721,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         title_editor.press("Enter", timeout=WAIT_MS)
     assert stale_title.value.status == 409
     assert stale_title.value.request.post_data_json == {
-        "expected_revision": current["revision"],
         "title": "Unaccepted local title",
     }
     error = page.locator("[data-goal-page] .goal-heading .error-line")
@@ -1160,7 +1153,7 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     changed = api.direct_patch(
         server,
         path,
-        {"expected_revision": current["revision"], "deadline": "2026-07-03"},
+        {"deadline": "2026-07-03"},
     )
     assert changed["completion_date"] == "2026-07-03"
     assert changed["outcome"] == "hit"
@@ -1186,7 +1179,6 @@ def test_goal_outcomes_refresh_across_page_and_overview(
         server,
         path,
         {
-            "expected_revision": current["revision"],
             "completion_rule": {**rule, "first_date": "2026-07-04"},
             "deadline": "2026-07-06",
         },

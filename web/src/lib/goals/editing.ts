@@ -4,7 +4,7 @@ import { goalQueries } from './queries';
 import { updatePageBlock } from './presentation';
 import type { Block, GoalEditBody, GoalResponse } from './contracts';
 
-type GoalPatch = Omit<GoalEditBody, 'expected_revision'>;
+type GoalPatch = GoalEditBody;
 type EditorIO = {
   read(id: string): Promise<GoalResponse>;
   write(id: string, body: GoalEditBody): Promise<GoalResponse>;
@@ -33,8 +33,8 @@ export function createGoalEditor(goalId: string, io: EditorIO = http) {
     if (goal.id !== goalId) throw new Error('The accepted goal does not match this edit.');
     return goal;
   }
-  async function accept(patch: GoalPatch, revision: number) {
-    const accepted = await io.write(goalId, { ...patch, expected_revision: revision });
+  async function accept(patch: GoalPatch) {
+    const accepted = await io.write(goalId, patch);
     // A read failure after acceptance belongs to the mounted query, never Retry save.
     await io.refresh().catch(() => undefined);
     return accepted;
@@ -42,16 +42,13 @@ export function createGoalEditor(goalId: string, io: EditorIO = http) {
   return {
     goalId,
     getAccepted,
-    write: (patch: GoalPatch, revision?: number) => enqueue(goalId, async () => {
-      const goal = await getAccepted();
-      return accept(patch, revision ?? goal.revision);
-    }),
-    updateBlock: (blockId: string, update: (block: Block) => Block, revision?: number) => enqueue(goalId, async () => {
+    write: (patch: GoalPatch) => enqueue(goalId, () => accept(patch)),
+    updateBlock: (blockId: string, update: (block: Block) => Block) => enqueue(goalId, async () => {
       const goal = await getAccepted();
       let found = false;
       const blocks = updatePageBlock(goal.page.blocks, blockId, block => { found = true; return update(block); });
       if (!found) throw new Error('This block no longer exists. Refresh the goal before another edit.');
-      return accept({ page: { ...goal.page, blocks } }, revision ?? goal.revision);
+      return accept({ page: { ...goal.page, blocks } });
     }),
   };
 }
