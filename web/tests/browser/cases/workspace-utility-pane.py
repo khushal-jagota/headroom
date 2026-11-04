@@ -311,10 +311,13 @@ def run(browser, urls):
     page.evaluate("location.hash='#/preview?source=ticket&ticket=t_fixture&path=artifacts%2Fwide.html'")
     preview = pane.locator('[data-file-preview-route]')
     expect(preview.locator('iframe')).to_be_visible()
-    expect(preview.locator('[data-artifact-recipient]')).to_have_text("Message Wide artifact owner")
     expect(preview.locator('[data-conversation-pane]')).to_have_attribute("data-conversation-state", "rest")
     expect(preview.get_by_placeholder("Message Wide artifact owner...", exact=True)).to_be_visible()
     expect(preview.locator('[data-artifact-owner-unavailable]')).to_have_count(0)
+    # Nothing sits above the artifact's conversation: it starts at the top of its column.
+    conversation_offset = preview.evaluate("node => { const column = node.querySelector('.conversation-column');"
+                                           " return column.querySelector('[data-conversation-pane]').getBoundingClientRect().top - column.getBoundingClientRect().top; }")
+    assert abs(conversation_offset) <= 1, conversation_offset
     assert rail.evaluate("node => node === window.__persistentRail")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     bounds = pane.bounding_box()
