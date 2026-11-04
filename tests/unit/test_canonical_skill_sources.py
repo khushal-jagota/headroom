@@ -23,7 +23,6 @@ from planner.skill_sources import (
     provision_native_backend_skills,
     provision_workspace_skills,
 )
-from planner.skill_versions import reconcile_managed_skill_versions
 from planner.worker_settings import service
 
 
@@ -291,7 +290,8 @@ def test_owner_edit_stands_in_the_row_and_the_file_when_version_history_fails(
     assert edited != before.decode("utf-8")
     assert 'description: "changed"' in edited
     assert path.read_bytes() == edited.encode("utf-8")
-    reconcile_managed_skill_versions(conn)
+    monkeypatch.undo()
+    service.save_skill(conn, "panels", {"description": "changed"}, now=2, database_parent=tmp_path)
     assert (
         conn.execute(
             "SELECT content FROM managed_skill_versions WHERE skill_name = ? AND content = ?",
@@ -351,8 +351,14 @@ def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
 ) -> None:
     import hashlib
 
-    reconcile_managed_skill_versions(database)
     before = read_skill_source(database, "panels")
+    service.save_skill(
+        database,
+        "panels",
+        {"description": service.read_skill(database, "panels").description},
+        now=0,
+        database_parent=tmp_path,
+    )
     original_versions = list(database.execute("SELECT id,content FROM managed_skill_versions"))
     target = before + "\nOwner custom text remains exact.\n"
     created = "---\nname: reviewed-manager\ndescription: New role\n---\n\nFull source.\n"
@@ -443,8 +449,7 @@ def test_manager_skill_primary_identity_matches_the_generated_role() -> None:
     assert "PLAN_SPRINT_ITEM_ID" not in primary and "PLAN\\_SPRINT" not in primary
     plain_source = source.replace("`", "").replace("\\_", "_")
     assert (
-        "If PLAN_MANAGER_ID is absent, use the retained PLAN_SPRINT_ITEM_ID "
-        "for the same Manager."
+        "If PLAN_MANAGER_ID is absent, use the retained PLAN_SPRINT_ITEM_ID for the same Manager."
     ) in plain_source
 
 

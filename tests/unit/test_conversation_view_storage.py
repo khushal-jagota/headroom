@@ -15,7 +15,6 @@ from planner.conversation.events import (
     ConversationEventKind,
     conversation_event_payload_from_canonical_json,
 )
-from planner.conversation.retention.read import diagnostics_expired, sequence_expired
 from planner.conversation.storage import StoredConversationEvent
 from planner.conversation.views.api import _changes
 from planner.conversation.views.configuration import (
@@ -30,6 +29,7 @@ from planner.conversation.views.contracts import (
     ViewPageCursor,
 )
 from planner.conversation.views.live_output import ConversationViewLiveOutput
+from planner.conversation.views.omissions import diagnostics_expired, sequence_expired
 from planner.conversation.views.status import read_status
 from planner.conversation.views.storage import (
     ViewBodyChanged,

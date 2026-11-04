@@ -180,13 +180,6 @@ class _World:
         with self.connect() as conn:
             return tickets_data.read_ticket(conn, ticket_id)
 
-    def skill_bindings(self) -> list[sqlite3.Row]:
-        with self.connect() as conn:
-            return conn.execute(
-                "SELECT sender_message_id, skill_role, binding_status "
-                "FROM worker_step_skill_bindings ORDER BY skill_role"
-            ).fetchall()
-
     def start_step(self, ticket_id: str) -> WorkerStepStartResult:
         return asyncio.run(
             start_ready_worker_step(
@@ -316,7 +309,6 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert ticket_id in message
     assert "conv-refuse" in message
     assert "write_to_backend_failed" in message
-    assert world.skill_bindings() == []
 
 
 def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
@@ -345,7 +337,6 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
     assert ticket.worker_step_claim is WorkerStepClaim.errored
     assert ticket.ticket_status is TicketStatus.errored
     assert world.conversations.backend_prompt_writes("conv-uncertain") == ()
-    assert world.skill_bindings() == []
     with closing(world.connect()) as conn:
         assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
         uncertain_restart = asyncio.run(
@@ -766,7 +757,6 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     assert [write.sender_label for write in writes] == ["browser"]
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
     assert world.pending_revision_feedback(ticket_id) is False
-    assert {row["binding_status"] for row in world.skill_bindings()} == {"provisional"}
 
 
 class _QueueingConversationSystem(_RetirementDelegate):
@@ -1078,7 +1068,6 @@ def test_definite_start_failure_stays_failed_until_one_explicit_retry(
             failed = world.ticket(ticket_id)
             assert failed.ticket_status is TicketStatus.errored
             assert failed.conversation_id == "native-refusal-detail"
-            assert world.skill_bindings() == []
             rows = await harness.events(failed.conversation_id)
             refusals = [
                 r.payload for r in rows if isinstance(r.payload, PromptDeliveryRefusedEventPayload)
