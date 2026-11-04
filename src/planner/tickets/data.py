@@ -62,10 +62,7 @@ from planner.tickets.logic import (
 )
 from planner.tickets.logic.decisions import Decision
 from planner.tickets.logic.locale import resolve_ticket_locale
-from planner.worker_settings.service import (
-    read_worker_launch_defaults_for_ticket_creation,
-    read_worker_requires_macos,
-)
+from planner.worker_settings.service import read_worker_launch_defaults_for_ticket_creation
 from planner.worker_types.configuration import (
     ConfiguredWorkerRuntimeDefinitions,
     configured_worker_runtime_definitions,
@@ -301,16 +298,7 @@ def resolve_ticket_draft_context(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
-    project = (
-        conn.execute("SELECT requires_macos FROM projects WHERE id=?", (project_id,)).fetchone()
-        if project_id is not None
-        else None
-    )
-    resolved_locale = resolve_ticket_locale(
-        locale,
-        project_requires_macos=bool(project["requires_macos"]) if project is not None else False,
-        worker_requires_macos=read_worker_requires_macos(conn, worker_type),
-    )
+    resolved_locale = resolve_ticket_locale(locale)
     return ResolvedTicketCreationContext(resolved_locale, launch_configuration, project_id)
 
 
@@ -1505,6 +1493,12 @@ def accept_proposal(
             manager_id=ticket.manager_id,
         )
         updated = _apply_decision(conn, ticket, decision, now)
+        from planner.attention.history import record_approval
+
+        record_approval(
+            conn, ticket_id=ticket_id, field=field, principal=principal,
+            method=TicketApprovalMethod.explicit_accept.value, now=now,
+        )
         _give_back_worker_step_claim(conn, updated, now=now)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -1707,6 +1701,10 @@ def delete_ticket_records(
                 conn, str(row["blocked_ticket_id"]), now, capture_attention=capture_attention
             )
 
+    # Deletion bypasses notification capture. End its interval before its identity goes.
+    from planner.attention.history import capture_gate
+
+    capture_gate(conn, ticket_id=ticket_id, active=False, now=now)
     conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
     for table in ("notification_attention_edges", "notification_attention_state"):
         conn.execute(

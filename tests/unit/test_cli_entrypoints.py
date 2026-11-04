@@ -115,6 +115,7 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
             "next_offset": 2,
         },
     }
+
     def fake_send(method: str, requested_path: str, **kwargs: Any) -> dict[str, Any]:
         assert method == "GET"
         requested_paths.append(requested_path)
@@ -260,3 +261,16 @@ def test_manager_help_explains_assignment_state() -> None:
         assert "finished destinations" in text
         assert "active manager for new work" in text
         assert "settled" in text and "absent settled field" in text
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ("project", "create", "--name", "Legacy", "--requires-macos"),
+        ("project", "set", "project_panels", "requires-macos", "--value", "true"),
+    ),
+)
+def test_project_cli_rejects_removed_macos_requirement(arguments: tuple[str, ...]) -> None:
+    result = CliRunner().invoke(cli_main.main, arguments)
+    assert result.exit_code != 0
+    assert "requires-macos" in result.output

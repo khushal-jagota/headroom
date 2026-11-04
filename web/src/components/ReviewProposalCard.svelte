@@ -12,7 +12,7 @@
    *
    * The Review screen (`ReviewRoute`) mounts the card.
    */
-  import { onMount, onDestroy, type Snippet } from "svelte";
+  import { onMount, onDestroy, untrack, type Snippet } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
@@ -44,10 +44,18 @@
     onSkip,
     onResolved,
     footer,
-    embedded = false
+    embedded = false,
+    initialRevisionDraft = "",
+    onRevisionDraftChange,
+    initialEditedBody,
+    onEditedBodyChange
   }: {
     identity: NavigationReviewProposalItem;
     embedded?: boolean;
+    initialRevisionDraft?: string;
+    initialEditedBody?: string;
+    onEditedBodyChange?: (text: string) => void;
+    onRevisionDraftChange?: (text: string) => void;
     /** The Ticket whose proposal this is. */
     ticketId: string;
     /** The Ticket field the proposal is filed against. */
@@ -172,8 +180,8 @@
 
   $effect(() => {
     if (currentKey !== decisionKey) {
+      revisionDraft = decisionKey === null ? initialRevisionDraft : "";
       decisionKey = currentKey;
-      revisionDraft = "";
       revisionError = null;
       revisionBusy = false;
 
@@ -181,6 +189,11 @@
       // The box — and anything being spoken into it — belongs to one proposal.
       voice?.cancel();
     }
+  });
+
+  $effect(() => {
+    const text = revisionDraft;
+    untrack(() => onRevisionDraftChange?.(text));
   });
 
   let reconciledMismatch: string | null = null;
@@ -300,7 +313,7 @@
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
             <WorkerProposalCard proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
               ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} manager={reviewManager}
-              disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
+              disabled={revisionBusy} {initialEditedBody} {onEditedBodyChange} initialReturnOpen={Boolean(initialRevisionDraft)} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
               onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}

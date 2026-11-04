@@ -71,7 +71,7 @@ def _seed_staging(conn: sqlite3.Connection) -> tuple[str, ...]:
 @pytest.mark.parametrize(
     "previous_head", [
         None, "ticket_application_previews", "scalar_observation_coverage",
-        "goals_staging_reconciliation",
+        "goals_staging_reconciliation", "attention_history", "remove_macos_requirements",
     ]
 )
 def test_combined_schema_preserves_fresh_and_each_accepted_branch(
@@ -87,10 +87,28 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
         conn.execute("""INSERT INTO projects(id,name,created_at,updated_at)
             VALUES('retained-project','Retained project',1,1)""")
         tables: tuple[str, ...] = ("projects",)
-        if previous_head in {"scalar_observation_coverage", "goals_staging_reconciliation"}:
+        if previous_head in {
+            "scalar_observation_coverage", "goals_staging_reconciliation",
+            "attention_history", "remove_macos_requirements",
+        }:
             tables += _seed_goals(conn)
-        if previous_head in {"ticket_application_previews", "goals_staging_reconciliation"}:
+        if previous_head in {
+            "ticket_application_previews", "goals_staging_reconciliation",
+            "attention_history", "remove_macos_requirements",
+        }:
             tables += _seed_staging(conn)
+        if previous_head in {"attention_history", "remove_macos_requirements"}:
+            conn.execute("""INSERT INTO attention_approval_events
+                (ticket_id,field,actor_kind,actor_id,method,occurred_at,destination_json)
+                VALUES('fixture-ticket','brief','owner','owner','explicit_accept',10,'{}')""")
+            conn.execute("""INSERT INTO attention_gate_intervals
+                (ticket_id,destination_json,opened_at,observed_since,closed_at)
+                VALUES('fixture-ticket','{}',NULL,5,10)""")
+            tables += (
+                "attention_history_metadata",
+                "attention_approval_events",
+                "attention_gate_intervals",
+            )
         before = {
             table: [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
             for table in tables
@@ -112,7 +130,22 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
             str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         for table, rows in before.items():
-            assert [dict(row) for row in conn.execute(f"SELECT * FROM {table}")] == rows
+            current = [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            if table == "goals":
+                assert len(current) == len(rows)
+                for previous, saved in zip(rows, current, strict=True):
+                    assert {key: saved[key] for key in previous} == previous
+                    assert saved["completion_rule"] is None
+                    assert saved["completion_date"] is None
+            elif table == "projects":
+                # Staging intentionally removes only this obsolete requirement.
+                assert all("requires_macos" not in saved for saved in current)
+                assert current == [
+                    {key: value for key, value in previous.items() if key != "requires_macos"}
+                    for previous in rows
+                ]
+            else:
+                assert current == rows
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         # A restart must not replay either branch or lose the merged version marker.
         db.create_schema(conn)

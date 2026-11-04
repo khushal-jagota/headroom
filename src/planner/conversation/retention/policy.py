@@ -23,6 +23,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "ticket_integrity_reason",
         # Manager launch choices leave diagnostic events and view schemas unchanged.
         "manager_launch_defaults",
+        "goal_outcomes",
         "automatic_project_measures",
         # Goal storage/history adds no changes to diagnostic event or view schemas.
         # Goal identities remain ineligible under the existing owner classifier.

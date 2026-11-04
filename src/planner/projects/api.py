@@ -29,8 +29,6 @@ def _marshal_create_project(raw: JsonDict) -> CreateProjectBody:
         name=body_str(raw, "name"),
         summary=body_str(raw, "summary"),
     )
-    if "requires_macos" in raw:
-        body["requires_macos"] = _requires_macos(raw["requires_macos"])
     if "folder_path" in raw:
         body["folder_path"] = _nullable_folder_path(raw["folder_path"])
     return body
@@ -42,19 +40,11 @@ def _marshal_update_project(raw: JsonDict) -> UpdateProjectBody:
         body["name"] = body_str(raw, "name")
     if "summary" in raw:
         body["summary"] = body_str(raw, "summary")
-    if "requires_macos" in raw:
-        body["requires_macos"] = _requires_macos(raw["requires_macos"])
     if "folder_path" in raw:
         body["folder_path"] = _nullable_folder_path(raw["folder_path"])
     if not body:
         raise PlannerError(ErrorCode.validation, "no project fields to update", {})
     return body
-
-
-def _requires_macos(raw: Any) -> bool:
-    if type(raw) is not bool:
-        raise PlannerError(ErrorCode.validation, "requires_macos must be a boolean", {})
-    return bool(raw)
 
 
 def _nullable_folder_path(raw: Any) -> str | None:
@@ -102,7 +92,6 @@ async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) 
         conn,
         name=body["name"],
         summary=body["summary"],
-        requires_macos=body.get("requires_macos", False),
         folder_path=body.get("folder_path"),
         now=clk.now_unix(),
     )
@@ -123,7 +112,6 @@ async def update_project(
         project_id,
         name=body.get("name"),
         summary=body.get("summary"),
-        requires_macos=body.get("requires_macos"),
         now=clk.now_unix(),
         **folder_path,
     )

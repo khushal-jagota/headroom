@@ -45,6 +45,7 @@ _RAW_PAYLOAD_FIELDS = {
         "sender",
         "recipient",
         "reconciles_sequence",
+        "system_generated",
     },
     "prompt_delivery_refused": {
         "text",

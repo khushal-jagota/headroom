@@ -13,8 +13,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from playwright.sync_api import BrowserContext, Page, expect
-from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
+from playwright.sync_api import BrowserContext, Locator, Page, expect
+from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle, capture_success
 from tests.support.server_fixtures import signal_server as signal_server
 
 
@@ -75,6 +75,12 @@ def test_formula_expectation_projection_and_correction_reach_mounted_chart(
             "project_id": project["id"],
             "title": "Follow the phased expectation",
             "kind": "quantitative",
+            "completion_rule": {
+                "actual": {"op": "reference", "measure_id": actual["id"], "day_offset": 0},
+                "target": {"op": "constant", "value": 999},
+                "direction": "atleast",
+                "first_date": "2026-07-01",
+            },
             "deadline": "2026-07-08",
             "primary_chart": {
                 "type": "chart",
@@ -795,6 +801,15 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             "project_id": project["id"],
             "title": "Record the published guides",
             "kind": "quantitative",
+            "completion_rule": {
+                "actual": {
+                    "op": "reference", "measure_id": manual_snapshot["id"], "day_offset": 0
+                },
+                # This milestone differs from the chart's daily quota of 12.
+                "target": {"op": "constant", "value": 12000},
+                "direction": "atleast",
+                "first_date": "2026-07-01",
+            },
             "primary_chart": {
                 "type": "chart",
                 "id": "preview-manual",
@@ -955,3 +970,238 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.reload()
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"
+
+
+def test_goal_outcomes_refresh_across_page_and_overview(
+    server: ServerHandle,
+    api: ApiHelper,
+    cli: Callable[..., JsonObject],
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
+    """Prove saved results stay consistent across mounted goal surfaces.
+
+    Rule and renderer tests cannot prove that live API changes replace painted
+    deadline colors and obsolete numeric status in the page, overview, rail, and
+    preview. Extend the existing flow and reuse its ordinary server/browser host.
+    """
+    project = api.direct_post(server, "/api/projects", {"name": "Goal outcome proof"})
+    measure = api.direct_post(
+        server,
+        "/api/measures",
+        {
+            "project_id": project["id"],
+            "name": "Monthly recurring revenue",
+            "unit": "USD",
+            "origin": "manual",
+            "kind": "reading",
+            "timezone": "UTC",
+        },
+    )
+    # The later decline must not erase the dated milestone.
+    for day, value in (("2026-07-02", 9000), ("2026-07-03", 10000), ("2026-07-04", 8000)):
+        state = api.get(server, f"/api/measures/{measure['id']}/manual-state?date={day}")
+        api.direct_post(
+            server,
+            f"/api/measures/{measure['id']}/manual-writes",
+            {
+                "request_id": f"mrr:{day}",
+                "date": day,
+                "basis": "date",
+                "operation": "replace",
+                "value": value,
+                "expected_definition_revision": state["definition_revision"],
+                "expected_write_revision": state["write_revision"],
+            },
+        )
+    rule: JsonObject = {
+        "actual": {"op": "reference", "measure_id": measure["id"], "day_offset": 0},
+        "target": {"op": "constant", "value": 10000},
+        "direction": "atleast",
+        "first_date": "2026-07-01",
+    }
+    goal = api.direct_post(
+        server,
+        "/api/goals",
+        {
+            "project_id": project["id"],
+            "title": "Reach $10,000 MRR",
+            "kind": "quantitative",
+            "deadline": "2026-07-02",
+            "completion_rule": rule,
+            "primary_chart": {
+                "type": "chart",
+                "kind": "number",
+                "title": "Monthly recurring revenue",
+                "measure_id": measure["id"],
+                "target": 10000,
+                "format": {"prefix": "$"},
+            },
+        },
+    )
+    api.direct_post(
+        server,
+        "/api/goals",
+        {
+            "project_id": project["id"],
+            "title": "Publish the pricing page",
+            "kind": "binary",
+            "primary_checklist_block_id": None,
+            "deadline": "2026-07-04",
+            "completed": True,
+            "active": False,
+        },
+    )
+    path = f"/api/goals/{goal['id']}"
+    assert goal["completed"] is True
+    assert goal["completion_date"] == "2026-07-03"
+    assert goal["outcome"] == "miss"
+    assert cli(server, "goal", "show", goal["id"]) == api.get(server, path)
+    assert api.get(server, "/api/goals")["outcome_summary"] == {
+        "hits": 1, "misses": 1, "rate": 0.5,
+    }
+
+    context = context_factory()
+    page = open_page(context, server, f"#/workspace/goal/{goal['id']}", "[data-goal-page]")
+    page.emulate_media(reduced_motion="reduce")
+    outcome = page.locator('[data-goal-page] [aria-label="Completion and result"]')
+    rail = page.locator(f'a[data-goal-id="{goal["id"]}"]')
+    preview = page.locator(f'[data-goal-preview="{goal["id"]}"]')
+
+    def assert_color(element: Locator, tone: str) -> None:
+        token = {
+            "bad": "--accent-error", "good": "--accent-done", "neutral": "--text-muted",
+        }[tone]
+        expected_color = element.evaluate(
+            """(node, token) => {
+                const probe = node.ownerDocument.createElement('span');
+                probe.style.color = `var(${token})`;
+                node.ownerDocument.body.append(probe);
+                const color = getComputedStyle(probe).color;
+                probe.remove();
+                return color;
+            }""",
+            token,
+        )
+        expect(element).to_have_css("color", expected_color, timeout=WAIT_MS)
+
+    def assert_page_and_rail(completion: str, result: str, tone: str, status: str) -> None:
+        expect(outcome).to_contain_text(completion, timeout=WAIT_MS)
+        expect(outcome.locator("[data-outcome]")).to_have_text(result, timeout=WAIT_MS)
+        deadline = page.locator("[data-goal-page] .metadata.deadline")
+        expect(deadline).to_have_attribute("data-deadline-tone", tone, timeout=WAIT_MS)
+        assert_color(deadline.locator("input"), tone)
+        expect(rail.locator("[data-goal-status]")).to_have_text(status, timeout=WAIT_MS)
+        expect(rail).not_to_contain_text("Below target", timeout=WAIT_MS)
+        expect(rail.locator("time")).to_have_attribute(
+            "data-deadline-tone", tone, timeout=WAIT_MS
+        )
+        assert_color(rail.locator("time"), tone)
+
+    def assert_preview(completion: str, result: str, tone: str) -> None:
+        expect(preview).to_be_visible(timeout=WAIT_MS)
+        saved_result = preview.locator('[aria-label="Completion and result"]')
+        expect(saved_result).to_contain_text(completion, timeout=WAIT_MS)
+        expect(saved_result.locator("[data-outcome]")).to_have_text(result, timeout=WAIT_MS)
+        deadline = preview.locator(".preview-date [data-deadline-tone]")
+        expect(deadline).to_have_attribute("data-deadline-tone", tone, timeout=WAIT_MS)
+        assert_color(deadline, tone)
+
+    def dismiss_preview() -> None:
+        page.mouse.move(1200, 650)
+        expect(preview).not_to_be_visible(timeout=WAIT_MS)
+
+    assert_page_and_rail("Completed Jul 3, 2026", "Miss", "bad", "Completed late · Miss")
+    expect(
+        page.locator("[data-goal-page]").get_by_role("button", name="Mark done", exact=True)
+    ).to_have_count(0)
+    capture_success(page, "goal-result-late-page.png")
+    rail.hover(timeout=WAIT_MS)
+    assert_preview("Completed Jul 3, 2026", "Miss", "bad")
+    capture_success(page, "goal-result-late-preview.png")
+    dismiss_preview()
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(outcome).to_be_visible(timeout=WAIT_MS)
+    capture_success(page, "goal-result-late-phone.png")
+    page.set_viewport_size({"width": 1280, "height": 720})
+
+    overview = open_page(context, server, "#/workspace/goals", ".goals-overview")
+    rate = overview.locator('[aria-label="Overall goal hit rate"]')
+    row = overview.locator(".goals-overview tbody tr").filter(
+        has=overview.get_by_role("link", name=goal["title"], exact=True)
+    )
+
+    def assert_overview(completion: str, result: str, tone: str) -> None:
+        saved_result = row.locator('[aria-label="Completion and result"]')
+        expect(saved_result).to_contain_text(completion, timeout=WAIT_MS)
+        expect(saved_result.locator("[data-outcome]")).to_have_text(result, timeout=WAIT_MS)
+        expect(saved_result).to_be_in_viewport(ratio=1, timeout=WAIT_MS)
+        deadline = row.locator("[data-deadline-tone]")
+        expect(deadline).to_have_attribute("data-deadline-tone", tone, timeout=WAIT_MS)
+        assert_color(deadline, tone)
+
+    expect(rate).to_contain_text("50%", timeout=WAIT_MS)
+    expect(rate).to_contain_text("1 hit · 1 miss", timeout=WAIT_MS)
+    expect(overview.locator(".goals-overview tbody tr")).to_have_count(2, timeout=WAIT_MS)
+    assert_overview("Completed Jul 3, 2026", "Miss", "bad")
+    capture_success(overview, "goal-result-late-overview.png")
+    overview.get_by_role("button", name="State filter", exact=True).click(timeout=WAIT_MS)
+    state_filter = overview.get_by_role("dialog", name="State filter", exact=True)
+    state_filter.get_by_role("combobox", name=re.compile("^State")).select_option(
+        "active", timeout=WAIT_MS
+    )
+    state_filter.get_by_role("button", name="Apply", exact=True).click(timeout=WAIT_MS)
+    expect(overview.locator(".goals-overview tbody tr")).to_have_count(1, timeout=WAIT_MS)
+    # The inactive hit remains in the server aggregate after the local filter.
+    expect(rate).to_contain_text("50%", timeout=WAIT_MS)
+
+    page.locator("[data-goal-page]").evaluate("node => node.dataset.outcomeProof = 'retained'")
+    current = api.get(server, path)
+    changed = api.direct_patch(
+        server,
+        path,
+        {"expected_revision": current["revision"], "deadline": "2026-07-03"},
+    )
+    assert changed["completion_date"] == "2026-07-03"
+    assert changed["outcome"] == "hit"
+    assert_page_and_rail("Completed Jul 3, 2026", "Hit", "good", "Completed · Hit")
+    expect(page.locator("[data-goal-page]")).to_have_attribute(
+        "data-outcome-proof", "retained", timeout=WAIT_MS
+    )
+    assert_overview("Completed Jul 3, 2026", "Hit", "good")
+    expect(rate).to_contain_text("100%", timeout=WAIT_MS)
+    expect(rate).to_contain_text("2 hits · 0 misses", timeout=WAIT_MS)
+    assert cli(server, "goal", "list")["outcome_summary"] == {
+        "hits": 2, "misses": 0, "rate": 1.0,
+    }
+    capture_success(page, "goal-result-hit-page.png")
+    capture_success(overview, "goal-result-hit-overview.png")
+    rail.hover(timeout=WAIT_MS)
+    assert_preview("Completed Jul 3, 2026", "Hit", "good")
+    capture_success(page, "goal-result-hit-preview.png")
+
+    # The same mounted preview must also replace a previously completed result.
+    current = api.get(server, path)
+    reopened = api.direct_patch(
+        server,
+        path,
+        {
+            "expected_revision": current["revision"],
+            "completion_rule": {**rule, "first_date": "2026-07-04"},
+            "deadline": "2026-07-06",
+        },
+    )
+    assert reopened["completed"] is False
+    assert reopened["completion_date"] is None
+    assert reopened["outcome"] == "pending"
+    assert_page_and_rail("Open", "Pending", "neutral", "Open")
+    assert_preview("Open", "Pending", "neutral")
+    capture_success(page, "goal-result-open-preview.png")
+    dismiss_preview()
+    assert_overview("Open", "Pending", "neutral")
+    expect(rate).to_contain_text("100%", timeout=WAIT_MS)
+    expect(rate).to_contain_text("1 hit · 0 misses", timeout=WAIT_MS)
+    capture_success(page, "goal-result-open-page.png")
+    capture_success(overview, "goal-result-open-overview.png")
+    page.reload()
+    assert_page_and_rail("Open", "Pending", "neutral", "Open")
