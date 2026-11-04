@@ -55,6 +55,8 @@ A refused call is the product surface: a Worker that tries to approve, a Manager
 
 ## Pointers
 
-`src/planner/core/authority/logic.py` is the rule. `src/planner/core/authority/service.py` is the door routes call. `src/planner/core/authctx.py` turns a request into a principal.
+`src/planner/core/authority/intake.py` checks HTTP requests and Mac commands at intake. It derives the target and relation from the route and method. Rank uses the assignment and responsibility at intake time, so a concurrent change can precede the write. Anyone strictly above a Ticket can approve, including Chief and its assigned Manager. A Worker cannot raise its own ceiling.
+
+`src/planner/core/authority/logic.py` is the rank rule. `src/planner/core/authority/service.py` supplies its database facts. `src/planner/core/authctx.py` turns a request into a principal.
 
 _Last verified: 2026-10-30._

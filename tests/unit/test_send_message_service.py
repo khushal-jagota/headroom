@@ -29,6 +29,7 @@ from planner.conversation.message_content import (
     message_content_text,
 )
 from planner.core.authctx import RequestContext
+from planner.core.authority.intake import admit_command
 from planner.core.clock import TestClock as PlannerTestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -257,7 +258,10 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
                 (first, second, "Coordinate"),
                 (second, first, "Agreed"),
             ):
-                service.require_reach(tmp_db, sender, recipient)
+                admit_command(
+                    tmp_db, sender, "POST", "/api/messages/send", {},
+                    {"target": {"kind": recipient.kind.value, "id": recipient.id}},
+                )
                 await service.send_message(
                     subject.system, tmp_db, fake_clock, RequestContext(sender), recipient, text
                 )
