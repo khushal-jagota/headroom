@@ -107,6 +107,7 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.db import connect, create_schema
+from planner.worker_types.store import read_definition, workflow_from_preset, workflow_to_json
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
 
@@ -644,15 +645,17 @@ def _link_test_ticket_to_conversation(
         with conn:
             conn.execute(
                 "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,"
-                "ceiling,conversation_id,field_values,created_at,updated_at,ceiling_holder) "
+                "ceiling,conversation_id,field_values,created_at,updated_at,"
+                "ceiling_holder,workflow_json) "
                 "VALUES (?,?,?,'codex','needs_implementation','needs_implementation',"
-                "?,'{}',1,1,?)",
+                "?,'{}',1,1,?,?)",
                 (
                     ticket_id,
                     "Failed Ticket",
                     "coding",
                     conversation_id,
                     json.dumps({"kind": "chief", "id": "chief"}),
+                    workflow_to_json(workflow_from_preset(read_definition(conn, "coding"))),
                 ),
             )
     finally:
@@ -3283,5 +3286,67 @@ def test_spawn_refusal_retains_native_detail_after_rebind(
         assert len(refused) == 1
         assert refused[0].refusal_detail == "c"
         assert refused[0].sender_message_id == "spawn-refusal"
+
+    _run(exercise)
+
+
+def test_system_prompt_provenance_keeps_agent_only_attention_share_usable(
+    harness: _Harness,
+) -> None:
+    """A real automatic prompt must not look like an unknown historical owner message."""
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+
+    from planner.attention.actions import read_summary
+    from planner.attention.contracts import SummaryRequest
+
+    start = int(datetime(2026, 11, 2, tzinfo=ZoneInfo("Europe/Berlin")).timestamp())
+
+    async def exercise() -> None:
+        harness.clock.now = start - 86400
+        await _start(harness, "attention-system")
+        _link_test_ticket_to_conversation(
+            harness.db_path, "attention-system", ticket_id="t_agent_only"
+        )
+        conn = connect(str(harness.db_path))
+        try:
+            conn.execute("UPDATE attention_history_metadata SET started_at=?", (start - 86400,))
+        finally:
+            conn.close()
+        harness.clock.now = start + 100
+        await harness.system.send(
+            "attention-system",
+            text_message_content("Run the next worker step"),
+            sender_label="Panels loop",
+        )
+        queued = await harness.system.send(
+            "attention-system",
+            text_message_content("A queued worker step"),
+            sender_label="Panels loop",
+            mode=PromptDeliveryMode.queue,
+        )
+        assert isinstance(queued, PromptDeliveryQueued)
+        await harness.complete_turn("attention-system")
+        await harness.complete_turn("attention-system")
+        prompts = [
+            event.payload
+            for event in await harness.events("attention-system")
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        assert len(prompts) == 2
+        assert all(prompt.system_generated is True for prompt in prompts)
+        assert all(prompt.sender is None for prompt in prompts)
+        conn = connect(str(harness.db_path))
+        try:
+            result = read_summary(
+                conn, SummaryRequest(date(2026, 11, 2), date(2026, 11, 2)), now=start + 86401
+            )
+        finally:
+            conn.close()
+        figures = result["totals"]["current"]
+        assert figures["owner_messages"]["value"] == 0
+        assert figures["owner_messages"]["coverage_status"] == "complete"
+        assert figures["active_ticket_count"]["value"] == 1
+        assert figures["without_owner_involvement_share"]["value"] == 1
 
     _run(exercise)

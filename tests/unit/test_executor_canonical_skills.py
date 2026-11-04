@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -191,3 +192,64 @@ def test_tampered_generation_refuses_instead_of_rewriting(tmp_path: Path) -> Non
         install_native_skill_snapshot(_snapshot(), paths=paths, native_home=tmp_path / "second")
     assert changed.read_bytes() == b"tampered"
     assert not (tmp_path / "second").exists()
+
+
+def test_required_skills_follow_saved_ticket_workflow(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from tests.support.principals import OWNER_PRINCIPAL
+
+    from planner.core.db import connect, create_schema
+    from planner.executor.skills import read_canonical_skill_snapshot
+    from planner.tickets.data import create_ticket
+    from planner.worker_types.configuration import configured_worker_type_registry
+    from planner.worker_types.store import workflow_from_preset, write_definition
+
+    with closing(connect(str(tmp_path / "skills.db"))) as conn:
+        create_schema(conn)
+        preset = configured_worker_type_registry().require("coding")
+        normal = create_ticket(
+            conn,
+            worker_type="coding",
+            title="Preset",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        custom = create_ticket(
+            conn,
+            worker_type=None,
+            workflow=replace(
+                workflow_from_preset(preset),
+                specialist_skill=None,
+            ),
+            title="Custom",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+            employee_backend="codex",
+            employee_launch_model="gpt-6.1-sol",
+        )
+        assert read_canonical_skill_snapshot(conn, custom.id).required_skill_names == (
+            "panels",
+            "panels-worker",
+        )
+        replacement = (
+            configured_worker_type_registry().require("general").worker_profile.specialist_skill
+        )
+        write_definition(
+            conn,
+            replace(
+                preset,
+                worker_profile=replace(
+                    preset.worker_profile,
+                    specialist_skill=replacement,
+                ),
+            ),
+            now=2,
+        )
+        assert read_canonical_skill_snapshot(conn, normal.id).required_skill_names == (
+            "panels",
+            "panels-worker",
+            preset.worker_profile.specialist_skill,
+        )

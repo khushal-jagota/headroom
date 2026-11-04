@@ -45,7 +45,6 @@ from planner.executor.protocol import (
     as_object,
     decode_event_arguments,
     envelope_child,
-    envelope_payload_digest,
     payload_child,
     type_adapter,
 )
@@ -152,14 +151,9 @@ class InboxStore(VpsDatabase):
             result = cast(JsonObject, refusal.to_payload())
         if disposition is ReceiptDisposition.accepted and result.get("fate") == "uncertain":
             disposition = ReceiptDisposition.uncertain
-        if disposition is ReceiptDisposition.refused and envelope.kind is EnvelopeKind.cli_write:
-            from planner.executor.refusals import record_refused_write
-
-            record_refused_write(connection, self.db_path, envelope, result)
         selected = AcceptanceReceipt(
             envelope.sender_id,
             envelope.submission_id,
-            envelope.payload_sha256,
             disposition,
             result,
             now_ms,
@@ -257,17 +251,13 @@ class InboxStore(VpsDatabase):
             return None
         stored = self._receipt(previous)
         if envelope.sequence == previous["sequence"]:
-            if (stored.submission_id, stored.payload_sha256) != (
-                envelope.submission_id,
-                envelope.payload_sha256,
-            ):
+            if stored.submission_id != envelope.submission_id:
                 raise _invalid("Submission identity conflicts with its first receipt")
             return stored
         # Old sequences are acknowledged without rerunning effects or regressing position.
         return AcceptanceReceipt(
             envelope.sender_id,
             envelope.submission_id,
-            envelope.payload_sha256,
             ReceiptDisposition.accepted,
             {},
             stored.accepted_at_vps_ms,
@@ -276,16 +266,6 @@ class InboxStore(VpsDatabase):
     def _validate_envelope(
         self, connection: sqlite3.Connection, envelope: QueuedEnvelope, *, check_files: bool = True
     ) -> None:
-        if envelope.payload_sha256 != envelope_payload_digest(
-            envelope.payload,
-            envelope.file_dependencies,
-            sender_id=envelope.sender_id,
-            conversation_id=envelope.conversation_id,
-            sequence=envelope.sequence,
-            submission_id=envelope.submission_id,
-            kind=envelope.kind,
-        ):
-            raise _invalid("Envelope digest does not match content")
         if check_files and envelope.file_dependencies:
             reference = type_adapter(ChildReference).validate_python(
                 payload_child(envelope.payload)

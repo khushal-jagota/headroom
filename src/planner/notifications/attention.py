@@ -29,7 +29,8 @@ from planner.conversation.logic.pending_requests import (
 )
 from planner.tickets import derivation
 from planner.tickets.contracts import TicketStatus
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.store import workflow_from_row
 
 
 class ConversationAttention(NamedTuple):
@@ -253,6 +254,10 @@ def _record(
     generation = int(row["generation"]) if row is not None else 0
     if active == prior_active and row is not None:
         return
+    if subject_kind == "ticket" and notification_type == "awaiting_approval":
+        from planner.attention.history import capture_gate
+
+        capture_gate(conn, ticket_id=subject_id, active=active, now=occurred_at)
     if active:
         generation += 1
         conn.execute(
@@ -335,13 +340,14 @@ def capture_ticket_attention(
     occurred_at: int,
     *,
     conversation_result: ConversationAttention | None = None,
-    worker_type_definition: WorkerTypeDefinition | None = None,
+    worker_type_definition: WorkflowDefinition | None = None,
 ) -> None:
     # Local import keeps the conversation storage and work-attention projection acyclic.
     from planner.work_attention import ticket_assignment_from_values
 
     row = conn.execute(
-        "SELECT id, stage, worker_type, worker_step_claim, pending_proposal, ceiling_holder, "
+        "SELECT id, stage, worker_type, workflow_json, worker_step_claim, "
+        "pending_proposal, ceiling_holder, "
         f"conversation_id, {derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets WHERE id=?",
         (ticket_id,),
@@ -370,8 +376,8 @@ def capture_ticket_attention(
         "awaiting_approval": facts.ticket_status is TicketStatus.awaiting_approval and owner_holds,
         "assigned": ticket_assignment_from_values(
             stage=str(row["stage"]),
-            worker_type=str(row["worker_type"]),
-            worker_type_definition=worker_type_definition,
+            worker_type=row["worker_type"],
+            worker_type_definition=worker_type_definition or workflow_from_row(row),
         ),
         "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
     }

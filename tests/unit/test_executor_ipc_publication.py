@@ -243,7 +243,6 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
                 AcceptanceReceipt(
                     envelope.sender_id,
                     "original",
-                    envelope.payload_sha256,
                     ReceiptDisposition.refused,
                     {"error": {"code": "validation"}},
                     1,

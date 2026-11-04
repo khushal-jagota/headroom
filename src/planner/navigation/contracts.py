@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Literal, TypedDict
 
 PREPARED_SCHEMA_VERSION = 7
-SCHEMA_VERSION = 9
-SUPPORTED_SEMANTICS = "attention-knowledge-v9-review-messages"
+SCHEMA_VERSION = 10
+SUPPORTED_SEMANTICS = "attention-knowledge-v10-ticket-workflows"
 RecordKind = Literal[
     "ticket", "manager", "chief", "goal", "conversation", "address", "totals", "project"
 ]
@@ -26,7 +26,9 @@ class TicketValue(TypedDict):
     title: str
     recap: str
     recap_preview: str
-    worker_type: str
+    worker_type: str | None
+    stage_label: str
+    workflow_label: str
     stage: str
     ticket_status: str
     blocked: bool
@@ -58,7 +60,7 @@ class BrokenTicketValue(TypedDict):
     title: str
     recap: str
     recap_preview: str
-    worker_type: str
+    worker_type: str | None
     stage: str
     ticket_status: Literal["errored"]
     integrity_error: NavigationTicketIntegrityIssue
@@ -247,7 +249,7 @@ type NavigationRecord = (
 class Continuity(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v9-review-messages"]
+    semantics: Literal["attention-knowledge-v10-ticket-workflows"]
     epoch: str
     revision: str
 
@@ -259,7 +261,7 @@ class Snapshot(Continuity):
 class RevisionBatch(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v9-review-messages"]
+    semantics: Literal["attention-knowledge-v10-ticket-workflows"]
     epoch: str
     base_revision: str
     revision: str

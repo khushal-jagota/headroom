@@ -55,6 +55,7 @@ from planner.conversation.message_content import (
     MessageContent,
     MessageText,
     message_content_text,
+    prefix_message_content_text,
     require_message_content,
     sender_labeled_composed_message_content,
 )
@@ -220,6 +221,7 @@ class _ConversationState:
     armed_session_load_failure: bool = False
     armed_backend_write_failure: bool = False
     retirement_proven: bool = False
+    has_delivered_prompt: bool = False
 
 
 class InMemoryConversationSystem:
@@ -1059,7 +1061,14 @@ class InMemoryConversationSystem:
                 else ()
             )
         )
-        wire_content = with_authenticated_reply_directive(content, reply_senders)
+        role = state.resolved_start.role_materials
+        composed = (
+            prefix_message_content_text(content, role.role_text, "\n\n")
+            if role is not None and not state.has_delivered_prompt
+            else content
+        )
+        wire_content = with_authenticated_reply_directive(composed, reply_senders)
+        state.has_delivered_prompt = True
         established.prompt_writes.append(
             InMemoryBackendPromptWrite(
                 content=sender_labeled_composed_message_content(

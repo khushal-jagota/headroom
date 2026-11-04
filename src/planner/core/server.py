@@ -19,6 +19,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from planner.attention.api import router as attention_router
 from planner.conversation.api import (
     router as conversation_router,
 )
@@ -578,6 +579,7 @@ def create_app(
         measure_sources_router,
         measures_router,
         datasets_router,
+        attention_router,
         goals_router,
         goal_conversation_router,
         credentials_router,

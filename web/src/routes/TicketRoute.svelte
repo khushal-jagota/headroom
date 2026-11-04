@@ -18,7 +18,7 @@
   import { labelize } from "../lib/ui";
   import {
     fieldLabelFor,
-    lifecycleFor,
+    buildLifecycle,
     stageLabelFor
   } from "../lib/lifecycle";
   import { holderLabelFor } from "../lib/ceilingHolder";
@@ -97,25 +97,11 @@
   const conversationStartValues = createQuery(() =>
     queries.ticketConversationStartValues(stableId)
   );
-  // The whole list, deliberately, even though this page draws one type's stages. The
-  // workspace shell around it already reads the list to write a stage sentence on every
-  // rail row, so this shares that one cached read; asking for the single type instead was
-  // measured to add a second request of 1,732 bytes rather than save the list's 20,005.
-  // The review screen, which has no rail, does ask for the one type.
-  const manifest = createQuery(() => queries.workerTypeManifests());
-
-  // Conversation labels use configuration. The section below admits its controls
-  // against the stored canonical Stage, gate, and ownership before display.
-  let conversationLifecycle = $derived(lifecycleFor(manifest.data, healthyTicket?.worker_type));
-  let manifestMissingWorkerType = $derived(
-    Boolean(
-      healthyTicket &&
-        manifest.data &&
-        !manifest.data.worker_types.some((item) => item.worker_type === healthyTicket?.worker_type)
-    )
-  );
+  // The Ticket's saved workflow is authoritative, independent of later preset edits.
+  let conversationLifecycle = $derived(healthyTicket?.workflow ? buildLifecycle(healthyTicket.workflow) : null);
+  let manifestMissingWorkerType = $derived(Boolean(healthyTicket && !healthyTicket.workflow));
   let canonicalTicket=$derived(currentView ? navigation.presentationFor(currentView).rawTicketsById.get(stableId) : undefined);
-  let sectionConfiguration=$derived(manifest.data?.worker_types.find(item=>item.worker_type===canonicalTicket?.value.worker_type));
+  let sectionConfiguration=$derived(healthyTicket?.workflow);
   let admittedSection=$derived(admitTicketSection(currentView,canonicalTicket,healthyTicket,sectionConfiguration));
   let section=$state.raw<TicketSection | undefined>(undefined);
   $effect(()=>{if(brokenTicket) section=undefined; else if(admittedSection) section=admittedSection;});
@@ -124,12 +110,11 @@
   // One request per mismatch avoids a repeated refetch for an incompatible manifest.
   let refreshedMismatch='';
   $effect(()=>{
-    if(!canonicalTicket || admittedSection || !healthyTicket || !manifest.data) return;
+    if(!canonicalTicket || admittedSection || !healthyTicket || !healthyTicket.workflow) return;
     const key=JSON.stringify([canonicalTicket.value,healthyTicket.record_sha256,sectionConfiguration]);
     if(key===refreshedMismatch) return;
     refreshedMismatch=key;
     void ticket.refetch();
-    void manifest.refetch();
   });
   function assertCurrentSection():void {
     // The owner keeps its coherent accepted view during the selector handoff.
@@ -137,7 +122,7 @@
     const view = navigation.state.effective;
     const record = view ? navigation.presentationFor(view).rawTicketsById.get(stableId) : undefined;
     if(!section || !record || !ticketSectionDetailMatches(record,section.detail) || !admitTicketSection(view,record,healthyTicket,
-      manifest.data?.worker_types.find(item=>item.worker_type===healthyTicket?.worker_type))) {
+      healthyTicket?.workflow)) {
       throw {code:'validation',message:'the Ticket changed; read it again before this action'};
     }
   }
@@ -302,7 +287,7 @@
   }
 
   function conversationWorkerTypeLabel(detail: TicketDetail): string {
-    return conversationLifecycle?.workerTypeLabel ?? labelize(detail.worker_type);
+    return conversationLifecycle?.workerTypeLabel ?? (detail.worker_type ? labelize(detail.worker_type) : 'Custom workflow');
   }
 
   function conversationEmployeeLabel(detail: TicketDetail): string {
@@ -335,7 +320,7 @@
       headerError = err;
     }
   }
-  let mastheadTypeLabel=$derived(masthead ? lifecycleFor(manifest.data,masthead.worker_type)?.workerTypeLabel ?? labelize(masthead.worker_type) : '');
+  let mastheadTypeLabel=$derived(masthead ? masthead.workflow_label ?? (healthyTicket?.worker_type === masthead.worker_type ? healthyTicket?.workflow?.label : null) ?? (masthead.worker_type ? labelize(masthead.worker_type) : 'Custom workflow') : '');
   $effect(()=>{
     const view=currentView;
     const source=currentMasthead;
@@ -441,11 +426,11 @@
       </main>
     </div>
   {:else}
-  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(healthyTicket && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
-    {#if healthyTicket && (manifest.error || manifestMissingWorkerType)}
+  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(healthyTicket && masthead && (section || manifestMissingWorkerType))} loadingText="Loading ticket...">
+    {#if healthyTicket && manifestMissingWorkerType}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
-          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${healthyTicket.worker_type}"` }}
+          error={{ code: "invalid_workflow", message: "The Ticket workflow is unavailable." }}
         />
       </div>
     {:else if healthyTicket && masthead}

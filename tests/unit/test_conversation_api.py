@@ -1792,3 +1792,33 @@ def test_executor_default_view_never_presents_placeholder_as_workspace(harness: 
             assert response.json()["workspace_folder"] is None
             assert response.json()["workspace_path_policy"] == "executor_default"
     _run(exercise)
+
+
+def test_generic_send_records_authenticated_owner_despite_system_label_and_spoof_field(
+    harness: _Harness,
+) -> None:
+    """Request text and extra JSON cannot manufacture server-owned system provenance."""
+    from planner.conversation.events import PromptEventPayload
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "attention-owner")
+            response = await client.post(
+                "/api/conversation/conversations/attention-owner/send",
+                json={
+                    "content": [{"piece": "text", "text": "Human instruction"}],
+                    "sender_label": "Panels loop",
+                    "system_generated": True,
+                },
+            )
+            assert response.status_code == 200
+        prompts = [
+            event.payload
+            for event in await harness.store.read_events_after("attention-owner", 0)
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        assert len(prompts) == 1
+        assert prompts[0].sender == OWNER_PRINCIPAL
+        assert prompts[0].system_generated is False
+
+    _run(exercise)

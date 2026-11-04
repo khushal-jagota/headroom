@@ -1,8 +1,12 @@
 # Who may act
 
-One sentence decides every guarded call: you may act on anything strictly below you.
+One sentence decides almost every guarded write in Headroom: you may act on anything strictly below you.
 
-Khushal, Chief, a Manager, and a Ticket’s Worker all call the same route. Who they are decides whether the call is admitted. There is no second address reserved for agents, and the general rule does not carry a list of principal kinds that are allowed through a particular door.
+Khushal, Chief, Managers, Workers, and goal agents all call the same routes. There is no separate interface for agents. Who the caller is, and where the target sits, decides whether the call is admitted.
+
+## Who can call
+
+The server knows five kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, a **Ticket** (its Worker), and a **goal** (its agent). The browser and an ordinary `panels` call are the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
 
 ## Position
 
@@ -13,48 +17,44 @@ Chief ───┘
 Manager ─ its current child Tickets
 
 Ticket ─── nothing
+Goal ───── nothing
 ```
 
-A Manager stands above a Ticket because the Ticket’s assignment says so. Move the Ticket, and the previous Manager no longer stands above it. A Ticket stands above nothing, so its Worker cannot decide its own proposal. That is the rule answering, not an extra ban written beside it.
+A Manager stands above a Ticket because the Ticket is assigned to it. Move the Ticket and the old Manager no longer stands above it. A Ticket stands above nothing, so its Worker cannot decide its own proposal. That is the rule answering, not an extra ban. (A Worker type could declare something its Tickets stand above. No current type does.)
 
-Retired planning types keep their history. They do not regain a shared-plan write through the old type name.
+The same rule covers owner-level configuration: schedules, skills, Worker types, and projects sit at the top, so only Khushal and Chief stand above them. A Manager does not gain control of a schedule by being assigned the Tickets it creates.
 
-## Your own record is a different question
+## Your own record
 
-A Ticket proposes, recaps, and asks for help. A Manager writes its goal, recap, and artifacts. Those are the principal acting as itself. The chain does not decide them. Proposing is the Ticket speaking about its own work. Nobody, including Khushal, proposes on a Ticket’s behalf.
+Acting as yourself is a different question from standing above something. A Worker files proposals, writes its recap, and asks for help on its own Ticket. A Manager writes its own goal, recap, and artifacts. A goal agent edits its own goal and page. The chain does not decide these.
 
-A goal agent acts on its own goal, page, completion, active state, and managed files. Source and measurement permissions remain separate. A goal stands above no Ticket and cannot hold a Ticket review. Goal agents ask Chief to route Ticket work.
+Proposing is the Ticket speaking about its own work, so nobody, including Khushal, proposes on a Ticket's behalf.
 
-## The re-parent exception
+## The exceptions
 
-No principal may move a Ticket out of its chain except Khushal and Chief. Changing the Manager changes who stands above the Ticket. At the moment of the call the Ticket really is below the Manager trying to hand it away, so the ordinary rule would allow the handoff. The exception exists so authority cannot be given away by the person who currently holds it. A Ticket cannot set its own Manager either. Being the Ticket does not include choosing who stands above you.
+- **Re-parenting.** Only Khushal and Chief may move a Ticket to another Manager. At the moment of the call, the Ticket really is below the Manager trying to hand it away, so the plain rule would allow it. The exception exists so authority cannot be given away by whoever currently holds it.
+- **Creation.** Making a Ticket acts on nothing that exists yet, so the rule cannot refuse it. The pieces it arrives with are checked one at a time instead. You can place it under a Manager in your own chain. Only someone above the new Ticket may set its ceiling and holder.
+- **Doors about who you are.** A small set of routes is not about any target. They ask only what kind of caller this is. Some admit only Khushal: his own reads and sends in a conversation, answering an agent's permission question, saving a credential, installing an update, and settling a Manager. Others admit Khushal or Chief, such as Chief's recap and the defaults for new Managers. These are deliberate and few.
 
-Deletion has no special case. If you stand above a thing, you may delete it. The Ticket page still hides delete. The command and the API enforce the rule.
-
-## Making a Ticket, and holding a review
-
-Making a Ticket acts on nothing that exists yet, so the rule does not refuse creation. What the new Ticket arrives with is asked piece by piece. You can put it under a Manager you stand above, a Manager you are, or the Manager you are under. Workers that spin up child Tickets cannot set the ceiling and holder at creation. Someone above the new Ticket does that.
-
-The holder of a parked proposal must be Khushal, Chief for a Chief-assigned Ticket, or the assigned Manager. Anyone strictly above the Ticket may approve. Holding and approving are different. An assignment move that does not name a new holder returns the holder to Khushal when the old holder would no longer be legal.
-
-## Schedules, skills, and settlement
-
-Schedules, skills, Worker types, and projects are owner-level configuration. Khushal and Chief stand above them. Managers and Workers do not gain schedule control by being assigned the Tickets a schedule will create. A Manager’s Project edit does update the Project on schedules already assigned to that Manager. That derived write changes the Project and the timestamp. It does not enable a schedule or rewrite the rest of the template.
-
-Settlement is tighter than the general rule. Only the owner may settle or reopen an ordinary Manager. Chief cannot settle, and Chief can never be settled. Settlement changes the rail. It does not stop children. See [Managers and Chief](managers.md).
+Who must look at a parked proposal, the holder, is a narrower fact owned by the [Ticket lifecycle](tickets.md). Holding a review grants nothing the rule does not already give.
 
 ## What this is not
 
-The rule decides what a caller may do. It does not decide who the caller is. The browser and the CLI say who they are, and the server believes that claim. Update actions and other owner doors inherit that trust. They are not a login system.
+The rule decides what a caller may do. It does not prove who the caller is. The browser and the command line state an identity and the server believes it. It is not a login system.
 
-Reads of the Ticket and Manager lists are open. A route that only reads is not protected by this rule.
+Reading Tickets and Managers is open to every caller. The rule guards writes.
 
-## Where it shows up
+## Decisions that shape it
 
-A refused call is the product surface: a Worker that tries to approve, a Manager that tries to reassign a Ticket, a Worker that tries to edit a skill or request an update. Review, the Ticket gate, and Settings succeed for the principals the rule allows and fail for the rest with the same writers.
+- **One rule instead of per-route lists.** Adding a route means asking where its target sits, not writing a new list of who is allowed.
+- **Self-approval is impossible by structure.** It falls out of position, so no route can forget to forbid it.
+- **Authority cannot be handed away.** Re-parenting is reserved for the top.
+- **Identity is trusted, not proven.** Keeping strangers out is the host's job, not this rule's.
 
-## Pointers
+## Code
 
-`src/planner/core/authority/logic.py` is the rule. `src/planner/core/authority/service.py` is the door routes call. `src/planner/core/authctx.py` turns a request into a principal.
+- `src/planner/core/authority/logic.py`: the rule, the own-record check, and who may hold a review.
+- `src/planner/core/authority/service.py`: the door routes call.
+- `src/planner/core/authctx.py`: turns a request into a caller, and holds the owner-only doors.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

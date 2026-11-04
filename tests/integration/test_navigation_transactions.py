@@ -9,6 +9,7 @@ import pytest
 from tests.support.navigation_current import (
     current_navigation_database,
 )
+from tests.support.ticket_workflows import preset_workflow_json
 
 from planner.navigation import journal, rebuild, snapshot
 from planner.navigation.contracts import NavigationRecord
@@ -36,27 +37,31 @@ def values(conn: sqlite3.Connection) -> dict[tuple[str, str], dict[str, Any]]:
 def add_ticket(conn: sqlite3.Connection, identity: str, parent: str | None = None) -> None:
     conn.execute(
         "INSERT INTO tickets(id,title,worker_type,employee_backend,ceiling,field_values,"
-        "created_at,updated_at,stage,manager_kind,manager_id) "
+        "created_at,updated_at,stage,manager_kind,manager_id,workflow_json) "
         "VALUES(?,?,'coding','codex','needs_implementation','{}',0,0,"
-        "'needs_implementation',?,?)",
-        (identity, identity, "chief" if parent is None else "manager", parent),
+        "'needs_implementation',?,?,?)",
+        (
+            identity,
+            identity,
+            "chief" if parent is None else "manager",
+            parent,
+            preset_workflow_json(conn),
+        ),
     )
 
 
-def test_definition_and_approval_metadata_use_current_transaction(tmp_path: Path) -> None:
+def test_saved_workflow_and_approval_metadata_use_current_transaction(tmp_path: Path) -> None:
     import json
 
     with current_navigation_database(tmp_path / "planner.db") as conn:
         conn.execute("BEGIN")
         add_ticket(conn, "t")
-        raw = conn.execute(
-            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
-        ).fetchone()[0]
+        raw = conn.execute("SELECT workflow_json FROM tickets WHERE id='t'").fetchone()[0]
         definition = json.loads(raw)
         stage = next(s for s in definition["stages"] if s["id"] == "needs_implementation")
         stage["ownership_mode"] = "user"
         conn.execute(
-            "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+            "UPDATE tickets SET workflow_json=? WHERE id='t'",
             (json.dumps(definition),),
         )
         proposal = {
@@ -196,7 +201,7 @@ def test_real_projection_failure_rolls_back_source_and_journal(tmp_path: Path) -
         conn.close()
 
 
-def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
+def test_actual_preset_change_preserves_each_referencing_ticket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json
@@ -235,8 +240,8 @@ def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
         )
         assert sorted(derived) == [("ticket", "first"), ("ticket", "second")]
         actual = values(conn)
-        assert actual["ticket", "first"]["stage_ownership"] == "user"
-        assert actual["ticket", "second"]["stage_ownership"] == "user"
+        assert actual["ticket", "first"]["stage_ownership"] == "worker"
+        assert actual["ticket", "second"]["stage_ownership"] == "worker"
         conn.execute("BEGIN")
         add_ticket(conn, "terminal")
         conn.execute("UPDATE tickets SET stage='done' WHERE id='terminal'")
@@ -268,16 +273,14 @@ def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
         current = snapshot(conn)
         after = values(conn)
         for identity in ("first", "second"):
-            assert after["ticket", identity]["gating_field"] == "consequences"
-            assert after["ticket", identity]["stage_ownership"] == "user"
+            assert after["ticket", identity]["gating_field"] == "implementation"
+            assert after["ticket", identity]["stage_ownership"] == "worker"
             assert after["ticket", identity]["ticket_status"] == "empty"
         batches = journal(conn, before["epoch"], before["revision"])["batches"]
         assert len(batches) == 1
-        assert [(record["kind"], record["id"]) for record in batches[0]["upserts"]] == [
-            ("ticket", "first"),
-            ("ticket", "second"),
-        ]
+        assert batches[0]["upserts"] == []
         assert batches[0]["deletes"] == []
+        assert current["records"] == before["records"]
         conn.execute("BEGIN")
         conn.execute(
             "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
@@ -399,9 +402,7 @@ def test_rebuild_refreshes_ownership_within_transaction_and_preserves_incrementa
         assert_rebuild_preserves_projection(conn)
         conn.execute("BEGIN")
         conn.execute("DELETE FROM tickets WHERE id='t'")
-        conn.execute(
-            "UPDATE agents SET conversation_id=NULL WHERE agent_key='manager_a'"
-        )
+        conn.execute("UPDATE agents SET conversation_id=NULL WHERE agent_key='manager_a'")
         conn.commit()
         assert_rebuild_preserves_projection(conn)
         actual = values(conn)
@@ -445,8 +446,7 @@ def test_rebuild_ticket_ownership_reads_are_constant_as_conversations_grow(tmp_p
                 conn.set_trace_callback(None)
             assert (
                 sum(
-                    query == "SELECT id,manager_id,conversation_id FROM tickets"
-                    for query in traced
+                    query == "SELECT id,manager_id,conversation_id FROM tickets" for query in traced
                 )
                 == 1
             )

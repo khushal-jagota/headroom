@@ -13,7 +13,6 @@
   import { managerHeaderImpact, workspaceHoverImpact, managerEditImpact, managerSettleImpact, conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
   import { hoverDomMatches } from "../lib/workspaceRailDom";
   import { workspaceHeaderDomMatches } from "../lib/managerWorkspaceDom";
-  import { lifecycleFor } from "../lib/lifecycle";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { RenderObserver } from "../lib/navigation/visibility";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -74,7 +73,6 @@
   let content=$derived(workspaceResource ?? ownWorkspace);
   let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
     error:fullRecap.error ?? content.error,isLoading:content.isLoading || !publicItem});
-  const manifests=createQuery(()=>queries.workerTypeManifests());
   let headerElement=$state<HTMLElement | null>(null);
   let hoverElement=$state<HTMLDivElement | null>(null);
   let hoverObserver=$state.raw<RenderObserver | null>(null);
@@ -196,7 +194,7 @@
     const generation=navigation.state.generation;
     const root=hoverElement, target=hoverTarget,observer=hoverObserver,worker=hoverWorker;
     const parent=publicItem;
-    const stage=worker ? workspaceWorkerStageSentence(worker,lifecycleFor(manifests.data,worker.worker_type)) : '';
+    const stage=worker ? workspaceWorkerStageSentence(worker) : '';
     if(!view?.runtimeCurrent || view!==displayedView || !root || !target?.isConnected || !observer || !worker || !parent || !hoverVisible) return;
     const observation=observer.observeSelectors(view.publication,generation);
     let obsolete=false;
