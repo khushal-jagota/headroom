@@ -73,6 +73,9 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
+    BackendStreamEnded,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     ComposerCatalogReported,
     DeliveryCancelled,
     NeedsRebind,
@@ -178,9 +181,21 @@ LOGGER = logging.getLogger("planner.conversation")
 
 # How long a child may sit doing nothing before it is stopped, and how often that is
 # checked. A stopped child costs a conversation nothing: its session cursor is stored, so
-# the next message resumes it without saying anything about the gap.
+# the next message resumes it without saying anything about the gap. A child running a
+# background task is not doing nothing, and the clock starts again when a task ends.
 IDLE_CHILD_STOP_AFTER_SECONDS = 30 * 60
 IDLE_CHILD_SWEEP_INTERVAL_SECONDS = 5 * 60
+
+# What Panels tells an agent whose background task ended because its session did.
+LOST_BACKGROUND_TASK_SENDER_LABEL = "Panels"
+
+
+def _lost_background_task_prompt(task_description: str) -> str:
+    return (
+        f'Your background task "{task_description}" stopped because your session ended. '
+        "It did not finish. Read its output, then start it again or report what happened."
+    )
+
 
 # A sweep runs every five minutes. This lead time keeps the automatic compaction before
 # the backend cache boundary even when the conversation becomes eligible just after one.
@@ -349,6 +364,7 @@ class _Message:
     recording_receipt: NativeMessageOperation | None = None
 
     reasoning_effort_is_set: bool = False
+    system_generated: bool = False
 
     def same_message_as(self, other: object) -> bool:
         """Compare the identity facts retained at the other message's stage.
@@ -377,6 +393,7 @@ def _prompt_row(message: _Message, mode: PromptDeliveryMode) -> PromptEventPaylo
         sender=message.sender,
         recipient=message.recipient,
         recovery_references=message.recovery_references,
+        system_generated=message.system_generated,
         mode=mode,
     )
 
@@ -493,6 +510,9 @@ class _ConversationState:
     retiring_child: BackendChild | None = None
     next_turn_number: int = 1
     has_delivered_prompt: bool = False
+    # Set for the whole of a kill. Nothing runs in a killed conversation until someone
+    # sends again, so a background task lost while it is killed goes without a prompt.
+    being_killed: bool = False
     last_touched_monotonic: float = 0.0
     # When this conversation last said its model was thinking. Kept per conversation
     # because the rate it may be said at is about one browser watching one conversation.
@@ -566,6 +586,9 @@ class SqliteProcessConversationSystem:
             raise
         if self._signal is not None:
             self._signal.bind_runtime(self._runtime_turn)
+        # Read before this process can start any child, so every task here ended with the
+        # previous process.
+        self._background_tasks_left_by_previous_process = store.read_live_background_task_ids()
         self._shutting_down = False
         self._shutdown_task: asyncio.Task[None] | None = None
 
@@ -821,6 +844,7 @@ class SqliteProcessConversationSystem:
 
         message = _Message(
             held_prompt_id="",
+            system_generated=sender is None,
             snapshot_sent_at_unix_milliseconds=0,
             queue_reason=PromptQueueReason.requested,
             acknowledge_owner_on_failure=acknowledge_owner_on_failure,
@@ -1187,6 +1211,21 @@ class SqliteProcessConversationSystem:
         state = await self._conversation_state(conversation_id)
         if state is None:
             return
+        state.being_killed = True
+        try:
+            await self._kill_owned(state)
+        finally:
+            try:
+                # A task the killed child reported on its way out is dropped too. Shutdown
+                # keeps every row for the next start.
+                if not self._shutting_down:
+                    await self._persist(
+                        state, partial(self._store.take_background_tasks, conversation_id)
+                    )
+            finally:
+                state.being_killed = False
+
+    async def _kill_owned(self, state: _ConversationState) -> None:
         state.last_touched_monotonic = self._monotonic_now()
         if await self._kill_initial_delivery(state):
             return
@@ -1404,6 +1443,7 @@ class SqliteProcessConversationSystem:
             await child.detach()
             if state.child is child:
                 state.child = None
+            await self._background_tasks_ended_with_child(state)
             if state.retained_child_reference == reference:
                 state.retained_child_reference = None
                 state.child_is_quarantined = False
@@ -1990,6 +2030,33 @@ class SqliteProcessConversationSystem:
         if self._idle_child_janitor is None:
             self._idle_child_janitor = asyncio.create_task(self._sweep_idle_children_forever())
 
+    async def tell_agents_of_background_tasks_lost_at_restart(self) -> None:
+        """Tell each agent about the background tasks that ended with the last server.
+
+        Shutdown leaves their rows in place for exactly this. Only the tasks recorded
+        before this process started are taken, so a task started since is left alone.
+        """
+        self._require_runtime_ownership()
+        left_behind = self._background_tasks_left_by_previous_process
+        self._background_tasks_left_by_previous_process = {}
+        for conversation_id, task_ids in sorted(left_behind.items()):
+            try:
+                state = await self._conversation_state(conversation_id)
+                if state is None:
+                    continue
+                lost = await self._persist(
+                    state,
+                    partial(self._store.take_background_tasks, conversation_id, task_ids=task_ids),
+                )
+                self._tell_agent_about_lost_background_tasks(state, lost)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOGGER.exception(
+                    "conversation %s could not hear about background tasks lost at restart",
+                    conversation_id,
+                )
+
     async def shutdown(self) -> None:
         """Own complete cleanup, retaining the database lease if the caller leaves."""
         if self._signal is not None:
@@ -2418,6 +2485,7 @@ class SqliteProcessConversationSystem:
                 drain_after_delivery_exception=False,
                 message=_Message(
                     held_prompt_id="",
+                    system_generated=True,
                     snapshot_sent_at_unix_milliseconds=0,
                     queue_reason=PromptQueueReason.requested,
                     model_change=None,
@@ -3915,7 +3983,64 @@ class SqliteProcessConversationSystem:
             )
             return False
         state.local_child_retirement_proven = True
+        # News still queued from the stopped child is not about any child that follows.
+        state.child_event_sink = None
+        await self._background_tasks_ended_with_child(state)
         return True
+
+    async def _background_tasks_ended_with_child(self, state: _ConversationState) -> None:
+        """The child is gone, and every background task it was running went with it.
+
+        Server shutdown never comes here: it detaches, and keeps the rows so the next
+        start tells the agent. A kill forgets the tasks without a prompt.
+        """
+        if self._shutting_down:
+            return
+        lost = await self._persist(
+            state, partial(self._store.take_background_tasks, state.record.conversation_id)
+        )
+        if not state.being_killed:
+            self._tell_agent_about_lost_background_tasks(state, lost)
+
+    def _tell_agent_about_lost_background_tasks(
+        self, state: _ConversationState, task_descriptions: tuple[str, ...]
+    ) -> None:
+        """Deliver one Panels prompt per lost task, queued behind any running turn."""
+        if task_descriptions:
+            self._settle_in_background(
+                state, self._deliver_lost_background_task_prompts(state, task_descriptions)
+            )
+
+    async def _deliver_lost_background_task_prompts(
+        self, state: _ConversationState, task_descriptions: tuple[str, ...]
+    ) -> None:
+        conversation_id = state.record.conversation_id
+        for task_description in task_descriptions:
+            try:
+                fate = await self.send(
+                    conversation_id,
+                    text_message_content(_lost_background_task_prompt(task_description)),
+                    sender_label=LOST_BACKGROUND_TASK_SENDER_LABEL,
+                    mode=PromptDeliveryMode.queue,
+                    reply_requested=False,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOGGER.exception(
+                    "conversation %s could not tell its agent that background task %r "
+                    "ended with its session",
+                    conversation_id,
+                    task_description,
+                )
+                continue
+            LOGGER.info(
+                "conversation background task lost with its session conversation_id=%s "
+                "task_description=%r fate=%s",
+                conversation_id,
+                task_description,
+                type(fate).__name__,
+            )
 
     async def _cancel_child_turn(
         self, state: _ConversationState, child: BackendChild
@@ -4100,6 +4225,7 @@ class SqliteProcessConversationSystem:
 
         async with self._conversations_lock:
             states = list(self._conversations.values())
+        busy_with_background_tasks = await self._store.conversation_ids_with_live_background_tasks()
         recovered_quarantines: list[_ConversationState] = []
         for state in states:
             if state.child is None or state.lock.locked():
@@ -4109,6 +4235,11 @@ class SqliteProcessConversationSystem:
                 if child is None or state.phase is not _ConversationPhase.idle:
                     continue
                 was_quarantined = state.child_is_quarantined
+                if (
+                    not was_quarantined
+                    and state.record.conversation_id in busy_with_background_tasks
+                ):
+                    continue
                 if child_stops_outside_lock(child):
                     # Only an explicit operation retries failed remote cleanup.
                     if was_quarantined and state.retirement_task is not None:
@@ -4205,6 +4336,7 @@ class SqliteProcessConversationSystem:
             state.child = None
             state.retained_child_reference = None
             state.child_is_quarantined = False
+            await self._background_tasks_ended_with_child(state)
             if state.reserved_turn is not None:
                 state.last_ended_turn_token = state.reserved_turn.token
                 state.reserved_turn.resolved.set()
@@ -4393,11 +4525,18 @@ class SqliteProcessConversationSystem:
         await self._acquire_after_steers(state)
         written: tuple[StoredConversationEvent, ...] = ()
         should_drain = False
+        background_task_news = isinstance(
+            args, (BackgroundTaskStarted, BackgroundTaskEnded, BackendStreamEnded)
+        )
+        lost_background_tasks: tuple[str, ...] = ()
         try:
             running = state.running_turn
             live = (
                 token is None
-                and isinstance(args, (VendorSessionCursorRebound, ComposerCatalogReported))
+                and (
+                    background_task_news
+                    or isinstance(args, (VendorSessionCursorRebound, ComposerCatalogReported))
+                )
             ) or (
                 running is not None
                 and running.token == token
@@ -4483,6 +4622,7 @@ class SqliteProcessConversationSystem:
             def write(
                 conn: sqlite3.Connection,
             ) -> tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]:
+                nonlocal lost_background_tasks
                 written = self._store.append_in_transaction(
                     conn,
                     conversation_id,
@@ -4505,11 +4645,28 @@ class SqliteProcessConversationSystem:
                         conversation_id,
                         composer_catalog=args.composer_catalog,
                     )
+                elif live and isinstance(args, BackgroundTaskStarted):
+                    self._store.record_background_task_started_in_transaction(
+                        conn, conversation_id, args.task_id, args.task_description
+                    )
+                elif live and isinstance(args, BackgroundTaskEnded):
+                    self._store.record_background_task_ended_in_transaction(
+                        conn, conversation_id, args.task_id
+                    )
+                elif live and isinstance(args, BackendStreamEnded):
+                    lost_background_tasks = self._store.take_background_tasks_in_transaction(
+                        conn, conversation_id
+                    )
                 return {"applied": live}, written
 
             result = await self._persist(
                 state,
-                partial(self._store.commit_backend_event, write, in_commit),
+                partial(
+                    self._store.commit_backend_event,
+                    write,
+                    in_commit,
+                    always_announce=live and background_task_news,
+                ),
                 runtime_mutation=mutation,
             )
             written = result.written
@@ -4532,6 +4689,8 @@ class SqliteProcessConversationSystem:
                     )
                 elif live and isinstance(args, ComposerCatalogReported):
                     state.record = replace(state.record, composer_catalog=args.composer_catalog)
+                elif live and background_task_news:
+                    self._note_background_task_news(state, args)
                 if predicted is not None and predicted.ended:
                     self._settle_phase(state)
                     should_drain = True
@@ -4548,12 +4707,38 @@ class SqliteProcessConversationSystem:
                     )
         finally:
             state.lock.release()
+        if result.taken:
+            self._tell_agent_about_lost_background_tasks(state, lost_background_tasks)
         if should_drain:
             # Return this event's committed result before the next prompt's provider I/O.
             # Register now so shutdown and quiescence also own the scheduled drain.
             drain = self._settle_in_background(state, self._drain_held_prompts(state))
             register_capture_task(drain)
         return result
+
+    def _note_background_task_news(
+        self, state: _ConversationState, args: BackendEventValue
+    ) -> None:
+        """One line per background task fact, and the idle clock restarts at a task's end."""
+        conversation_id = state.record.conversation_id
+        if isinstance(args, BackgroundTaskStarted):
+            LOGGER.info(
+                "conversation background task started conversation_id=%s task_id=%s "
+                "task_description=%r",
+                conversation_id,
+                args.task_id,
+                args.task_description,
+            )
+        elif isinstance(args, BackgroundTaskEnded):
+            state.last_touched_monotonic = self._monotonic_now()
+            LOGGER.info(
+                "conversation background task ended conversation_id=%s task_id=%s task_status=%s",
+                conversation_id,
+                args.task_id,
+                args.task_status,
+            )
+        elif isinstance(args, BackendStreamEnded):
+            LOGGER.info("conversation backend stream ended conversation_id=%s", conversation_id)
 
     # --- shared internals ---------------------------------------------------------------
 
@@ -4864,6 +5049,12 @@ class _CoreBackendEventSink:
                 turn,
                 event,
                 conversation_id=self._state.record.conversation_id,
+                # A replaced child's session facts are not about the current child.
+                expected_sink=self
+                if isinstance(
+                    event, (BackgroundTaskStarted, BackgroundTaskEnded, BackendStreamEnded)
+                )
+                else None,
             )
         )
 

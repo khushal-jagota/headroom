@@ -1412,14 +1412,16 @@ def test_notice_suppression_upgrade_preserves_lifecycle_facts_and_indexes(
         conn.close()
 
 
-@pytest.mark.parametrize("starting_head", ["reconcile_native_main", "ticket_integrity_reason"])
-def test_native_and_mac_release_histories_upgrade_to_one_head(
+@pytest.mark.parametrize(
+    "starting_head", ["reconcile_native_mac_release", "conversation_background_tasks"]
+)
+def test_native_and_staging_histories_upgrade_to_one_head(
     tmp_path: Path, starting_head: str
 ) -> None:
     """Either installed branch must gain the other schema without replaying its own."""
     from alembic import command
 
-    path = tmp_path / "combined-native-review.db"
+    path = tmp_path / "combined-native-staging.db"
     engine = db_module._migration_engine(str(path), 1000)
     try:
         with engine.begin() as connection:
@@ -1430,7 +1432,7 @@ def test_native_and_mac_release_histories_upgrade_to_one_head(
         engine.dispose()
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("reconcile_native_mac_release",)
+            ("reconcile_native_staging",)
         ]
         assert "recovery_sender_message_id" in {
             column[1]
@@ -1438,6 +1440,10 @@ def test_native_and_mac_release_histories_upgrade_to_one_head(
         }
         assert conn.execute("SELECT count(*) FROM notification_apns_devices").fetchone() == (0,)
         assert conn.execute("SELECT count(*) FROM notification_apns_deliveries").fetchone() == (0,)
+        assert "workflow_json" in {
+            column[1] for column in conn.execute("PRAGMA table_info(tickets)")
+        }
+        assert conn.execute("SELECT count(*) FROM conversation_background_tasks").fetchone() == (0,)
         assert "locale" in {column[1] for column in conn.execute("PRAGMA table_info(tickets)")}
         assert conn.execute("SELECT count(*) FROM executor_connections").fetchone() == (0,)
 

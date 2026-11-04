@@ -352,6 +352,11 @@ class CodexAppServerBackendChild:
         message_files: ConversationMessageFiles,
         remembered_login_rejection: CodexLoginRejectionMemory,
     ) -> None:
+        if resolved_start.model == "sol":
+            raise BackendSpawnFailed(
+                'The legacy Codex model "sol" cannot run. Choose an explicit Codex model '
+                "in the model settings before you retry."
+            )
         self._launch = launch
         self._resolved_start = resolved_start
         self._sink = event_sink
@@ -404,6 +409,9 @@ class CodexAppServerBackendChild:
                 argv=self._launch.argv,
                 environment=environment,
                 working_directory=resolved_start.workspace_folder,
+                worker_ticket_id=dict(self._identity_environment(resolved_start)).get(
+                    "PLAN_TICKET_ID"
+                ),
             )
         except CodexChildWouldNotStart as would_not_spawn:
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
@@ -1637,7 +1645,9 @@ class CodexAppServerBackendChild:
             TurnEnded(
                 ending=ConversationTurnEnding.failed,
                 error_summary=self._read_the_login_in(
-                    turn, "the codex process ended while the turn was running"
+                    turn,
+                    self._client.end_reason
+                    or "the codex process ended while the turn was running",
                 ),
                 standard_error_tail=self._client.standard_error_tail(),
             ),

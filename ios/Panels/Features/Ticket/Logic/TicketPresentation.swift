@@ -2,9 +2,9 @@ import Foundation
 
 struct TicketPresentation {
     let ticket: TicketDetail
-    let manifest: TicketWorkerType
+    let manifest: TicketWorkflow
 
-    var currentStage: TicketWorkerType.Stage? { manifest.stages.first { $0.id == ticket.stage } }
+    var currentStage: TicketWorkflow.Stage? { manifest.stages.first { $0.id == ticket.stage } }
     var terminal: Bool { currentStage?.isTerminal == true }
     var working: Bool { ticket.conversationSignal?.working == true }
     var currentField: String? { currentStage?.gatingField }
@@ -26,7 +26,7 @@ struct TicketPresentation {
         return current > gate
     }
     var completedCount: Int { manifest.fields.filter { isComplete($0.id) }.count }
-    var ceilingOptions: [TicketWorkerType.Stage] {
+    var ceilingOptions: [TicketWorkflow.Stage] {
         let start = manifest.stages.firstIndex { $0.id == ticket.stage } ?? 0
         return Array(manifest.stages.dropFirst(start))
     }

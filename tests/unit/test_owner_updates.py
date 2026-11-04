@@ -15,6 +15,7 @@ from typing import cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.ticket_workflows import preset_workflow_json
 from tests.unit.test_conversation_system import _Harness, _run, _start, harness  # noqa: F401, F811
 from tests.unit.test_deployment import SHA_A, SHA_B, FakeHealth, FakeService, _app
 
@@ -189,10 +190,10 @@ def test_invalid_finished_ticket_refuses_claim_and_keeps_workspace_open(
     try:
         connection.execute(
             "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
-            "field_values,created_at,updated_at,ceiling_holder) "
+            "field_values,created_at,updated_at,ceiling_holder,workflow_json) "
             "VALUES ('finished','Finished Ticket','coding','codex','done','removed_stage',"
-            "'{}',1,1,?)",
-            (json.dumps({"kind": "chief", "id": "chief"}),),
+            "'{}',1,1,?,?)",
+            (json.dumps({"kind": "chief", "id": "chief"}), preset_workflow_json(connection)),
         )
     finally:
         connection.close()

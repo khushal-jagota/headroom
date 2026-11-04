@@ -4,7 +4,7 @@ import Observation
 /// A draft belongs to the exact proposal the person read, including its revision.
 @MainActor @Observable final class ReviewDecision {
     var ticket: TicketDetail?
-    var manifest: ReviewWorkerManifest?
+    var manifest: TicketWorkflow?
     var draft = "" { didSet { persistDraft(draft, old: oldValue, suffix: ":edit") } }
     var revisionDraft = "" { didSet { persistDraft(revisionDraft, old: oldValue, suffix: ":guidance") } }
     private var draftServer: String?
@@ -37,7 +37,7 @@ import Observation
 
     var proposal: TicketProposal? { ticket?.pendingProposal }
     var canReturn: Bool { proposal?.field != "brief" && ticket?.conversationId != nil }
-    var approvalStages: [ReviewWorkerManifest.Stage] { manifest?.approvalStages(after: ticket?.stage ?? "") ?? [] }
+    var approvalStages: [TicketWorkflow.Stage] { manifest?.approvalStages(after: ticket?.stage ?? "") ?? [] }
     var ready: Bool { proposal != nil && !changed && !busy && !resolved && !approvalStages.isEmpty }
 
     static func matches(_ lhs: TicketProposal, _ rhs: TicketProposal) -> Bool {
@@ -52,9 +52,7 @@ import Observation
         if ticket == nil, let saved = api.cachedTicket(item.ticketId), let proposal = saved.pendingProposal,
            proposal.field == item.field, proposal.createdAt == item.waitingSince {
             ticket = saved
-            struct ManifestResponse: Decodable { let workerTypes: [ReviewWorkerManifest] }
-            let response: ManifestResponse? = api.cached("/api/worker-types/\(saved.workerType)/manifest")
-            manifest = response?.workerTypes.first { $0.workerType == saved.workerType }
+            manifest = saved.workflow
             restoreDrafts(api: api, ticket: saved, proposal: proposal)
         }
         loading = true
@@ -73,10 +71,10 @@ import Observation
                 error = "The proposal changed while you were editing. Your draft is kept below. Reload to read the new version."
                 return
             }
-            let lifecycle = try await api.reviewManifest(fetched.workerType)
+            let lifecycle = fetched.workflow
             guard !Task.isCancelled else { return }
             guard lifecycle.fields.contains(where: { $0.id == incoming.field }) else {
-                throw APIError(status: 0, message: "This proposal field is unavailable for its worker type.")
+                throw APIError(status: 0, message: "This proposal field is unavailable for its saved workflow.")
             }
             restoreDrafts(api: api, ticket: fetched, proposal: incoming, discard: discardDraft)
             ticket = fetched; manifest = lifecycle; changed = false; error = nil

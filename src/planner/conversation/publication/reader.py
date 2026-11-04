@@ -17,10 +17,14 @@ def read_durable_facts(
         "ELSE NULL END FROM conversation_events e WHERE e.conversation_id=c.conversation_id "
         "AND e.kind IN ('prompt','turn_ended') AND e.sequence>COALESCE("
         "(SELECT through_sequence FROM conversation_error_acknowledgements a WHERE "
-        "a.conversation_id=c.conversation_id),0) ORDER BY e.sequence DESC LIMIT 1) "
+        "a.conversation_id=c.conversation_id),0) ORDER BY e.sequence DESC LIMIT 1),"
+        "EXISTS(SELECT 1 FROM conversation_background_tasks b "
+        "WHERE b.conversation_id=c.conversation_id) "
         "FROM conversations c WHERE c.conversation_id=?",
         (conversation_id,),
     ).fetchone()
     if row is None:
         return None
-    return SignalDurableFacts(row[1] is not None and int(row[1]) > int(row[0]), row[2] == "failed")
+    return SignalDurableFacts(
+        row[1] is not None and int(row[1]) > int(row[0]), row[2] == "failed", bool(row[3])
+    )

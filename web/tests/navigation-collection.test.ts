@@ -13,7 +13,7 @@ describe('TanStack source publication', () => {
     // Amendment/classifier boundary only: synthetic attention facts do not prove Signal parity.
     const adapter = createNavigationCollection();
     const record: (TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue}) = {kind:'ticket',id:'t',value:{
-      title:'Ticket',recap:'Ticket recap',recap_preview:'Ticket recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',
+      title:'Ticket',recap:'Ticket recap',recap_preview:'Ticket recap',worker_type:'coding',stage_label:'Implementation',workflow_label:'Coding',stage:'needs_implementation',ticket_status:'empty',
       blocked:false,created_at:1,updated_at:10,worker_step_claim_out:false,deadline:null,
       project_id:null,manager_kind:'chief',manager_id:null,conversation_id:null,
       is_backlogged:false,ceiling:'needs_implementation',ceiling_holder:{kind:'owner',id:'owner'},

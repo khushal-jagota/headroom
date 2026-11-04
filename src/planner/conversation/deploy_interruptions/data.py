@@ -464,10 +464,9 @@ def recovery_blocker(
     from planner.tickets import locale_configuration
     from planner.tickets.contracts import StageOwnershipMode
     from planner.tickets.logic import machine
-    from planner.worker_types.configuration import configured_worker_type_registry
 
     ticket = tickets_data.read_ticket(conn, str(row["owner_id"]))
-    definition = configured_worker_type_registry().require(ticket.worker_type)
+    definition = ticket.workflow
     if ticket.stage != reference.expected_stage:
         return "the Ticket Stage changed"
     if ticket.is_backlogged:

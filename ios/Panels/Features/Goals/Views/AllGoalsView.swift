@@ -59,7 +59,6 @@ struct AllGoalsView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(goal.title).font(.body.weight(.medium)).foregroundStyle(PanelsTheme.strong)
                 Spacer(minLength: 8)
-                Text(goal.completed ? "Done" : "Not done").font(.caption).foregroundStyle(goal.completed ? PanelsTheme.success : PanelsTheme.Goal.faint)
             }
             HStack(spacing: 8) {
                 Text(projects.first { $0.id == goal.projectId }?["name"].string ?? "…")

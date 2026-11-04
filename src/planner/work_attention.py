@@ -18,8 +18,8 @@ from planner.tickets.derivation import AgentState, TicketFacts
 from planner.tickets.integrity import issue_for_ticket
 from planner.tickets.logic import machine
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
-from planner.worker_types.configuration import configured_worker_type_registry
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.store import workflow_from_row
 
 
 async def read_running_conversation_count(
@@ -66,7 +66,8 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
         return {}
     placeholders = ",".join("?" for _ in ticket_ids)
     rows = conn.execute(
-        "SELECT id, stage, worker_type, worker_step_claim, pending_proposal, ceiling_holder, "
+        "SELECT id, stage, worker_type, workflow_json, worker_step_claim, "
+        "pending_proposal, ceiling_holder, "
         "conversation_id "
         f"FROM tickets WHERE id IN ({placeholders})",
         tuple(sorted(ticket_ids)),
@@ -91,20 +92,23 @@ def _ticket_attention(
     signal = (
         conversation.signal
         if conversation
-        else conversation_signal(is_running=False, unread_message_to_owner=False)
+        else conversation_signal(
+            turn_is_running=False, has_live_background_task=False, unread_message_to_owner=False
+        )
     )
     awaiting_reply = signal["message_for_owner"]
     awaiting_answer = conversation.awaiting_answer if conversation else False
-    running = signal["working"]
+    working = signal["working"]
     last_turn_failed = conversation.last_turn_failed if conversation else False
     assigned = ticket_assignment_from_values(
         stage=str(row["stage"]),
-        worker_type=str(row["worker_type"]),
+        worker_type=row["worker_type"],
+        worker_type_definition=workflow_from_row(row),
     )
     agent_state = derivation.agent_state(
         facts.ticket_status,
         stage=str(row["stage"]),
-        turn_is_running=running,
+        agent_is_working=working,
         last_turn_failed=last_turn_failed,
     )
     return {
@@ -129,10 +133,10 @@ def ticket_is_assigned(ownership: StageOwnershipMode | None) -> bool:
 
 
 def ticket_assignment_from_values(
-    *, stage: str, worker_type: str, worker_type_definition: WorkerTypeDefinition | None = None
+    *, stage: str, worker_type: str | None, worker_type_definition: WorkflowDefinition
 ) -> bool:
     """Derive assignment from the Worker type's ownership declaration."""
-    definition = worker_type_definition or configured_worker_type_registry().require(worker_type)
+    definition = worker_type_definition
     ownership = machine.stage_ownership_mode(
         stage,
         worker_type_definition=definition,
@@ -237,7 +241,9 @@ async def add_work_attention(
         row["conversation_signal"] = (
             conversation.signal
             if conversation
-            else conversation_signal(is_running=False, unread_message_to_owner=False)
+            else conversation_signal(
+                turn_is_running=False, has_live_background_task=False, unread_message_to_owner=False
+            )
         )
     for row in item_rows:
         item_id = str(row["id"])
@@ -245,11 +251,13 @@ async def add_work_attention(
         signal = (
             own_conversation.signal
             if own_conversation
-            else conversation_signal(is_running=False, unread_message_to_owner=False)
+            else conversation_signal(
+                turn_is_running=False, has_live_background_task=False, unread_message_to_owner=False
+            )
         )
         awaiting_reply = signal["message_for_owner"]
         awaiting_answer = own_conversation.awaiting_answer if own_conversation else False
-        running = signal["working"]
+        working = signal["working"]
         failed = own_conversation.last_turn_failed if own_conversation else False
         row.update(
             {
@@ -261,7 +269,7 @@ async def add_work_attention(
                 "assigned": False,
                 "agent_state": (
                     AgentState.working.value
-                    if running
+                    if working
                     else AgentState.errored.value
                     if failed
                     else AgentState.idle.value

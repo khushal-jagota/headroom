@@ -1,52 +1,42 @@
 # Design
 
-Headroom’s interface is meant to feel like a quiet desktop: near-black surfaces, almost no chrome, and content that is the thing itself. A conversation turn is its text. A Ticket field is its value. Labels, avatars, timestamps, and counts appear only when they do work. The owner built the tool. The screen does not explain the tool back to him.
+Headroom's interface is meant to feel like a quiet desktop: near-black surfaces, almost no chrome, and content that is the thing itself. The owner built the tool, so the screen does not explain it back to him. [`DESIGN.md`](../DESIGN.md) holds the principles and `assets/tokens.css` the values. This page is how they show up in the product and how screens are assembled.
 
-The standing principle list is [`DESIGN.md`](../DESIGN.md). The values those principles tune live only in `assets/tokens.css`. This page is how those choices show up in the product.
+## How the principles show up
 
-## One accent, one meaning
+- **One accent, one meaning.** The soft steel accent means a person is needed: a pending approval, a required action, the enabled Send control. It stays out of ordinary agent prose. The approval control is the one strongly raised surface, so the gate is the most visible thing on a screen. Settled state is quiet. Done and error have their own small marks and are not the accent.
+- **Content only.** A conversation turn is its text and a Ticket field is its value. Labels, avatars, timestamps, and counts appear only when they do work.
+- **Asymmetry.** The owner's message is a contained pill. The agent's message is bare prose. See [Conversations](conversations.md).
+- **Depth without borders.** Wells are recessed, scroll areas fade into their bars, and menus share one shadow. A hairline appears only where a list has a real seam. Selection is a sunken surface, not a border.
+- **Feedback for anything that waits.** A running agent shows streaming dots or a working mark, and loading shows a skeleton shaped like what is coming. A surface is never silent while work is in flight.
+- **Shared scales.** Type, space, and radius come from one set of tokens, with a single sans face. Monospace remains for code, diffs, and tool output.
 
-The accent is the soft steel `--accent-bright`. It means a person is needed: a pending approval, a required action, and the enabled Send control in the composer. It is not a brand decoration, and it stays out of ordinary agent prose. If it is everywhere, it says nothing. A selected row is a sunken `--surface-2`, not the accent. The one strongly raised surface is the approval control, with a top highlight and a long shadow. Nothing else on a page is elevated that way. A pure white dot is reserved for a Worker waiting on a permission ask, so “only you can answer this” reads before any label does.
+## The page kit
 
-Settled state is quiet. An errored stage can use the error color. Done can use the small green mark. Those are status, not the accent.
+Screens are assembled from a small shared kit rather than a new layout per feature:
 
-## How a page is built
+- a screen header with a title and at most one piece of meta;
+- rows for lists, with space as the separator;
+- disclosures for detail that does not deserve a page;
+- skeleton regions that load in the shape of their content;
+- few buttons: a rare primary action, a quiet action, and a pill;
+- chips and pills that name a Project, a count, or a state;
+- a stage mark that carries Ticket and conversation state.
 
-Screens share a small kit rather than a new layout per feature.
+Some screens add layout rules in `assets/app.css`, keyed by a `data-screen` name. Most screens rely on the kit alone.
 
-- A screen header carries the title and, when needed, one piece of meta.
-- Lists are rows. A seam appears where a real list needs one: the stage spine, a Manager’s children, Ideas. Elsewhere, separation is space.
-- A disclosure opens detail that does not deserve a page.
-- Loading is a skeleton in the shape of the content that is coming, document-shaped or row-shaped, and it gives way when the body arrives.
-- Buttons are few: a primary action, a quiet action, a pill. The primary action is rare.
-- Chips and pills name a project, a count, or a state. They are not decoration.
-
-Each screen hangs its layout off a `data-screen` name in `assets/app.css`, using the shared type, space, and radius scales. New sizes are a design decision. The scale already includes the larger prose, display, and hero sizes the owner asked to keep when serif was removed. Content and controls use one system sans. Monospace remains for code, diffs, and tool output, because alignment carries meaning there.
-
-Depth comes from a recessed well, not from borders. The composer, editors, and code sit in that well. Menus and floating notices use one shared shadow. A scrim dims whatever is behind an open layer. Hover is a faint light laid over the element’s own surface, so it does not assume what color is underneath.
+Goal pages use a separate page kit for checklists, charts, tables, layouts, and text. It is owned by [Goals](goals.md).
 
 ## The conversation is the strictest screen
 
-The person’s message is a right-aligned pill. The agent’s message is bare prose, with compact closed thought and tool rows. One status line says whether the turn is working. The composer is recessed and carries the model and effort actually in force, plus Steer, Queue, Send now, Stop, and New when they apply. Focus hides the tool noise. Full shows the notebook. The toggle is a lens on one transcript, not two products.
+Focus mode hides tool noise and Full shows the notebook. The toggle is a lens on one transcript, not two views. The composer is recessed and shows the model and effort actually in force. Other screens borrow its rules, which makes it the best place to see a violation.
 
-Fade replaces dividers. A scrolling thread dissolves into the bars above and below it. A gateway round trip is slow enough to feel. The screen shows dots that hand off to streaming, and a working mark on a running Ticket, so a surface is never frozen and silent while an agent is in flight.
+## Decisions that shape it
 
-## What feeds the look, and where it shows up
+- Token edits retune the whole app, and kit edits retune every screen that uses them. A new screen that adds a second accent, a border on every card, or a caption on an obvious control has left the system.
 
-Token edits retune the whole app. Component edits in the kit retune every screen that uses them. The Ticket stage spine, Review’s approval card, the Workspace rail’s selected row, and the conversation pane are the places the rules are easiest to see and easiest to break. A new screen that introduces a second accent, a border around every card, or an explanation of an obvious control has left the system.
+## Code
 
-Copy uses employee, ceiling, and holder. The Worker is an employee taking the task. The ceiling is the grant. The holder is who a parked proposal is addressed to.
+`assets/tokens.css`, `assets/app.css`, and `web/src/components/` for the kit, including `ScreenHeader`, `ListRow`, `StageMark`, `Button`, `SkeletonRegion`, `Disclosure`, and `conversation/`. The goal page kit is in `web/src/components/pageKit/`.
 
-## Goal pages and managed files
-
-Goal pages use the shared page kit for checklists, charts, tables, layouts, and text. They are dashboards for the user. Explicit display choices control what the page shows. See [Goals](goals.md).
-
-Manager and goal artifacts use sibling roots. Manager files retain `files/sprint-items/<manager_id>/` and `/files/managers/` links. Goal files use `files/goals/<goal_id>/` and `/files/goals/` links. Their routes support reads, text writes, and deletion through the existing owner, Chief, or own-agent authority. Both use safe paths, symlink checks, media types, and `nosniff`.
-
-Goal workspaces use the shared Artifacts catalog and preview frame. Completion, deactivation, and conversation reset preserve the files. Managed file previews retain authored context and artifact links.
-
-## Pointers
-
-`assets/tokens.css`, `assets/app.css`, [`DESIGN.md`](../DESIGN.md), and `web/src/components/` for the kit: `ScreenHeader`, `ListRow`, `StageMark`, `Button`, `SkeletonRegion`, and `web/src/components/conversation/`.
-
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

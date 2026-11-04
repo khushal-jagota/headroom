@@ -75,6 +75,12 @@ def test_formula_expectation_projection_and_correction_reach_mounted_chart(
             "project_id": project["id"],
             "title": "Follow the phased expectation",
             "kind": "quantitative",
+            "completion_rule": {
+                "actual": {"op": "reference", "measure_id": actual["id"], "day_offset": 0},
+                "target": {"op": "constant", "value": 999},
+                "direction": "atleast",
+                "first_date": "2026-07-01",
+            },
             "deadline": "2026-07-08",
             "primary_chart": {
                 "type": "chart",
@@ -795,6 +801,15 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             "project_id": project["id"],
             "title": "Record the published guides",
             "kind": "quantitative",
+            "completion_rule": {
+                "actual": {
+                    "op": "reference", "measure_id": manual_snapshot["id"], "day_offset": 0
+                },
+                # This milestone differs from the chart's daily quota of 12.
+                "target": {"op": "constant", "value": 12000},
+                "direction": "atleast",
+                "first_date": "2026-07-01",
+            },
             "primary_chart": {
                 "type": "chart",
                 "id": "preview-manual",

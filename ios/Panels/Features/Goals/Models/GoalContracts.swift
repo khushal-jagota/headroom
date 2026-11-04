@@ -48,6 +48,9 @@ struct GoalRecord: Codable, Identifiable, Sendable, Equatable {
     let kind: String
     var active: Bool
     var completed: Bool
+    var completionDate: String? = nil
+    var completionRule: GoalJSON? = nil
+    var outcome: String? = nil
     let primaryChecklistBlockId: String?
     var deadline: String?
     let primaryChart: GoalJSON?

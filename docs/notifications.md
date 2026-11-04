@@ -1,40 +1,55 @@
 # Notifications
 
-A notification is a phone or desktop push for a kind of attention Khushal opted into, fired when that attention newly becomes true. Headroom can be installed from the browser. The service worker delivers pushes. It does not cache the app, and there is no offline copy.
+A notification is a phone or desktop push for a kind of attention Khushal opted into, sent at the moment that attention newly becomes true. Notifications exist so Khushal does not have to keep Headroom open to learn that something is waiting on him.
 
-## What can become a push
+## What it is made of
 
-Each subject — a Ticket, Chief, or Managers as one group — has attention flags. A flag that flips from false to true is an edge. An edge is the only thing that can notify. The writer records the flag and the edge in the same transaction as the change that caused them, so several commits stay distinct even when one later poll delivers them.
+- **Subjects.** Tickets, the Chief, Goals, and Managers. Preferences are per subject class: all Managers share one switch per kind, and so do all goals. A Chief preference never changes the matching Ticket preference.
+- **Attention flags.** Each subject has separate flags for a message waiting for a reply, an ask waiting for an answer, and a failure. Tickets also have a proposal waiting for approval and a stage assigned to Khushal.
+- **Edges.** A flag flipping from false to true is an edge. An edge is the only thing that can notify.
+- **The policy.** One decision door that turns an edge into a push or drops it, according to Khushal's preferences.
+- **Devices.** Each browser or installed app that enabled notifications is a Web Push subscription. A service worker on the device shows the push and opens the link.
+- **The settings section.** Notifications is a section of Settings. It renders the server's catalogue of choices and does not keep its own list.
 
-The flags are split because they are different events. A message waiting for a reply and a Worker waiting on a permission or input ask used to be easy to collapse. Whichever arrived second then changed nothing and reached nobody. They are separate. A proposal waiting on Khushal, a stage becoming his to fill, and a failure are separate again. Approval and stage-assignment exist on Tickets only. Chief and Managers offer reply, answer, and error.
+```
+ Ticket, conversation, and proposal writes
+                 │
+                 ▼
+ attention flag rises ──► edge (same transaction)
+                                │
+                                ▼
+                     policy (preferences) ──► drop
+                                │
+                                ▼
+                  one delivery per enabled device ──► Web Push ──► service worker
+```
 
-All ordinary Managers share one subject. A preference is about Managers as a class. A Chief preference never changes the matching Ticket preference.
+## How it works
 
-The push itself carries a privacy-safe title, body, link, and a replacement tag. It does not carry the transcript, the prompt, or the permission text. One tag per subject means a newer notification replaces the older one at the operating system. The server owns the catalogue of choices. The Notifications screen renders that catalogue. It does not invent a parallel list.
+The writer records the flag and the edge in the same transaction as the change that caused them. A background pass later turns edges into deliveries, so several commits stay distinct even when one pass sends them. Each device gets its own delivery, retried with backoff. An expired subscription disables that device.
 
-A permission or input request awaits an answer only while its turn is open. The turn ending clears unanswered requests from that turn, so the next request can raise a new edge. Unread messages and failures stay their own flags.
+The flags are separate because the events are separate. Held as one flag, a message and an ask that arrived second would raise no edge and reach nobody. An ask awaits an answer only while its turn is open. When the turn ends, its unanswered asks clear, so the next ask can raise a new edge.
 
-Changing a preference affects future edges. It does not replay the past. Startup reconciliation can clear a stale “needs an answer” when the notebook shows the turn already ended. That correction does not raise an edge and does not replay missed history.
+A push carries a short title, a body such as "has a message for you", a link, and one replacement tag per subject, so a newer push replaces the older one on the device. It never carries the transcript, the prompt, or the text of an ask. The link opens the Ticket, Chief, goal, or Manager it is about.
 
-When a parked review moves to an agent holder, Headroom attempts a courtesy message in that holder’s conversation. Khushal does not get an arrival message when a review moves to him. That courtesy is not a new push type. If the send fails, the courtesy can be lost. The proposal itself remains parked.
+Changing a preference affects future edges and does not replay the past.
 
-## How a device is enabled
+Headroom can be installed from the browser. Pushes need HTTPS outside localhost, and on iPhone or iPad they work from the installed Home Screen app. The service worker only handles pushes. It does not cache the app, and there is no offline copy.
 
-Delivery is Web Push. At the moment an edge is accepted, Headroom writes a delivery row per enabled device and retries with backoff. An expired subscription disables that device.
+## Decisions that shape it
 
-Production pushes need HTTPS. Localhost is the development exception. On iPhone or iPad, add the site to the Home Screen, open that installed app, then enable notifications for this device. The screen still says “Add Panels to the Home Screen,” which is the old product name in the current copy. Permission requested in a browser tab on iOS does not stick the way the installed app does.
+- Only edges notify. A flag that stays true does not keep pushing, and a correction never pushes.
+- Every push passes the one policy door. Sources never call delivery, and delivery never reads source state.
+- The push payload is privacy-safe. What was said stays in Headroom.
+- Preferences are by class, not by item, so a new Manager or goal needs no setup.
 
-## What feeds pushes, and where they land
+## Code
 
-Ticket, conversation, and proposal writes feed the flags. Preferences feed the policy that turns an edge into a push or drops it. A Ticket notification opens that Ticket in the Workspace. A Manager notification opens that Manager. A Chief notification opens Chief. Older addresses from before those routes moved still redirect. A malformed payload opens the Workspace.
+- `src/planner/notifications/`: flags and edges (`attention.py`), the policy (`logic/policy.py`), deliveries, preferences, and Web Push.
+- `static/service-worker.js`: the service worker.
+- `web/src/routes/NotificationsRoute.svelte`: the settings section.
 
-The Notifications section is Settings → Notifications, `#/settings/notifications`. The shell does not have a separate notifications destination anymore. `#/notifications` redirects there.
-
-## Pointers
-
-`src/planner/notifications/` and `web/src/routes/NotificationsRoute.svelte`. The service worker is `static/service-worker.js`.
-
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._
 
 ## Native iOS setup
 

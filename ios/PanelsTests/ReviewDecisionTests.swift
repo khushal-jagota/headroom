@@ -37,9 +37,18 @@ import XCTest
         let ticket = try fixture("ticket-full")
         let detail = try APIClient.decoder().decode(TicketDetail.self, from: ticket)
         let proposal = try XCTUnwrap(detail.pendingProposal)
-        ReviewStub.state.reset(ticket: ticket, manifest: Data("""
-        {"worker_types":[{"worker_type":"\(detail.workerType)","stages":[{"id":"\(detail.stage)","label":"Current"},{"id":"next_gate","label":"Next gate"},{"id":"done","label":"Done"}],"advance":{"\(detail.stage)":"next_gate"},"fields":[{"id":"\(proposal.field)","label":"Proposal"}],"ceiling_range":["next_gate","done"]}]}
-        """.utf8))
+        // A custom Ticket has no preset. Its saved controls are all the client gets;
+        // looking up a deleted or changed Worker type must never govern this decision.
+        var raw = try XCTUnwrap(JSONSerialization.jsonObject(with: ticket) as? [String: Any])
+        raw["worker_type"] = NSNull()
+        raw["workflow"] = ["worker_type": NSNull(), "label": "Saved custom workflow",
+            "stages": [["id": detail.stage, "label": "Current", "gating_field": proposal.field, "is_terminal": false, "ownership_mode": "worker"],
+                       ["id": "next_gate", "label": "Saved next gate", "gating_field": "result", "is_terminal": false, "ownership_mode": "worker"],
+                       ["id": "done", "label": "Done", "is_terminal": true]],
+            "advance": [detail.stage: "next_gate"],
+            "fields": [["id": proposal.field, "label": "Proposal"], ["id": "result", "label": "Result"]],
+            "ceiling_range": ["next_gate", "done"]]
+        ReviewStub.state.reset(ticket: try JSONSerialization.data(withJSONObject: raw))
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ReviewStub.self]
         let api = APIClient(baseURL: URL(string: "https://review.invalid")!, session: URLSession(configuration: configuration))
@@ -60,7 +69,13 @@ import XCTest
         let (decision, api, _) = try await setupDecision()
         let revision = try XCTUnwrap(decision.proposal?.revision)
         decision.draft = "Edited proposal\n\nWith context."
+        XCTAssertNil(decision.ticket?.workerType)
         XCTAssertEqual(decision.approvalStages.first?.id, "next_gate")
+        XCTAssertEqual(decision.approvalStages.first?.label, "Saved next gate")
+        XCTAssertEqual(decision.manifest?.label, "Saved custom workflow")
+        let presentation = TicketPresentation(ticket: try XCTUnwrap(decision.ticket), manifest: try XCTUnwrap(decision.manifest))
+        XCTAssertEqual(presentation.heading, "Currently working on Proposal")
+        XCTAssertEqual(presentation.ceilingOptions.map(\.id), [presentation.ticket.stage, "next_gate", "done"])
         let accepted = await decision.approve(api: api, ceiling: "next_gate", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(accepted)
         await settle(api)
@@ -229,7 +244,6 @@ import XCTest
 private final class ReviewStubState: @unchecked Sendable {
     private let lock = NSLock()
     private var ticket = Data()
-    private var manifest = Data()
     private var recorded: [URLRequest] = []
     private var failing = false
     var writes: [URLRequest] { lock.withLock { recorded } }
@@ -237,8 +251,8 @@ private final class ReviewStubState: @unchecked Sendable {
         get { lock.withLock { failing } }
         set { lock.withLock { failing = newValue } }
     }
-    func reset(ticket: Data, manifest: Data) {
-        lock.withLock { self.ticket = ticket; self.manifest = manifest; recorded = []; failing = false }
+    func reset(ticket: Data) {
+        lock.withLock { self.ticket = ticket; recorded = []; failing = false }
     }
     func bumpRevision() {
         lock.withLock {
@@ -263,7 +277,7 @@ private final class ReviewStubState: @unchecked Sendable {
                 if request.url!.path.hasSuffix("voice-transcriptions") { return (200, Data("{\"transcript\":\"Add the opened state.\"}".utf8)) }
                 return failing ? (400, Data("{\"error\":{\"code\":\"validation\",\"message\":\"the visible proposal changed; read it again before sending back\"}}".utf8)) : (200, Data("{}".utf8))
             }
-            return (200, request.url!.path.contains("manifest") ? manifest : ticket)
+            return request.url!.path.contains("manifest") ? (404, Data()) : (200, ticket)
         }
     }
 }

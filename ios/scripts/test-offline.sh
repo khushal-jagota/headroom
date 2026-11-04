@@ -9,7 +9,7 @@ cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Core/Networking/Resourc
   ios/Panels/Features/Conversation/Logic/*.swift ios/Panels/Features/Conversation/State/ConversationModel.swift ios/Panels/Features/Review/ReviewAPI.swift \
   ios/Panels/Features/Review/ReviewDecision.swift ios/Panels/Features/Review/ReviewMessageDecision.swift "$build/Sources/Panels/"
 cp ios/Panels/Features/Goals/Models/*.swift ios/Panels/Features/Goals/Logic/*.swift ios/Panels/Features/Goals/Networking/*.swift ios/Panels/Features/Goals/State/*.swift ios/Panels/Features/Artifacts/Logic/ArtifactTarget.swift ios/Panels/Features/Artifacts/Networking/ArtifactReader.swift ios/Panels/Features/Notifications/NotificationContracts.swift ios/Panels/Features/Notifications/Logic/NotificationRouting.swift "$build/Sources/Panels/"
-cp ios/Panels/Features/Ticket/Networking/TicketAPI.swift ios/Panels/Features/Ticket/Models/TicketLifecycle.swift "$build/Sources/Panels/"
+cp ios/Panels/Features/Ticket/Networking/TicketAPI.swift ios/Panels/Features/Ticket/Models/TicketLifecycle.swift ios/Panels/Features/Ticket/Logic/TicketPresentation.swift "$build/Sources/Panels/"
 cp ios/PanelsTests/GoalTests.swift ios/PanelsTests/ResourceRefreshTests.swift ios/PanelsTests/ReviewMessageTests.swift ios/PanelsTests/ReviewDecisionTests.swift ios/PanelsTests/OfflineTests.swift ios/PanelsTests/ConversationTests.swift "$build/Tests/PanelsTests/"
 cp -R ios/PanelsTests/Fixtures "$build/Tests/PanelsTests/"
 cat > "$build/Package.swift" <<'SWIFT'

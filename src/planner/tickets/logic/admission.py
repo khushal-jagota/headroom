@@ -6,7 +6,7 @@ from datetime import date
 from typing import Final
 
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
-from planner.worker_types.contracts import RETIRED_WORKER_TYPES, WorkerTypeDefinition
+from planner.worker_types.contracts import RETIRED_WORKER_TYPES, WorkflowDefinition
 
 REVISION_GUIDANCE_MAX_CHARACTERS: Final = 10_000
 
@@ -44,11 +44,19 @@ def require_creatable_worker_type(worker_type: str) -> None:
         raise PlannerError(ErrorCode.validation, "Worker type is retired")
 
 
+def validate_creation_ceiling(ceiling: str) -> None:
+    if ceiling == "done":
+        raise PlannerError(
+            ErrorCode.validation,
+            "A new Ticket cannot use Done as its ceiling. Choose an earlier stage.",
+        )
+
+
 def check_agent_proposal(
     stage: str,
     field: str,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> None:
     """Whether this Ticket can take a worker submission on this field at all.
 

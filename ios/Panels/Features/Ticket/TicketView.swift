@@ -6,7 +6,7 @@ struct TicketView: View {
     var openConversationID: String?
     @Environment(AppStore.self) private var store
     @State private var detail: TicketDetail?
-    @State private var manifest: TicketWorkerType?
+    @State private var manifest: TicketWorkflow?
     @State private var artifacts: ArtifactPage?
     @State private var error: String?
     @State private var artifactError: String?
@@ -208,7 +208,7 @@ struct TicketView: View {
         let client = store.client
         do {
             let result = try await client.ticket(ticketID)
-            let type = try await client.ticketWorkerType(result.workerType)
+            let type = result.workflow
             try Task.checkCancellation()
             guard generation == loadGeneration, client.baseURL == store.baseURL else { return }
             detail = result; manifest = type; error = nil

@@ -1,25 +1,23 @@
 # Feedback
 
-Feedback is a loose note about the product, captured from whatever page Khushal is on, for an agent to handle later. It is not an Idea. An Idea remembers possible work. Feedback records something to act on: a rough edge, a sentence that is wrong, a behavior to change.
+Feedback is a loose note about the product, captured from whatever page Khushal is on, for an agent to handle later: a rough edge, a wrong sentence, a behavior to change. It is not an [Idea](ideas.md). An Idea remembers possible work for a person. Feedback records something for an agent to act on.
 
-## How a note moves
+## How it works
 
-The shell control opens a capture overlay on any page. The note needs text. Headroom can store the current page address and a readable label, and that context can be removed before save. An unfinished draft stays on the device. A failed save keeps the text.
+A control in the shell opens capture on any page. Headroom can attach the current page address and label, which the owner can remove before saving. Open notes are listed newest first. Dismissing moves a note to Handled, and any handled note can be reopened.
 
-Open notes are newest first, with the page link and the time. Dismiss moves a note to Handled. Undo restores it for six seconds. Any handled note can return to Open. Handled notes that were used for one Ticket group under that Ticket’s title. Notes dismissed without a Ticket appear with the dismissed group. If the Ticket is later deleted, those notes stay handled and move to the dismissed group.
+An agent reads the open notes and marks the ones it used, naming the Ticket that took them. Handled notes group under that Ticket's title. Notes dismissed without a Ticket, or whose Ticket is later deleted, sit in a dismissed group. Marking is one write that follows the caller's scope.
 
-An agent reads open notes with `panels feedback list` and marks the ones it used with `panels feedback use --ticket …`. That update is one write, and it follows the caller’s Ticket or Manager scope.
+## Decisions that shape it
 
-## What it feeds
-
-Capture feeds the open list. Using a note feeds the handled history and the link to the Ticket that took it. The note does not become a Ticket and does not enter a conversation unless someone sends its content as a prompt.
+A note never becomes a Ticket and never enters a conversation by itself. It reaches an agent only when the agent reads the list or someone sends its text as a prompt. It is data to act on, not an instruction.
 
 ## Where it shows up
 
-The Feedback control is in the shell on every page. The list is `#/feedback`. The open count sits on the trigger. A toast after capture can jump to the list.
+The Feedback control on every page, with the open count, and the list at `#/feedback`. Agents use `panels feedback`, a hidden command group, or `/api/feedback`.
 
-## Pointers
+## Code
 
-`src/planner/feedback/`, `web/src/components/FeedbackCapture.svelte`, `web/src/routes/FeedbackRoute.svelte`.
+`src/planner/feedback/`, `web/src/components/FeedbackCapture.svelte`, and `web/src/routes/FeedbackRoute.svelte`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

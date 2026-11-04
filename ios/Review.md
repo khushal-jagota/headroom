@@ -30,14 +30,14 @@ proposal changes during editing, Review keeps the draft and requires a reload.
 
 The approval sheet shows How far as a list of gates and Who reviews as a native
 segmented picker. The suggested next gate and current holder are selected first.
-Nothing is written until Approve until <Stage> is pressed. The worker type's
-served manifest supplies the available gates; Review does not assume coding stages.
+Nothing is written until Approve until <Stage> is pressed. The Ticket's saved workflow supplies the available gates; Review does not assume
+coding stages or read controls from the current Worker preset.
 
 Swipe left past 30% of the screen to skip, or use the Skip button. The swipe never
 approves. The entire ask follows a leftward finger drag; releasing short of the
 threshold returns it without bounce. Skip fades the whole ask out over 120ms,
 resets its scroll position while hidden, then fades the next ask in over 200ms.
-The next proposal and its worker manifest are prefetched. While a proposal is
+The next proposal and its saved workflow are prefetched. While a proposal is
 loading, its card reserves the previous card height. After approval succeeds,
 the same transition waits for the approval sheet's dismissal callback. Reduce
 Motion keeps direct finger tracking and uses 120ms fades for the swap. Writes

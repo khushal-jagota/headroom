@@ -5,7 +5,7 @@ import { SCHEMA_VERSION, SUPPORTED_SEMANTICS, WIRE_VERSION } from '../src/lib/na
 const continuity: import('../src/lib/navigation/contracts').Continuity = {scope:'navigation',schema_version:SCHEMA_VERSION,semantics:SUPPORTED_SEMANTICS,epoch:'é',revision:'9007199254740993'};
 describe('canonical browser protocol boundary', () => {
   it('requires canonical metadata fields and exact nullability instead of compatibility defaults', () => {
-    const ticket={kind:'ticket',id:'t',value:{title:'Ticket',recap:'Ticket recap',recap_preview:'Ticket recap',worker_type:'coding',stage:'needs_plan',
+    const ticket={kind:'ticket',id:'t',value:{title:'Ticket',recap:'Ticket recap',recap_preview:'Ticket recap',worker_type:'coding',stage_label:'Plan',workflow_label:'Coding',stage:'needs_plan',
       ticket_status:'empty',blocked:false,created_at:1,updated_at:12,worker_step_claim_out:false,
       deadline:null,project_id:null,manager_kind:'chief',manager_id:null,conversation_id:null,
       is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,
@@ -17,7 +17,7 @@ describe('canonical browser protocol boundary', () => {
     expect(parse([ticket,manager]).snapshot.records).toHaveLength(2);
     expect(parse([{...ticket,value:{...ticket.value,gating_field:null}}]).snapshot.records).toHaveLength(1);
     expect(parse([{...ticket,value:{...ticket.value,proposal_created_at:13}}]).snapshot.records).toHaveLength(1);
-    for (const field of ['blocked','created_at','updated_at','worker_step_claim_out','proposal_created_at','gating_field','recap','recap_preview']) {
+    for (const field of ['blocked','created_at','updated_at','worker_step_claim_out','proposal_created_at','gating_field','recap','recap_preview','stage_label','workflow_label']) {
       const value: Record<string,unknown>={...ticket.value};delete value[field];
       expect(()=>parse([{...ticket,value}])).toThrow();
     }
@@ -26,7 +26,7 @@ describe('canonical browser protocol boundary', () => {
       expect(()=>parse([{...manager,value}])).toThrow();
     }
     for (const [field,bad] of [['blocked',0],['updated_at',null],['created_at',null],['created_at',1.5],['updated_at',1.5],
-      ['worker_step_claim_out',1],['proposal_created_at',false],['gating_field',true],['recap',null],['recap_preview',null]]) {
+      ['worker_step_claim_out',1],['proposal_created_at',false],['gating_field',true],['recap',null],['recap_preview',null],['stage_label',null],['workflow_label',null]]) {
       expect(()=>parse([{...ticket,value:{...ticket.value,[field as string]:bad}}])).toThrow();
     }
     // Removed source policy cannot reappear through a current record or defaults.

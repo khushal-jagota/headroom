@@ -18,7 +18,7 @@
   .rail { line-height:normal; }
   .rail > span { min-width:0; overflow-wrap:anywhere; }
   .rail .settle { flex-shrink:0; opacity:0; }
-  :global(.manager-card:hover) .settle, :global(.manager-card:focus-within) .settle, .settle:focus-visible { opacity:1; }
+  :global(.manager-card .identity:hover) .settle, :global(.manager-card .identity:focus-within) .settle, .settle:focus-visible { opacity:1; }
   .settle:hover { color:var(--text-strong); }
   .settle:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:3px; }
 </style>

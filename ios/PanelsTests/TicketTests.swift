@@ -15,11 +15,11 @@ final class TicketTests: XCTestCase {
     }
 
     func testManifestControlsCompletionAndApprovalFloor() throws {
-        let manifest = TicketWorkerType(workerType: "product_design", label: "Product design", stages: [
+        let manifest = TicketWorkflow(workerType: "product_design", label: "Product design", stages: [
             .init(id: "needs_brief", label: "Kickoff", gatingField: "brief", isTerminal: false, ownershipMode: "worker"),
             .init(id: "needs_wireframe", label: "Draw it", gatingField: "wireframe", isTerminal: false, ownershipMode: "worker"),
             .init(id: "done", label: "Finished", gatingField: nil, isTerminal: true, ownershipMode: nil)
-        ], fields: [.init(id: "brief", label: "Kickoff"), .init(id: "wireframe", label: "Drawing")])
+        ], fields: [.init(id: "brief", label: "Kickoff"), .init(id: "wireframe", label: "Drawing")], advance: ["needs_wireframe": "done"], ceilingRange: ["needs_wireframe", "done"])
         let presentation = TicketPresentation(ticket: try ticket(), manifest: manifest)
         XCTAssertEqual(presentation.completedCount, 1)
         XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe", "done"])

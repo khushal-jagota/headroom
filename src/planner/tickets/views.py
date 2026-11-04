@@ -42,6 +42,8 @@ from planner.tickets.logic.creation_receipt import supervision_receipt
 from planner.tickets.logic.recap import recap_preview
 from planner.tickets.logic.review import eligible_for_owner_review
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.registry import workflow_manifest
+from planner.worker_types.store import workflow_from_row
 
 
 def _broken(conn: sqlite3.Connection, ticket_id: str) -> JsonDict | None:
@@ -74,6 +76,11 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "id": ticket.id,
         "title": ticket.title,
         "worker_type": ticket.worker_type,
+        "workflow": workflow_manifest(
+            ticket.workflow,
+            worker_type=ticket.worker_type,
+            specialist_skill=ticket.workflow.specialist_skill,
+        ),
         "locale": ticket.locale.value,
         "employee_backend": ticket.employee_backend,
         "employee_launch_model": ticket.employee_launch_model,
@@ -112,7 +119,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
 
 
 def ticket_creation_json(conn: sqlite3.Connection, ticket: Ticket, now: int) -> JsonDict:
-    definition = configured_worker_type_registry().require(ticket.worker_type)
+    definition = ticket.workflow
     destination = proposal_routing.parked_destination(
         proposal_routing.route_to_holder(ticket.ceiling_holder)
     )
@@ -172,8 +179,7 @@ def list_tickets(
 
 
 def _ticket_search_text(row: sqlite3.Row) -> str:
-    registry = configured_worker_type_registry()
-    definition = registry.require(str(row["worker_type"]))
+    definition = workflow_from_row(row)
     values = fields_codec.values_from_json(str(row["field_values"]), definition.field_ids())
     proposal = fields_codec.proposal_from_json(row["searchable_pending_proposal"])
     return "\n".join(
@@ -193,7 +199,7 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         "id": str(row["id"]),
         "title": str(row["title"]),
         "locale": str(row["locale"]),
-        "worker_type": str(row["worker_type"]),
+        "worker_type": row["worker_type"],
         "stage": str(row["stage"]),
         "ticket_status": facts.ticket_status.value,
         "project_id": (
@@ -240,7 +246,8 @@ def list_ticket_summaries(
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
     rows = conn.execute(
-        "SELECT tickets.id, tickets.title, tickets.locale, tickets.worker_type, tickets.stage, "
+        "SELECT tickets.id, tickets.title, tickets.locale, tickets.worker_type, "
+        "tickets.workflow_json, tickets.stage, "
         "tickets.is_backlogged, "
         "tickets.worker_step_claim, tickets.recap, "
         "tickets.pending_proposal, "
@@ -258,7 +265,6 @@ def list_ticket_summaries(
         "THEN managers.project_id ELSE tickets.project_id END" + where + " ORDER BY " + order,
         tuple(params),
     ).fetchall()
-    registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     search = filters.search.casefold() if filters.search else None
     matches: list[JsonDict] = []
@@ -280,7 +286,7 @@ def list_ticket_summaries(
             )
         )
         status = facts.ticket_status
-        definition = registry.require(str(row["worker_type"]))
+        definition = workflow_from_row(row)
         if (
             filters.is_backlogged is not None
             and bool(row["is_backlogged"]) != filters.is_backlogged
@@ -391,7 +397,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     if broken is not None:
         return str(broken)
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    worker_type_definition = ticket.workflow
     ownership = machine.stage_ownership_mode(
         ticket.stage,
         worker_type_definition=worker_type_definition,
@@ -445,7 +451,7 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
         "managers.project_id AS parent_project_id, "
         "managers.title AS manager_title, "
         "parent_projects.name AS parent_project_name, "
-        "tickets.pending_proposal, tickets.worker_type, "
+        "tickets.pending_proposal, tickets.worker_type, tickets.workflow_json, "
         "tickets.employee_backend, tickets.locale, "
         "tickets.conversation_id, "
         "tickets.worker_step_claim, "
@@ -454,9 +460,8 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
         "LEFT JOIN managers ON managers.id = tickets.manager_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = managers.project_id ",
     ).fetchall()
-    registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
-    coding_order = registry.require("coding").stage_ids()
+    coding_order = configured_worker_type_registry().require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
     by_stage: dict[str, list[tuple[tuple[int, str, int], BoardCardSource]]] = {
         sid: [] for sid in column_order
@@ -490,8 +495,8 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
             continue
         stage = str(row["stage"])
         deadline = str(row["deadline"]) if row["deadline"] is not None else None
-        worker_type = str(row["worker_type"])
-        worker_type_definition = registry.require(worker_type)
+        worker_type = row["worker_type"]
+        worker_type_definition = workflow_from_row(row)
         gating_field_id = worker_type_definition.gating_field(stage)
         gating_field_label = (
             worker_type_definition.field_definition(gating_field_id).label
@@ -628,11 +633,10 @@ def _board_managers(
 
 def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
     rows = conn.execute(
-        "SELECT id, title, stage, worker_type, worker_step_claim, "
+        "SELECT id, title, stage, worker_type, workflow_json, worker_step_claim, "
         "pending_proposal, ceiling_holder, is_backlogged FROM tickets "
         "ORDER BY id",
     ).fetchall()
-    registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     items: list[JsonDict] = []
     for row in rows:
@@ -650,7 +654,7 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
         holder = json.loads(str(row["ceiling_holder"]))
         if holder != {"kind": "owner", "id": "owner"}:
             continue
-        worker_type_definition = registry.require(str(row["worker_type"]))
+        worker_type_definition = workflow_from_row(row)
         stage = str(row["stage"])
         field = worker_type_definition.gating_field(stage)
         if field is None:

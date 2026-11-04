@@ -67,15 +67,8 @@ extension APIClient {
     }
 
     func workspaceStageSentence(_ ticket: TicketSummary) async throws -> String {
-        struct Manifest: Decodable, Sendable {
-            struct Worker: Decodable, Sendable {
-                struct Stage: Decodable, Sendable { let id: String; let label: String }
-                let stages: [Stage]
-            }
-            let workerTypes: [Worker]
-        }
-        let manifest: Manifest = try await get("/api/worker-types/\(ticket.workerType)/manifest")
-        guard let label = manifest.workerTypes.first?.stages.first(where: { $0.id == ticket.stage })?.label else { return "" }
+        let detail = try await self.ticket(ticket.id)
+        guard let label = detail.workflow.stages.first(where: { $0.id == ticket.stage })?.label else { return "" }
         if ticket.ticketStatus == "blocked" { return "Blocked at \(label)." }
         if ticket.awaitingApproval { return "Awaiting your approval at \(label)." }
         if ticket.awaitingAnswer { return "Awaiting your answer at \(label)." }

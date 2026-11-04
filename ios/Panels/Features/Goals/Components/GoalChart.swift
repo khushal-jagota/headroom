@@ -27,7 +27,7 @@ struct GoalChart: View {
             if block.kind == "binary" {
                 VStack(alignment: .leading, spacing: 20) {
                     GoalCompletion(done: session.goal?.completed ?? false, status: session.goal?.status ?? "neutral")
-                    if !preview {
+                    if !preview, session.goal?.kind == "binary" {
                         Button(session.goal?.completed == true ? "Mark not done" : "Mark done") { Task { await session.save(["completed": .bool(!(session.goal?.completed ?? false))]) } }
                             .font(.footnote).buttonStyle(.bordered).frame(maxWidth: .infinity, alignment: .trailing).disabled(session.busy)
                     }

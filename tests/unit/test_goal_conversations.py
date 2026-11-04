@@ -288,6 +288,8 @@ def test_chief_and_goals_use_current_workspace_only_for_fresh_or_reset_conversat
     harness = GoalHarness(path)
     recipients = [CHIEF_PRINCIPAL, Principal(PrincipalKind.goal, goals[0].id)]
     keys = ["chief_of_staff", goal_agent_key(goals[0].id)]
+    # The Chief starts in its own home folder whatever the workspace; a goal takes the root.
+    chief_home = path.parent / "files" / "chief"
 
     async def speak(recipient: Principal, text: str) -> str:
         result = await send_message(
@@ -302,21 +304,31 @@ def test_chief_and_goals_use_current_workspace_only_for_fresh_or_reset_conversat
         try:
             with register_workspace_root(str(path), roots[0]):
                 original_ids = [await speak(recipient, "Begin") for recipient in recipients]
-                assert [start.workspace_folder for start in harness.starts] == [roots[0], roots[0]]
+                assert [start.workspace_folder for start in harness.starts] == [
+                    chief_home,
+                    roots[0],
+                ]
             with register_workspace_root(str(path), roots[1]):
                 for recipient, original_id in zip(recipients, original_ids, strict=True):
                     assert await speak(recipient, "Continue") == original_id
                 assert len(harness.starts) == 2
                 fresh_id = await speak(Principal(PrincipalKind.goal, goals[1].id), "New goal")
                 assert harness.starts[-1].workspace_folder == roots[1]
-                for key, recipient, original_id in zip(keys, recipients, original_ids, strict=True):
+                for key, recipient, original_id, before, after in zip(
+                    keys,
+                    recipients,
+                    original_ids,
+                    (chief_home, roots[0]),
+                    (chief_home, roots[1]),
+                    strict=True,
+                ):
                     await reset_agent_conversation(harness.system, tmp_db, key)
                     reset_id = await speak(recipient, "Start after reset")
                     assert reset_id not in (original_id, fresh_id)
-                    assert harness.starts[-1].workspace_folder == roots[1]
+                    assert harness.starts[-1].workspace_folder == after
                     old = await harness.store.read_conversation(original_id)
                     assert old is not None
-                    assert old.workspace_folder == roots[0]
+                    assert old.workspace_folder == before
                     assert await harness.events(original_id)
         finally:
             await harness.system.shutdown()

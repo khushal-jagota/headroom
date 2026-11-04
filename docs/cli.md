@@ -1,65 +1,38 @@
 # The command line
 
-`panels` is Headroom’s record, reached over HTTP. The browser is the main surface for Khushal. The command is how a Worker acts, how a Manager acts from its own process, and how an operator runs the host. Adding `--json` returns the machine-readable body the route already has.
+`panels` is Headroom's record, reached over HTTP. The browser is Khushal's main surface. The command is how a Worker acts, how the Chief, a Manager, or a goal agent acts from its own process, and how an operator runs the host. Every command calls the same routes the browser uses, and `--json` returns the route's own body.
 
-The command name does not grant authority. The process environment says who is calling (`PLAN_ACTOR`, `PLAN_TICKET_ID`, `PLAN_MANAGER_ID`, and the related keys). The server admits or refuses that principal with the same rule as the browser. See [Who may act](authority.md).
+## Who is calling
 
-## Two kinds of command
+The command name grants nothing. The process environment says who is calling: Headroom sets the actor, the Ticket, Manager, or goal id, and the conversation id when it starts an agent. The server admits or refuses that caller with the same rule as the browser. See [Who may act](authority.md).
 
-Ordinary help shows the roots a person or a Manager uses:
+## What it is made of
 
-- `send-message` delivers text into an existing conversation. This is the only way prose reaches an agent or reaches Khushal from an agent.
-- `project` reads and edits the catalog.
-- `ticket` reads and edits Tickets, including backlog, resume, assignment, locale moves, proposal accept and revise, delete, and restart-worker.
-- `manager` reads and edits Managers, including goal, recap, and, for the owner, settlement.
-- `goal` reads and edits saved goal pages through revision-checked writes. See [Goals](goals.md).
-- `measure`, `dataset`, and `measure-source` read and maintain project measurements and their sources. See [Project measures](measures.md).
-- `credential` lists descriptive names and requests reusable keys without secret values.
+- **Ordinary roots**, shown in help, for people and supervising agents:
+  - `send-message` addresses Khushal, the Chief, a goal, a Ticket's Worker, or a Manager through the [conversation](conversations.md) door.
+  - `project`, `ticket`, and `manager` read and edit the catalog, Tickets, and Managers, including backlog and resume, assignment, accepting or revising a parked proposal, restarting a stalled Worker, and settling a Manager.
+  - `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
+  - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
+- **The Worker group**, hidden from ordinary help: read my Ticket, file a proposal, set a recap, request help. A Worker can file a proposal. Accepting one is `ticket proposal`, for a caller who stands above the Ticket.
+- **Hidden groups** that a specialist skill or an operator names when needed: `serve`, `skill`, `worker-type`, `schedule`, `feedback`, and maintenance.
 
-Workers use a separate `worker` group that ordinary help hides: show my Ticket, file a proposal, set a recap, request help. Those commands read the Worker identity from the environment. Proposal bodies come from stdin. A Worker can file. A Worker cannot accept. Acceptance is `ticket proposal` for a principal who stands above the Ticket.
+## How reads and writes work
 
-Other groups stay hidden until a skill or an operator needs them: `serve`, `skill`, `worker-type`, `schedule`, `feedback`, `preview`, `environment`, and maintenance. A specialist skill names the one it is allowed to use. On the production host, `~/.local/bin/panels` follows the deployed app, not whatever checkout happens to be on `PATH`.
-
-## Reads and the writes people repeat
-
-`ticket show`, `manager show`, and `project show` return a header and a manifest of parts. Name the parts you want expanded. `ticket show` with no id, inside a Worker, reads that Worker’s Ticket through the self route, including the Worker type and specialist. Neither form returns the conversation. `ticket history` is the conversation record when the record is what you need.
-
-List commands are pages of 30, and each page says what it omitted. Ticket lists can filter on backlog and Worker type. Completed Tickets need `--include-terminal`. Backlog and resume accept a hash of the record that was shown, and a stale hash writes nothing.
-
-`ticket create` sends one JSON object through the ordinary create route. The server applies defaults and validates the whole Ticket before one write. Skill edits and applies are the same writers as Settings. See [Skills](skills.md).
+A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. A write that depends on what was read, such as backlog and resume, carries the record's fingerprint, so a stale write is refused instead of landing on a changed Ticket. `ticket create` sends one object to the same create route as the browser. It accepts a preset or a custom workflow. Custom stages carry their result fields, ownership, and instructions together. The route validates the whole Ticket before one write.
 
 ## What the CLI feeds
 
-A Worker’s `propose` feeds the proposal resolver. `send-message` feeds a conversation. Operator commands feed the host: backup, restore, environment prepare, preview register, diagnostic history. None of these are a side channel into a model. If an agent should know something, the text has to be in a prompt the conversation actually sent.
+A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advances). `send-message` feeds a conversation. Operator commands feed the host. None of these are a side channel into a model: an agent learns something only when a prompt its conversation actually sent carries it.
 
-## Where it shows up
+## Decisions that shape it
 
-Workers see the CLI as the tool inside their skill. Khushal sees it for creation, repair, and host operations the browser does not offer, including delete and the maintenance commands. The browser remains the place Review, the rail, and the conversation pane live.
+- One set of writers. The CLI adds no rule of its own, so the browser and the command cannot disagree.
+- Identity comes from the environment Headroom set, not from a flag the caller chooses.
+- Help shows the roots a person or a supervisor needs. Specialist and operator groups stay hidden until a skill names them.
 
-## API key requests
+## Code
 
-`panels credential list` returns reusable descriptive names and metadata without secret values. Credential lookup does not require source Project/account. A unique saved name can serve another source directly.
+- `src/planner/cli/main.py`: the command tree. `src/planner/cli/http.py`: the HTTP client and identity headers.
+- Each domain's `cli.py` holds its own group, such as `src/planner/credentials/cli.py` and `src/planner/goals/cli.py`. The routes they call are in each domain's `api.py`.
 
-An employee requests a bearer or named-header key beside its work:
-
-```sh
-panels credential request --request-id REQUEST_UUID \
-  --name Panels_posthog_production --provider PostHog \
-  --use 'Read production usage' --auth-kind bearer \
-  --help-text 'Use a personal API key with access to this project.' \
-  --help-url https://posthog.com/docs/api --json
-```
-
-Reuse the same UUID and metadata after a lost command response. A conflicting replay fails. For header authentication, use `--auth-kind header --header-name X-Api-Key`. For replacement, add both `--replace-id CREDENTIAL_ID` and `--expected-revision REVISION`, with the existing name. `--help` shows command usage.
-
-The server derives the exact destination from the employee principal and its reserved conversation identity. There is no destination option. A retired conversation cannot redirect a request into its replacement. An older live child without the identity needs its ordinary restart or resume.
-
-The command carries no secret. The owner enters the value in the inline card. Save or Reject resolves the request separately from result delivery. A queued result remains held. Only proven refusal offers a metadata-only delivery retry. Unknown backend writes and lost queues remain uncertain.
-
-Multiple legacy matches report ambiguity with metadata candidates. The owner can correct a selected name through `panels credential rename CREDENTIAL_ID --name UNIQUE_NAME --expected-revision REVISION`. This preserves its saved value and increments its revision. Update affected source references before the next run.
-
-## Pointers
-
-`src/planner/cli/main.py` is the tree. HTTP handlers under each domain are the writers the commands call.
-
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

@@ -26,7 +26,7 @@ struct ManagerTicket: Codable, Identifiable, Sendable {
     let recapPreview: String
     let stage: String
     let ticketStatus: String
-    let workerType: String
+    let workerType: String?
     let isBacklogged: Bool
     let blocked: Bool
     let hasPendingProposal: Bool
@@ -58,7 +58,7 @@ extension ManagerTicket {
         recapPreview = try required(String.self, .recapPreview, broken: issue?.reason ?? "")
         stage = try required(String.self, .stage, broken: "")
         ticketStatus = try required(String.self, .ticketStatus, broken: "")
-        workerType = try required(String.self, .workerType, broken: "")
+        workerType = try c.decodeIfPresent(String.self, forKey: .workerType)
         isBacklogged = try required(Bool.self, .isBacklogged, broken: false)
         blocked = try required(Bool.self, .blocked, broken: false)
         hasPendingProposal = try required(Bool.self, .hasPendingProposal, broken: false)

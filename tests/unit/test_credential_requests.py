@@ -679,7 +679,7 @@ def test_owner_resolution_after_manager_deletion_is_refused_without_resurrecting
             ConversationStartRequest(
                 conversation_id="manager-origin",
                 model="gpt-6-sol",
-                role_materials=manager_role_materials(manager.id),
+                role_materials=manager_role_materials(manager.id, host.db_path.parent),
                 workspace_folder=host.db_path.parent,
             )
         )
@@ -738,7 +738,7 @@ def test_manager_deletion_waits_for_an_admitted_result_delivery(
             ConversationStartRequest(
                 conversation_id="manager-origin",
                 model="gpt-6-sol",
-                role_materials=manager_role_materials(manager.id),
+                role_materials=manager_role_materials(manager.id, host.db_path.parent),
                 workspace_folder=host.db_path.parent,
             )
         )

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from alembic.script import ScriptDirectory
-from tests.unit.test_worker_memory import _add_ticket, _make_conversation
+from tests.unit.test_worker_memory import _make_conversation
 
 from planner.core import db
 from planner.core.db import connect, create_schema
@@ -40,7 +40,14 @@ def test_native_usage_merge_preserves_branch_rows_and_reopens(
     preserved_tables = ["tickets", "conversations", "conversation_events"]
     with closing(connect(path)) as conn:
         _make_conversation(conn, "preserved", compacted=7)
-        _add_ticket(conn, "t_preserved", claim="out", conversation_id="preserved")
+        # These older schemas predate saved Ticket workflows, so the row has no
+        # workflow_json. The upgrade to head fills it in.
+        conn.execute(
+            "INSERT INTO tickets (id, worker_type, employee_backend, title, stage, "
+            "ceiling, field_values, created_at, updated_at, worker_step_claim, "
+            "conversation_id) VALUES ('t_preserved', 'coding', 'claude', 't_preserved', "
+            "'needs_implementation', 'done', '{}', 0, 0, 'out', 'preserved')"
+        )
         if previous_head == "native_usage_prices":
             conn.execute("INSERT INTO native_usage_sources VALUES ('claude','source','{ }')")
             conn.execute("INSERT INTO native_usage_files VALUES ('claude','source','file','{  }')")

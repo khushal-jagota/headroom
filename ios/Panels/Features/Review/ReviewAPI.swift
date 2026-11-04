@@ -1,21 +1,5 @@
 import Foundation
 
-/// The served lifecycle determines approval gates; Review never assumes coding stages.
-struct ReviewWorkerManifest: Decodable, Sendable {
-    struct Stage: Decodable, Identifiable, Sendable { let id: String; let label: String }
-    struct Field: Decodable, Sendable { let id: String; let label: String }
-    let workerType: String
-    let stages: [Stage]
-    let advance: [String: String]
-    let fields: [Field]
-    let ceilingRange: [String]
-
-    func approvalStages(after stage: String) -> [Stage] {
-        guard let next = advance[stage], let start = stages.firstIndex(where: { $0.id == next }) else { return [] }
-        return Array(stages[start...]).filter { ceilingRange.contains($0.id) }
-    }
-}
-
 struct ReviewApproval: Codable, Sendable {
     let expectedProposalRevision: Int
     let editedBody: String?
@@ -24,15 +8,6 @@ struct ReviewApproval: Codable, Sendable {
 }
 
 extension APIClient {
-    func reviewManifest(_ workerType: String) async throws -> ReviewWorkerManifest {
-        struct Response: Decodable, Sendable { let workerTypes: [ReviewWorkerManifest] }
-        let response: Response = try await get("/api/worker-types/\(workerType)/manifest")
-        guard let manifest = response.workerTypes.first(where: { $0.workerType == workerType }) else {
-            throw APIError(status: 0, message: "This worker type is unavailable.")
-        }
-        return manifest
-    }
-
     func approveReview(_ ticketID: String, field: String, approval: ReviewApproval) async throws {
         _ = try await reviewWrite("/api/tickets/\(ticketID)/accept/\(field)", body: approval)
     }

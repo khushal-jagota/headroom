@@ -169,3 +169,70 @@ def test_both_doors_are_human_only(tmp_path: Path) -> None:
     assert start.json()["error"]["code"] == "agent_forbidden", start.text
     assert reset.json()["error"]["code"] == "agent_forbidden", reset.text
     assert _conversation_id(db_path, ticket_id) is None
+
+
+def test_owner_guidance_reaches_only_the_named_tickets_actual_backend_prompt(
+    tmp_path: Path,
+) -> None:
+    """Native owner routing must deliver guidance, not just report an accepted send.
+
+    The existing route cases use an in-memory reference system. This one reuses the
+    scripted ACP process harness so the assertion comes from the receiving process,
+    beyond HTTP receipts and the conversation record. No provider or browser host runs.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from httpx import ASGITransport, AsyncClient
+    from tests.support.conversation_system_under_test import open_conversation_system_under_test
+
+    from planner.conversation.message_files import ConversationMessageFiles
+
+    async def exercise() -> None:
+        db_path = tmp_path / "artifact-message.db"
+        async with open_conversation_system_under_test(database_path=db_path) as subject:
+            ticket_id = _ticket(db_path)
+            other_ticket_id = _ticket(db_path)
+            config = load_config(
+                path=None,
+                env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
+            )
+            app = create_app(
+                config,
+                build_clock(config),
+                lambda: connect(str(db_path)),
+                conversation_system_for_test=subject.system,
+            )
+            # ASGI transport keeps the production HTTP routes but does not start the
+            # application lifespan or its autonomous worker-readiness loop.
+            app.state.conversation_system = subject.system
+            app.state.conversation = SimpleNamespace(
+                message_files=ConversationMessageFiles(str(db_path))
+            )
+            text = "For this artifact, change the second paragraph before approval."
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    f"/api/tickets/{ticket_id}/conversation/send",
+                    json={
+                        "conversation_id": None,
+                        "content": [{"piece": "text", "text": text}],
+                        "sender_label": "owner",
+                        "sender_message_id": "artifact-owner-guidance",
+                    },
+                )
+            assert response.status_code == 200, response.text
+            receipt = response.json()
+            assert receipt["fate"] == "started", receipt
+            conversation_id = receipt["conversation_id"]
+            assert _conversation_id(db_path, ticket_id) == conversation_id
+            assert _conversation_id(db_path, other_ticket_id) is None
+            writes = await subject.backend_writes(conversation_id)
+            assert len(writes) == 1
+            assert writes[0].text.startswith("[Authenticated Panels reply requirement]\n")
+            assert writes[0].text.endswith(f"owner:\n{text}")
+            assert writes[0].text.count(text) == 1
+            assert writes[0].sender_label == "owner"
+
+    asyncio.run(exercise())

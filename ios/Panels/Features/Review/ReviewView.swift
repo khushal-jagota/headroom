@@ -191,6 +191,8 @@ private struct ReviewProposalView: View {
     @State private var actionsVisible = true
     @State private var changingActions = false
     @State private var resolvedAfterDismiss = false
+    @Environment(\.openURL) private var openURL
+    @State private var selectedArtifact: ArtifactTarget?
     @State private var observedRevision: Int?
     @State private var renaming = false
     @State private var titleDraft = ""
@@ -280,6 +282,14 @@ private struct ReviewProposalView: View {
         .onAppear { withAnimation(.timingCurve(0.2, 0.7, 0.3, 1, duration: reduceMotion ? ReviewStyle.fadeOut : ReviewStyle.fadeIn)) { visible = true } }
         .onChange(of: editing || returning || sheet != nil || decision.busy || leaving, initial: true) { _, locked in selectionLocked = locked }
         .onDisappear { selectionLocked = false }
+        .environment(\.openURL, OpenURLAction { url in
+            if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selectedArtifact = target }
+            else { openURL(url) }
+            return .handled
+        })
+        .navigationDestination(item: $selectedArtifact) { target in
+            ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: false)
+        }
         .alert("Rename ticket", isPresented: $renaming) {
             TextField("Title", text: $titleDraft)
             Button("Cancel", role: .cancel) {}
