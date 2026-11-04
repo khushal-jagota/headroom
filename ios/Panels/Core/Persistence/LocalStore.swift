@@ -54,14 +54,21 @@ import SwiftData
     }
     func records(server: String, kind: String) throws -> [LocalRecord] {
         _ = workRevision
-        return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.server == server && $0.kind == kind }, sortBy: [SortDescriptor(\.updated)]))
+        let context = kind == "cache" ? try cacheReadContext() : try self.context
+        let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.server == server && $0.kind == kind }, sortBy: [SortDescriptor(\.updated)]))
+        return withExtendedLifetime(context) { kind == "cache" ? rows.map(Self.cacheSnapshot) : rows }
     }
     func record(server: String, kind: String, id: String) throws -> LocalRecord? {
         let key = Self.key(server, kind, id)
-        // The cache writer uses another context. A fresh read must not reuse a
-        // previously registered model with an old payload or freshness date.
+        // The cache writer uses another context. Read fresh values, then detach a
+        // snapshot before this temporary context dies. Returning its managed model
+        // leaves faults without a context when the caller reads the properties.
         let context = kind == "cache" ? try cacheReadContext() : try self.context
-        return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first
+        guard let row = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first else { return nil }
+        return withExtendedLifetime(context) { kind == "cache" ? Self.cacheSnapshot(row) : row }
+    }
+    private static func cacheSnapshot(_ row: LocalRecord) -> LocalRecord {
+        LocalRecord(key: row.key, server: row.server, kind: row.kind, payload: row.payload, updated: row.updated)
     }
     nonisolated static func key(_ server: String, _ kind: String, _ id: String) -> String { [server, kind, id].joined(separator: "\u{1f}") }
     private func cacheReadContext() throws -> ModelContext {
