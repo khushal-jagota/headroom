@@ -18,9 +18,7 @@
       assertCurrent?.();
       const request=(responseMetadata:ResponseMetadata)=>mutateJson(`/api/tickets/${encodeURIComponent(ticket.id)}/${action}`, {
         method: "POST",responseMetadata,
-        body: {
-          ...(ticket.record_sha256 ? { expected_record_sha256: ticket.record_sha256 } : {})
-        }
+        body: {}
       });
       await (runCommand ? runCommand(request) : request({}));
     } catch (err) {
