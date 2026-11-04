@@ -1,7 +1,7 @@
 import { useLiveQuery } from '@tanstack/svelte-db';
 import type { NavigationCollectionAdapter } from './collection';
 import { publicationFromRows } from './collection';
-import { recordKey, sameAuthority } from './validation';
+import { recordKey, sameAuthority } from './identity';
 import type { NavigationOwnerState } from './owner';
 
 /** One live query includes both source rows and publication metadata. */

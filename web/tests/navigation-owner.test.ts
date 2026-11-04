@@ -3,7 +3,7 @@ import { createTransaction } from '@tanstack/db';
 import type { RenderObserver, RenderObservation } from '../src/lib/navigation/visibility';
 import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { createNavigationOwner } from '../src/lib/navigation/owner';
-import { encodeCursor } from '../src/lib/navigation/validation';
+import { encodeCursor } from '../src/lib/navigation/identity';
 import type { Continuity, Fence, SnapshotResponse, RevisionBatch, BatchEnvelope, CurrentSnapshotResponse } from '../src/lib/navigation/contracts';
 import { NavigationRequestError, type NavigationStreamHandlers, type NavigationTransport } from '../src/lib/navigation/transport';
 import { continuity, currentSnapshot, degradedSnapshot, envelope, authority, conversation } from './support/navigation/fixtures';
@@ -313,7 +313,7 @@ describe('attention availability and independent durable knowledge', () => {
       expect(owner.getState().effective?.runtimeCurrent).toBe(false);
       await flush();expect(calls).toBe(2);
       const invalid={...envelope(batch('0','1')),authority:{delivery_session_id:'delivery',availability:{state:'unavailable',generation:'1',reason:'lost'},permit:null}};
-      handlers.batch(invalid,encodeCursor(batch('0','1')));
+      handlers.batch(invalid as unknown as import('../src/lib/navigation/contracts').BatchEnvelope,encodeCursor(batch('0','1')));
       expect(owner.getState().effective?.runtimeCurrent).toBe(false);
       await flush();expect(calls).toBe(3);
     } finally {owner.dispose();base.destroy();}

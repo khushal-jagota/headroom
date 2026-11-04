@@ -1,6 +1,6 @@
 import { parseMarkdown } from '../markdownPipeline';
 import type { MarkdownParseReply, MarkdownParseRequest } from './contracts';
-import { parseViewRowBody } from '../conversation/view/validation';
+import type { ViewRowBody } from '../conversation/view/contracts';
 
 self.onmessage = (event: MessageEvent<MarkdownParseRequest>) => {
   const { id, source, kind } = event.data;
@@ -8,7 +8,7 @@ self.onmessage = (event: MessageEvent<MarkdownParseRequest>) => {
   try {
     reply = kind === 'markdown'
       ? { id, document: parseMarkdown(source) }
-      : { id, body: parseViewRowBody(JSON.parse(source)) };
+      : { id, body: JSON.parse(source) as ViewRowBody };
   } catch (error) { reply = { id, error: error instanceof Error ? error.message : String(error) }; }
   self.postMessage(reply);
 };

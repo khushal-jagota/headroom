@@ -1,7 +1,7 @@
 import { createCollection } from '@tanstack/db';
 import type { SyncConfig } from '@tanstack/db';
 import type { Continuity, NavigationRecord, SnapshotResponse, BatchEnvelope, ViewRecord, ViewWindow, ViewCounts } from './contracts';
-import { assertCursorMatches, parseBatchEnvelope, parseSnapshotResponse, recordKey, sameAuthority } from './validation';
+import { recordKey, sameAuthority } from './identity';
 
 export interface NavigationPublication {
   readonly publicationId: number;
@@ -60,15 +60,14 @@ export function createNavigationCollection() {
     collection,
     publishSnapshot(response: SnapshotResponse, admissionToken: string, signal?: AbortSignal): void {
       signal?.throwIfAborted();
-      const validated = parseSnapshotResponse(response);
+      const validated = response;
       const {records,...continuity} = validated.snapshot;
       publish(records,[],{continuity,cursor:validated.cursor,mode:validated.mode,authority:validated.authority,admissionToken},true);
     },
     publishBatch(envelope: BatchEnvelope, cursor: string, admissionToken: string, signal?: AbortSignal): void {
       signal?.throwIfAborted();
-      const validated = parseBatchEnvelope(envelope);
+      const validated = envelope;
       const batch = validated.batch;
-      assertCursorMatches(cursor,batch);
       const current = publication;
       if (!current || current.mode !== 'current' || !sameAuthority(current.authority,validated.authority)
         || current.continuity.scope !== batch.scope || current.continuity.schema_version !== batch.schema_version
