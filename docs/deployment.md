@@ -3,7 +3,10 @@
 Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. The live workspace changes only when Khushal asks for one of those releases, and then it gets exactly those bytes. The host never builds code, and a push never installs itself.
 
 ```text
-push to main → checks → build once → seal archive → prove on clean root → smoke → rehearsal
+push to main ─┬→ suites (unit, integration, e2e, browser) ──────────────────────────┐
+              └→ checks → build once → seal archive → prove on clean root → smoke ──┤
+                                                                                    │
+                                                    both passed → rehearsal → receipt
                                                                                     │
                                                               retained release (archive + proof)
                                                                                     │
@@ -14,7 +17,7 @@ owner asks (now or when idle) → pinned request → host runner → admit → s
 
 ## What it is made of
 
-- **Publication.** A GitHub workflow on hosted machines. It runs the checks and suites against one commit, builds once, seals the archive, and proves it before anyone can install it.
+- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites run on some machines while another runs the checks, builds once, seals the archive, and proves it. A last machine checks the sealed archive and its proofs against the digest the build machine reported. It rehearses the install and writes the receipt only when the suites, the checks, and the build have all passed, so nothing can be installed before that.
 - **The sealed release.** An archive plus a proof record. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages, including the Claude Code and Codex CLIs.
 - **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. Replacement changes only `app`. See [Environments](environments.md).
 - **The deployment runner.** A self-hosted GitHub runner on the VPS, used only to install.

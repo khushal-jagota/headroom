@@ -21,6 +21,13 @@ SUITES = ("unit", "integration", "e2e", "browser")
 REPORTS = {suite: f"reports/{suite}.{'json' if suite == 'browser' else 'xml'}"
            for suite in SUITES}
 IDENTITY_KEYS = ("requested_sha", "workflow_sha", "run_id", "run_attempt")
+# The build job seals and proves the candidate while the suites run. Publication
+# accepts only these files, anchored by the record digest the build job reports.
+CANDIDATE_RECORD = "candidate-record.json"
+CANDIDATE_REQUIRED = ("panels-app.tar.gz", "archive-sha256.txt", "manifest.json", "smoke.json",
+                      "target/target-proof.json", "target/target-root-inventory.json")
+CANDIDATE_REPORTS = ("reports/ruff.log", "reports/mypy.log", "reports/svelte-check.log",
+                     "reports/vitest.json", "reports/candidate-build.log")
 
 
 def full_selection(source: Path) -> dict[str, object]:
@@ -133,10 +140,15 @@ def accept_selection(download: Path, gate: Path, expected: dict[str, str],
     return selection
 
 
+def plain_relative(relative: str) -> bool:
+    path = PurePosixPath(relative)
+    return not (path.is_absolute() or path.as_posix() != relative
+                or any(part in {"", ".", ".."} for part in path.parts))
+
+
 def evidence_path(suite: str, relative: str, expected: dict[str, str]) -> bool:
     path = PurePosixPath(relative)
-    if (path.is_absolute() or path.as_posix() != relative
-            or any(part in {"", ".", ".."} for part in path.parts)):
+    if not plain_relative(relative):
         return False
     if relative in {REPORTS[suite], f"reports/{suite}.log"}:
         return True
@@ -147,7 +159,11 @@ def evidence_path(suite: str, relative: str, expected: dict[str, str]) -> bool:
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    value = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            value.update(chunk)
+    return value.hexdigest()
 
 
 def pack(suite: str, gate: Path, output: Path, expected: dict[str, str]) -> None:
@@ -192,6 +208,22 @@ def checked_bundle(suite: str, download: Path, selection: dict[str, object],
     return files | {f"suite-records/{suite}.json": record_path}
 
 
+def retain(files: dict[str, Path], gate: Path) -> None:
+    """Copy checked files into the gate without overwriting or writing through links."""
+    for relative in files:
+        destination = gate / relative
+        # Check parents as well as leaves; never write through a symlink.
+        if (destination.exists() or destination.is_symlink()
+                or any(parent.is_symlink() for parent in destination.parents)):
+            raise ValueError(f"evidence destination collision: {relative}")
+        if not destination.resolve().is_relative_to(gate.resolve()):
+            raise ValueError(f"evidence escapes gate: {relative}")
+    for relative, path in files.items():
+        destination = gate / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, destination)
+
+
 def collect(downloads: Path, gate: Path, expected: dict[str, str],
             prerequisites: dict[str, object]) -> None:
     """Retain valid available evidence, then fail closed on any missing/failed work."""
@@ -208,18 +240,7 @@ def collect(downloads: Path, gate: Path, expected: dict[str, str],
         for suite in SUITES:
             try:
                 files = checked_bundle(suite, downloads / suite, selection, expected)
-                for relative in files:
-                    destination = gate / relative
-                    # Check parents as well as leaves; never write through a symlink.
-                    if (destination.exists() or destination.is_symlink()
-                            or any(parent.is_symlink() for parent in destination.parents)):
-                        raise ValueError(f"evidence destination collision: {relative}")
-                    if not destination.resolve().is_relative_to(gate.resolve()):
-                        raise ValueError(f"evidence escapes gate: {relative}")
-                for relative, path in files.items():
-                    destination = gate / relative
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(path, destination)
+                retain(files, gate)
                 # Completeness is a publication requirement, not a reason to discard
                 # safe, source-bound diagnostics from a suite that failed early.
                 if REPORTS[suite] not in files:
@@ -231,10 +252,60 @@ def collect(downloads: Path, gate: Path, expected: dict[str, str],
                         raise ValueError("browser evidence directory is empty or absent")
             except (OSError, ValueError) as error:
                 errors.append(f"{suite}: {error}")
-    if prerequisites != {"prepare": "success", "suites": "success"}:
+    if prerequisites != {"prepare": "success", "suites": "success", "build": "success"}:
         errors.append(f"publication prerequisites did not succeed: {prerequisites}")
     if errors:
         raise ValueError("; ".join(errors))
+
+
+def candidate_path(relative: str) -> bool:
+    parts = PurePosixPath(relative).parts
+    return plain_relative(relative) and (
+        relative in CANDIDATE_REQUIRED or relative in CANDIDATE_REPORTS
+        or (len(parts) > 1 and parts[0] == "target"))
+
+
+def pack_candidate(gate: Path, output: Path, expected: dict[str, str]) -> str:
+    """Copy the sealed archive and its proofs, and return the record digest."""
+    names = [*CANDIDATE_REQUIRED,
+             *(name for name in CANDIDATE_REPORTS if (gate / name).is_file()),
+             *("target/" + name for name in regular_files(gate / "target"))]
+    output.mkdir(parents=True, exist_ok=False)
+    files: dict[str, str] = {}
+    for relative in dict.fromkeys(names):
+        path = gate / relative
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise ValueError(f"unsafe candidate entry: {relative}")
+        destination = output / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, destination)
+        files[relative] = digest(destination)
+    write_object(output / CANDIDATE_RECORD, {"schema": 1, "identity": expected, "files": files})
+    return digest(output / CANDIDATE_RECORD)
+
+
+def accept_candidate(download: Path, gate: Path, expected: dict[str, str],
+                     record_sha256: str) -> None:
+    """Admit only the exact candidate whose record digest the build job reported."""
+    files = regular_files(download)
+    record_path = files.pop(CANDIDATE_RECORD, None)
+    if record_path is None or digest(record_path) != record_sha256:
+        raise ValueError("sealed candidate record differs from the build job's digest")
+    record = read_object(record_path)
+    hashes = record.get("files")
+    if (set(record) != {"schema", "identity", "files"} or record["schema"] != 1
+            or record["identity"] != expected):
+        raise ValueError("sealed candidate identity differs")
+    if not isinstance(hashes, dict) or set(hashes) != set(files):
+        raise ValueError("sealed candidate file inventory differs")
+    for relative, path in files.items():
+        if not candidate_path(relative):
+            raise ValueError(f"unexpected sealed candidate file: {relative}")
+        if hashes[relative] != digest(path):
+            raise ValueError(f"sealed candidate hash differs: {relative}")
+    if missing := sorted(set(CANDIDATE_REQUIRED) - set(files)):
+        raise ValueError(f"sealed candidate is incomplete: {missing}")
+    retain(files | {CANDIDATE_RECORD: record_path}, gate)
 
 
 def validate(gate: Path, source: Path, expected: dict[str, str]) -> None:
@@ -261,6 +332,7 @@ def validate(gate: Path, source: Path, expected: dict[str, str]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("operation", choices=("prepare", "accept-selection", "pack", "collect",
+                                               "pack-candidate", "accept-candidate",
                                                "verify-selection", "validate"))
     parser.add_argument("--source", type=Path)
     parser.add_argument("--gate", type=Path)
@@ -286,6 +358,15 @@ def main() -> None:
             parser.error("--download is required")
         prerequisites = json.loads(os.environ["PANELS_PREREQUISITES"])
         collect(args.download, gate, expected, prerequisites)
+    elif args.operation == "pack-candidate":
+        if args.output is None:
+            parser.error("--output is required")
+        print(pack_candidate(gate, args.output, expected))
+    elif args.operation == "accept-candidate":
+        if args.download is None:
+            parser.error("--download is required")
+        accept_candidate(args.download, gate, expected,
+                         os.environ["PANELS_CANDIDATE_RECORD_SHA256"])
     elif args.operation == "verify-selection":
         require_source(source, expected)
         if full_selection(source) != read_object(gate / "selection.json"):
