@@ -23,6 +23,7 @@ from urllib.parse import quote
 
 import click
 
+from planner.attention.cli import attention as attention_group
 from planner.cli import http
 from planner.cli.artifact_io import read_artifact_source
 from planner.cli.errors import CompatibilityChoice, CompatibilityOption, PanelsGroup
@@ -474,6 +475,7 @@ main.add_command(credential_group)
 main.add_command(goal_group)
 main.add_command(measure_group)
 main.add_command(dataset_group)
+main.add_command(attention_group)
 main.add_command(measure_source_group)
 main.add_command(preview_group)
 environment_group.hidden = True

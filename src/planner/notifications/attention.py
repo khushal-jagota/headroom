@@ -253,6 +253,10 @@ def _record(
     generation = int(row["generation"]) if row is not None else 0
     if active == prior_active and row is not None:
         return
+    if subject_kind == "ticket" and notification_type == "awaiting_approval":
+        from planner.attention.history import capture_gate
+
+        capture_gate(conn, ticket_id=subject_id, active=active, now=occurred_at)
     if active:
         generation += 1
         conn.execute(
