@@ -57,15 +57,17 @@ final class GoalFlowTests: XCTestCase {
         valueButton.tap()
         let input = app.textFields["Words written"]
         XCTAssertTrue(input.waitForExistence(timeout: 3))
-        input.tap()
-        input.press(forDuration: 1)
-        if app.menuItems["Select All"].exists { app.menuItems["Select All"].tap() }
-        else { input.tap(withNumberOfTaps: 3, numberOfTouches: 1) }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse((input.value as? String ?? "").hasSuffix(".0"), "Whole readings must not show a decimal")
+        // The field selects its whole reading on focus, so typing replaces it.
         input.typeText("750.25")
+        input.press(forDuration: 1)
+        XCTAssertFalse(app.menuItems.firstMatch.exists, "No edit menu may cover the reading: \(app.menuItems.allElementsBoundByIndex.map(\.label))")
         capture("goal-before-save")
-        XCTAssertTrue(app.buttons["Save"].isHittable)
-        XCTAssertFalse(app.buttons["Save"].frame.intersects(app.buttons["conversation-line"].frame))
-        app.buttons["Save"].tap()
+        let save = app.toolbars.buttons["Done"]
+        XCTAssertTrue(save.isHittable)
+        XCTAssertFalse(save.frame.intersects(readingButton.frame), "Done must not crowd the reading")
+        save.tap()
         capture("goal-after-save")
         try await Task.sleep(for: .seconds(0.5))
         let replacement = try await writes()
@@ -105,7 +107,7 @@ final class GoalFlowTests: XCTestCase {
         // A supporting chart opens in place and retains its range and open state.
         let support = element("goal-chart-activation").buttons.firstMatch
         for _ in 0..<18 {
-            if support.exists && support.isHittable { break }
+            if support.exists && support.isHittable && support.frame.maxY < app.buttons["conversation-line"].frame.minY { break }
             app.scrollViews["goal-screen"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65)).press(forDuration: 0.01, thenDragTo: app.scrollViews["goal-screen"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)))
         }
         capture("goals-supporting-scroll-position")

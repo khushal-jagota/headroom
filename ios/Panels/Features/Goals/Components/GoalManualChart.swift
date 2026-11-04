@@ -126,6 +126,8 @@ private struct GoalNumberField: UIViewRepresentable {
         }
         func textFieldDidEndEditing(_ field: UITextField) { if owner.focused { owner.focused = false } }
         func textFieldShouldReturn(_ field: UITextField) -> Bool { owner.commit(); return false }
+        // A long press would otherwise still raise the system edit menu over the number.
+        func textField(_ field: UITextField, editMenuForCharactersIn range: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu? { UIMenu(children: []) }
     }
 }
 

@@ -664,8 +664,15 @@ charts and extra checklists fold in place; each chart remembers its range and
 open state while the app runs. A line follows a finger and clears inspection on
 release. Bars and rings retain the selected reading. Missing readings stay
 missing, and comparisons use the server's supplied summary where one exists.
-The server calendar controls deadline colours. Chart and checklist motion follows
-the web's timings and honours Reduce Motion.
+The server calendar controls deadline colours. Chart, number and checklist motion
+uses the web's own springs and curves. When the range changes, a line reshapes
+from what is on screen while its scale moves on the same spring. Numbers turn
+digit by digit in the direction they changed. Reduce Motion makes every change
+instant, as on the web.
+
+Tapping a manual reading turns the number into a field with the whole reading
+selected. Cancel and Done sit above the keyboard, no copy menu covers the
+number, and a whole reading shows without a decimal.
 
 Goal edits do not enter the offline message outbox. Failed edits keep their draft
 and offer Retry save and Discard edit. A stale revision cannot replace a newer
