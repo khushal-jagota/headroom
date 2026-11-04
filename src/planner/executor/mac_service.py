@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import sqlite3
 from collections.abc import Callable
-from dataclasses import replace
 from functools import partial
 from uuid import uuid4
 
@@ -27,6 +27,7 @@ from planner.executor.mac_agent_gateway import AgentGateway
 from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
+from planner.executor.mac_updates import MacUpdateController, advance_generation, handoff_identity
 from planner.executor.protocol import (
     ChildCommand,
     ConnectionState,
@@ -39,6 +40,8 @@ from planner.executor.protocol import (
     as_object,
     type_adapter,
 )
+from planner.executor.runtime_bootstrap import read_record
+from planner.executor.update_configuration import MAC_RUNTIME_HANDOFF_ENV
 
 
 class MacService:
@@ -56,9 +59,12 @@ class MacService:
         self.executor_id = executor_id
         self._session_factory = session_factory
         self.connection = MacConnection(
-            ExecutorIdentity(PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, str(uuid4()), 0)
+            handoff_identity(
+                ExecutorIdentity(PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, str(uuid4()), 0)
+            )
         )
         self._stop = asyncio.Event()
+        self._update_requested = False
         self._command_tasks: set[asyncio.Task[None]] = set()
         self.phase = ConnectionPhase.app_connect
         self.outbox = MacOutbox(paths.spool)
@@ -71,6 +77,13 @@ class MacService:
             message_files=ConversationMessageFiles(paths.message_files_anchor),
             connection=self.connection,
         )
+        handoff_path = os.environ.get(MAC_RUNTIME_HANDOFF_ENV)
+        if handoff_path is not None:
+            from pathlib import Path
+
+            custody = read_record(Path(handoff_path))
+            if custody is not None and custody.get("replay_pending") is True:
+                self.runner.begin_planned_replay()
         self.gateway = AgentGateway(
             runner=self.runner,
             outbox=self.outbox,
@@ -78,6 +91,15 @@ class MacService:
             request_exit=self._stop.set,
             settle_catalogs=self.catalog.settle,
         )
+        self.updates = MacUpdateController(
+            paths=paths, runner=self.runner, connection=self.connection,
+            server_url=self.server_url, executor_id=executor_id,
+            session_factory=session_factory, request_exit=self._request_update_exit,
+        )
+
+    def _request_update_exit(self) -> None:
+        self._update_requested = True
+        self._stop.set()
 
     @property
     def identity(self) -> ExecutorIdentity:
@@ -198,13 +220,17 @@ class MacService:
 
     async def _connected(self) -> None:
         self.phase = ConnectionPhase.app_connect
-        self.connection.identity = replace(
-            self.identity, connection_generation=self.identity.connection_generation + 1
-        )
+        # Recovery does not depend on a successful work-protocol handshake.
+        with contextlib.suppress(OSError, ValueError, ConnectionError, aiohttp.ClientError):
+            await self.updates.check()
+        if self._stop.is_set():
+            return
+        self.connection.identity = advance_generation(self.identity)
         self.connection.state = ConnectionState.reconciling
         await self._serve()
 
     async def run(self) -> None:
+        updates = asyncio.create_task(self.updates.poll(self._stop))
         try:
             async with self.gateway.serve(self.paths.ipc_socket):
                 while not self._stop.is_set():
@@ -224,4 +250,10 @@ class MacService:
                                     self._stop.wait(), RECONNECT_INTERVAL_SECONDS
                                 )
         finally:
+            updates.cancel()
+            await asyncio.gather(updates, return_exceptions=True)
             self.outbox.close()
+        if self._update_requested:
+            from planner.executor.update_configuration import MAC_RUNTIME_UPDATE_EXIT_CODE
+
+            raise SystemExit(MAC_RUNTIME_UPDATE_EXIT_CODE)

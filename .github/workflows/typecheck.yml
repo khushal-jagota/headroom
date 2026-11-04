@@ -18,6 +18,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
@@ -40,5 +41,9 @@ jobs:
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install --editable .
+      - name: Check executor protocol versions
+        env:
+          PANELS_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: .venv/bin/python scripts/check_executor_protocol.py --base "$PANELS_BASE_SHA"
       - name: Check complete merged tree
         run: .venv/bin/mypy

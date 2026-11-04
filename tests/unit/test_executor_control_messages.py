@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -13,7 +14,13 @@ from tests.support.executor_control import MessageStream
 
 from planner.execution_identity import ProtocolRefused
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
-from planner.executor.protocol import WireMessage, WireMessageKind, decode_message, encode_message
+from planner.executor.protocol import (
+    ChildCommand,
+    WireMessage,
+    WireMessageKind,
+    decode_message,
+    encode_message,
+)
 
 
 def test_plain_control_messages_validate_and_bound_the_whole_payload() -> None:
@@ -169,3 +176,139 @@ def test_mac_refuses_invalid_hello_reply_before_reconciliation(
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(run())
+
+
+def _compatibility_commands() -> tuple[ChildCommand, ...]:
+    from planner.executor.protocol import ChildCommand, type_adapter
+
+    child = {
+        "executor_incarnation": "aa09f291-3892-4677-b563-5936017e6c1d",
+        "child_id": "native-child",
+        "conversation_id": "c_one",
+    }
+    variants: tuple[tuple[str, dict[str, Any]], ...] = (
+        ("start", {
+            "resolved_start": {
+                "conversation_id": "c_one", "backend_key": "codex", "model": "fixture",
+                "reasoning_effort": None, "role_materials": {
+                    "role_text": "Worker", "identity_environment_variables": [],
+                },
+                "workspace_folder": "/tmp/fixture", "access": "full",
+            },
+            "canonical_skill_snapshot": {"sources": [], "required_skill_names": []},
+        }),
+        ("write_prompt", {
+            "content": [{"text": "Hello"}], "sender_content": [{"text": "Hello"}],
+            "sender_label": "Owner", "mode": "queue",
+        }),
+        ("steer", {"content": [{"text": "Guide"}], "sender_label": "Owner"}),
+        ("cancel_running_turn", {}),
+        ("answer_permission_ask", {"ask_id": "permission", "option_id": "allow"}),
+        ("answer_user_input", {"request_id": "question", "answers": []}),
+        ("stop", {}),
+    )
+    return tuple(
+        type_adapter(ChildCommand).validate_python({
+            "command_id": operation, "child": child, "operation": operation,
+            "turn": {"conversation_id": "c_one", "turn_number": 1}, "arguments": arguments,
+        })
+        for operation, arguments in variants
+    )
+
+
+def test_previous_peer_accepts_every_current_command_against_frozen_protocol_19() -> None:
+    import json
+
+    from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+
+    from planner.executor.protocol import ChildCommand, encode_command_for_peer
+
+    fixture = Path(__file__).parents[1] / "fixtures/executor_protocol/protocol_19_commands.json"
+    old = json.loads(fixture.read_text())
+    validator = Draft202012Validator(old["command_schema"])
+    for command in _compatibility_commands():
+        assert isinstance(command, ChildCommand)
+        encoded = encode_command_for_peer(command, old["protocol_version"])
+        validator.validate(encoded)
+        arguments = encoded["arguments"]
+        assert isinstance(arguments, dict)
+        arguments["future_argument"] = True
+        from planner.executor.protocol import type_adapter
+
+        assert type_adapter(ChildCommand).validate_python(encoded) == command
+    with pytest.raises(ProtocolRefused):
+        encode_command_for_peer(command, 18)
+
+
+def test_wire_ignores_nested_unknown_fields_without_relaxing_identity_or_local_ipc() -> None:
+    from copy import deepcopy
+    from uuid import uuid4
+
+    from planner.execution_identity import parse_identity
+    from planner.executor.protocol import (
+        ChildCommand,
+        IpcWritePayload,
+        as_object,
+        type_adapter,
+    )
+
+    command = _compatibility_commands()[0]
+    raw = as_object(command)
+    # Exercise real wire decoding at every formerly strict argument level.
+    raw["future_envelope"] = {"anything": True}
+    arguments = raw["arguments"]
+    assert isinstance(arguments, dict)
+    arguments["future_argument"] = True
+    resolved = arguments["resolved_start"]
+    assert isinstance(resolved, dict)
+    resolved["future_start"] = True
+    materials = resolved["role_materials"]
+    assert isinstance(materials, dict)
+    materials["future_material"] = True
+    assert type_adapter(ChildCommand).validate_python(raw) == command
+    malformed = deepcopy(raw)
+    malformed["operation"] = "stop"
+    with pytest.raises(ValidationError):
+        type_adapter(ChildCommand).validate_python(malformed)
+    malformed = deepcopy(raw)
+    malformed["child"] = {"child_id": "missing original identity"}
+    with pytest.raises(ValidationError):
+        type_adapter(ChildCommand).validate_python(malformed)
+    identity = {
+        "protocol_version": 19, "application_revision": "old", "spool_format_version": 5,
+        "executor_incarnation": str(uuid4()), "connection_generation": 1, "future": True,
+    }
+    assert parse_identity(identity).protocol_version == 19
+    identity["connection_generation"] = True
+    with pytest.raises(ProtocolRefused):
+        parse_identity(identity)
+    with pytest.raises(ValidationError):
+        type_adapter(IpcWritePayload).validate_python({
+            "operation": "ticket.edit", "arguments": {}, "unrecognized": True,
+        })
+
+
+def test_protocol_manifest_detects_schema_edits_and_cannot_hide_them_by_updating_snapshot() -> None:
+    import json
+    from typing import cast
+
+    from planner.executor.protocol_schema import (
+        ProtocolManifest,
+        check_protocol_manifest,
+        protocol_manifest,
+    )
+
+    fixture = Path(__file__).parents[1] / "fixtures/executor_protocol/manifest.json"
+    recorded = cast(ProtocolManifest, json.loads(fixture.read_text()))
+    actual = protocol_manifest()
+    check_protocol_manifest(actual, recorded)
+    changed: ProtocolManifest = {**actual, "schema_sha256": "changed nested event field"}
+    with pytest.raises(ValueError, match="schema changed"):
+        check_protocol_manifest(changed, recorded)
+    with pytest.raises(ValueError, match="without an increase"):
+        check_protocol_manifest(changed, changed, recorded)
+    increased: ProtocolManifest = {**changed, "protocol_version": actual["protocol_version"] + 1}
+    check_protocol_manifest(increased, increased, recorded)
+    spool_changed: ProtocolManifest = {**actual, "spool_schema_sha256": "changed table"}
+    with pytest.raises(ValueError, match="spool_format_version"):
+        check_protocol_manifest(spool_changed, spool_changed, recorded)

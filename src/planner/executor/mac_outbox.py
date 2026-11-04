@@ -114,13 +114,15 @@ class MacOutbox:
         self._capturing = 0
         self._database: sqlite3.Connection | None = None
         path = root / DATABASE_NAME
-        # An old draft format is refused before creating even a lock file.
+        # An incompatible format is preserved before creating even a lock file.
         if path.exists():
             with sqlite3.connect(f"{path.absolute().as_uri()}?mode=ro", uri=True) as check:
                 if check.execute("PRAGMA user_version").fetchone()[0] != SPOOL_FORMAT_VERSION:
-                    raise ValueError("unsupported outbox format; rebuild the unshipped spool")
+                    raise ValueError(
+                        "unsupported outbox format; preserve the spool for compatible Panels"
+                    )
         elif root.exists() and any(p.name != "lock" for p in root.iterdir()):
-            raise ValueError("unsupported outbox format; rebuild the unshipped spool")
+            raise ValueError("unsupported outbox format; preserve the spool for compatible Panels")
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._process_lock = (root / "lock").open("a+b")
         try:

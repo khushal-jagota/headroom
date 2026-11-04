@@ -19,6 +19,12 @@ export type MacStatus = {
   connection_state: "ready" | "reconciling" | "disconnected";
   last_contact_at_ms: number | null;
   refusal?: ExecutorRefusal | null;
+  update?: {
+    request_id: string;
+    target_revision: string;
+    phase: "waiting" | "downloading" | "ready_to_restart" | "current" | "failed" | "reverted" | "unavailable";
+    detail: string | null;
+  } | null;
 };
 export type ExecutorHealth = MacStatus & {
   mode: "local" | "remote";

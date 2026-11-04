@@ -31,7 +31,11 @@ from planner.environments.deployment_lifecycle import DeploymentLifecycleStore, 
 from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_admission import matching_commit, startup_requires_commit
 from planner.environments.update_api import router
-from planner.environments.update_contracts import OwnerUpdateRequest, PublishedUpdate
+from planner.environments.update_contracts import (
+    OwnerUpdateRequest,
+    PublishedMacUpdate,
+    PublishedUpdate,
+)
 from planner.environments.update_requests import FileUpdateRequestStore, UpdateConflict
 from planner.environments.update_service import UpdateService
 
@@ -674,13 +678,14 @@ def test_provider_rechecks_metadata_without_repeated_proof_download(
     from planner.environments.update_provider import GitHubUpdateProvider
 
     provider = GitHubUpdateProvider("owner/repository", None, runner_token="runner-only")
-    offered = release()
+    offered = replace(release(), mac=PublishedMacUpdate(4, "f" * 64, 123))
     payload = BytesIO()
     with zipfile.ZipFile(payload, "w") as zipped:
         zipped.writestr("publication.json", json.dumps(asdict(offered)))
     metadata_reads: list[str] = []
     proof_reads: list[str] = []
     expired = [False]
+    mac_artifact_id = [4]
 
     def respond(_client: httpx.Client, method: str, url: str, **kwargs: Any) -> httpx.Response:
         path = url.removeprefix("https://api.github.com/repos/owner/repository/")
@@ -707,6 +712,7 @@ def test_provider_rechecks_metadata_without_repeated_proof_download(
                     "artifacts": [
                         {"id": 2, "name": "panels-app", "expired": expired[0]},
                         {"id": 3, "name": "panels-publication-proof", "expired": False},
+                        {"id": mac_artifact_id[0], "name": "panels-mac-runtime", "expired": False},
                     ]
                 },
             )
@@ -717,10 +723,13 @@ def test_provider_rechecks_metadata_without_repeated_proof_download(
     monkeypatch.setattr(httpx.Client, "request", respond)
     assert provider.available() == offered
     assert provider.available() == offered
+    mac_artifact_id[0] = 5
+    with pytest.raises(ValueError, match="trusted repository evidence"):
+        provider.available()
     expired[0] = True
     assert provider.available() is None
     assert len(proof_reads) == 1
-    assert metadata_reads == ["run", "artifacts"] * 3
+    assert metadata_reads == ["run", "artifacts"] * 4
 
 
 @pytest.mark.parametrize(

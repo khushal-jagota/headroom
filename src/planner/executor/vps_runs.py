@@ -28,6 +28,7 @@ from planner.executor.clock import now_ms
 from planner.executor.link import Link
 from planner.executor.link_files import settled_io
 from planner.executor.protocol import (
+    AcceptanceReceipt,
     CanonicalSkillSnapshot,
     ChildCommand,
     ChildInventory,
@@ -40,6 +41,7 @@ from planner.executor.protocol import (
     WithdrawCommands,
     WithdrawResult,
     as_object,
+    encode_command_for_peer,
     type_adapter,
 )
 from planner.executor.skills import read_canonical_skill_snapshot
@@ -54,6 +56,8 @@ class MacRunConversations(Protocol):
     ) -> None: ...
 
     async def interrupt_runs_of_replaced_host(self, current_incarnation: str) -> None: ...
+
+    async def confirm_remote_child_termination(self, reference: ChildReference) -> None: ...
 
     async def stop_interrupted_remote_child(
         self, reference: ChildReference, child: MacRemoteChild
@@ -333,7 +337,7 @@ class MacRuns:
 
         return await writer.tell(
             WireMessageKind.command,
-            as_object(command),
+            encode_command_for_peer(command, identity.protocol_version),
             request_id=command.command_id,
             admit=admit,
         )
@@ -360,7 +364,7 @@ class MacRuns:
                 return
             emitted = await writer.tell(
                 WireMessageKind.command,
-                as_object(command),
+                encode_command_for_peer(command, identity.protocol_version),
                 request_id=command.command_id,
                 admit=admit_answer,
             )
@@ -461,6 +465,8 @@ class MacRuns:
         # Closed assignments admit only their retained exact stop proof.
         # They grant no callback, command-result or new native-work authority.
         pending = self.pending_commands.get(outcome.command_id)
+        if pending is not None and pending.command.child != outcome.child:
+            raise ValueError("child_stopped conflicts with pending child")
         if not (
             self.store.has_closed_child_assignment(outcome.child)
             and pending is not None
@@ -472,6 +478,34 @@ class MacRuns:
             raise ValueError("child_stopped requires successful exact-child stop")
         if pending is not None and pending.command.operation is not ChildOperation.stop:
             raise ValueError("child_stopped conflicts with pending command")
+
+    async def accept_stop_receipt(
+        self, outcome: CommandOutcome, receipt: AcceptanceReceipt
+    ) -> None:
+        """Settle authoritative termination without making FIFO wait for another stop."""
+        if (
+            receipt.result.get("stop_command_id") != outcome.command_id
+            or receipt.result.get("stopped_child") != as_object(outcome.child)
+        ):
+            # Older receipts prove only their original solicited exchange. They
+            # never grant a new unsolicited retirement from a replayed payload.
+            if "stop_command_id" not in receipt.result:
+                self._resolve_command(outcome, stop_proven=True)
+            return
+        pending = self.pending_commands.get(outcome.command_id)
+        if pending is not None and pending.command.child == outcome.child:
+            self._resolve_command(outcome, stop_proven=True)
+            return
+        if not await settled_io(self.store.has_closed_child_assignment, outcome.child):
+            await settled_io(self.store.close_child, outcome.child, now_ms())
+        # Another retirement can wait for a different stop of this exact child.
+        # ACK this journal suffix before core settlement, so replay can finish.
+        if hasattr(self, "conversations"):
+            task = asyncio.create_task(
+                self.conversations.confirm_remote_child_termination(outcome.child)
+            )
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
 
     def _resolve_command(self, outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
         pending = self.pending_commands.get(outcome.command_id)

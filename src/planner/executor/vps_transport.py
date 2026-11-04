@@ -17,7 +17,7 @@ from planner.core.clock import Clock
 from planner.core.contracts import PrincipalKind
 from planner.core.errors import PlannerError
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ExecutorIdentity
+from planner.execution_identity import ExecutorIdentity, supports_executor_versions
 from planner.executor.catalog_relay import VpsCatalogRelay
 from planner.executor.clock import now_ms
 from planner.executor.files import file_digest
@@ -125,10 +125,7 @@ class VpsExecutor:
         }
 
     def _inspect_identity(self, identity: ExecutorIdentity) -> JsonObject | None:
-        if (identity.protocol_version, identity.spool_format_version) == (
-            PROTOCOL_VERSION,
-            SPOOL_FORMAT_VERSION,
-        ):
+        if supports_executor_versions(identity.protocol_version, identity.spool_format_version):
             return None
         at_ms = now_ms()
         server = ExecutorIdentity(

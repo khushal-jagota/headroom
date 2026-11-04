@@ -30,6 +30,15 @@ type UpdateRequestState = Literal[
 
 
 @dataclass(frozen=True, slots=True)
+class PublishedMacUpdate:
+    """The prebuilt arm64 runtime from the same source as the VPS publication."""
+
+    artifact_id: int
+    archive_sha256: str
+    archive_size: int
+
+
+@dataclass(frozen=True, slots=True)
 class PublishedUpdate:
     publication_run_id: int
     artifact_id: int
@@ -38,6 +47,7 @@ class PublishedUpdate:
     archive_sha256: str
     schema_floor: str
     expires_at: str
+    mac: PublishedMacUpdate | None = None
 
 
 @dataclass(frozen=True, slots=True)

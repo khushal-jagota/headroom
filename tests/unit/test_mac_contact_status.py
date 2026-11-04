@@ -42,7 +42,7 @@ def identity() -> ExecutorIdentity:
 def test_old_hello_gets_refusal_before_close_and_durable_evidence(endpoint: VpsExecutor) -> None:
     async def run() -> None:
         stream = MessageStream()
-        peer = replace(identity(), protocol_version=PROTOCOL_VERSION - 1)
+        peer = replace(identity(), protocol_version=PROTOCOL_VERSION - 2)
         # An older hello need not decode as the current ExecutorHealth schema.
         stream.feed_data(
             encode_message(
@@ -116,7 +116,7 @@ def test_rejected_parallel_hello_does_not_replace_live_health(endpoint: VpsExecu
         endpoint.runs.link = current
         endpoint.runs.ready = True
         assert (
-            endpoint._inspect_identity(replace(peer, protocol_version=PROTOCOL_VERSION - 1))
+            endpoint._inspect_identity(replace(peer, protocol_version=PROTOCOL_VERSION - 2))
             is not None
         )
         assert endpoint.health()["connection_state"] == "ready"
