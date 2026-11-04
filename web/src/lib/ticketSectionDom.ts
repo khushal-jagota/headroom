@@ -24,7 +24,7 @@ export function ticketSectionDomMatches(root:HTMLElement,masthead:HTMLElement,se
   if(!root.isConnected || root.dataset.ticketSection!==section.record.id || root.dataset.sectionStage!==row.stage) return false;
   if(root.querySelector('[role=listbox]')) return false;
   const parent=detail.manager_id ? {id:detail.manager_id,title:detail.manager_title || 'Manager'} : null;
-  // Admission proves this typed detail principal has the canonical kind and ID.
+  // The loaded detail supplies the reviewer.
   const principal=detail.ceiling_holder;
   const holder=holderLabelFor(parent,principal);
   const reviewer=holderOptionsFor(parent,principal).find(option=>option.value===holderValue(principal))?.label;

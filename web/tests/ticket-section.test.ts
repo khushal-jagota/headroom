@@ -4,7 +4,7 @@ import type { WorkerTypeManifest } from '../src/lib/lifecycle';
 import type { TicketRecord } from '../src/lib/navigation/contracts';
 import { createNavigationCollection } from './support/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
-import { admitTicketSection, ticketSectionFacts, ticketSectionHeading, ticketSectionFieldState } from '../src/lib/ticketSection';
+import { ticketSection, ticketSectionFacts, ticketSectionHeading, ticketSectionFieldState } from '../src/lib/ticketSection';
 import { currentSnapshot, continuity, conversation } from './support/navigation/fixtures';
 
 const record:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'ticket',value:{title:'Ticket',recap:'',recap_preview:'',worker_type:'coding',stage:'needs_plan',
@@ -23,34 +23,26 @@ const detail:TicketDetail={id:'ticket',title:'Ticket',worker_type:'coding',stage
   employee_launch_reasoning_effort:null,employee_configuration_editable:false,manager_title:null,
   field_values:{},pending_proposal:{field:'plan',body:'Exact body',proposed_by:'agent',created_at:1,revision:2}};
 
-describe('Ticket section admission',()=>{
-  it('keeps structural/proposal/configuration identity together, including explicit proposal absence',()=>{
-    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
-    try {
-      adapter.publishSnapshot(currentSnapshot({...continuity,records:[record,conversation('conversation')]}),'section');
-      const view=knowledge.accept(adapter.getPublication()!);
-      expect(admitTicketSection(view,record,detail,configuration)?.detail).toBe(detail);
-      expect(admitTicketSection(view,record,{...detail,stage:'done'},configuration)).toBeUndefined();
-      expect(admitTicketSection(view,record,{...detail,pending_proposal:{...detail.pending_proposal!,revision:1}},configuration)).toBeUndefined();
-      expect(admitTicketSection(view,record,detail,{...configuration,stages:configuration.stages.map(stage=>({...stage,gating_field:null}))})).toBeUndefined();
-      const absent={...record,value:{...record.value,proposal_field:null,proposal_created_at:null,ticket_status:'empty'}};
-      adapter.publishSnapshot(currentSnapshot({...continuity,revision:'1',records:[absent,conversation('conversation')]}),'absent');
-      const absentView=knowledge.accept(adapter.getPublication()!);
-      expect(admitTicketSection(absentView,absent,{...detail,ticket_status:'empty',pending_proposal:null},configuration)).toBeDefined();
-      expect(admitTicketSection(view,record,{...detail,pending_proposal:null},configuration)).toBeUndefined();
-    } finally {adapter.destroy();}
+describe('Ticket section presentation',()=>{
+  it('uses the loaded detail without a matching navigation or configuration tuple',()=>{
+    const changed={...detail,stage:'done',pending_proposal:null};
+    expect(ticketSection(changed,configuration)).toMatchObject({detail:changed,record:{value:{stage:'done',terminal:true,gating_field:null}}});
+    const olderProposal={...detail,pending_proposal:{...detail.pending_proposal!,revision:1}};
+    expect(ticketSection(olderProposal,configuration)?.detail).toBe(olderProposal);
+    const changedConfiguration={...configuration,stages:configuration.stages.map(stage=>({...stage,gating_field:null}))};
+    expect(ticketSection(detail,changedConfiguration)?.record.value.gating_field).toBeNull();
   });
   it('reprojects held section knowledge after same-publication runtime loss without erasing durable facts',()=>{
     const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
     try {
       adapter.publishSnapshot(currentSnapshot({...continuity,records:[record,conversation('conversation',0,true,false)]}),'section');
-      const view=knowledge.accept(adapter.getPublication()!),section=admitTicketSection(view,record,detail,configuration)!;
+      const view=knowledge.accept(adapter.getPublication()!),section=ticketSection(detail,configuration)!;
       expect(ticketSectionHeading(section,view)).toBe('Currently working on');
       expect(ticketSectionFieldState(section,view,'plan')).toBe('current-running');
       const lost=knowledge.loseRuntime()!;
       expect(lost.publication).toBe(view.publication);
-      // Runtime loss cannot reject an unchanged structurally admitted action.
-      expect(admitTicketSection(lost,record,detail,configuration)).toBeDefined();
+      // Runtime loss does not remove the loaded section.
+      expect(ticketSection(detail,configuration)).toBeDefined();
       expect(ticketSectionHeading(section,lost)).toBe('Waiting at');
       expect(ticketSectionFieldState(section,lost,'plan')).toBe('current-awaiting-approval');
       expect(ticketSectionFacts(section,lost)).toMatchObject({awaiting_reply:true,awaiting_answer:null,agent_state:null,

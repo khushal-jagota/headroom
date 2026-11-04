@@ -60,7 +60,7 @@ import "../../assets/app.css";
 import {viewSnapshot,viewChanges,type FixtureEvent} from "../tests/support/conversation/view-fixture";
 import type {ConversationViewLens} from "../src/lib/conversation/view/contracts";
 import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from "../src/lib/navigation/contracts";
-import { encodeCursor } from "../tests/support/navigation/legacyValidation";
+import { encodeCursor } from "../tests/support/navigation/fixtures";
 import { authority, conversation } from "../tests/support/navigation/fixtures";
 (globalThis as any).__navigationSnapshots = 0;
 (globalThis as any).__navigationStreams = 0;

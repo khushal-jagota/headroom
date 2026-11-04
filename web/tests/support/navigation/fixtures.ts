@@ -1,6 +1,10 @@
 import type { CurrentAuthority, DegradedAuthority, Snapshot, CurrentSnapshotResponse, DegradedSnapshotResponse, RevisionBatch, BatchEnvelope, ConversationRecord, Continuity } from '../../../src/lib/navigation/contracts';
 import { SCHEMA_VERSION, SUPPORTED_SEMANTICS, WIRE_VERSION } from '../../../src/lib/navigation/contracts';
-import { encodeCursor } from './legacyValidation';
+
+export function encodeCursor(value: Continuity): string {
+  const text = JSON.stringify({epoch:value.epoch, revision:value.revision, schema_version:value.schema_version, scope:value.scope, semantics:value.semantics, wire_version:WIRE_VERSION});
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/, '');
+}
 
 export const authority = (scope = 'signal-workspace', generation = '1', session = 'delivery'): CurrentAuthority => ({
   delivery_session_id:session,availability:{state:'current',generation,reason:null},

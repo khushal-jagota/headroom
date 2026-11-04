@@ -1,4 +1,4 @@
-"""Durable, bounded navigation replay. Wakes accelerate polling but never replace it."""
+"""Shared authority and retention for scoped navigation delivery."""
 
 from __future__ import annotations
 

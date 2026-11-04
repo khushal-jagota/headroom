@@ -4,8 +4,8 @@ import type {NavigationPublication} from '../publication';
 import type {NavigationHealth,ScopedNavigationOwnerState} from '../owner';
 import {createNavigationKnowledge,type DurableFact} from '../knowledge';
 import {createVisibilityTracker,type Certification} from '../visibility';
-import {compareRevision,sameAuthority} from '../validation';
-import {applyFrame,sameDomain} from './validation';
+import {compareRevision,sameAuthority} from '../identity';
+import {applyFrame,sameDomain} from './applyFrame';
 import {createViewTransport,type ViewTransport} from './transport';
 import {NavigationRequestError} from '../transport';
 

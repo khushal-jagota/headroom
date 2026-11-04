@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Literal, TypedDict
 
 from planner.navigation.contracts import Continuity, RevisionBatch, Snapshot
@@ -90,13 +89,3 @@ class Reset(TypedDict):
 class ReplayPage(TypedDict):
     batches: list[RevisionBatch]
     has_more: bool
-
-
-class ResetRequired(ValueError):
-    def __init__(self, reason: ResetReason) -> None:
-        super().__init__(reason)
-        self.reason = reason
-
-
-def compact_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

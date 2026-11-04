@@ -1,6 +1,6 @@
 import type { SnapshotResponse, BatchEnvelope } from '../../../src/lib/navigation/contracts';
 import type { NavigationPublication } from '../../../src/lib/navigation/publication';
-import { recordKey } from '../../../src/lib/navigation/validation';
+import { recordKey } from '../../../src/lib/navigation/identity';
 
 /** Publish synthetic facts for tests of active consumer projections. */
 export function createNavigationCollection() {

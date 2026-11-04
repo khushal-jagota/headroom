@@ -1,6 +1,6 @@
 import type { NavigationRecord } from './contracts';
 import type { NavigationOwnerState } from './owner';
-import { parseFence } from './validation';
+import type { Fence } from './contracts';
 import type { RenderObserver, VisibilityResult } from './visibility';
 
 /** Local command footprint; keys come from the generated canonical record values. */
@@ -109,9 +109,9 @@ export function createCommandEvidence(owner:EvidenceOwner,maximum:number) {
       }
       domainCompletedAt=performance.now();
       update(entry('pending',null));
-      let fence:ReturnType<typeof parseFence> | null;
+      let fence:Fence | null;
       try {
-        fence=parseFence(JSON.parse(metadata.headers?.get('Panels-Navigation-Fence') ?? 'null'));
+        fence=JSON.parse(metadata.headers?.get('Panels-Navigation-Fence') ?? 'null') as Fence;
         fenceMetadata=Object.freeze({
           epoch:fence.epoch,
           revision:fence.revision,

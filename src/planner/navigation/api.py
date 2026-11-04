@@ -1,9 +1,9 @@
-"""Authorized navigation snapshot and SSE doors, bound to the runtime workspace."""
+"""Shared response classes for scoped navigation and its existing send fence."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.types import Message, Receive, Scope, Send
@@ -13,10 +13,6 @@ from planner.navigation.delivery_authority import (
     DeliveryAdmission,
     DeliveryUnavailable,
 )
-
-if TYPE_CHECKING:
-    pass
-
 
 class DeadlineStreamingResponse(StreamingResponse):
     def __init__(
