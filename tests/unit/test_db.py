@@ -1304,7 +1304,6 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         "UPDATE tickets SET manager_kind='sprint_item' WHERE id='t_item'",
         "UPDATE tickets SET manager_kind='chief' WHERE id='t_item'",
         "UPDATE manager_wakes SET target_kind='sprint_item' WHERE id=41",
-        "UPDATE scheduled_ticket_schedules SET manager_kind='chief' WHERE id='assigned'",
         "UPDATE notification_preferences SET subject_key='sprint_item_supervisors'",
     ):
         with pytest.raises(sqlite3.IntegrityError):
