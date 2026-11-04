@@ -402,11 +402,11 @@ describe("manager rail projection", () => {
 });
 
 // Shared-publication adoption: these are browser adapters, not a new Signal policy.
-import { createNavigationCollection } from '../src/lib/navigation/collection';
+import { createNavigationCollection } from './support/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
 import { navigationWorkspacePresentation, navigationTicketMasthead, navigationReviewPresentation, navigationWorkingAgentCount, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
 import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
-import { encodeCursor } from '../src/lib/navigation/validation';
+import { encodeCursor } from './support/navigation/legacyValidation';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
 const sourceTicket:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'source-ticket',value:{
   title:'Source Ticket',recap:'Full source recap.\n'+'Body continues. '.repeat(20),recap_preview:'Source recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,

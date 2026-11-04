@@ -59,23 +59,6 @@ export function continuity(value: Omit<Continuity, "semantics"> & {semantics:str
   if (value.schema_version !== SCHEMA_VERSION || value.semantics !== SUPPORTED_SEMANTICS || !value.scope || !value.epoch) throw new NavigationProtocolError('Unsupported continuity');
   parseRevision(value.revision);
 }
-export function encodeCursor(value: Continuity): string {
-  const text = JSON.stringify({epoch:value.epoch, revision:value.revision, schema_version:value.schema_version, scope:value.scope, semantics:value.semantics, wire_version:WIRE_VERSION});
-  return btoa(String.fromCharCode(...new TextEncoder().encode(text))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/, '');
-}
-export function decodeCursor(raw: string): Cursor {
-  try {
-    if (!raw || raw.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(raw)) throw new Error();
-    const text = new TextDecoder('utf-8', {fatal:true}).decode(Uint8Array.from(atob(raw.replaceAll('-','+').replaceAll('_','/') + '='.repeat((4-raw.length%4)%4)), c => c.charCodeAt(0)));
-    const value = parse<Cursor>('Cursor', JSON.parse(text)); continuity(value);
-    if (encodeCursor(value) !== raw) throw new Error();
-    return value;
-  } catch { throw new NavigationProtocolError('Invalid cursor'); }
-}
-export function assertCursorMatches(cursor: string, value: Continuity): void {
-  const decoded = decodeCursor(cursor);
-  for (const key of ['scope','schema_version','semantics','epoch','revision'] as const) if (decoded[key] !== value[key]) throw new NavigationProtocolError('Cursor mismatch');
-}
 export function sameAuthority(left: CurrentAuthority | DegradedAuthority, right: CurrentAuthority | DegradedAuthority): boolean {
   return left.delivery_session_id === right.delivery_session_id
     && left.availability.state === right.availability.state
@@ -96,42 +79,5 @@ export function authority(value: CurrentAuthority | DegradedAuthority): void {
     if (value.permit.generation !== value.availability.generation) throw new NavigationProtocolError('Authority generation mismatch');
   }
 }
-function attentionProfile(records: NavigationRecord[], mode: SnapshotResponse['mode']): void {
-  for (const record of records) {
-    if (!record.id) throw new NavigationProtocolError('Empty record identity');
-    if (record.kind !== 'conversation') continue;
-    const knowledge = record.value.attention;
-    if (mode === 'current') {
-      if (knowledge.current === null
-        || knowledge.current.signal.message_for_owner !== knowledge.durable.message_for_owner
-        || knowledge.current.last_turn_failed !== knowledge.durable.last_turn_failed) {
-        throw new NavigationProtocolError('Incomplete or contradictory current attention');
-      }
-    } else if (knowledge.current !== null) throw new NavigationProtocolError('Runtime attention in degraded view');
-  }
-}
-export function parseSnapshotResponse(raw: unknown): SnapshotResponse {
-  const value = parse<SnapshotResponse>('SnapshotResponse', raw);
-  continuity(value.snapshot); authority(value.authority);
-  if (value.mode === 'current') {
-    assertCursorMatches(value.cursor,value.snapshot);
-  }
-  uniqueKeys(value.snapshot.records); attentionProfile(value.snapshot.records,value.mode);
-  return value;
-}
-export function parseBatchEnvelope(raw: unknown): BatchEnvelope {
-  const value = parse<BatchEnvelope>('BatchEnvelope',raw);
-  authority(value.authority);
-  value.batch = parseRevisionBatch(value.batch);
-  attentionProfile(value.batch.upserts,'current');
-  return value;
-}
 export function recordKey(value: {kind:string; id:string}): string { return JSON.stringify([value.kind,value.id]); }
-function uniqueKeys(records: {kind:string;id:string}[]): void { if (new Set(records.map(recordKey)).size !== records.length) throw new NavigationProtocolError('Duplicate record key'); }
-export function parseRevisionBatch(raw: unknown): RevisionBatch {
-  const value = parse<RevisionBatch>('RevisionBatch', raw); continuity(value); parseRevision(value.base_revision);
-  if (parseRevision(value.revision) !== parseRevision(value.base_revision) + 1n) throw new NavigationProtocolError('Nonadvancing batch');
-  uniqueKeys([...value.upserts,...value.deletes]); return value;
-}
 export function parseFence(raw: unknown): Fence { const value = parse<Fence>('Fence',raw); continuity(value); return value; }
-export function parseReset(raw: unknown): Reset { return parse<Reset>('Reset',raw); }

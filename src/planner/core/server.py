@@ -593,7 +593,6 @@ def create_app(
     ):
         include_router(domain_router, prefix="/api")
     include_router(previews_router)
-    include_router(navigation_delivery.router)
     include_router(scoped_navigation.router)
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")

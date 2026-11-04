@@ -14,13 +14,13 @@ import pytest
 from click.testing import CliRunner
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from tests.support.probe import seed_probe_worker_type
 
 from planner.cli.main import main as cli_main
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationSystem,
-)
 from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config

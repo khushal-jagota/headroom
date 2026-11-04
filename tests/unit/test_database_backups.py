@@ -328,8 +328,8 @@ def test_restored_panels_starts_and_reads_and_writes_tickets(tmp_path: Path, leg
     # This connected proof crosses the real schema, restore, lifespan and HTTP doors.
     # The source is synthetic. Every path and provider home belongs to tmp_path.
     from fastapi.testclient import TestClient
+    from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
-    from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
     from planner.core.clock import build_clock
     from planner.core.config import load_config
     from planner.core.contracts import OWNER_PRINCIPAL

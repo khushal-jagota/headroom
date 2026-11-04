@@ -8,11 +8,11 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.unit.test_db import _migration_tree_through
 
 from planner.conversation.contracts import PromptDeliveryStarted
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core import db
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema

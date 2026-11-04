@@ -7,9 +7,9 @@ from dataclasses import replace
 from sqlite3 import Connection
 
 import pytest
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError

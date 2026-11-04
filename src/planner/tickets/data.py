@@ -50,7 +50,6 @@ from planner.tickets.contracts import (
     WorkerStepClaim,
 )
 from planner.tickets.integrity import TicketIntegrityError
-from planner.tickets.locale_configuration import require_locale_backend_compatibility
 from planner.tickets.logic import (
     admission,
     employee_configuration,
@@ -336,9 +335,6 @@ def resolve_ticket_creation_context(
         manager_id=manager_id,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         worker_runtime_definitions=worker_runtime_definitions,
-    )
-    require_locale_backend_compatibility(
-        context.locale, context.launch_configuration.employee_backend
     )
     return context
 

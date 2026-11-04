@@ -1,6 +1,6 @@
 import type { TicketRecord, TicketValue } from './navigation/contracts';
 import type { EffectiveNavigationView } from './navigation/knowledge';
-import type { NavigationPublication } from './navigation/collection';
+import type { NavigationPublication } from './navigation/publication';
 import type { TicketDetail } from './types';
 import type { WorkerTypeManifest } from './lifecycle';
 import { buildLifecycle, ticketStageVisualStateFor, type Lifecycle } from './lifecycle';

@@ -4,25 +4,16 @@ from dataclasses import replace
 from datetime import datetime
 from sqlite3 import Connection
 
-import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.unit.test_scheduled_tickets import _template
 
 from planner.scheduled_tickets import actions, data
 from planner.scheduled_tickets.contracts import OccurrenceOutcome, ScheduleCadence
 from planner.tickets import data as tickets_data
-from planner.tickets import locale_configuration
 from planner.tickets.contracts import TicketLocale
 
 
-def test_schedule_persists_resolved_locale_and_occurrences_keep_it(
-    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setitem(
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS,
-        TicketLocale.macos,
-        frozenset({"hermes", "codex", "claude"}),
-    )
+def test_schedule_persists_resolved_locale_and_occurrences_keep_it(tmp_db: Connection) -> None:
     schedule = actions.create_schedule(
         tmp_db,
         principal=OWNER_PRINCIPAL,
