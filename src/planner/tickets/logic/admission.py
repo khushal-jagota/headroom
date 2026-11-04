@@ -44,6 +44,14 @@ def require_creatable_worker_type(worker_type: str) -> None:
         raise PlannerError(ErrorCode.validation, "Worker type is retired")
 
 
+def validate_creation_ceiling(ceiling: str) -> None:
+    if ceiling == "done":
+        raise PlannerError(
+            ErrorCode.validation,
+            "A new Ticket cannot use Done as its ceiling. Choose an earlier stage.",
+        )
+
+
 def check_agent_proposal(
     stage: str,
     field: str,
