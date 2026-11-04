@@ -9,17 +9,20 @@ struct GoalCounter: View {
     var size: CGFloat = PanelsTheme.Goal.reading
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .largeTitle) private var scale: CGFloat = 1
-    /// Unbounded wheel positions keyed by place value; position mod 10 is the digit on show.
-    @State private var wheels: [String: Double] = [:]
+    @State private var wheels = GoalWheelPositions()
     private var formatted: String { GoalChartPresentation.format(block, value) }
-    private var parts: [GoalCounterPart] { GoalChartPresentation.counterParts(block, value: value) }
     var body: some View {
         let font = size * scale
+        let parts = GoalChartPresentation.counterParts(block, value: value)
+        // Targets are worked out in the same update that shows the new value, so the
+        // wheels start turning on the frame the number changes.
+        let positions = wheels.roll(to: value, parts: parts)
         HStack(alignment: .center, spacing: 0) {
             ForEach(parts) { part in
                 Group {
                     if let digit = part.digit {
-                        GoalDigitWheel(position: wheels[part.id] ?? Double(digit), size: font)
+                        GoalDigitWheel(position: positions[part.id] ?? Double(digit), size: font)
+                            .animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: positions[part.id])
                     } else {
                         Text(part.text).font(.system(size: font, weight: .medium)).monospacedDigit().fixedSize().frame(height: font)
                     }
@@ -30,29 +33,28 @@ struct GoalCounter: View {
         .foregroundStyle(PanelsTheme.strong)
         .animation(reduceMotion ? nil : PanelsTheme.Goal.morph, value: parts.map(\.id))
         .accessibilityElement(children: .ignore).accessibilityLabel(formatted)
-        .onAppear { roll(from: nil, to: value) }
-        .onChange(of: value) { old, next in roll(from: old, to: next) }
     }
-    private func roll(from old: Double?, to next: Double?) {
-        let fresh = GoalChartPresentation.counterParts(block, value: next)
-        guard let old, let next, old.isFinite, next.isFinite else {
-            wheels = Dictionary(fresh.compactMap { part in part.digit.map { (part.id, Double($0)) } }, uniquingKeysWith: { a, _ in a })
-            return
-        }
-        let direction = next > old ? 1 : -1
+}
+
+/// Unbounded wheel positions keyed by place value; position mod 10 is the digit on show.
+/// Every wheel turns the way the whole number moved, wrapping 9 → 0 (animated-counter.tsx).
+final class GoalWheelPositions {
+    private var value: Double?
+    private var positions: [String: Double] = [:]
+    func roll(to next: Double?, parts: [GoalCounterPart]) -> [String: Double] {
+        guard next != value || positions.isEmpty else { return positions }
+        defer { value = next }
+        let direction = (next ?? 0) > (value ?? 0) ? 1 : -1
+        let fresh = value == nil || next == nil || value?.isFinite != true || next?.isFinite != true
         var targets: [String: Double] = [:]
-        for part in fresh {
+        for part in parts {
             guard let digit = part.digit else { continue }
-            guard let position = wheels[part.id] else { targets[part.id] = Double(digit); continue }
+            guard !fresh, let position = positions[part.id] else { targets[part.id] = Double(digit); continue }
             let shown = ((Int(position.rounded()) % 10) + 10) % 10
             targets[part.id] = position + Double(direction < 0 ? -((shown - digit + 10) % 10) : (digit - shown + 10) % 10)
         }
-        if reduceMotion { wheels = targets; return }
-        // New columns start on their digit; existing ones roll from where they stand.
-        var placed = wheels
-        for (key, target) in targets where wheels[key] == nil { placed[key] = target }
-        wheels = placed
-        withAnimation(PanelsTheme.Goal.smooth) { wheels = targets }
+        positions = targets
+        return targets
     }
 }
 
@@ -87,25 +89,42 @@ private struct GoalDigitWheel: View, @MainActor Animatable {
     }
 }
 
+/// The web's range control: one highlight that slides between equal segments on the
+/// snappy spring (Motion's shared `layoutId`), with no press dimming.
 struct GoalRangeSwitch: View {
     let choices: [(String, String)]
     @Binding var selection: String
-    @Namespace private var highlight
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var index: Int { choices.firstIndex { $0.0 == selection } ?? 0 }
     var body: some View {
         HStack(spacing: 2) {
             ForEach(choices, id: \.0) { id, label in
-                Button {
-                    withAnimation(reduceMotion ? nil : PanelsTheme.Goal.snappy) { selection = id }
-                } label: {
-                    Text(label).panelsScaledFont(size: 11, weight: .medium).frame(maxWidth: .infinity).frame(minHeight: 36)
-                        .background { if selection == id { RoundedRectangle(cornerRadius: 6).fill(PanelsTheme.Goal.selectedRange).matchedGeometryEffect(id: "selection", in: highlight) } }
-                }.buttonStyle(.plain).foregroundStyle(selection == id ? PanelsTheme.strong : PanelsTheme.Goal.faint)
+                Button { selection = id } label: {
+                    Text(label).panelsScaledFont(size: 12, weight: .regular).frame(maxWidth: .infinity).frame(minHeight: 36).contentShape(Rectangle())
+                }.buttonStyle(GoalPlainPress()).foregroundStyle(selection == id ? PanelsTheme.strong : PanelsTheme.faint)
                     .accessibilityAddTraits(selection == id ? .isSelected : [])
             }
-        }.padding(3).background(PanelsTheme.Goal.range, in: RoundedRectangle(cornerRadius: 8))
-            .accessibilityElement(children: .contain).accessibilityLabel("Time range")
+        }
+        .background(alignment: .leading) {
+            GeometryReader { geometry in
+                let width = (geometry.size.width - CGFloat(max(0, choices.count - 1)) * 2) / CGFloat(max(1, choices.count))
+                RoundedRectangle(cornerRadius: 12).fill(PanelsTheme.Goal.selectedRange)
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(PanelsTheme.Goal.grid))
+                    .shadow(color: .black.opacity(0.2), radius: 1.5, y: 1)
+                    .frame(width: width, height: geometry.size.height)
+                    .offset(x: CGFloat(index) * (width + 2))
+                    .animation(reduceMotion ? nil : PanelsTheme.Goal.snappy, value: index)
+            }
+        }
+        .padding(4).background(PanelsTheme.Goal.range, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.white.opacity(0.024)))
+        .accessibilityElement(children: .contain).accessibilityLabel("Time range")
     }
+}
+
+/// A button that shows no pressed state, like the web's plain buttons.
+struct GoalPlainPress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { configuration.label }
 }
 
 struct GoalSaveFailure: View {

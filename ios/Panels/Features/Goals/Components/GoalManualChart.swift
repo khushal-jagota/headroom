@@ -27,21 +27,25 @@ struct GoalManualValue: View {
     @State private var submitting = false
     private var current: Double? { editor.state?.value(cumulative: editor.cumulative) }
     var body: some View {
+        // The counter stays mounted under the field, as on the web, so an accepted edit
+        // rolls from the old reading to the new one.
+        let editingValue = editing || editor.draft != nil
         ZStack(alignment: centered ? .center : .leading) {
-            if editing || editor.draft != nil {
-                GoalNumberField(text: Binding(get: { editor.draft ?? current.map(GoalChartPresentation.plainNumber) ?? "" }, set: { editor.draft = $0 }),
-                                focused: $editing, size: size, centered: centered, label: block["title"].string ?? "Reading",
-                                commit: save, cancel: { Task { await editor.discard(); editing = false } })
-                    .frame(height: size * 1.2)
-            } else {
-                // A pending write leaves the number readable, as the web's read-only input does.
-                Button { guard !editor.busy, editor.pending == nil else { return }; editor.beginEditing(); editing = true } label: {
-                    GoalManualCounter(block: block, value: current, size: size).frame(minHeight: size * 1.2)
-                }.buttonStyle(.plain).contentShape(Rectangle())
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(GoalChartPresentation.manualLiteral(block, value: current) ?? GoalChartPresentation.format(GoalChartPresentation.manualDisplayBlock(block, value: current), current))
-                    .accessibilityIdentifier("goal-manual-value-" + block.id).accessibilityHint("Edit reading")
-            }
+            Button { guard !editor.busy, editor.pending == nil else { return }; editor.beginEditing(); editing = true } label: {
+                GoalManualCounter(block: block, value: current, size: size).frame(minHeight: size * 1.2)
+            }.buttonStyle(.plain).contentShape(Rectangle())
+                .opacity(editingValue ? 0 : 1).allowsHitTesting(!editingValue)
+                .accessibilityHidden(editingValue)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(GoalChartPresentation.manualLiteral(block, value: current) ?? GoalChartPresentation.format(GoalChartPresentation.manualDisplayBlock(block, value: current), current))
+                .accessibilityIdentifier("goal-manual-value-" + block.id).accessibilityHint("Edit reading")
+            // The field stays mounted too, so accepting an edit swaps opacity instead of
+            // tearing down a first responder in the frame the counter starts turning.
+            GoalNumberField(text: Binding(get: { editor.draft ?? current.map(GoalChartPresentation.plainNumber) ?? "" }, set: { editor.draft = $0 }),
+                            focused: $editing, size: size, centered: centered, label: block["title"].string ?? "Reading",
+                            commit: save, cancel: { Task { await editor.discard(); editing = false } })
+                .frame(height: size * 1.2)
+                .opacity(editingValue ? 1 : 0).allowsHitTesting(editingValue).accessibilityHidden(!editingValue)
         }.onChange(of: editing) { old, focused in
             if old && !focused && !submitting && editor.draft != nil && editor.pending == nil { Task { _ = await editor.prepare() } }
         }.onDisappear {
