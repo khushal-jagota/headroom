@@ -71,7 +71,7 @@ def _seed_staging(conn: sqlite3.Connection) -> tuple[str, ...]:
 @pytest.mark.parametrize(
     "previous_head", [
         None, "ticket_application_previews", "scalar_observation_coverage",
-        "goals_staging_reconciliation",
+        "goals_staging_reconciliation", "attention_history",
     ]
 )
 def test_combined_schema_preserves_fresh_and_each_accepted_branch(
@@ -87,10 +87,26 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
         conn.execute("""INSERT INTO projects(id,name,created_at,updated_at)
             VALUES('retained-project','Retained project',1,1)""")
         tables: tuple[str, ...] = ("projects",)
-        if previous_head in {"scalar_observation_coverage", "goals_staging_reconciliation"}:
+        if previous_head in {
+            "scalar_observation_coverage", "goals_staging_reconciliation", "attention_history",
+        }:
             tables += _seed_goals(conn)
-        if previous_head in {"ticket_application_previews", "goals_staging_reconciliation"}:
+        if previous_head in {
+            "ticket_application_previews", "goals_staging_reconciliation", "attention_history",
+        }:
             tables += _seed_staging(conn)
+        if previous_head == "attention_history":
+            conn.execute("""INSERT INTO attention_approval_events
+                (ticket_id,field,actor_kind,actor_id,method,occurred_at,destination_json)
+                VALUES('fixture-ticket','brief','owner','owner','explicit_accept',10,'{}')""")
+            conn.execute("""INSERT INTO attention_gate_intervals
+                (ticket_id,destination_json,opened_at,observed_since,closed_at)
+                VALUES('fixture-ticket','{}',NULL,5,10)""")
+            tables += (
+                "attention_history_metadata",
+                "attention_approval_events",
+                "attention_gate_intervals",
+            )
         before = {
             table: [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
             for table in tables
