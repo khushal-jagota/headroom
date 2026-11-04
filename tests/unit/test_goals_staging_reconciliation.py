@@ -100,7 +100,7 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
         db.create_schema(conn)
         assert {
             str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")
-        } == {"manager_launch_defaults"}
+        } == {"goal_outcomes"}
         assert {
             "goals",
             "measure_sources",
@@ -112,7 +112,15 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
             str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         for table, rows in before.items():
-            assert [dict(row) for row in conn.execute(f"SELECT * FROM {table}")] == rows
+            current = [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            if table == "goals":
+                assert len(current) == len(rows)
+                for previous, saved in zip(rows, current, strict=True):
+                    assert {key: saved[key] for key in previous} == previous
+                    assert saved["completion_rule"] is None
+                    assert saved["completion_date"] is None
+            else:
+                assert current == rows
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         # A restart must not replay either branch or lose the merged version marker.
         db.create_schema(conn)
