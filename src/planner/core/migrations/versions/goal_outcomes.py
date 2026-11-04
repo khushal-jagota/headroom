@@ -3,7 +3,7 @@
 from alembic import op
 
 revision = "goal_outcomes"
-down_revision = "attention_history"
+down_revision = "remove_macos_requirements"
 branch_labels = None
 depends_on = None
 
