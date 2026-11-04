@@ -26,7 +26,7 @@ struct ArtifactViewerView: View {
     private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
 
     private var activeConversationOwner: ConversationOwner {
-        conversationOwner ?? (owner.kind == .ticket ? .ticket(owner.id) : .manager(owner.id))
+        conversationOwner ?? owner.conversationOwner
     }
 
     private var waitingForPreview: Bool { isLoading || (target.kind == .html && document != nil && !webReady && error == nil) }
@@ -82,6 +82,7 @@ struct ArtifactViewerView: View {
                 switch activeConversationOwner {
                 case .ticket(let id): conversationID = try await store.client.ticket(id).conversationId
                 case .manager(let id): conversationID = try await store.client.manager(id).manager.conversationId
+                case .goal(let id): conversationID = try await store.client.goal(id).conversationId
                 case .chief: conversationID = try await store.client.chiefConversation().conversationId
                 }
             } catch { /* The owner send door remains available when detail cannot be read. */ }

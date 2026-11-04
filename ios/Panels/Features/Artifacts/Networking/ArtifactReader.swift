@@ -16,7 +16,7 @@ extension APIClient {
         guard ArtifactTarget.isSafePath(target.owner.id), !target.owner.id.contains("/"), ArtifactTarget.isSafePath(target.path) else {
             throw APIError(status: 0, message: "This artifact has an invalid file path.")
         }
-        let collection = target.owner.kind == .ticket ? "tickets" : "managers"
+        let collection = target.owner.collection
         return try url("/files/\(collection)/\(target.owner.id)/\(target.path)")
     }
 

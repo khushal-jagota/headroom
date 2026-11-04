@@ -644,3 +644,39 @@ Push registration remains disabled. Dock previews and inline attachment parity
 remain separate work. The compatibility checks use Foundation host tests, in-memory
 HTTP stubs, backend checks and one unsigned generic iOS compile. They do not prove
 physical-device behavior or a live Mac/VPS round trip from the iPhone.
+
+## Goals
+
+Active goals sit inside the Chief card in Workspace. A tap opens the goal; a long
+press shows its main display and an Open action. A binary goal without a checklist
+also offers Mark done or Mark not done. Manual charts offer their configured
+increments, such as Add 100 words. Chief shows the same active goals with working
+checklists and manual charts; All goals includes inactive goals and filters for
+each column.
+
+A goal page uses the existing conversation, file reader and Review message controls.
+Project, deadline, state, title and explanation can be edited in place. Saved page
+text can be edited too; Markdown keeps its links and offers Edit on a long press.
+Tables sort without changing the stored row order. Grids stack on the phone.
+
+Charts have two sizes. Main charts use the web's small presentation. Supporting
+charts and extra checklists fold in place; each chart remembers its range and
+open state while the app runs. A line follows a finger and clears inspection on
+release. Bars and rings retain the selected reading. Missing readings stay
+missing, and comparisons use the server's supplied summary where one exists.
+The server calendar controls deadline colours. Chart and checklist motion follows
+the web's timings and honours Reduce Motion.
+
+Goal edits do not enter the offline message outbox. Failed edits keep their draft
+and offer Retry save and Discard edit. A stale revision cannot replace a newer
+page. Manual retries preserve the original request identity, date and value;
+the app never retries a measurement write by itself. There is no Saved toast.
+
+Run `ios/scripts/test-offline.sh` for the Foundation checks. That host evaluates
+the current web chart catalogue and curve functions as an independent comparison
+for the native presentation code; it requires this worktree's web dependencies.
+The existing simulator fixture host supports `PANELS_GOALS_SMOKE=1` and
+`PANELS_OFFLINE_TEST=GoalFlowTests`. Supply an already booted assigned simulator,
+a separate task bundle ID, lane lock name and output directory through its
+`PANELS_OFFLINE_DEVICE`, `PANELS_OFFLINE_BUNDLE`, `PANELS_OFFLINE_LANE` and
+`PANELS_OFFLINE_OUTPUT` settings. It uses loopback data and no live writes.

@@ -189,3 +189,63 @@ extension View {
         navigationTitle(title).background(PanelsNavigationTypography(role: role))
     }
 }
+
+// Goal kit matches assets/tokens.css and charts/lib/{motion-tokens,chart-motion}.
+extension PanelsTheme {
+    enum Goal {
+        static let attention = Color(hex: 0xd4ab6c)
+        static let faint = Color(hex: 0xa6a6a6)
+        static let recessed = Color(hex: 0x0d0d0d)
+        static let surface = Color(hex: 0x1a1a1a)
+        static let raised = Color(hex: 0x252525)
+        static let mutedSurface = Color(hex: 0x212121)
+        static let border = Color.white.opacity(0.055)
+        static let grid = Color.white.opacity(0.047)
+        static let reference = Color(hex: 0x777777)
+        static let range = Color(hex: 0x232323)
+        static let selectedRange = Color(hex: 0x191919)
+        static let meter = Color(hex: 0x2a2a2a)
+        static let budget = Color(hex: 0x424242)
+        static let remaining = Color(hex: 0x676767)
+        static let palette = [Color(hex: 0x9aadd2), Color(hex: 0x647998), Color(hex: 0x414f65)]
+        static let activePalette = [Color(hex: 0xbccceb), Color(hex: 0x839bbd), Color(hex: 0x667d9e)]
+        static let composition = [Color(hex: 0x9aadd2), Color(hex: 0x646f87), Color(hex: 0x474b55)]
+        static func seriesColor(_ name: String?, index: Int, composed: Bool = false, active: Bool = false) -> Color {
+            let slot = name == "blue" ? 0 : name == "blue-muted" ? 1 : name == "blue-dark" ? 2 : index % 3
+            return (composed ? composition : active ? activePalette : palette)[slot]
+        }
+        static let reading: CGFloat = 40
+        static let compactReading: CGFloat = 32
+        static let completionReading: CGFloat = 36
+        static let plotHeight: CGFloat = 176
+        static let cardRadius: CGFloat = 24
+        static let panelRadius: CGFloat = 28
+        static let ringWidth: CGFloat = 12
+        static let activeRingWidth: CGFloat = 16
+        static let ringSize: CGFloat = 200
+        static let barDuration = 0.6
+        static let gaugeReveal = 0.768
+        static let lineReveal = 0.84
+        static let standardDuration = 0.24
+        static let instantDuration = 0.12
+        static let delay = 0.08
+        static let checkedHold = 0.72
+        static let itemCollapse = 0.28
+        static let panelCollapse = 0.26
+        static let bodyCollapse = 0.32
+        static let completedCollapse = 0.24
+        static let pressDuration = 0.11
+        static let tickDelay = 0.05
+        static let tickDuration = 0.15
+        static let snappy = Animation.spring(duration: 0.26, bounce: 0)
+        static let smooth = Animation.spring(duration: 0.4, bounce: 0)
+        static let morph = Animation.spring(duration: 0.42, bounce: 0)
+        static let disclosure = Animation.interpolatingSpring(mass: 1, stiffness: 280, damping: 34)
+        static let standard = Animation.timingCurve(0.22, 1, 0.36, 1, duration: standardDuration)
+        static let bars = Animation.timingCurve(0.65, 0, 0.35, 1, duration: barDuration)
+        static let reveal = Animation.timingCurve(0.65, 0, 0.35, 1, duration: lineReveal)
+        static func tone(_ name: String) -> Color {
+            switch name { case "good": PanelsTheme.success; case "bad": PanelsTheme.error; case "attention": attention; case "info": PanelsTheme.accent; default: PanelsTheme.muted }
+        }
+    }
+}

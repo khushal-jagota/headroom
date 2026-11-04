@@ -20,7 +20,7 @@ struct ArtifactListView: View {
     var body: some View {
         searchContent
             .navigationDestination(item: $selectedArtifact) { target in
-                ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, conversationOwner: owner.kind == .ticket ? .ticket(owner.id) : .manager(owner.id))
+                ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, conversationOwner: owner.conversationOwner)
             }
             .task(id: store.revision) { await load(); refreshVersion += 1 }
 
