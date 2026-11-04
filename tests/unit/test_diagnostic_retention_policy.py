@@ -255,7 +255,7 @@ def test_report_reads_without_initialization_and_binds_source_schema_and_databas
 ) -> None:
     current_path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     assert [row[0] for row in tmp_db.execute("SELECT version_num FROM alembic_version")] == [
-        "goal_outcomes"
+        "remove_feedback_notes"
     ]
     assert read_report(current_path, as_of_unix=2_000_000).database_path == str(current_path)
     tmp_db.execute("UPDATE alembic_version SET version_num = 'unknown_future_revision'")
