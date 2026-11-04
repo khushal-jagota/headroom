@@ -1557,7 +1557,6 @@ def verify_owner_updates(browser, url, *, problem_only=False):
     deployment = {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None, "success_display_until": None}
     posts = []
     documents = []
-    navigation_health = {"mode": "current", "generation": 1, "reason": None}
     errors = []
     context = browser.new_context(viewport={"width": 1280, "height": 900}, reduced_motion="reduce")
     context.add_init_script("localStorage.setItem('panels.workspace.rail-width', '300')")
@@ -1580,12 +1579,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             return
         if path == "/api/navigation/view/snapshot":
             view = json.loads(parse_qs(parts.query)["view"][0])
-            authority = {**source["authority"], "availability": {
-                "state": "current" if navigation_health["mode"] == "current" else "unavailable",
-                "generation": str(navigation_health["generation"]), "reason": navigation_health["reason"],
-            }, "permit": {**source["authority"]["permit"], "generation": str(navigation_health["generation"])} if navigation_health["mode"] == "current" else None}
-            projected = {**source, "mode": navigation_health["mode"], "authority": authority}
-            route.fulfill(json=navigation["scoped_navigation_response"](projected, view))
+            route.fulfill(json=navigation["scoped_navigation_response"](source, view))
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
@@ -1743,25 +1737,23 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         page.screenshot(path=str(evidence / "navigation-reconnecting.png"))
         page.evaluate("window.__navigationOffline = false")
         expect(health).to_have_count(0)
-        reason = "Runtime <script> is unavailable. " + "The server keeps durable navigation data while runtime authority recovers. " * 3
-        navigation_health.update(mode="degraded", generation=2, reason=reason)
-        page.evaluate("void window.__refreshNavigation()")
-        expect(health).to_have_attribute("data-navigation-health", "degraded")
-        expect(health.get_by_text("Navigation degraded", exact=True)).to_be_visible()
-        expect(health.locator(".navigation-reason")).to_have_text(reason)
-        expect(health.locator("script")).to_have_count(0)
+        # Keep a real transport loss active through the update controls. There
+        # is no unavailable-status frame or separate degraded presentation.
+        page.evaluate("window.__disconnectNavigation()")
+        expect(health).to_have_attribute("data-navigation-health", "reconnecting")
+        expect(health).to_have_text("Navigation reconnecting")
         expect(box).to_have_value(retained_draft)
-        page.screenshot(path=str(evidence / "navigation-degraded-desktop.png"))
+        page.screenshot(path=str(evidence / "navigation-reconnecting-desktop.png"))
         page.set_viewport_size({"width": 390, "height": 844})
         compact_health = page.locator(".compact-bar [data-navigation-health]")
         expect(compact_health).to_be_visible()
-        expect(compact_health.locator(".navigation-reason")).to_have_text(reason)
-        dimensions = compact_health.evaluate("node => ({width:node.clientWidth, scroll:node.scrollWidth, reasonHeight:node.querySelector('.navigation-reason').getBoundingClientRect().height, lineHeight:parseFloat(getComputedStyle(node).lineHeight)})")
+        expect(compact_health).to_have_text("Navigation reconnecting")
+        dimensions = compact_health.evaluate("node => ({width:node.clientWidth, scroll:node.scrollWidth, height:node.getBoundingClientRect().height, lineHeight:parseFloat(getComputedStyle(node).lineHeight)})")
         assert dimensions["scroll"] == dimensions["width"], dimensions
-        assert dimensions["reasonHeight"] > dimensions["lineHeight"] * 2, dimensions
-        page.screenshot(path=str(evidence / "navigation-degraded-compact.png"))
+        assert dimensions["height"] >= dimensions["lineHeight"], dimensions
+        page.screenshot(path=str(evidence / "navigation-reconnecting-compact.png"))
         page.set_viewport_size({"width": 1280, "height": 900})
-        expect(health).to_have_attribute("data-navigation-health", "degraded")
+        expect(health).to_have_attribute("data-navigation-health", "reconnecting")
         assert page.evaluate("document === window.__navigationDocument")
         navigation_seconds = time.perf_counter() - health_started
         if not problem_only:
@@ -1841,12 +1833,13 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
         card.get_by_role("button", name="Go back", exact=True).click()
         expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        expect(health).to_have_attribute("data-navigation-health", "degraded")
+        expect(health).to_have_attribute("data-navigation-health", "reconnecting")
         expect(box).to_have_value(retained_draft)
         page.screenshot(path=str(evidence / "problem-with-update-actions.png"))
-        navigation_health.update(mode="current", generation=3, reason=None)
-        page.evaluate("void window.__refreshNavigation()")
+        page.evaluate("window.__navigationOffline = false")
         expect(health).to_have_count(0)
+        assert page.evaluate("document === window.__navigationDocument")
+        assert len(documents) == 1
         expect(card.get_by_text("Problem", exact=True)).to_be_visible()
         expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
         expect(box).to_have_value(retained_draft)
@@ -1854,7 +1847,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         (evidence / "navigation-health-proof.json").write_text(json.dumps({
             "seconds": round(navigation_seconds, 3), "newHosts": 0,
             "boundary": "App + production scoped navigation transport + both shell mounts + retained composer + existing Problem and update controls",
-            "compactReason": dimensions, "reason": reason,
+            "compactHealth": dimensions, "recoveredWithoutReload": True,
         }, indent=2))
 
         for activity, warning in (("unknown", "Activity is unknown. The update can interrupt work."), ("busy", "Work is active. The update can interrupt it.")):
