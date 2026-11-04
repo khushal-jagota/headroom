@@ -66,7 +66,7 @@ class ProtocolRefused(ValueError):
     """The peer did not speak the agreed protocol; replay must not start."""
 
 
-def validate_identity(identity: ExecutorIdentity) -> None:
+def validate_identity(identity: ExecutorIdentity, *, check_versions: bool = True) -> None:
     if (
         not isinstance(identity.application_revision, str)
         or not identity.application_revision.strip()
@@ -85,7 +85,7 @@ def validate_identity(identity: ExecutorIdentity) -> None:
         )
     ):
         raise ProtocolRefused("identity versions and generation must be integers")
-    if (
+    if check_versions and (
         identity.protocol_version != PROTOCOL_VERSION
         or identity.spool_format_version != SPOOL_FORMAT_VERSION
     ):
@@ -94,7 +94,7 @@ def validate_identity(identity: ExecutorIdentity) -> None:
         raise ProtocolRefused("invalid executor identity")
 
 
-def parse_identity(payload: object) -> ExecutorIdentity:
+def parse_identity(payload: object, *, check_versions: bool = True) -> ExecutorIdentity:
     if not isinstance(payload, dict) or set(payload) != {
         "protocol_version",
         "application_revision",
@@ -110,5 +110,5 @@ def parse_identity(payload: object) -> ExecutorIdentity:
         if type(payload[key]) is not str:
             raise ProtocolRefused("identity text field has wrong type")
     identity = TypeAdapter(ExecutorIdentity).validate_python(payload)
-    validate_identity(identity)
+    validate_identity(identity, check_versions=check_versions)
     return identity

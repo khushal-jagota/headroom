@@ -14,7 +14,12 @@ import aiohttp
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
-from planner.execution_identity import ExecutorIdentity, ProtocolRefused, parse_identity
+from planner.execution_identity import (
+    ExecutorIdentity,
+    ProtocolRefused,
+    parse_identity,
+    validate_identity,
+)
 from planner.executor.clock import now_ms
 from planner.executor.configuration import (
     EXECUTOR_GENERATION_HEADER,
@@ -268,6 +273,8 @@ class Link:
         self._reading: asyncio.Task[None] | None = None
         self._down = False
         self.last_received_at_ms = now_ms()
+        self.refusal: JsonObject | None = None
+        self.received: Callable[[int], None] | None = None
         self._capacity = asyncio.Semaphore(MAX_TRANSFERS)
 
     def on(
@@ -397,8 +404,17 @@ class Link:
                 if self.is_closing():
                     raise ConnectionError("executor generation revoked")
                 self.last_received_at_ms = now_ms()
+                if self.received is not None:
+                    self.received(self.last_received_at_ms)
                 if message.kind is WireMessageKind.protocol_refused:
-                    raise ProtocolRefused("executor protocol refused")
+                    error = ProtocolRefused(
+                        str(message.payload.get("reason", "executor protocol refused"))
+                    )
+                    self.refusal = message.payload
+                    for pending in self._pending.values():
+                        if not pending.done():
+                            pending.set_exception(error)
+                    raise error
                 future = self._pending.get(message.request_id)
                 if future is not None:
                     if not future.done():
@@ -454,6 +470,7 @@ async def dial_link(
 async def accept_link(
     stream: ControlMessageStream,
     admit: Callable[[ExecutorHealth, Link], Awaitable[ExecutorIdentity]],
+    inspect_identity: Callable[[ExecutorIdentity], JsonObject | None] | None = None,
 ) -> Link:
     """Read and validate the handshake before giving a generation to the owner."""
     link = None
@@ -462,7 +479,14 @@ async def accept_link(
             hello = await stream.receive()
             if hello.kind is not WireMessageKind.hello:
                 raise ProtocolRefused("executor handshake required")
-            identity = parse_identity(hello.payload.get("identity"))
+            identity = parse_identity(hello.payload.get("identity"), check_versions=False)
+            refusal = inspect_identity(identity) if inspect_identity is not None else None
+            if refusal is not None:
+                await stream.send(
+                    WireMessage(WireMessageKind.protocol_refused, hello.request_id, refusal)
+                )
+                raise ProtocolRefused(str(refusal["reason"]))
+            validate_identity(identity)
             health = type_adapter(ExecutorHealth).validate_python(hello.payload)
             if health.identity != identity:
                 raise ProtocolRefused("identity coercion refused")

@@ -204,7 +204,14 @@ class MacRuns:
 
     def assign_child(self, start: ResolvedConversationStart) -> ChildReference:
         if self.identity is None or not self.ready:
-            raise BackendSpawnFailed("The Mac executor has no reconciled connection")
+            from planner.execution_identity import TicketLocale
+            from planner.tickets.locale_configuration import execution_unavailable_reason
+
+            conn = db.connect(self.db_path)
+            try:
+                raise BackendSpawnFailed(execution_unavailable_reason(conn, TicketLocale.macos))
+            finally:
+                conn.close()
         child = ChildReference(
             self.identity.executor_incarnation, str(uuid4()), start.conversation_id
         )

@@ -517,8 +517,7 @@ async def send_to_ticket_conversation(
     if not locale_configuration.can_execute_locale(conn, ticket.locale):
         raise PlannerError(
             ErrorCode.validation,
-            f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
-            f"this {locale_configuration.CURRENT_EXECUTION_LOCALE.value} machine",
+            locale_configuration.execution_unavailable_reason(conn, ticket.locale),
             {
                 "ticket_id": ticket_id,
                 "locale": ticket.locale.value,

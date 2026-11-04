@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -97,7 +97,29 @@ def test_named_agents_remain_refused_through_hosted_ingress(tmp_path: Path) -> N
             )
             assert response.status_code == 400
             assert response.json()["error"]["code"] == "agent_forbidden"
-        assert client.get("/api/updates").json()["configured"] is True
+        baseline = json.loads(json.dumps(asdict(app.state.updates.status())))
+        result = client.get("/api/updates").json()
+        assert result == {**baseline, "mac_status": None}
+        from types import SimpleNamespace
+
+        mac_status = {
+            "connection_state": "disconnected",
+            "last_contact_at_ms": 1234,
+            "identity": None,
+            "refusal": {"reason": "Mac needs update"},
+        }
+        app.state.executor_endpoint = SimpleNamespace(health=lambda: mac_status)
+        assert client.get("/api/updates").json() == {**baseline, "mac_status": mac_status}
+        response = client.get(
+            "/api/updates",
+            headers={
+                "tailscale-user-login": "owner@example.test",
+                "X-Plan-Actor": "worker",
+                "X-Plan-Ticket-ID": "t",
+            },
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "agent_forbidden"
 
 
 def test_pinned_request_survives_new_publication_and_cannot_be_claimed_after_cancel(

@@ -66,6 +66,12 @@ A stop counts only when the Mac's final stop receipt arrives, after all of that 
 Each machine reads its own backends' model lists. The VPS keeps the Mac's last answer, so pickers for Mac Tickets still work while the Mac is offline. [Conversations](conversations.md) covers the picker.
 
 The executor health read shows whether the Mac is connected and ready, and when the VPS last heard from it.
+A version refusal shows “Mac needs update” with both versions instead of a generic disconnection.
+Mac Tickets that cannot start use the same reason. Last contact and refusal survive a server restart.
+A compatible reconnect clears the refusal. Until then, it describes the last contact and does not prove that the Mac is online.
+
+The single update answer includes Mac status beside the VPS result. An update completes when the VPS is done.
+New Mac software also exposes the refusal in its local status. This does not start an update.
 
 ## What runs on the Mac
 
