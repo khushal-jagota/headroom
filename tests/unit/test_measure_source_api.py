@@ -484,15 +484,16 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "unknown",
         )
 
-        # Runtime parsing order is unchanged: source/measure syntax precedes authority;
-        # goal edits check ownership before inspecting authored content.
+        # Intake parses assignment context before permission checks. Authored fields
+        # reach command validation only after the request passes intake.
         invalid(
             client.post("/api/measure-sources", json=guessed_source, headers=foreign_headers),
             "$.responsible.goal_id",
         )
-        invalid(
-            client.post("/api/measures", json=guessed_measure, headers=foreign_headers), "unknown"
-        )
+        denied = client.post("/api/measures", json=guessed_measure, headers=foreign_headers)
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+        assert sentinel not in denied.text
         assert (
             client.post("/api/measures", json=measure_body, headers=foreign_headers).json()[
                 "error"
