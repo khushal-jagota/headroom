@@ -21,6 +21,8 @@ owner asks (now or when idle) → pinned request → host runner → admit → s
 - **The owner's install request.** A small file beside the live data, outside the database and its snapshots, and the update actions in the shell status pill.
 - **The lifecycle record.** Durable evidence of each install attempt and how it ended. The status pill, the [VPS](vps.md) summary, and Chief read it.
 
+The test suites run on several processes at once. Each test process builds the current database once by replaying every migration, then copies it into each new test database; a test of a migration, or of a database that already holds data, still gets the real replay.
+
 ## What a release needs from the host
 
 A release brings its own Python, so installation never runs a package installer and the host's Python does not matter. Packaging refuses a native library it cannot resolve; that is a broken release, not something the host repairs. Before publication, a separate proof runs the archive on a minimal Debian root with no Python 3.12 and no network.
