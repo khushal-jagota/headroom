@@ -271,6 +271,9 @@ def run(browser, urls):
             // on the slot can be a height animation that outlived its swap.
             heightEffects: slot.getAnimations()
               .filter((animation) => animation.transitionProperty === undefined).length,
+            heightDuration: slot.getAnimations()
+              .find((animation) => animation.transitionProperty === undefined)
+              ?.effect?.getTiming().duration ?? null,
           });
           if (ms < duration) requestAnimationFrame(step);
           else { window.__slotFrames = samples; window.__slotDone = true; }
@@ -383,12 +386,19 @@ def run(browser, urls):
     expect(status).to_contain_text("Deployment outcome unknown")
     card = status.bounding_box()
     assert card and abs(entering[-1]["height"] - (card["height"] + 8)) < 1.5, (card, entering[-1])
-    # rAF samples span different time intervals across displays. Match the
-    # neighboring continuity proof's per-16ms bound, with one pixel for rounded
-    # geometry and integer elapsed timestamps; a one-frame intrinsic-size snap
-    # still exceeds this limit.
+    # The height effect uses cubic-bezier(.4,.02,.2,1), whose progress slope is
+    # below three. Scale that bound by the observed distance and effect duration,
+    # rather than the old copy's pixel velocity. Keep one pixel for rounded geometry.
+    height_durations = [sample["heightDuration"] for sample in entering
+                        if isinstance(sample["heightDuration"], (int, float))
+                        and sample["heightDuration"] > 0]
+    assert height_durations, entering
+    distance = max(sample["height"] for sample in entering) - min(sample["height"] for sample in entering)
+    assert distance > 2, entering
+    assert sum(1 < sample["height"] < entering[-1]["height"] - 1
+               for sample in entering) >= 3, entering
     assert all(abs(current["height"] - previous["height"])
-               < 8 * max(1, (current["ms"] - previous["ms"]) / 16) + 1
+               < 3 * distance * max(1, current["ms"] - previous["ms"]) / min(height_durations) + 1
                for previous, current in zip(entering, entering[1:], strict=False)), entering
     assert abs(entering[-1]["height"] - entering[-3]["height"]) < 1, entering[-4:]
     assert entering[-1]["heightEffects"] == 0, entering[-4:]

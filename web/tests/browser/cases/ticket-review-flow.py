@@ -793,7 +793,11 @@ def run(browser, urls):
     page.locator("[data-ticket-backlog-action]").click()
     page.wait_for_function("window.__commandWait==='pending'")
     assert backlog_writes == [{"action": "backlog", "body": {}}]
-    expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
+    # Confirmed writes refetch the loaded body before source publication. The UI
+    # can show that result while scoped render evidence still waits for its batch.
+    expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Resume ticket")
+    assert ticket["is_backlogged"] is True
+    assert page.evaluate("window.__commandWait") == "pending"
     page.evaluate("window.__batch()")
     expect(page.locator("[data-ticket-backlogged]")).to_have_text("Backlogged")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Resume ticket")
