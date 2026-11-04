@@ -76,12 +76,17 @@ def admit_command(
     writing = method not in ('GET', 'HEAD', 'OPTIONS')
     target = None
     own = False
-    if family in ('schedules', 'feedback'):
-        return  # Separate sweep items retain their current admission.
     if family == 'messages' and writing:
         admit_message(conn, principal, _principal(body.get('target')))
         return
-    if family == 'tickets':
+    if family == 'feedback' and writing:
+        if route.endswith('/use'):
+            from planner.tickets.api import body_str
+
+            target, own = authority.ticket(body_str(dict(body), 'ticket_id')), True
+        else:
+            target = authority.owner_only('feedback')
+    elif family == 'tickets':
         from planner.managers.assignment import normalize_assignment
 
         body = normalize_assignment(dict(body))

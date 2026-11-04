@@ -39,7 +39,7 @@ The holder of a parked proposal must be Khushal, Chief for a Chief-assigned Tick
 
 ## Schedules, skills, and settlement
 
-Schedules, skills, Worker types, and projects are owner-level configuration. Khushal and Chief stand above them. Managers and Workers do not gain schedule control by being assigned the Tickets a schedule will create. A Manager’s Project edit does update the Project on schedules already assigned to that Manager. That derived write changes the Project and the timestamp. It does not enable a schedule or rewrite the rest of the template.
+Skills, Worker types, and projects are owner-level configuration. Khushal and Chief stand above them.
 
 Settlement is tighter than the general rule. Only the owner may settle or reopen an ordinary Manager. Chief cannot settle, and Chief can never be settled. Settlement changes the rail. It does not stop children. See [Managers and Chief](managers.md).
 

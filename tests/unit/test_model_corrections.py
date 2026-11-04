@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.executor_catalog import ScriptedBackendSnapshots
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.contracts import ConversationBackendKey as Backend
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL

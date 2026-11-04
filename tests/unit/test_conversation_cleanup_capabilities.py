@@ -38,7 +38,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.measure_sources.contracts import SourceRuntime
 from planner.runtime.workspaces import register_workspace_root, workspace_root_for_connection
-from planner.scheduled_tickets.registry import build_participants
+from planner.measure_sources.registry import build_participants
 from planner.server_lifecycle import runtime as application_runtime
 
 

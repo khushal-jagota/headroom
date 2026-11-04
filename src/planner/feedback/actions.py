@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
 
 from planner.core.errors import ErrorCode, PlannerError
 from planner.feedback import data
@@ -54,12 +53,9 @@ def use_feedback(
     *,
     ticket_id: str,
     now: int,
-    admit: Callable[[], None] | None = None,
 ) -> list[FeedbackNote]:
     with data.transaction(conn):
         ids = require_feedback_ids(feedback_ids)
-        if admit is not None:
-            admit()
         ticket = conn.execute("SELECT 1 FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
         if ticket is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {"id": ticket_id})

@@ -40,8 +40,8 @@
  $effect(()=>{void readBackends().then(value=>backends=value).catch(()=>undefined);});
  const sessions=createGoalRequestSessions();
  let editor=$derived(createGoalEditor(id));
- function save(patch:Omit<GoalEditBody,'expected_revision'>,revision?:number){return editor.write(patch,revision);}
- function updateBlock(blockId:string,update:Parameters<typeof editor.updateBlock>[1],revision?:number){return editor.updateBlock(blockId,update,revision);}
+ function save(patch:GoalEditBody){return editor.write(patch);}
+ function updateBlock(blockId:string,update:Parameters<typeof editor.updateBlock>[1]){return editor.updateBlock(blockId,update);}
  const textDrafts = new Map<string, PageTextDraft>();
  const authorText: NonNullable<PageContext['authorText']> = {
   draft(blockId, field) {
@@ -56,10 +56,10 @@
   },
   begin(blockId) {
    if (!goal || goal.id !== id) throw new Error('The goal is not ready for this edit.');
-   const ownerId = goal.id, revision = goal.revision;
+   const ownerId = goal.id;
    const captured = createGoalEditor(ownerId);
    return async update => {
-    try { return await captured.updateBlock(blockId, update, revision); }
+    try { return await captured.updateBlock(blockId, update); }
     catch (failure) { void queryClient.invalidateQueries(); throw failure; }
    };
   }
@@ -67,7 +67,7 @@
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
   goalId:()=>id,goal:()=>goal,readings:()=>readings.data,narrow:()=>narrow,sessions:()=>sessions,
  },{manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText}));
- async function change(patch:Omit<GoalEditBody,'expected_revision'>){try{await save(patch);error=null;}catch(e){error=e;}}
+ async function change(patch:GoalEditBody){try{await save(patch);error=null;}catch(e){error=e;}}
  async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson<DeliveredMessage>(`/api/goals/${encodeURIComponent(id)}/conversation/send`,{method:'POST',body,responseMetadata});const view=navigation?.state.effective;const delivered=navigation?await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'send goal message'):await operation();await detail.refetch();return delivered;}
  async function reset(){const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson(`/api/goals/${encodeURIComponent(id)}/conversation/reset`,{method:'POST',responseMetadata});const view=navigation?.state.effective;if(navigation)await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'reset goal conversation');else await operation();selectedPastConversationId=null;await detail.refetch();}
  let display=$derived(resolveGoalPrimaryDisplay(goal));

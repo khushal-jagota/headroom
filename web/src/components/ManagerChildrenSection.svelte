@@ -20,7 +20,7 @@
   let { principal, tickets, publication, filter, onHover, onLeave }: {
     principal: ManagerPrincipal;
     tickets?: readonly (WorkItemTicketFacts & {is_backlogged:boolean})[];
-    publication?: import("../lib/navigation/collection").NavigationPublication;
+    publication?: import("../lib/navigation/publication").NavigationPublication;
     filter: ManagerChildFilter;
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave: () => void;

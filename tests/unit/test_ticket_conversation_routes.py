@@ -15,11 +15,11 @@ from sqlite3 import Connection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
-from tests.support.principals import OWNER_PRINCIPAL
-
-from planner.conversation.in_memory_conversation_system import (
+from tests.support.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
+from tests.support.principals import OWNER_PRINCIPAL
+
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema

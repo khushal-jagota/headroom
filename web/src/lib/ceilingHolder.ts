@@ -22,8 +22,8 @@ export function holderOptionsFor(
   if (manager) options.push({ value: manager.id, label: "Manager", detail: manager.title });
   options.push({ value: "chief", label: "Chief" });
   const current = holderValue(holder);
-  if (!options.some((option) => option.value === current)) {
-    options.push({ value: current, label: holder?.kind === "manager" ? "Manager" : "Worker", detail: holder?.id || current });
+  if (holder?.kind === "manager" && !options.some((option) => option.value === current)) {
+    options.push({ value: current, label: "Manager", detail: holder.id });
   }
   return options;
 }
@@ -40,11 +40,9 @@ export function holderLabelFor(
 }
 
 export function holderFromValue(
-  value: string,
-  manager: { id: string; title: string } | null
+  value: string
 ): Principal {
   if (value === "owner") return OWNER_HOLDER;
   if (value === "chief") return CHIEF_HOLDER;
-  if (manager && value === manager.id) return { kind: "manager", id: value };
-  return { kind: value.startsWith("si_") ? "manager" : "ticket", id: value };
+  return { kind: "manager", id: value };
 }

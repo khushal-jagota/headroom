@@ -80,29 +80,6 @@ def require_restartable(
     )
 
 
-def _require_same_restart_target(
-    conn: sqlite3.Connection,
-    principal: Principal,
-    expected: Ticket,
-) -> Ticket:
-    current = tickets_data.read_ticket(conn, expected.id)
-    if (
-        current.worker_step_claim is not expected.worker_step_claim
-        or current.worker_step_claim_revision != expected.worker_step_claim_revision
-        or current.conversation_id != expected.conversation_id
-        or tickets_data.employee_launch_configuration(current)
-        != tickets_data.employee_launch_configuration(expected)
-        or (current.locale, current.project_id, current.manager_id, current.manager_kind)
-        != (expected.locale, expected.project_id, expected.manager_id, expected.manager_kind)
-    ):
-        raise PlannerError(
-            ErrorCode.already_running,
-            "the Ticket moved while it was being restarted",
-            {"ticket_id": expected.id},
-        )
-    return require_restartable(conn, principal, expected.id)
-
-
 async def restart_worker(
     conversations: ConversationSystem,
     conn: sqlite3.Connection,
@@ -169,7 +146,8 @@ async def _prepare_worker_restart(
     killed_conversation_id = ticket.conversation_id
     killed_conversation_looked_running = False
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        _require_same_restart_target(conn, principal, ticket)
+        ticket = require_restartable(conn, principal, ticket_id)
+        killed_conversation_id = ticket.conversation_id
         if killed_conversation_id is not None:
             killed_conversation_looked_running = await conversations.is_running(
                 killed_conversation_id
@@ -199,37 +177,25 @@ async def _prepare_worker_restart(
             write_now = now()
             conn.execute("BEGIN IMMEDIATE")
             try:
-                _require_same_restart_target(conn, principal, ticket)
+                ticket = require_restartable(conn, principal, ticket_id)
                 if ticket.worker_step_claim in {
                     WorkerStepClaim.out,
                     WorkerStepClaim.errored,
                 }:
-                    given_back = tickets_data.release_worker_step_claim(
+                    tickets_data.release_worker_step_claim(
                         conn,
                         ticket_id,
                         expected_claim=ticket.worker_step_claim,
                         expected_claim_revision=ticket.worker_step_claim_revision,
                         now=write_now,
                     )
-                    if not given_back:
-                        raise PlannerError(
-                            ErrorCode.already_running,
-                            "the Ticket moved while it was being restarted",
-                            {"ticket_id": ticket_id},
-                        )
-                    if killed_conversation_id is not None:
-                        unlinked = tickets_data.clear_ticket_conversation_link(
+                    if ticket.conversation_id is not None:
+                        tickets_data.clear_ticket_conversation_link(
                             conn,
                             ticket_id,
-                            expected_conversation_id=killed_conversation_id,
+                            expected_conversation_id=ticket.conversation_id,
                             now=write_now,
                         )
-                        if not unlinked:
-                            raise PlannerError(
-                                ErrorCode.already_running,
-                                "the Ticket moved while it was being restarted",
-                                {"ticket_id": ticket_id},
-                            )
                 if write_employee_configuration is not None:
                     write_employee_configuration(conn, write_now)
                 conn.execute("COMMIT")

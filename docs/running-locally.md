@@ -10,7 +10,7 @@ The install commands live in the repository [README](../README.md). They create 
 
 The database path defaults to `data/planning.db`. Logs, the dispatcher lock, and backups default under `data/` as well. That directory is gitignored runtime state. Production uses a different filename and directory, `~/Deployments/Panels/current/data/planner.db`, described in [Environments](environments.md). Do not point a local checkout at the live database to “just look.”
 
-With dispatch enabled, which is the default, this process owns the readiness loop, the schedule loop, and the manager-wake loop, behind one machine lock. A second serve on the same lock does not become a second scheduler.
+With dispatch enabled, which is the default, this process owns the readiness loop, the measure-source schedule loop, and the manager-wake loop, behind one machine lock. A second serve on the same lock does not become a second scheduler.
 
 ## Before any agent work
 

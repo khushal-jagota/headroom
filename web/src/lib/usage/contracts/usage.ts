@@ -94,7 +94,6 @@ export type UsageSummary = {
 };
 
 export const USAGE_CONTRACT_VERSION = 5 as const;
-export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 export const UsageDay = {
   make(value: string): UsageDay {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new TypeError("Expected YYYY-MM-DD");

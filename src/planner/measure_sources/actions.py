@@ -15,9 +15,9 @@ from planner.measure_sources.contracts import (
     SourceScheduleBody,
     SourceScriptBody,
 )
+from planner.measure_sources.local_time import validate_local_time
 from planner.measure_sources.notices import notify_episode
 from planner.measure_sources.transaction import transaction
-from planner.scheduled_tickets.logic import validate_local_time
 
 
 def _revision(source: MeasureSource, expected: int) -> None:

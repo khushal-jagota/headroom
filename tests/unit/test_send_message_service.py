@@ -10,6 +10,9 @@ from typing import cast
 
 import pytest
 from tests.support.conversation_system_under_test import open_conversation_system_under_test
+from tests.support.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 
 from planner.conversation.contracts import (
     ConversationBackendKey,
@@ -21,9 +24,6 @@ from planner.conversation.contracts import (
     PromptDeliverySuppressed,
 )
 from planner.conversation.events import ExplicitReplyMissingEventPayload, PromptEventPayload
-from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationSystem,
-)
 from planner.conversation.message_content import (
     MessageContent,
     message_content_text,

@@ -26,7 +26,7 @@ def edit(conn: Connection, goal: Goal, *, now: int = NOW, **changes: Any) -> Goa
     return actions.update_goal(
         conn,
         goal.id,
-        {"expected_revision": goal.revision, **changes},
+        {**changes},
         principal=OWNER_PRINCIPAL,
         now=now,
     )

@@ -34,13 +34,13 @@ Backlog is an explicit pause of the next automatic Worker step. The stage, the p
 
 The Ticket page offers Backlog ticket and Resume ticket. Each has one writer. The browser sends a hash of the record it displayed, and a stale request is refused inside the write.
 
-Delete removes the Ticket’s record. Files under the Ticket’s file tree survive. The browser does not offer delete. `panels ticket delete` does, and it refuses while a Worker step or a live turn still needs the Ticket, unless the caller forces it or a Manager is deleting its own child. A Ticket that is another Ticket’s ceiling holder cannot be deleted out from under that review.
+Delete removes the Ticket’s record. Files under the Ticket’s file tree survive. The browser does not offer delete. `panels ticket delete` does, and it refuses while a Worker step or a live turn still needs the Ticket, unless the caller forces it or a Manager is deleting its own child.
 
 ## Where the Worker may run
 
 Each Ticket stores a locale, `vps` or `macos`. Creation uses an explicit locale when one is given. Without an explicit locale, creation selects `vps`. The chosen backend is checked against that locale before the Ticket exists. The Mac compatibility set starts empty, so Mac creation refuses until that configuration allows a backend. The VPS refuses to start a Ticket whose locale is somewhere else.
 
-`panels ticket move` changes the locale of an idle Ticket: no Worker step, active turn, or accepted message may still need the current machine. The conversation and history stay. Repository files do not travel. Existing Tickets and schedules keep their stored locales.
+`panels ticket move` changes the locale of an idle Ticket: no Worker step, active turn, or accepted message may still need the current machine. The conversation and history stay. Repository files do not travel. Existing Tickets keep their stored locales.
 
 ## Assignment
 
@@ -48,7 +48,7 @@ A Ticket names Chief or one ordinary Manager. That assignment is who the work si
 
 ## What feeds a Ticket, and what it feeds
 
-People, Chief, Managers, and due schedules create Tickets. Blockers are named at creation or added later. The readiness loop feeds the conversation its next opener when the Ticket reads empty. The Worker feeds proposals. The resolver feeds settled stage text and the next stage. Attention flags feed Review and notifications. Artifacts land in the Ticket file tree and open in the viewer.
+People, Chief, and Managers create Tickets. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate from Ticket creation. Blockers are named at creation or added later. The readiness loop feeds the conversation its next opener when the Ticket reads empty. The Worker feeds proposals. The resolver feeds settled stage text and the next stage. Attention flags feed Review and notifications. Artifacts land in the Ticket file tree and open in the viewer.
 
 Settled fields remember who approved the current text. Explicit approval says Approved by Khushal, Chief, or the Manager’s title. A field that settled below the ceiling says Auto-accepted, including a Brief that settled at creation. Older rows and some direct completions say Approval unknown. Unknown is not auto-accepted. An edit that changes the text clears the approval. An identical edit keeps it.
 

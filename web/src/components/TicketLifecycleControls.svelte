@@ -6,7 +6,7 @@
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
-  let { ticket, terminal, assertCurrent, runCommand, leading }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown>; leading?: Snippet } = $props();
+  let { ticket, terminal, runCommand, leading }: { ticket: TicketDetail; terminal: boolean; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown>; leading?: Snippet } = $props();
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -15,12 +15,9 @@
     busy = true;
     error = null;
     try {
-      assertCurrent?.();
       const request=(responseMetadata:ResponseMetadata)=>mutateJson(`/api/tickets/${encodeURIComponent(ticket.id)}/${action}`, {
         method: "POST",responseMetadata,
-        body: {
-          ...(ticket.record_sha256 ? { expected_record_sha256: ticket.record_sha256 } : {})
-        }
+        body: {}
       });
       await (runCommand ? runCommand(request) : request({}));
     } catch (err) {

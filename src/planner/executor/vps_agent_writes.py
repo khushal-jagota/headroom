@@ -61,22 +61,23 @@ def write_ticket_mutation(
     body = args.get("body")
     if not isinstance(body, dict):
         raise PlannerError(ErrorCode.validation, "ticket mutation needs a body", {})
-    if write.operation != "feedback.use":
-        ticket_id = args.get("ticket_id")
-        params = {"ticket_id": ticket_id}
-        route, method = "/api/tickets/{ticket_id}", "PATCH"
-        if write.operation == "ticket.create":
-            route, method, params = "/api/tickets", "POST", {}
-        elif write.operation == "ticket.propose":
-            route, method = route + "/propose", "POST"
-        elif write.operation in ("ticket.block", "ticket.unblock"):
-            route = "/api/collections/{collection}/{container_id}/{member_id}"
-            method = "PUT" if write.operation == "ticket.block" else "DELETE"
-            params = {
-                "collection": "blockers", "container_id": ticket_id,
-                "member_id": args.get("blocker_id"),
-            }
-        admit_command(connection, principal, method, route, params, body)
+    ticket_id = args.get("ticket_id")
+    params = {"ticket_id": ticket_id}
+    route, method = "/api/tickets/{ticket_id}", "PATCH"
+    if write.operation == "feedback.use":
+        route, method, params = "/api/feedback/use", "POST", {}
+    elif write.operation == "ticket.create":
+        route, method, params = "/api/tickets", "POST", {}
+    elif write.operation == "ticket.propose":
+        route, method = route + "/propose", "POST"
+    elif write.operation in ("ticket.block", "ticket.unblock"):
+        route = "/api/collections/{collection}/{container_id}/{member_id}"
+        method = "PUT" if write.operation == "ticket.block" else "DELETE"
+        params = {
+            "collection": "blockers", "container_id": ticket_id,
+            "member_id": args.get("blocker_id"),
+        }
+    admit_command(connection, principal, method, route, params, body)
     if write.operation == "feedback.use":
         from planner.feedback.api import write_use_feedback
 
@@ -288,7 +289,6 @@ class AgentWrites:
             reservation = AcceptanceReceipt(
                 envelope.sender_id,
                 envelope.submission_id,
-                envelope.payload_sha256,
                 ReceiptDisposition.uncertain,
                 result,
                 now_ms(),
@@ -314,14 +314,9 @@ class AgentWrites:
             if result.get("fate") == "uncertain"
             else ReceiptDisposition.accepted
         )
-        if disposition is ReceiptDisposition.refused:
-            from planner.executor.refusals import record_refused_write
-
-            record_refused_write(conn, self.db_path, envelope, result)
         receipt = AcceptanceReceipt(
             envelope.sender_id,
             envelope.submission_id,
-            envelope.payload_sha256,
             disposition,
             result,
             now_ms(),
