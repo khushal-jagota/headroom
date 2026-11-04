@@ -115,7 +115,7 @@ struct GoalChartPreference: Equatable { var range = "month"; var expanded = fals
     private var draftBasis: GoalManualState?
     func beginEditing() {
         guard !busy, pending == nil else { return }
-        draftBasis = state; draft = state?.value(cumulative: cumulative).map { String($0) } ?? ""
+        draftBasis = state; draft = state?.value(cumulative: cumulative).map(GoalChartPresentation.plainNumber) ?? ""
     }
     func prepare() async -> Bool {
         guard !busy, pending == nil else { return false }

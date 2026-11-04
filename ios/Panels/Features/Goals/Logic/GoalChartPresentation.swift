@@ -68,6 +68,14 @@ enum GoalChartPresentation {
         let fraction = value.rounded(.towardZero) == value ? 0 : parts[0].split(separator: ".").dropFirst().first?.count ?? 0
         return max(Int(block["format"]["decimals"].number ?? 0), fraction - (parts.count > 1 ? Int(parts[1]) ?? 0 : 0))
     }
+    /// JavaScript's `String(number)`: whole numbers carry no ".0", and exponents use "e+21" / "e-7".
+    static func plainNumber(_ value: Double) -> String {
+        if value == 0 { return "0" }
+        if value == value.rounded(), abs(value) < 1e21 { return String(format: "%.0f", value) }
+        let text = "\(value)"
+        guard let e = text.firstIndex(of: "e"), let exponent = Int(text[text.index(after: e)...]) else { return text }
+        return String(text[..<e]) + "e" + (exponent < 0 ? "-" : "+") + String(abs(exponent))
+    }
     static func manualLiteral(_ block: GoalJSON, value: Double?) -> String? {
         guard let value, manualPrecision(block, value: value) > 20 else { return nil }
         return String(value) + suffix(block)
