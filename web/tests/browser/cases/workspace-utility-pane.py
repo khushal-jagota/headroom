@@ -1885,12 +1885,14 @@ def verify_owner_updates(browser, url, *, problem_only=False):
                 failed_request = "The runner refused the previous attempt."
                 backend.store.transition(receipt.request_id, frozenset({"installing"}), "failed", detail=failed_request)
                 signal()
-                expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
+                assert backend.store.read().state == "failed"
+                assert backend.store.read().detail == failed_request
+                expect(card.get_by_role("alert")).to_have_text(failed_request)
                 card.get_by_role("button", name="Start update", exact=True).click()
                 expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
                 expect(card.locator(".deployment-detail")).to_have_text(failure)
                 expect(card.locator(".deployment-detail")).to_be_visible()
-                expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
+                expect(card.get_by_role("alert")).to_have_text(failed_request)
                 assert len(backend.provider.dispatched) == before_dispatches + 1
                 page.screenshot(path=str(evidence / "problem-with-retry-confirmation.png"))
                 card.get_by_role("button", name="Proceed with update", exact=True).click()
