@@ -82,6 +82,7 @@ from planner.ideas.api import router as ideas_router
 from planner.managers.api import legacy_router as legacy_managers_router
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
+from planner.measure_sources.participants import SlotParticipantFactory
 from planner.measures.api import router as measures_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
@@ -98,14 +99,8 @@ from planner.previews.transport import PreviewTransport
 from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
 from planner.runtime.workspaces import register_workspace_root
-from planner.scheduled_tickets.api import router as scheduled_tickets_router
-from planner.scheduled_tickets.participants import SlotParticipantFactory
 from planner.server_lifecycle.runtime import application_runtime
 from planner.skill_sources import provision_workspace_skills
-from planner.skill_versions import (
-    reconcile_managed_skill_versions,
-    reconcile_provisional_worker_step_bindings,
-)
 from planner.tickets.api import router as tickets_router
 from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
@@ -305,8 +300,6 @@ def create_app(
 
                     ExecutorStore.interrupt_after_restart(audit_conn)
                     audit_conn.commit()
-                    reconcile_managed_skill_versions(audit_conn)
-                    reconcile_provisional_worker_step_bindings(audit_conn)
                 finally:
                     audit_conn.close()
 
@@ -575,7 +568,6 @@ def create_app(
         managers_router,
         legacy_managers_router,
         ideas_router,
-        scheduled_tickets_router,
         measure_sources_router,
         measures_router,
         datasets_router,

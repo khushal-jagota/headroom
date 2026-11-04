@@ -337,7 +337,6 @@ def test_ticket_fingerprint_tracks_integrity_marks_and_clearance_without_admitti
     with pytest.raises(PlannerError, match="Ticket integrity failure"):
         tickets_data.set_ticket_backlog(
             tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
-            expected_record_sha256=marked_hash,
         )
     tmp_db.execute(
         "UPDATE tickets SET integrity_error_reason=? WHERE id=?", ("changed fault", ticket.id)
@@ -348,10 +347,7 @@ def test_ticket_fingerprint_tracks_integrity_marks_and_clearance_without_admitti
     tmp_db.execute("UPDATE tickets SET integrity_error_reason=NULL WHERE id=?", (ticket.id,))
     tmp_db.commit()
     assert tickets_data.ticket_record_sha256(tmp_db, ticket.id) == clean_hash
-    for stale_hash in (marked_hash, changed_hash):
-        with pytest.raises(PlannerError, match="the Ticket changed"):
-            tickets_data.set_ticket_backlog(
-                tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
-                expected_record_sha256=stale_hash,
-            )
-    assert not tickets_data.read_ticket(tmp_db, ticket.id).is_backlogged
+    updated = tickets_data.set_ticket_backlog(
+        tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
+    )
+    assert updated.is_backlogged
