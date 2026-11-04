@@ -119,8 +119,9 @@ xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
 ```
 
 `PanelsNotificationUITests` holds the notification and opt-in conversation UI
-scenarios. `PanelsTests/Fixtures` contains unmodified responses
-captured with read-only GETs on 2026-10-22. Tests protect two previously uncovered
+scenarios. `PanelsTests/Fixtures` contains response samples from read-only GETs on
+2026-10-22; the full Ticket sample includes the current saved workflow controls.
+Tests protect two previously uncovered
 wire-contract risks: snake-case/nullable/grouping and page decoding; and the
 review/detail/artifact response shapes. One tiny parser test protects heartbeat
 comments being mistaken for changes. Setup is one fixture loader, with no backend
