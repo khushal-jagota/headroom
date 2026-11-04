@@ -1066,6 +1066,7 @@ def create_ticket(
             if stated_ceiling is None
             else worker_type_definition.resolve_ceiling(stated_ceiling)
         )
+        admission.validate_creation_ceiling(ceiling)
         initial_proposal_route = proposal_routing.route_proposal(
             stage=initial_stage,
             ceiling=ceiling,

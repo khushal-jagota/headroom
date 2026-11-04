@@ -6,6 +6,8 @@ A proposal is the Worker asking for the current stage’s blank to become real. 
 
 The ceiling is the last stage the Worker may complete on its own. A new Ticket starts with the ceiling on Brief unless creation sets it further down the ladder. While the current stage is still before that ceiling, a filed proposal settles immediately, the stage advances one step, and the field reads Auto-accepted. When the stage is at the ceiling or past it, the same filing parks. The stage does not move. The Ticket reads as awaiting approval, and the proposal is addressed to the ceiling holder.
 
+Creation refuses a Done ceiling with a validation error that asks the caller to choose an earlier stage. This rule applies at the shared creation function, for every caller and Worker type. Existing Tickets keep their ceilings. Later approvals and authorized ceiling edits can still select Done.
+
 The holder is who the parked proposal is for. It is the owner, Chief, or the Manager this Ticket is assigned to. Holding the review is narrower than general authority: Chief holds a review for a Chief-assigned Ticket, and a Manager holds a review only for its own child. Anyone who stands strictly above the Ticket may still approve or send it back. The holder says who is on the hook to look. It does not grant a private approval route.
 
 Stage ownership is a second, quieter choice, declared by the Worker type. A worker-owned stage is the Worker’s to fill. A user-owned stage gets one automatic opening turn when the Ticket becomes ready for it, and then the person and the Worker continue in the same conversation until the blank is filled or the person completes the gate directly. Ownership does not add a second kind of parking. The ceiling still decides whether a filed proposal waits.
