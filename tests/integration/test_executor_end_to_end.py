@@ -480,7 +480,7 @@ async def boot(
     reconnect_interval: float | None = None,
 ) -> ExecutorHarness:
     if reconnect_interval is not None:
-        # Only fixtures with short reconnect deadlines accelerate this timer.
+        # Tests with explicit disconnect barriers can shorten retry polling.
         monkeypatch.setattr(
             "planner.executor.mac_service.RECONNECT_INTERVAL_SECONDS", reconnect_interval
         )
@@ -1310,7 +1310,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     from planner.executor.protocol import as_object
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         try:
@@ -1393,7 +1393,7 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         try:
@@ -1627,7 +1627,7 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
     from planner.conversation.message_content import MessageFile, MessageText
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         try:
@@ -1689,7 +1689,7 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
     from planner.executor.protocol import ChildCommand, ChildOperation
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         entered, cleanup = asyncio.Event(), asyncio.Event()
@@ -1783,7 +1783,7 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
     from planner.conversation.snapshot import BackendSnapshotService
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         try:
@@ -2122,7 +2122,7 @@ def test_saved_answer_after_vps_restart_remains_unapplied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: AskKind
 ) -> None:
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         resume = None
@@ -2216,7 +2216,7 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: AskKind
 ) -> None:
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         resume = None
@@ -2512,7 +2512,7 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
     from planner.executor import catalog_relay
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch)
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         try:
             source = harness.mac.catalog.snapshots
             assert isinstance(source, ScriptedBackendSnapshots)

@@ -205,7 +205,7 @@ def capture_synthetic_state(current: Path, health_url: str, gate: Path) -> None:
 def check_selection() -> None:
     require_rehearsal()
     selection = json.loads((Path(os.environ["PANELS_GATE_DIR"]) / "selection.json").read_text())
-    if "tests/unit/test_conversation_codex_bindings.py" not in selection["unit"]:
+    if "tests/integration/test_conversation_codex_bindings.py" not in selection["integration"]:
         raise ValueError("rehearsal must exercise Codex bindings")
     if not selection["e2e"]:
         raise ValueError("rehearsal must exercise the E2E report boundary")

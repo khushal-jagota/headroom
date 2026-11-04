@@ -14,7 +14,7 @@ owner asks (now or when idle) → pinned request → host runner → admit → s
 
 ## What it is made of
 
-- **Publication.** A GitHub workflow on hosted machines. It runs the checks and suites against one commit, builds once, seals the archive, and proves it before anyone can install it.
+- **Publication.** A GitHub workflow on hosted machines. It runs the checks and suites against one commit, builds once, seals the archive, and proves it before anyone can install it. Domain checks include their permission behavior; shared or unknown changes select all default suites.
 - **The sealed release.** An archive plus a proof record. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages, including the Claude Code and Codex CLIs.
 - **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. Replacement changes only `app`. See [Environments](environments.md).
 - **The deployment runner.** A self-hosted GitHub runner on the VPS, used only to install.

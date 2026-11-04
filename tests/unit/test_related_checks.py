@@ -22,7 +22,7 @@ def history(tmp_path: Path) -> tuple[Path, str, Path]:
     run("config", "user.email", "tests@example.invalid")
     run("config", "user.name", "Selection test")
     for path in (
-        "tests/unit/test_feedback.py", "tests/unit/test_authority_matrix.py",
+        "tests/unit/test_feedback.py", "tests/unit/test_unrelated.py",
         "tests/integration/test_adapter.py", "tests/e2e/test_feedback.py",
         "tests/containment/test_contained_pytest.py",
         "web/tests/feedback.test.ts", "web/tests/feedback.test.mjs",
@@ -63,12 +63,12 @@ def release(history: tuple[Path, str, Path], edits: dict[str, str | None],
                           base if baseline == "initial" else baseline, mapping)
 
 
-def test_full_endpoint_union_includes_authority_and_rollback(
+def test_endpoint_selection_keeps_the_full_release_diff_and_rollback(
     history: tuple[Path, str, Path],
 ) -> None:
     root, base, mapping = history
     first = release(history, {"src/planner/feedback/api.py": "changed"})
-    assert first["unit"] == ["tests/unit/test_authority_matrix.py", "tests/unit/test_feedback.py"]
+    assert first["unit"] == ["tests/unit/test_feedback.py"]
     assert not first["broad"]
     second = release(history, {"docs/guide.md": "doc"})
     assert second["unit"] == first["unit"]  # not merely latest commit

@@ -340,9 +340,16 @@ def _pytest_probe(tmp_path: Path, body: str) -> tuple[subprocess.CompletedProces
     sentinel.write_text("original")
     suite = tmp_path / "suite"
     suite.mkdir()
+    # The child probes protect their synthetic account, not the developer account.
+    # The outer suite still bootstraps the complete native-home inventory.
     (suite / "conftest.py").write_text(
-        "from tests.support.skill_tree_protection.pytest_plugin import bootstrap\n"
-        "protection = bootstrap()\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "from tests.support.skill_tree_protection.inventory import capture_launch_inventory\n"
+        "from tests.support.skill_tree_protection.pytest_plugin import SkillTreeProtectionPlugin\n"
+        "inventory, baseline = capture_launch_inventory(\n"
+        "    dict(os.environ), Path.cwd(), account_home=Path(os.environ['HOME']))\n"
+        "protection = SkillTreeProtectionPlugin(inventory, baseline)\n"
         "def pytest_configure(config):\n"
         "    config.pluginmanager.register(protection, 'probe-protection')\n"
     )
