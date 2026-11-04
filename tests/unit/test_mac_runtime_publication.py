@@ -184,7 +184,28 @@ def test_workflow_requires_same_run_native_artifact_before_publication() -> None
     workflow = yaml.safe_load(
         (Path(__file__).parents[2] / ".github/workflows/deploy.yml").read_text()
     )
-    native = workflow["jobs"]["mac-runtime"]
+    operation = workflow["on"]["workflow_dispatch"]["inputs"]["operation"]
+    assert operation["default"] == "publish"
+    assert operation["options"] == ["publish", "adopt", "mac-build"]
+    jobs = workflow["jobs"]
+    # The isolated build runs even if publication preparation is skipped.
+    assert jobs["prepare"]["if"] == (
+        "${{ inputs.operation != 'mac-build' "
+        "&& (inputs.operation != 'adopt' || inputs.rehearsal) }}"
+    )
+    assert jobs["suites"]["needs"] == "prepare"
+    assert "if" not in jobs["suites"]
+    assert jobs["deploy"]["if"] == (
+        "${{ always() && inputs.operation != 'mac-build' "
+        "&& (inputs.operation != 'adopt' || inputs.rehearsal) }}"
+    )
+    assert jobs["adopt"]["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'adopt' "
+        "&& !inputs.rehearsal && github.ref == 'refs/heads/main' }}"
+    )
+    native = jobs["mac-runtime"]
+    assert "needs" not in native
+    assert native["if"] == "${{ inputs.operation != 'adopt' || inputs.rehearsal }}"
     # This is the documented arm64 label, not the unsupported macos-15-arm64 alias.
     assert native["runs-on"] == "macos-15"
     commands = "\n".join(step.get("run", "") for step in native["steps"])

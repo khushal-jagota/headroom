@@ -19,13 +19,14 @@ name: Publish checked app and adopt owner request
         required: false
         type: string
       operation:
-        description: Publish a candidate or adopt an owner request
+        description: Publish a candidate, build the Mac runtime, or adopt an owner request
         required: true
         default: publish
         type: choice
         options:
           - publish
           - adopt
+          - mac-build
       request_id:
         description: request id
         required: false
@@ -60,7 +61,7 @@ env:
   PANELS_REQUESTED_SHA: ${{ inputs.commit_sha || github.sha }}
 jobs:
   prepare:
-    if: ${{ inputs.operation != 'adopt' || inputs.rehearsal }}
+    if: ${{ inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -452,7 +453,7 @@ jobs:
         if: ${{ always() }}
   deploy:
     needs: [prepare, suites, mac-runtime]
-    if: ${{ always() && (inputs.operation != 'adopt' || inputs.rehearsal) }}
+    if: ${{ always() && inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
     runs-on: ubuntu-24.04
     env:
       PANELS_REHEARSAL: 'true'
