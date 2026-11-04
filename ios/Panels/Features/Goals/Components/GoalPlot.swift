@@ -32,6 +32,44 @@ private struct PlotLine: Shape {
     }
 }
 
+/// Touch inspection must coexist with the enclosing page's vertical pan. A
+/// zero-duration press observes the finger without claiming the scroll gesture.
+private struct GoalLineInspection: UIViewRepresentable {
+    let changed: (CGPoint) -> Void
+    let ended: (Bool) -> Void
+    let scrolling: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(); view.backgroundColor = .clear
+        let press = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.touch(_:)))
+        press.minimumPressDuration = 0; press.allowableMovement = .greatestFiniteMagnitude
+        press.cancelsTouchesInView = false; press.delegate = context.coordinator
+        view.addGestureRecognizer(press)
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) { context.coordinator.owner = self }
+    @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var owner: GoalLineInspection
+        private var origin = CGPoint.zero
+        private var isScrolling = false
+        init(_ owner: GoalLineInspection) { self.owner = owner }
+        @objc func touch(_ press: UILongPressGestureRecognizer) {
+            let point = press.location(in: press.view)
+            switch press.state {
+            case .began:
+                origin = point; isScrolling = false; owner.changed(point)
+            case .changed:
+                if abs(point.y - origin.y) > 12 && abs(point.y - origin.y) > abs(point.x - origin.x) { isScrolling = true }
+                if isScrolling { owner.scrolling() } else { owner.changed(point) }
+            case .ended: owner.ended(!isScrolling)
+            case .cancelled, .failed: owner.ended(false)
+            default: break
+            }
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+    }
+}
+
 struct GoalPlot: View {
     let block: GoalJSON
     let data: [GoalChartDatum]
@@ -148,17 +186,19 @@ struct GoalPlot: View {
                 }
                 .padding(.trailing, 32).padding(.bottom, 22)
                 .contentShape(Rectangle())
-                .simultaneousGesture(DragGesture(minimumDistance: block.kind == "bar" ? 12 : 0).onChanged { value in
-                    guard block.kind != "bar", !data.isEmpty else { return }
-                    if abs(value.translation.height) > 12 && abs(value.translation.height) > abs(value.translation.width) { active = nil; return }
-                    let fraction = max(0, min(1, value.location.x / max(1, geometry.size.width - 32)))
-                    active = data.enumerated().min { abs(($0.element.position ?? Double($0.offset) / Double(max(1, data.count - 1))) - fraction) < abs(($1.element.position ?? Double($1.offset) / Double(max(1, data.count - 1))) - fraction) }?.element.id
-                }.onEnded { value in
-                    guard block.kind != "bar" else { return }
-                    defer { active = nil }
-                    guard abs(value.translation.height) <= 12 || abs(value.translation.width) >= abs(value.translation.height) else { return }
-                    if let active, let select { select(active) }
-                })
+                .overlay {
+                    if block.kind != "bar" {
+                        GoalLineInspection(changed: { point in
+                            guard !data.isEmpty else { return }
+                            let fraction = max(0, min(1, point.x / max(1, geometry.size.width - 32)))
+                            active = data.enumerated().min { abs(($0.element.position ?? Double($0.offset) / Double(max(1, data.count - 1))) - fraction) < abs(($1.element.position ?? Double($1.offset) / Double(max(1, data.count - 1))) - fraction) }?.element.id
+                        }, ended: { inspecting in
+                            if inspecting, let active, let select { select(active) }
+                            active = nil
+                        }, scrolling: { active = nil })
+                        .accessibilityHidden(true)
+                    }
+                }
                 .overlay(alignment: .bottom) { axisLabels.padding(.trailing, 32) }
             }.frame(height: CGFloat(block["plot_height"].number ?? Double(PanelsTheme.Goal.plotHeight)))
                 .accessibilityElement(children: .contain).accessibilityLabel(block["title"].string ?? "Reading chart")
