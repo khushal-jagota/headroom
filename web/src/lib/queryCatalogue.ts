@@ -17,7 +17,6 @@ import type {
   IdeasResponse,
   NotificationSettingsResponse,
   ProjectsResponse,
-  SchedulesResponse,
   SkillsHomeResponse,
   ManagersResponse,
   ManagerWorkspace,
@@ -88,7 +87,6 @@ export const queries = {
   feedbackCount: () =>
     versionedJsonQuery<FeedbackCountResponse>(["feedback-count"], "/api/feedback/count"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
-  schedules: () => jsonQuery<SchedulesResponse>(["schedules"], "/api/schedules"),
   managers: () => jsonQuery<ManagersResponse>(["managers"], "/api/managers?detail=full"),
   managerWorkspaceContent: (itemId: string) =>
     versionedJsonQuery<ManagerWorkspaceContent>(

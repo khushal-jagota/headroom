@@ -7,7 +7,6 @@ from planner.goals.calendar import server_date
 from planner.goals.outcomes import reconcile_completions
 from planner.measures.data import transaction
 from planner.resource_versions.data import source_revision
-from planner.scheduled_tickets.contracts import ScheduledTicketOccurrence
 
 
 class GoalCompletionParticipant:
@@ -19,11 +18,9 @@ class GoalCompletionParticipant:
         self._stopped = False
         self._previous = None
 
-    def poll(
-        self, conn: sqlite3.Connection, *, local_now: datetime, now: int
-    ) -> list[ScheduledTicketOccurrence]:
+    def poll(self, conn: sqlite3.Connection, *, local_now: datetime, now: int) -> None:
         if self._stopped:
-            return []
+            return
         today = server_date(now)
 
         def revision() -> tuple[str, str, str]:
@@ -40,7 +37,6 @@ class GoalCompletionParticipant:
                 reconcile_completions(conn, now=now)
                 accepted_revision = revision()
             self._previous = accepted_revision
-        return []
 
     def stop(self, *, deadline: float | None = None) -> None:
         self._stopped = True

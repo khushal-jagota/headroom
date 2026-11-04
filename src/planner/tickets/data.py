@@ -737,7 +737,6 @@ def write_ticket_conversation_start(
     model: str | None,
     reasoning_effort: str | None,
     now: int,
-    expected_configuration: EmployeeLaunchConfiguration | None = None,
 ) -> Ticket:
     """Link the started conversation without replacing the Ticket's requested intent.
 
@@ -832,7 +831,6 @@ def write_ticket_last_chosen_configuration(
     model: str | None,
     reasoning_effort: str | None,
     now: int,
-    expected_configuration: EmployeeLaunchConfiguration | None = None,
     employee_backend: str | None = None,
 ) -> bool:
     """Record the model and reasoning effort a Ticket's conversation now runs on.
@@ -849,10 +847,6 @@ def write_ticket_last_chosen_configuration(
     """
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        if expected_configuration is not None:
-            current = employee_launch_configuration(_load_ticket_for_write(conn, ticket_id))
-            if current != expected_configuration:
-                return False
         updated = conn.execute(
             "UPDATE tickets SET employee_backend=COALESCE(?,employee_backend), "
             "employee_launch_model = ?, "
@@ -894,7 +888,6 @@ def write_employee_configuration(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    expected_employee_configuration: EmployeeLaunchConfiguration,
     employee_backend: str,
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
@@ -914,12 +907,6 @@ def write_employee_configuration(
         require_enabled_model(conn, registered_backend, employee_launch_model)
         ticket = _load_ticket_for_write(conn, ticket_id)
         current = employee_launch_configuration(ticket)
-        if current != expected_employee_configuration:
-            raise PlannerError(
-                ErrorCode.already_running,
-                "Employee configuration changed while its options were loading",
-                {"ticket_id": ticket_id},
-            )
         candidate = EmployeeLaunchConfiguration(
             employee_backend=registered_backend,
             employee_launch_model=employee_launch_model,
@@ -2115,18 +2102,6 @@ def ticket_record_sha256(conn: sqlite3.Connection, ticket_id: str) -> str:
     ).hexdigest()
 
 
-def _require_record_sha256(
-    conn: sqlite3.Connection, ticket_id: str, expected_record_sha256: str | None
-) -> None:
-    if (
-        expected_record_sha256 is not None
-        and ticket_record_sha256(conn, ticket_id) != expected_record_sha256
-    ):
-        raise PlannerError(
-            ErrorCode.validation, "the Ticket changed; read it again before this action"
-        )
-
-
 def set_ticket_backlog(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -2134,13 +2109,11 @@ def set_ticket_backlog(
     is_backlogged: bool,
     principal: Principal,
     now: int,
-    expected_record_sha256: str | None = None,
 ) -> Ticket:
     """Defer automatic steps without taking ownership from any delivered turn."""
     with _txn(conn):
         authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, definition = _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
-        _require_record_sha256(conn, ticket_id, expected_record_sha256)
         if definition.is_terminal(ticket.stage):
             raise PlannerError(ErrorCode.validation, "terminal Tickets cannot change backlog state")
         if ticket.is_backlogged != is_backlogged:

@@ -312,7 +312,6 @@ async def start_ticket_conversation(
             conn,
             ticket.id,
             conversation_id=conversation_id,
-            expected_configuration=tickets_data.employee_launch_configuration(ticket),
             backend=values.backend_key.value,
             model=values.model if actual_start is None else actual_start["model"],
             reasoning_effort=(

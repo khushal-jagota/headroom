@@ -124,7 +124,7 @@ def test_locale_migration_preserves_entire_existing_rows(
     conn.close()
 
 
-def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
+def test_public_http_locale_refusals_override_and_noop(
     tmp_db: Connection, tmp_path: Path, fake_clock: ClockForTest
 ) -> None:
     """The socket-free HTTP boundary retains the retired locale host's contracts."""
@@ -199,26 +199,6 @@ def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
         detail = client.get(f"/api/tickets?detail=full&id={ticket_id}")
         assert detail.status_code == 200, detail.text
         assert detail.json()["locale"] == "vps"
-        schedule = client.post(
-            "/api/schedules",
-            json={
-                "title": "Locale schedule",
-                "worker_type": "coding",
-                "kickoff_note": "Scope.",
-                "project_id": project_id,
-                "locale": "vps",
-                "enabled": False,
-                "cadence": "daily",
-                "local_time": "23:59",
-            },
-        )
-        assert schedule.status_code == 200, schedule.text
-        schedule_id = schedule.json()["id"]
-        assert schedule.json()["locale"] == "vps"
-        assert client.get(f"/api/schedules/{schedule_id}").json()["locale"] == "vps"
-        edited = client.patch(f"/api/schedules/{schedule_id}", json={"title": "Edited title"})
-        assert edited.status_code == 200, edited.text
-        assert edited.json()["locale"] == "vps"
 
 
 def test_requirement_removal_migration_preserves_rows_and_locales(

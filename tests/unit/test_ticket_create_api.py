@@ -258,10 +258,6 @@ def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
     conflict = {"manager": assignment, "orchestrator": {"kind": "chief", "id": "chief"}}
     for endpoint, body in (
         ("/api/tickets", {**conflict, "title": "Conflict", "worker_type": "coding"}),
-        (
-            "/api/schedules",
-            {**conflict, "title": "Conflict", "worker_type": "coding", "local_time": "09:00"},
-        ),
     ):
         response = client.post(endpoint, json=body)
         assert response.status_code == 400, response.text
