@@ -3,6 +3,7 @@
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.config import Config
+from planner.goals.scheduling import GoalCompletionParticipant
 from planner.measure_sources.contracts import SourceRuntime
 from planner.measure_sources.participants import SlotParticipant
 from planner.measure_sources.runtime import Runtime
@@ -23,4 +24,5 @@ def build_participants(
             Runtime() if source_runtime is None else source_runtime,
             workspace_admission=workspace_admission,
         ),
+        GoalCompletionParticipant(),
     )

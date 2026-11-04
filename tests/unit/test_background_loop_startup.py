@@ -21,6 +21,7 @@ from planner.core import loops
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
+from planner.goals.scheduling import GoalCompletionParticipant
 from planner.measure_sources.contracts import SourceRuntime
 from planner.measure_sources.participants import SlotParticipant
 from planner.measure_sources.registry import build_participants
@@ -45,7 +46,7 @@ def _assert_lock(path: str, *, held: bool) -> None:
 
 
 def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_path: Path) -> None:
-    """The test seam runs both production participants under the actual barrier."""
+    """The test seam runs all production participants under the actual barrier."""
     cfg = load_config(
         path=None,
         env={
@@ -60,9 +61,9 @@ def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_p
     admission = WorkspaceAdmission()
     factory_admissions: list[WorkspaceAdmission] = []
     registered: tuple[SlotParticipant, ...] = ()
-    starts = [0]
-    stops = [0]
-    polls = [0]
+    starts = [0, 0]
+    stops = [0, 0]
+    polls = [0, 0]
     deadlines: list[float | None] = []
     source_polled = threading.Event()
 
@@ -106,8 +107,9 @@ def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_p
         cfg, clock, workspace_admission=admission, participants_factory=participants_factory
     )
     assert factory_admissions == [admission]
-    assert len(registered) == 1
+    assert len(registered) == 2
     assert isinstance(registered[0], SourceScheduleParticipant)
+    assert isinstance(registered[1], GoalCompletionParticipant)
     assert owner.worker_step_readiness_loop is None
     assert owner.notification_loop is None and owner.manager_wake_loop is None
     scheduler = owner.source_schedule_loop
@@ -118,15 +120,15 @@ def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_p
         deadline = monotonic() + 5
         try:
             assert await asyncio.to_thread(source_polled.wait, 2)
-            assert starts == [1] and stops == [0]
+            assert starts == [1, 1] and stops == [0, 0]
         finally:
             await owner.stop(deadline=deadline)
         await owner.stop(deadline=deadline)
-        assert stops == [1]
-        assert deadlines == [deadline]
+        assert stops == [1, 1]
+        assert deadlines == [deadline, deadline]
         assert scheduler._thread is None
         assert not admission.active
-        # Closed admission blocks both participant polls, not only source execution.
+        # Closed admission blocks all participant polls, not only source execution.
         assert admission.claim(lambda: None, idle=lambda: True, require_idle=True)
         before = list(polls)
         assert scheduler.poll_once() is None

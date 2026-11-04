@@ -5,7 +5,7 @@ import {createGoalRequestSessions} from '../src/lib/goals/requestSessions';
 import type {PageContext} from '../src/lib/pageKit/context';
 
 function goal(id:string):GoalResponse{
- return {id,project_id:'project',title:id,why:'',kind:'binary',active:true,completed:false,primary_checklist_block_id:null,deadline:null,primary_chart:null,
+ return {id,project_id:'project',title:id,why:'',kind:'binary',active:true,completed:false,completion_date:null,completion_rule:null,outcome:'undated',primary_checklist_block_id:null,deadline:null,primary_chart:null,
   page:{kind:'headroom.page',version:1,title:id,summary:'',blocks:[]},revision:1,created_at:0,updated_at:0,employee_backend:'codex',employee_launch_model:'model',employee_launch_reasoning_effort:null,conversation_id:null,status:'neutral',status_date:'2026-10-31',next_refresh_at:1};
 }
 function readings(id:string,value:number):GoalReadingsResponse{

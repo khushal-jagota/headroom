@@ -12,7 +12,7 @@ A stage marked worker-owned is the Worker’s to draft. A stage marked user-owne
 
 Ten types ship. `probe` exists only in tests, with unfamiliar stage names, so a coding-shaped assumption fails loudly. `personal`, `planning-day`, `planning-midday-check`, and `planning-sprint` remain readable history. They cannot be created.
 
-Launch defaults below are what a fresh database copies onto a new Ticket. The owner can change prospective defaults and the specialist text in Settings. Hermes ignores reasoning. A Worker type can be marked as requiring macOS. That flag affects future creation only.
+Launch defaults below are what a fresh database copies onto a new Ticket. The owner can change prospective defaults and the specialist text in Settings. Hermes ignores reasoning.
 
 ## Amendments and existing Tickets
 

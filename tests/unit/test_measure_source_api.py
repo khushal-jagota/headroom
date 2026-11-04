@@ -123,8 +123,9 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
         "title", "project_id", "kind", "primary_checklist_block_id"
     }
     assert set(branches["quantitative"]["required"]) == {
-        "title", "project_id", "kind", "primary_chart"
+        "title", "project_id", "kind", "primary_chart", "completion_rule"
     }
+    assert "default" not in branches["quantitative"]["properties"]["completed"]
     for branch in branches.values():
         assert "expected_revision" in branch["properties"]
         assert "default" not in branch["properties"]["kind"]
@@ -248,7 +249,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
     tmp_db: Connection,
 ) -> None:
     """The reference must be usable at the canonical writer, with safe repair guidance."""
-    from tests.unit.test_goal_pages import create
+    from tests.unit.test_goal_pages import create, numeric_rule
 
     goal_examples = _guidance("goal", "schema", "create")["examples"]
     goal_body = goal_examples["chief_goal"]
@@ -327,6 +328,10 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                 assert reread.status_code == 200, reread.text
                 assert reread.json()["page"] == saved_page
         goal_body["project_id"] = "project_vylo"
+        goal_body["completion_rule"] = numeric_rule(tmp_db)
+        goal_body["primary_chart"]["measure_id"] = (
+            goal_body["completion_rule"]["actual"]["measure_id"]
+        )
         created = client.post("/api/goals", json=goal_body, headers={"X-Plan-Actor": "chief"})
         assert created.status_code == 200, created.text
         goal = created.json()

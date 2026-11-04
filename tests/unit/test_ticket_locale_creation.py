@@ -11,18 +11,12 @@ from planner.managers import data as sprints
 from planner.projects import data as projects
 from planner.tickets import data, locale_configuration, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
-from planner.worker_settings import service as worker_settings
-from planner.worker_types.configuration import configured_worker_type_registry
 
 
-@pytest.mark.parametrize("project_requirement", [False, True])
-@pytest.mark.parametrize("worker_requirement", [False, True])
 @pytest.mark.parametrize("explicit", [None, "vps", "macos"])
-def test_creation_uses_explicit_then_either_requirement_then_vps(
+def test_creation_uses_explicit_locale_or_vps(
     tmp_db: Connection,
     monkeypatch: pytest.MonkeyPatch,
-    project_requirement: bool,
-    worker_requirement: bool,
     explicit: str | None,
 ) -> None:
     monkeypatch.setitem(
@@ -33,17 +27,8 @@ def test_creation_uses_explicit_then_either_requirement_then_vps(
     project = projects.create_project(
         tmp_db,
         name="Mac project",
-        requires_macos=project_requirement,
         now=1,
     )
-    settings = worker_settings.update_worker_requirements(
-        tmp_db,
-        configured_worker_type_registry(),
-        "coding",
-        requires_macos=worker_requirement,
-        now=1,
-    )
-    assert settings.requires_macos is worker_requirement
     ticket = data.create_ticket(
         tmp_db,
         title="Locale",
@@ -54,16 +39,15 @@ def test_creation_uses_explicit_then_either_requirement_then_vps(
         project_id=project.id,
         locale=explicit,
     )
-    expected = explicit or ("macos" if project_requirement or worker_requirement else "vps")
+    expected = explicit or "vps"
     assert ticket.locale.value == expected
     assert views.ticket_json(ticket, 1)["locale"] == expected
     assert data.read_ticket(tmp_db, ticket.id).locale.value == expected
-    # A requirement is a creation default, never a constraint on later records.
-    projects.update_project(tmp_db, project.id, requires_macos=not project_requirement, now=2)
+    projects.update_project(tmp_db, project.id, name="Renamed project", now=2)
     assert data.read_ticket(tmp_db, ticket.id).locale.value == expected
 
 
-def test_inherited_project_resolves_before_locale(
+def test_inherited_project_keeps_vps_default(
     tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setitem(
@@ -73,8 +57,7 @@ def test_inherited_project_resolves_before_locale(
     )
     project = projects.create_project(
         tmp_db,
-        name="Inherited Mac",
-        requires_macos=True,
+        name="Inherited project",
         now=1,
     )
     item = sprints.create_manager(
@@ -91,7 +74,7 @@ def test_inherited_project_resolves_before_locale(
         manager_id=item.id,
     )
     assert context.project_id == project.id
-    assert context.locale is TicketLocale.macos
+    assert context.locale is TicketLocale.vps
     ticket = data.create_ticket(
         tmp_db,
         title="Inherited",
@@ -101,22 +84,7 @@ def test_inherited_project_resolves_before_locale(
         title_max_chars=TITLE_MAX_CHARS,
         manager_id=item.id,
     )
-    assert ticket.locale is TicketLocale.macos
-
-
-def test_worker_requirement_survives_definition_updates(tmp_db: Connection) -> None:
-    from planner.worker_types import store
-
-    registry = configured_worker_type_registry()
-    worker_settings.update_worker_requirements(
-        tmp_db,
-        registry,
-        "coding",
-        requires_macos=True,
-        now=1,
-    )
-    store.write_definition(tmp_db, registry.require("coding"), now=2)
-    assert worker_settings.read_worker_requires_macos(tmp_db, "coding") is True
+    assert ticket.locale is TicketLocale.vps
 
 
 def test_locale_migration_preserves_entire_existing_rows(
@@ -189,11 +157,24 @@ def test_public_http_locale_refusals_override_and_noop(
         conversation_system_for_test=InMemoryConversationSystem(),
     )
     with TestClient(app) as client:
-        project = client.post(
-            "/api/projects", json={"name": "Mac requirement", "requires_macos": True}
-        )
+        project = client.post("/api/projects", json={"name": "Locale project"})
         assert project.status_code == 200, project.text
         project_id = project.json()["id"]
+        assert "requires_macos" not in project.json()
+        workers = client.get("/api/workers?detail=summary")
+        assert workers.status_code == 200, workers.text
+        assert all("requires_macos" not in row for row in workers.json()["workers"])
+        worker = client.get("/api/workers/coding")
+        assert worker.status_code == 200, worker.text
+        assert "requires_macos" not in worker.json()["settings"]
+        removed_edit = client.patch(f"/api/projects/{project_id}", json={"requires_macos": True})
+        assert removed_edit.status_code == 400, removed_edit.text
+        assert (
+            client.patch(
+                "/api/workers/coding/requirements", json={"requires_macos": True}
+            ).status_code
+            == 404
+        )
         request = {
             "title": "Locale transfer",
             "worker_type": "coding",
@@ -231,3 +212,92 @@ def test_public_http_locale_refusals_override_and_noop(
         detail = client.get(f"/api/tickets?detail=full&id={ticket_id}")
         assert detail.status_code == 200, detail.text
         assert detail.json()["locale"] == "vps"
+
+
+def test_requirement_removal_migration_preserves_rows_and_locales(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dropping legacy defaults must not rewrite unrelated data or stored locales."""
+    import shutil
+
+    from alembic.script import ScriptDirectory
+
+    from planner.core import db
+
+    original = db.MIGRATIONS_DIRECTORY
+    scripts = ScriptDirectory(str(original))
+    removal = scripts.get_revision("remove_macos_requirements")
+    assert removal is not None
+    predecessor = removal.down_revision
+    assert isinstance(predecessor, str)
+    tree = tmp_path / "before-removal"
+    (tree / "versions").mkdir(parents=True)
+    shutil.copy(original / "env.py", tree / "env.py")
+    for revision in scripts.walk_revisions(base="base", head=predecessor):
+        path = Path(revision.path)
+        shutil.copy(path, tree / "versions" / path.name)
+    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", tree)
+    conn = db.connect(str(tmp_path / "legacy.db"))
+    try:
+        db.create_schema(conn)
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == predecessor
+        conn.executemany(
+            "INSERT INTO projects "
+            "(id,name,summary,folder_path,created_at,updated_at,requires_macos) "
+            "VALUES (?,?,?,?,1,2,?)",
+            (
+                ("project_preserved", "Legacy Mac", "Preserve context", "/legacy/project", 1),
+                ("project_preserved_vps", "Legacy VPS", "Other context", None, 0),
+            ),
+        )
+        conn.execute("UPDATE worker_types SET requires_macos=1 WHERE worker_type='coding'")
+        for locale in ("vps", "macos"):
+            conn.execute(
+                "INSERT INTO tickets (id,title,worker_type,employee_backend,ceiling,field_values,"
+                "stage,project_id,locale,created_at,updated_at) "
+                "VALUES (?,?,'coding','codex','needs_brief','{}','needs_brief',"
+                "'project_preserved',?,1,2)",
+                (f"t_preserved_{locale}", f"Existing {locale}", locale),
+            )
+            conn.execute(
+                "INSERT INTO scheduled_ticket_schedules (id,enabled,cadence,local_time,title,"
+                "worker_type,project_id,locale,created_at,updated_at) "
+                "VALUES (?,0,'daily','14:30',?,'coding','project_preserved',?,1,2)",
+                (f"schedule_preserved_{locale}", f"Existing {locale}", locale),
+            )
+        conn.commit()
+        tables = ("projects", "worker_types", "tickets", "scheduled_ticket_schedules")
+        before = {
+            table: [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+            for table in tables
+        }
+        for table in ("projects", "worker_types"):
+            assert {row.pop("requires_macos") for row in before[table]} == {0, 1}
+        metadata_before = list(
+            conn.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_master "
+                "WHERE type IN ('index','trigger') ORDER BY type,name"
+            )
+        )
+        shutil.copy(Path(removal.path), tree / "versions")
+        db.create_schema(conn)
+        assert (
+            conn.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+            == removal.revision
+        )
+        for table in tables:
+            assert [
+                dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")
+            ] == before[table]
+        assert (
+            list(
+                conn.execute(
+                    "SELECT type,name,tbl_name,sql FROM sqlite_master "
+                    "WHERE type IN ('index','trigger') ORDER BY type,name"
+                )
+            )
+            == metadata_before
+        )
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()

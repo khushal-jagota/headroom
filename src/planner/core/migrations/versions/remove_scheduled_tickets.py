@@ -3,7 +3,7 @@
 from alembic import op
 
 revision = "remove_scheduled_tickets"
-down_revision = "manager_launch_defaults"
+down_revision = "goal_outcomes"
 branch_labels = None
 depends_on = None
 

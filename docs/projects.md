@@ -12,7 +12,7 @@ There is no delete and no archive. The catalog grows by create and changes by ed
 
 ## What it feeds
 
-Project choice feeds Ticket and Idea capture, Manager headers, and the locale default: a Project marked as requiring macOS selects the Mac locale for future Ticket creation when the caller did not pass a locale. It does not move Tickets that already exist. The summary feeds anyone who reads the Project, including an agent that loads it into a prompt on purpose. Headroom does not push the summary into a conversation by itself.
+Project choice feeds Ticket and Idea capture and Manager headers. The summary feeds anyone who reads the Project, including an agent that loads it into a prompt on purpose. Headroom does not push the summary into a conversation by itself.
 
 The removed global Workers page used to filter by Project. Workspace now groups by Chief and Manager. Project remains visible text on the Ticket and the Manager.
 
@@ -24,4 +24,4 @@ Project selectors appear in Idea capture and the Ticket and Manager editors. `pa
 
 `src/planner/projects/`. Selectors in the Ticket, Ideas, and Manager screens read that resource.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

@@ -48,7 +48,7 @@ def archive() -> Iterator[sqlite3.Connection]:
         ),
     )
     events = [
-        (1, "prompt", {"text": "start"}, 1),
+        (1, "prompt", {"text": "start", "system_generated": True}, 1),
         (2, "agent_message", {"text": "old"}, 2),
         (3, "tool_call_started", {"tool_call_id": "x"}, 3),
         (4, "tool_call_finished", {"tool_call_id": "x"}, 4),

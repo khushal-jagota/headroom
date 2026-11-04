@@ -25,6 +25,7 @@ The word list for Ticket, Stage, Review, Conversation, and the rest lives in [`C
 - [Review](review.md) — the pass through everything waiting on Khushal.
 - [Ideas](ideas.md) — possibilities kept before they become work.
 - [Goals](goals.md) — Chief goal pages, explicit displays, checklists, charts, and independent completion and active states.
+- [Historical attention](attention.md) — where recorded owner involvement went over selected dates.
 - [Project measures](measures.md) — dated values, retained datasets, sources, credentials, and collection.
 - [Projects](projects.md) — the catalog that classifies work and points at a folder.
 - [Feedback](feedback.md) — notes captured from any page for an agent to handle.

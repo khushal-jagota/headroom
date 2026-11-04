@@ -28,9 +28,8 @@ def test_incomplete_entry_not_replayed_and_bad_receipt_keeps_entry(tmp_path: Pat
     with pytest.raises(ValueError, match="identity"):
         spool.acknowledge(
             AcceptanceReceipt(
-                envelope.sender_id,
+                "wrong-sender",
                 envelope.submission_id,
-                "bad",
                 ReceiptDisposition.accepted,
                 {},
                 1,

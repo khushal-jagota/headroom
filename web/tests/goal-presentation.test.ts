@@ -268,7 +268,7 @@ it('separates word units while preserving authored suffixes and numeric formatti
 });
 
 
-it('uses the supplied server date for deadline-only tones and gives saved completion precedence',()=>{
+it('uses the server date for checklist-item tones and gives item completion precedence',()=>{
  const today='2026-10-30';
  expect(deadlineTone('2026-10-29',false,today)).toBe('bad');
  expect(deadlineTone('2026-10-30',false,today)).toBe('attention');

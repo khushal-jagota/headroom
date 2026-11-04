@@ -15,7 +15,7 @@ def test_schedule_removal_preserves_ticket_and_reopens(
 ) -> None:
     conn = connect(str(tmp_path / "schedule-removal.db"))
     with monkeypatch.context() as historical:
-        _migration_tree_through(tmp_path, historical, "manager_launch_defaults")
+        _migration_tree_through(tmp_path, historical, "goal_outcomes")
         create_schema(conn)
     ticket = create_ticket(
         conn,
