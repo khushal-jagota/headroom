@@ -89,6 +89,7 @@ Worker temporary files use a private `~/.pw-XXXXXXXX/t` directory on disk for th
 lifetime, including successive conversation turns. Shutdown removes the directory
 after the tools stop. Worker OOM errors appear in the existing conversation error
 path. The unit boundary controls resources, not access to files or credentials.
+Worker units retain `NoNewPrivileges=yes` from the previous live-service launch path.
 
 The operator must install `panels.slice` and `panels-workers.slice` alongside `panels-live.service`
 before activation. The operator then reloads the user manager and restarts Panels.

@@ -203,6 +203,7 @@ class WorkerUnit:
             f"--slice={self.slice_name}", f"--property=MemoryMax={WORKER_MEMORY_MAX}",
             "--property=MemorySwapMax=0",
             "--property=OOMPolicy=kill", "--property=KillMode=control-group",
+            "--property=NoNewPrivileges=yes",
             f"--property=EnvironmentFile={directory}/environment",
             f"--property=WorkingDirectory={str(self.working_directory).replace('%', '%%')}",
             f"--property=ExecStopPost=/bin/rm -rf -- {shlex.quote(directory)}",
