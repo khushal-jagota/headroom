@@ -114,7 +114,8 @@ uses Lane A and leaves all three lanes available for the parallel screen workers
 Panels uses Blue Door Labs team `FB99BBDJBA` and bundle ID
 `com.khushaljagota.panels`. Version 0.1 starts at build 1. Release builds for
 physical iOS use automatic signing and the Push Notifications capability, with
-`aps-environment=production`. Push registration remains disabled.
+`aps-environment=production`. Push registration remains disabled. The app declares all four interface
+orientations for its existing iPhone and iPad device families.
 
 Debug and simulator builds remain unsigned. Generic iOS compile checks can
 continue to pass `CODE_SIGNING_ALLOWED=NO` explicitly. Generate the project after
