@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from sqlite3 import Connection
 
 import pytest
@@ -23,7 +24,7 @@ def test_retired_types_are_refused_by_all_creation_writers(
     tmp_db: Connection,
     worker_type: str,
 ) -> None:
-    for index, create in enumerate((
+    writers: tuple[Callable[[], object], ...] = (
         lambda: data.create_ticket(
             tmp_db,
             title="Retired direct writer",
@@ -46,7 +47,8 @@ def test_retired_types_are_refused_by_all_creation_writers(
             title_max_chars=200,
             worker_type=worker_type,
         ),
-    )):
+    )
+    for index, create in enumerate(writers):
         message = "unknown worker type" if index < 2 else "Worker type is retired"
         with pytest.raises(PlannerError, match=message):
             create()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from typing import cast
 
 import pytest
 from fastapi import FastAPI, Request
@@ -68,7 +69,9 @@ def test_source_counters_are_atomic_narrow_and_reads_emit_no_change(
             result = asyncio.run(api.resource_versions(json.dumps([key]), request(), conn))
             body = asyncio.run(api.resource_body(key, request(), conn))
             assert result["resources"][0]["revision"] == body["revision"] == snapshot.revision
-            assert body["body"]["recap"] == "a"
+            assert isinstance(body["body"], dict)
+            settings = cast(dict[str, object], body["body"])
+            assert settings["recap"] == "a"
         assert signals == []
         conn.execute("UPDATE chief_settings SET recap='b'")
         assert source_revision(conn, "chief-settings", "chief_of_staff") != updated
@@ -101,7 +104,9 @@ def test_body_uses_the_same_snapshot_as_its_version(
         monkeypatch.setattr(api, "PROVIDERS", (ConcurrentCommit(),))
         body = asyncio.run(api.resource_body(key, request(), conn))
         assert body["revision"] == previous.revision
-        assert body["body"]["recap"] == "before"
+        assert isinstance(body["body"], dict)
+        settings = cast(dict[str, object], body["body"])
+        assert settings["recap"] == "before"
         current = source.capture(conn, request(), key)
         assert current is not None and current.revision != previous.revision
     finally:

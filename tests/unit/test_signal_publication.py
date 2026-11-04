@@ -7,6 +7,7 @@ import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -32,7 +33,9 @@ class Host:
             row = conn.execute(
                 "SELECT value FROM signal_publication_values WHERE conversation_id=?", (identity,)
             ).fetchone()
-            return json.loads(row[0])["attention"]
+            attention = json.loads(row[0])["attention"]
+            assert isinstance(attention, dict)
+            return cast(dict[str, object], attention)
 
 
 @pytest.fixture
