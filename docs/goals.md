@@ -136,7 +136,7 @@ Use a saved measure ID and a first date that match the goal. The actual expressi
 
 The backend evaluates retained evidence from the first date through the current server date. It saves the earliest date that meets the finish line. Later fluctuations preserve that earlier achievement. Corrections to observations, measure formulas, or the finish line can move or clear the saved date. Manual completion cannot contradict a numeric rule.
 
-The existing background scheduler evaluates numeric goals without a page visit or an agent turn. It checks again after data changes and at midnight. Goal creation and edits also evaluate the rule. Evaluation errors preserve the saved completion facts rather than claim that the goal failed. Reads remain read-only. An accepted background completion changes the goal revision, so an older page draft still receives the ordinary stale-edit response.
+The existing background scheduler evaluates numeric goals without a page visit or an agent turn. It checks again after data changes and at midnight. Goal creation and finish-line edits also evaluate the rule immediately. Evaluation errors preserve the saved completion facts rather than claim that the goal failed. Reads remain read-only. An accepted background completion changes the goal revision, so an older page draft still receives the ordinary stale-edit response.
 
 Each goal has one deadline. A completion date on or before it means hit. A later completion means miss. An unfinished goal becomes a miss after its deadline passes. Before that, it remains pending. A deadline edit changes this comparison. A goal without a deadline is undated.
 

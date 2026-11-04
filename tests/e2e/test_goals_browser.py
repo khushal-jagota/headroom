@@ -1081,7 +1081,7 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     expect(rate).to_contain_text("1 hit · 1 miss", timeout=WAIT_MS)
     overview.get_by_role("button", name="State filter", exact=True).click(timeout=WAIT_MS)
     state_filter = overview.get_by_role("dialog", name="State filter", exact=True)
-    state_filter.get_by_label("State", exact=True).select_option("active", timeout=WAIT_MS)
+    state_filter.get_by_role("combobox", name=re.compile("^State")).select_option("active", timeout=WAIT_MS)
     state_filter.get_by_role("button", name="Apply", exact=True).click(timeout=WAIT_MS)
     expect(overview.locator(".goals-overview tbody tr")).to_have_count(1, timeout=WAIT_MS)
     # The inactive hit remains in the server aggregate after the local filter.
