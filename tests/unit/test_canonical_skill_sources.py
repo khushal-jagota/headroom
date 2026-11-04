@@ -2,6 +2,7 @@ import multiprocessing
 import os
 import sqlite3
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from planner.managed_skills import (
 )
 from planner.skill_sources import (
     RETIRED_PANELS_SKILL_NAMES,
+    WORKER_ONLY_SKILL_NAMES,
     provision_native_backend_skills,
     provision_workspace_skills,
 )
@@ -63,6 +65,9 @@ def test_supervisor_edit_reaches_every_backend_home_from_one_managed_source(
 
     canonical = managed / "panels-manager"
     for home in homes.values():
+        for hidden in WORKER_ONLY_SKILL_NAMES:
+            assert not (home / "skills" / hidden).exists()
+            assert (managed / hidden / "SKILL.md").is_file()
         exposed = home / "skills" / "panels-manager"
         assert exposed.resolve() == canonical.resolve()
         assert "Future conversations read this revision" in (exposed / "SKILL.md").read_text(
@@ -80,14 +85,14 @@ def test_native_skills_directory_preserves_custom_entries_and_replaces_panels_co
     (native_skills / "custom" / "SKILL.md").write_text("custom", encoding="utf-8")
     (native_skills / "panels-worker-coding").mkdir()
     (native_skills / "panels-worker-coding" / "SKILL.md").write_text("stale", encoding="utf-8")
-    for retired_skill_name in RETIRED_PANELS_SKILL_NAMES:
+    for retired_skill_name in RETIRED_PANELS_SKILL_NAMES | WORKER_ONLY_SKILL_NAMES:
         (native_skills / retired_skill_name).write_text("retired", encoding="utf-8")
 
     provision_native_backend_skills(tmp_path / "provider", tmp_path)
     provision_native_backend_skills(tmp_path / "provider", tmp_path)
 
     assert (native_skills / "custom" / "SKILL.md").read_text(encoding="utf-8") == "custom"
-    for retired_skill_name in RETIRED_PANELS_SKILL_NAMES:
+    for retired_skill_name in RETIRED_PANELS_SKILL_NAMES | WORKER_ONLY_SKILL_NAMES:
         assert not (native_skills / retired_skill_name).exists()
     assert (native_skills / "panels-worker-coding").resolve() == (
         managed / "panels-worker-coding"
@@ -460,7 +465,10 @@ def test_workspace_skill_link_is_repeatable_and_reads_live_managed_edits(
     provision_workspace_skills(workspace, tmp_path)
     exposed = workspace / ".agents/skills"
     assert exposed.is_symlink()
-    assert exposed.resolve() == managed.resolve()
+    assert exposed.resolve() == (tmp_path / "agent-skill-home/skills").resolve()
+    for hidden in WORKER_ONLY_SKILL_NAMES:
+        assert not (exposed / hidden).exists()
+        assert (managed / hidden / "SKILL.md").is_file()
     original_link = exposed.lstat().st_ino
     provision_workspace_skills(workspace, tmp_path)
     assert exposed.lstat().st_ino == original_link
@@ -520,7 +528,7 @@ def test_workspace_skill_setup_preserves_every_existing_conflict(
     with pytest.raises(FileExistsError) as caught:
         provision_workspace_skills(workspace, tmp_path)
     assert str(conflict) in str(caught.value)
-    assert str(managed_skills_home(tmp_path)) in str(caught.value)
+    assert str(tmp_path / "agent-skill-home/skills") in str(caught.value)
     assert conflict.lstat().st_ino == before.st_ino
     assert retained.read_text() == "foreign content"
     if link_target is not None:
@@ -548,4 +556,19 @@ def test_workspace_skill_setup_rechecks_exclusive_creation_race(
 
     monkeypatch.setattr("planner.skill_sources.os.symlink", concurrent_creator)
     provision_workspace_skills(workspace, tmp_path)
-    assert exposed.resolve() == managed_skills_home(tmp_path).resolve()
+    assert exposed.resolve() == (tmp_path / "agent-skill-home/skills").resolve()
+
+
+def test_workspace_migrates_only_its_previous_managed_skill_link(
+    tmp_path: Path, database: sqlite3.Connection
+) -> None:
+    del database
+    workspace = tmp_path / "workspace"
+    (workspace / ".agents").mkdir(parents=True)
+    exposed = workspace / ".agents/skills"
+    exposed.symlink_to(managed_skills_home(tmp_path), target_is_directory=True)
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        list(workers.map(lambda _: provision_workspace_skills(workspace, tmp_path), range(8)))
+    assert (exposed / "panels/SKILL.md").is_file()
+    assert not (exposed / "panels-worker-personal-task").exists()
+    assert (managed_skills_home(tmp_path) / "panels-worker-personal-task/SKILL.md").is_file()

@@ -215,7 +215,7 @@ def test_archive_then_delete_preserves_private_snapshot_artifacts_and_upgrade_re
 
 
 @pytest.mark.parametrize(
-    "failure", ["archive", "delete", "claim", "ceiling", "activity", "ownership", "reference"]
+    "failure", ["archive", "delete", "claim", "activity", "ownership", "reference"]
 )
 def test_recovery_failure_never_partially_deletes(
     tmp_db: sqlite3.Connection,
@@ -228,12 +228,6 @@ def test_recovery_failure_never_partially_deletes(
     tmp_db_uid = _path(tmp_db).stat().st_uid
     if failure == "claim":
         tmp_db.execute("UPDATE tickets SET worker_step_claim='out' WHERE id='t_b'")
-    if failure == "ceiling":
-        _ticket(tmp_db, "t_holder", "needs_brief")
-        tmp_db.execute(
-            "UPDATE tickets SET ceiling_holder=? WHERE id='t_holder'",
-            (json.dumps({"kind": "ticket", "id": "t_b"}),),
-        )
     if failure == "archive":
         monkeypatch.setattr(
             recovery, "_durable_write", lambda *args: (_ for _ in ()).throw(OSError("disk full"))

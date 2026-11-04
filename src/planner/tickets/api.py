@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
+from pathlib import Path
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -386,7 +387,9 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
     )
 
 
-def _parse_principal(raw: object, field: str) -> Principal | None:
+def _parse_principal(
+    raw: object, field: str, *, allow_ticket: bool = False
+) -> Principal | None:
     if raw is None:
         return None
     if not isinstance(raw, dict) or set(raw) != {"kind", "id"}:
@@ -397,18 +400,23 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
         )
     kind_raw = raw.get("kind")
     principal_id = raw.get("id")
+    kind_choices = (
+        "owner, chief, manager, or ticket" if allow_ticket else "owner, chief, or manager"
+    )
     if not isinstance(kind_raw, str):
         raise PlannerError(
             ErrorCode.validation,
-            f"{field} kind must be owner, chief, manager, or ticket",
+            f"{field} kind must be {kind_choices}",
             {field: raw},
         )
     try:
         kind = PrincipalKind(kind_raw)
+        if kind is PrincipalKind.ticket and not allow_ticket:
+            raise ValueError("Ticket cannot hold a review")
     except (TypeError, ValueError):
         raise PlannerError(
             ErrorCode.validation,
-            f"{field} kind must be owner, chief, manager, or ticket",
+            f"{field} kind must be {kind_choices}",
             {field: raw},
         ) from None
     if not isinstance(principal_id, str):
@@ -739,6 +747,7 @@ async def get_worker_self_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
+    cfg: Cfg,
 ) -> JsonDict:
     """A worker agent's own Ticket, resolved from `PLAN_TICKET_ID` (its spawn env, flag-on).
 
@@ -766,6 +775,10 @@ async def get_worker_self_ticket(
         .require(ticket.worker_type)
         .worker_profile.specialist_skill
     )
+    if ticket.locale == "vps":
+        detail["worker_skill_path"] = str(
+            Path(cfg.db_path).resolve().parent / "skills" / str(detail["worker"]) / "SKILL.md"
+        )
     return detail
 
 
@@ -1340,7 +1353,7 @@ async def request_help(
     if not message.strip():
         raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    named = _parse_principal(body.get("recipient"), "recipient")
+    named = _parse_principal(body.get("recipient"), "recipient", allow_ticket=True)
     if named is not None:
         # The same question Send Message asks. Without it this is a second, open door
         # into any conversation in Panels. The default below is not asked, because the

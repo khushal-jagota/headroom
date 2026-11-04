@@ -127,7 +127,7 @@ def _append_failed_turn(store: ConversationStore, conversation_id: str) -> None:
     )
 
 
-@pytest.mark.parametrize("holder_kind", ["chief", "manager", "ticket"])
+@pytest.mark.parametrize("holder_kind", ["chief", "manager"])
 def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
     tmp_db: Connection, fake_clock: FakeClock, holder_kind: str
 ) -> None:
@@ -135,17 +135,6 @@ def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
     holder_id = item_id
     if holder_kind == "chief":
         holder_id = "chief"
-    elif holder_kind == "ticket":
-        holder_id = tickets_data.create_ticket(
-            tmp_db,
-            title="Reviewing ticket",
-            principal=OWNER_PRINCIPAL,
-            now=2,
-            title_max_chars=TITLE_MAX_CHARS,
-            worker_type="coding",
-            brief="Start",
-            stated_ceiling="needs_what_changes",
-        ).id
     tmp_db.execute(
         "UPDATE tickets SET ceiling_holder=? WHERE id=?",
         (json.dumps({"kind": holder_kind, "id": holder_id}), ticket_id),
