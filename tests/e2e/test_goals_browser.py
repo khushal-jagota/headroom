@@ -1079,6 +1079,12 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     rate = overview.locator('[aria-label="Overall goal hit rate"]')
     expect(rate).to_contain_text("50%", timeout=WAIT_MS)
     expect(rate).to_contain_text("1 hit · 1 miss", timeout=WAIT_MS)
+    expect(overview.locator(".goals-overview tbody tr")).to_have_count(2, timeout=WAIT_MS)
+    for row_outcome in overview.locator(
+        '.goals-overview tbody tr [aria-label="Completion and result"]'
+    ).all():
+        expect(row_outcome).to_be_in_viewport(ratio=1, timeout=WAIT_MS)
+    capture_success(overview, "goal-outcome-overview-desktop.png")
     overview.get_by_role("button", name="State filter", exact=True).click(timeout=WAIT_MS)
     state_filter = overview.get_by_role("dialog", name="State filter", exact=True)
     state_filter.get_by_role("combobox", name=re.compile("^State")).select_option(
@@ -1114,7 +1120,10 @@ def test_goal_outcomes_refresh_across_page_and_overview(
     assert cli(server, "goal", "list")["outcome_summary"] == {
         "hits": 2, "misses": 0, "rate": 1.0,
     }
-    capture_success(overview, "goal-outcome-overview-desktop.png")
+    expect(
+        overview.locator('.goals-overview tbody tr [aria-label="Completion and result"]')
+    ).to_be_in_viewport(ratio=1, timeout=WAIT_MS)
+    capture_success(overview, "goal-outcome-overview-updated.png")
     page.reload()
     expect(outcome).to_contain_text("Completed Jul 2, 2026", timeout=WAIT_MS)
     expect(outcome.locator('[data-outcome="hit"]')).to_have_text("Hit", timeout=WAIT_MS)
