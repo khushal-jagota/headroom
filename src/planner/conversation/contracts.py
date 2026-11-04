@@ -175,6 +175,7 @@ class SignalDurableFacts:
 
     message_for_owner: bool
     last_turn_failed: bool
+    has_live_background_task: bool
 
 
 @dataclass(frozen=True, slots=True)

@@ -45,6 +45,8 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "attention_history",
         "remove_macos_requirements",
         "ticket_owned_workflows",
+        # Live background tasks leave diagnostic events and conversation views unchanged.
+        "conversation_background_tasks",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

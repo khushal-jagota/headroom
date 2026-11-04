@@ -12,18 +12,6 @@ export function copyWorkflow(value: WorkflowRecord): WorkflowRecord {
   };
 }
 
-export function blankWorkflow(): WorkflowRecord {
-  return {
-    label: 'Custom workflow',
-    guidance: '',
-    stages: [
-      { id: 'needs_brief', label: 'Brief', gating_field: 'brief', is_terminal: false, ownership_mode: 'worker', instructions: '' },
-      { id: 'needs_consequences', label: 'Consequences', gating_field: 'consequences', is_terminal: false, ownership_mode: 'worker', instructions: '' },
-      { id: 'done', label: 'Done', gating_field: null, is_terminal: true, ownership_mode: null, instructions: '' }
-    ],
-    fields: [{ id: 'brief', label: 'Brief' }, { id: 'consequences', label: 'Consequences' }]
-  };
-}
 
 export function workflowError(value: WorkflowRecord): string | null {
   if (!value.stages.length) return 'Add at least one stage.';
@@ -34,8 +22,4 @@ export function workflowError(value: WorkflowRecord): string | null {
     if (!stage.is_terminal && (!stage.gating_field || !value.fields.some(field => field.id === stage.gating_field && field.label.trim()))) return `Give ${stage.label} a result.`;
   }
   return null;
-}
-
-export function workflowSummary(value: WorkflowRecord): string {
-  return value.stages.map(stage => stage.label).join(' → ');
 }

@@ -104,15 +104,16 @@ def agent_state(
     ticket_status: TicketStatus,
     *,
     stage: str,
-    turn_is_running: bool,
+    agent_is_working: bool,
     last_turn_failed: bool,
 ) -> AgentState:
     """Current activity, with a completed Ticket's failed turn kept as history.
 
-    A live turn outranks errors. An explicit failed claim stays an error at any Stage.
+    The agent is working while a turn runs or a background task it started is still
+    running. Work outranks errors. An explicit failed claim stays an error at any Stage.
     Only the fallback to conversation history stops once the Ticket is done.
     """
-    if turn_is_running:
+    if agent_is_working:
         return AgentState.working
     if ticket_status is TicketStatus.errored:
         return AgentState.errored

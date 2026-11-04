@@ -1,6 +1,4 @@
 <script lang="ts">
-  import CreateTicket from "../components/CreateTicket.svelte";
-  let createTicketOpen = $state(false);
   import { workspaceRailWash } from "../lib/workspaceRailWash";
   import { viewWindow } from "../lib/navigation/views/owner";
   import { navigationScrollWindow } from "../lib/navigation/views/scrollWindow";
@@ -391,12 +389,10 @@
   }
 </script>
 
-{#if createTicketOpen}<CreateTicket initialManager={opening.openManagerId ?? ''} onClose={() => createTicketOpen = false} />{/if}
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section use:workspaceRailWash bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
-          <button type="button" class="new-ticket" onclick={() => createTicketOpen = true} data-new-ticket>+ New Ticket</button>
           <div class="rail-work">
           <ResourceState shape="block" layout="fill" loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
@@ -576,9 +572,4 @@
     .board-workspace-shell--destination .approved-rail { display:none; }
     .board-workspace-right--destination { display:flex; padding:0; }
   }
-
-  .new-ticket { flex: 0 0 auto; align-self: flex-start; padding: var(--space-3) var(--space-4); margin: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font: var(--type-xs) var(--font-ui); cursor: pointer; }
-  .new-ticket:hover { color: var(--text-default); background: var(--surface-2); }
-
-
 </style>

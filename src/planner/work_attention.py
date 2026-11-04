@@ -92,11 +92,13 @@ def _ticket_attention(
     signal = (
         conversation.signal
         if conversation
-        else conversation_signal(is_running=False, unread_message_to_owner=False)
+        else conversation_signal(
+            turn_is_running=False, has_live_background_task=False, unread_message_to_owner=False
+        )
     )
     awaiting_reply = signal["message_for_owner"]
     awaiting_answer = conversation.awaiting_answer if conversation else False
-    running = signal["working"]
+    working = signal["working"]
     last_turn_failed = conversation.last_turn_failed if conversation else False
     assigned = ticket_assignment_from_values(
         stage=str(row["stage"]),
@@ -106,7 +108,7 @@ def _ticket_attention(
     agent_state = derivation.agent_state(
         facts.ticket_status,
         stage=str(row["stage"]),
-        turn_is_running=running,
+        agent_is_working=working,
         last_turn_failed=last_turn_failed,
     )
     return {
@@ -239,7 +241,9 @@ async def add_work_attention(
         row["conversation_signal"] = (
             conversation.signal
             if conversation
-            else conversation_signal(is_running=False, unread_message_to_owner=False)
+            else conversation_signal(
+                turn_is_running=False, has_live_background_task=False, unread_message_to_owner=False
+            )
         )
     for row in item_rows:
         item_id = str(row["id"])
@@ -247,11 +251,13 @@ async def add_work_attention(
         signal = (
             own_conversation.signal
             if own_conversation
-            else conversation_signal(is_running=False, unread_message_to_owner=False)
+            else conversation_signal(
+                turn_is_running=False, has_live_background_task=False, unread_message_to_owner=False
+            )
         )
         awaiting_reply = signal["message_for_owner"]
         awaiting_answer = own_conversation.awaiting_answer if own_conversation else False
-        running = signal["working"]
+        working = signal["working"]
         failed = own_conversation.last_turn_failed if own_conversation else False
         row.update(
             {
@@ -263,7 +269,7 @@ async def add_work_attention(
                 "assigned": False,
                 "agent_state": (
                     AgentState.working.value
-                    if running
+                    if working
                     else AgentState.errored.value
                     if failed
                     else AgentState.idle.value
