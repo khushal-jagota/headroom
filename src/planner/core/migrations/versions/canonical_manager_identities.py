@@ -40,7 +40,8 @@ def migrate(conn: sqlite3.Connection) -> None:
             continue
         manager_id = values.get("PLAN_MANAGER_ID") or values.get("PLAN_SPRINT_ITEM_ID")
         canonical_pairs = [
-            [key, value] for key, value in pairs
+            [key, value]
+            for key, value in pairs
             if key not in {"PLAN_ACTOR", "PLAN_MANAGER_ID", "PLAN_SPRINT_ITEM_ID"}
         ]
         canonical_pairs.extend([["PLAN_ACTOR", "manager"], ["PLAN_MANAGER_ID", manager_id]])

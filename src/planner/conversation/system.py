@@ -3957,11 +3957,12 @@ class SqliteProcessConversationSystem:
     async def _compose_prompt_content(
         self, state: _ConversationState, content: MessageContent
     ) -> MessageContent:
-        """The message as the backend gets it: the role text rides the very first prompt.
+        """The backend receives the role on the first prompt and each Manager turn.
 
         The role is composed here, by the core, so every backend is told what it is in the
-        same way. It goes on once, on the first prompt this conversation ever delivers —
-        after that the agent has it. The record keeps the sender's own message: the role is
+        same way. Managers receive their current role on each turn so retained
+        conversations receive the canonical instructions after migration. Other roles
+        appear once. The record keeps the sender's own message: the role is
         the conversation's, and it is stored on the conversation.
 
         A message that opens with words takes the role onto those words, which is what
