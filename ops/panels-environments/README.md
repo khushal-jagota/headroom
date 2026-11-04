@@ -79,13 +79,13 @@ Backup and restore instructions are in [backup-restore.md](backup-restore.md).
 
 Linux Ticket agents run in transient user services under `panels-workers.slice`.
 Their tools inherit that unit. Each service limits memory to 6 GiB and stops its
-whole process group on OOM. The slice limits all Workers to 20 GiB and gives them
+whole cgroup on OOM. The slice limits all Workers to 20 GiB and gives them
 CPU weight 10. Its parent `panels.slice` also uses weight 10, below the
 foreground `app.slice`. Panels uses weight 100 and a 1 GiB memory reservation.
 `MemoryLow` protects memory under pressure only when every ancestor supplies
 the same protection. It does not preallocate RAM.
 
-Worker temporary files use a private directory on disk for the agent process
+Worker temporary files use a private `~/.pw-XXXXXXXX/t` directory on disk for the agent process
 lifetime, including successive conversation turns. Shutdown removes the directory
 after the tools stop. Worker OOM errors appear in the existing conversation error
 path. The unit boundary controls resources, not access to files or credentials.
