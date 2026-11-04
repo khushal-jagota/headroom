@@ -29,6 +29,7 @@ from tests.support.navigation_historical_source import (
 from tests.unit.test_db import head_revision
 
 from planner.navigation import snapshot
+from planner.navigation.contracts import SCHEMA_VERSION
 from planner.projects.data import list_projects
 from planner.tickets.data import read_ticket
 
@@ -126,7 +127,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
 
     with current_navigation_database(candidate) as connection:
         current = snapshot(connection)
-        assert current["schema_version"] == 9
+        assert current["schema_version"] == SCHEMA_VERSION
         initial_epoch = current["epoch"]
         facts = source_facts(connection)
         _assert_current_reader(connection)
@@ -169,8 +170,8 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
     after = run_historical(source, candidate, "read_unavailable", expected_tip=expected_tip)
     assert after["tip"] == expected_tip
     assert after["unavailable"] == "structural_manager_rename"
-    assert set(after["failures"]) == {"ticket"}
-    assert after["projects"]["project_historical"] == "Later fixture project"
+    assert set(after["failures"]) == {"projects", "ticket", "worker_types"}
+    assert after["failures"]["worker_types"] == "stored worker type has a malformed record"
     assert after["denied_writes"] == 2
     assert after["foreign_keys"] == []
     assert after["source"] == later_facts
@@ -180,7 +181,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
     # removal. Exercise the actual old readers read-only; do not invent defaults.
     f097 = historical_sources(F097_TIP)
     unsupported = run_historical(f097, candidate, "read_incompatible", expected_tip=F097_TIP)
-    assert set(unsupported["failures"]) == {"projects", "ticket"}
+    assert set(unsupported["failures"]) == {"projects", "ticket", "worker_types"}
     assert "priority" in unsupported["failures"]["projects"]
     assert unsupported["source"] == later_facts
     assert candidate.read_bytes() == contents
@@ -193,7 +194,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
     assert reopened["source"] == before["source"]
     with current_navigation_database(restored) as connection:
         restored_snapshot = snapshot(connection)
-        assert restored_snapshot["schema_version"] == 9
+        assert restored_snapshot["schema_version"] == SCHEMA_VERSION
         assert restored_snapshot["epoch"] != initial_epoch
         ticket = next(
             row

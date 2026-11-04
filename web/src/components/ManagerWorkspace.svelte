@@ -248,7 +248,7 @@
           </div>
 
           <section class="manager-workers" aria-label="Workers">
-            <ManagerChildren principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication} tickets={shared?.ticketsByParent.get(`manager:${itemId}`) ?? []}
+            <ManagerChildren principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
               onHover={(element, id, immediate) => {
                 const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
                 if (ticket) hoverRow(element, ticket, immediate);

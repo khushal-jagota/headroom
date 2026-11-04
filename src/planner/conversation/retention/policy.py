@@ -40,6 +40,11 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "goal_source_responsibility",
         "scalar_observation_coverage",
         "goals_staging_reconciliation",
+        # Attention history, the macOS flag removal, and saved Ticket workflows
+        # leave diagnostic events and conversation view schemas unchanged.
+        "attention_history",
+        "remove_macos_requirements",
+        "ticket_owned_workflows",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

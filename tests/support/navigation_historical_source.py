@@ -436,11 +436,20 @@ def _main() -> None:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")
     try:
+        from planner.core.contracts import PlannerError
         from planner.projects.data import list_projects
         from planner.tickets.data import read_ticket
         from planner.worker_types.configuration import load_worker_runtime_definitions
 
-        load_worker_runtime_definitions(connection)
+        failures: dict[str, str] = {}
+        try:
+            load_worker_runtime_definitions(connection)
+        except PlannerError as error:
+            # ticket_owned_workflows stores Worker types as creation presets, a record
+            # shape old binaries refuse. Only their matched backup is readable to them.
+            if action == "read":
+                raise
+            failures["worker_types"] = str(error)
         denied: list[str] = []
         for statement in (
             "UPDATE native_usage_sources SET source_key='forbidden'",
@@ -456,8 +465,15 @@ def _main() -> None:
         if action == "read_unavailable":
             # The reviewed Manager rename changes the physical schema. Old binaries
             # require their matched backup, rather than synthetic compatibility views.
+            # The macOS flag removal also drops a Project column these readers select.
             assert expected_tip in {HISTORICAL_TIP, CURRENT_STAGING_TIP}
-            projects = {project.id: project.name for project in list_projects(connection)}
+            try:
+                list_projects(connection)
+            except sqlite3.OperationalError as error:
+                failures["projects"] = str(error)
+                assert failures["projects"] == "no such column: requires_macos", error
+            else:
+                raise AssertionError("pre-removal Project reader unexpectedly succeeded")
             try:
                 read_ticket(connection, "t_historical")
             except sqlite3.OperationalError as error:
@@ -473,8 +489,7 @@ def _main() -> None:
                     {
                         "tip": observed,
                         "unavailable": "structural_manager_rename",
-                        "failures": {"ticket": failure},
-                        "projects": projects,
+                        "failures": {**failures, "ticket": failure},
                         "denied_writes": len(denied),
                         "source": source_facts(connection),
                         "foreign_keys": [
@@ -487,7 +502,6 @@ def _main() -> None:
             return
         if action == "read_incompatible":
             assert expected_tip == F097_TIP
-            failures: dict[str, str] = {}
             for name, read in (
                 ("projects", lambda: list_projects(connection)),
                 ("ticket", lambda: read_ticket(connection, "t_historical")),

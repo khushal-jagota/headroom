@@ -434,7 +434,7 @@ def test_manager_skill_primary_identity_matches_the_generated_role() -> None:
     from planner.managed_skills import PACKAGED_SKILLS_ROOT
     from planner.runtime.logic.conversation_start_resolution import manager_role_materials
 
-    role = manager_role_materials("si_contract")
+    role = manager_role_materials("si_contract", Path("/workspace"))
     identity = dict(role.identity_environment_variables)
     assert identity == {"PLAN_ACTOR": "manager", "PLAN_MANAGER_ID": "si_contract"}
     source = (PACKAGED_SKILLS_ROOT / "panels-manager/SKILL.md").read_text()

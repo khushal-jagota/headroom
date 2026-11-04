@@ -4,7 +4,7 @@ Diagnostic history is the append-only event record that conversations and relate
 
 ## What it is made of
 
-- **A retention policy.** It picks which diagnostic events are old enough to remove. It never picks current work, control records, records it does not recognise, or half of a tool call. Every conversation linked to an unfinished Ticket is kept, however old, and so are Chief and unsettled Managers.
+- **A retention policy.** It picks which diagnostic events are old enough to remove. It never picks current work (including a Mac run that has not proved it stopped), control records, records it does not recognise, or half of a tool call. Every conversation linked to an unfinished Ticket is kept, however old, and so are Chief and unsettled Managers.
 - **A reviewed report.** A measurement that names exactly which payloads would go and how much space each choice would recover. It is fixed to one cutoff and to the database contents it measured.
 - **Two separate acts.** **Expiry** removes the selected event payloads. **Compaction** removes no rows and only gives free pages back to the file system.
 

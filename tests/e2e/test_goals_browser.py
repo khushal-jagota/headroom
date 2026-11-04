@@ -778,7 +778,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(primary.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
     )
-    expect(rail_checklist.locator("small")).to_contain_text("Done", timeout=WAIT_MS)
+    # Goal outcomes word a finished goal without a deadline as plain "Complete".
+    expect(rail_checklist.locator("[data-goal-status]")).to_have_text("Complete", timeout=WAIT_MS)
     rail_binary = page.locator(f'a[data-goal-id="{other["id"]}"]')
     rail_binary.hover(timeout=WAIT_MS)
     binary_preview = page.locator(f'[data-goal-preview="{other["id"]}"]')
@@ -792,7 +793,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         binary_preview.get_by_role("button", name="Mark done", exact=True).click(timeout=WAIT_MS)
     assert preview_binary.value.ok
     assert api.get(server, f"/api/goals/{other['id']}")["completed"] is True
-    expect(rail_binary.locator("small")).to_contain_text("Done", timeout=WAIT_MS)
+    expect(rail_binary.locator("[data-goal-status]")).to_have_text("Complete", timeout=WAIT_MS)
 
     manual_goal = api.direct_post(
         server,
@@ -844,9 +845,11 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     state = api.get(server, f"/api/measures/{manual_snapshot['id']}/manual-state")
     assert state["observation"]["value"] == 7
     expect(snapshot.get_by_role("textbox")).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
-    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
+    # The rail shows the goal's saved result, not a numeric reading: an open goal
+    # without a deadline stays "Open" and neutral. The page reading proves the write.
+    expect(rail_manual.locator("[data-goal-status]")).to_have_text("Open", timeout=WAIT_MS)
     expect(rail_manual.locator("[data-tone]")).to_have_attribute(
-        "data-tone", "bad", timeout=WAIT_MS
+        "data-tone", "neutral", timeout=WAIT_MS
     )
     rail_manual.hover(timeout=WAIT_MS)
     expect(value).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
@@ -886,7 +889,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(manual_page.get_by_role("textbox")).to_have_attribute(
         "data-reading", "7", timeout=WAIT_MS
     )
-    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
+    expect(rail_manual.locator("[data-goal-status]")).to_have_text("Open", timeout=WAIT_MS)
     expect(selected_bar.locator(".bar")).to_have_attribute(
         "style", re.compile(r"background-color: var\(--accent-error\)"), timeout=WAIT_MS
     )
