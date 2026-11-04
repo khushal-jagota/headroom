@@ -53,6 +53,12 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 - Create the Ticket branch and isolated worktree from current `staging`. Do the work
   in that worktree.
+- Put the worktree at `~/projects/panels/repository-worktrees/<ticket-id>`, or
+  `<ticket-id>-<name>` for an extra one, and start its branch name with
+  `ticket/<ticket-id>`. Put every other file that must outlive one run in
+  `~/projects/panels/task-tmp/<ticket-id>/`. Panels removes all of these after the
+  Ticket is done or deleted. It keeps uncommitted changes and commits that no remote
+  has. See `docs/environments.md`.
 - Fetch the remote target before you create the branch. State in the proposal the
   commit you created the worktree from and the commit your final checks ran against.
   A stale local ref passes every check against the wrong tree.
