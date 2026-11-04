@@ -11,11 +11,11 @@ struct GoalCounter: View {
     private var formatted: String { GoalChartPresentation.format(block, value) }
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Array(formatted.reversed().enumerated()).reversed(), id: \.offset) { position, character in
-                if let digit = character.wholeNumberValue, !reduceMotion {
+            ForEach(GoalChartPresentation.counterParts(block, value: value)) { part in
+                if let digit = part.digit, !reduceMotion {
                     GoalDigit(digit: digit, increasing: (value ?? 0) >= (previous ?? value ?? 0), size: size * scale)
-                        .id("digit-\(position)")
-                } else { Text(String(character)).font(.system(size: size * scale, weight: .medium)).monospacedDigit() }
+                        .transition(.opacity.combined(with: .scale(scale: 0.01, anchor: .trailing)))
+                } else { Text(part.text).font(.system(size: size * scale, weight: .medium)).monospacedDigit() }
             }
         }
         .contentShape(Rectangle())
@@ -31,13 +31,15 @@ private struct GoalDigit: View {
     let increasing: Bool
     let size: CGFloat
     @State private var position = 10.0
-    @State private var moving = false
+    init(digit: Int, increasing: Bool, size: CGFloat) {
+        self.digit = digit; self.increasing = increasing; self.size = size
+        _position = State(initialValue: Double(digit + 10))
+    }
     private var height: CGFloat { size * 1.18 }
     var body: some View {
         Color.clear.frame(width: size * 0.64, height: height)
             .overlay(alignment: .top) {
                 GoalDigitWindow(position: position, size: size)
-                    .blur(radius: moving ? 0.45 : 0)
                     .allowsHitTesting(false).accessibilityHidden(true)
             }
             .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.12), .init(color: .black, location: 0.88), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
@@ -45,15 +47,14 @@ private struct GoalDigit: View {
         .task(id: digit) {
             var transaction = Transaction(); transaction.disablesAnimations = true
             let old = Int(position.rounded()) % 10
+            guard old != digit else { return }
             withTransaction(transaction) { position = Double(old + 10) }
             var destination = digit + 10
             if increasing, digit < old { destination += 10 }
             if !increasing, digit > old { destination -= 10 }
-            moving = true
             withAnimation(PanelsTheme.Goal.smooth) { position = Double(destination) }
             try? await Task.sleep(for: .seconds(PanelsTheme.Goal.smoothDuration))
             guard !Task.isCancelled else { return }
-            moving = false
             withTransaction(transaction) { position = Double(digit + 10) }
         }
     }
@@ -70,8 +71,12 @@ private struct GoalDigitWindow: View, @MainActor Animatable {
             let height = size * 1.18
             for index in 0..<30 {
                 let y = (Double(index) - position + 0.5) * height
-                guard y > -height, y < bounds.height + height else { continue }
-                context.draw(Text(String(index % 10)).font(.system(size: size, weight: .medium)).monospacedDigit().foregroundStyle(PanelsTheme.strong), at: CGPoint(x: bounds.width / 2, y: y))
+                let offset = abs(Double(index) - position)
+                guard offset < 1 else { continue }
+                var glyph = context
+                glyph.opacity = 1 - offset
+                if offset > 0.02 { glyph.addFilter(.blur(radius: offset * 2)) }
+                glyph.draw(Text(String(index % 10)).font(.system(size: size, weight: .medium)).monospacedDigit().foregroundStyle(PanelsTheme.strong), at: CGPoint(x: bounds.width / 2, y: y))
             }
         }
     }

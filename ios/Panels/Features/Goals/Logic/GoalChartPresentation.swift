@@ -10,6 +10,12 @@ struct GoalChartDatum: Equatable, Identifiable, Sendable {
     var observation: GoalJSON = .null
     var evidence: GoalJSON = .null
 }
+struct GoalCounterPart: Identifiable, Equatable, Sendable {
+    let id: String
+    let text: String
+    let digit: Int?
+}
+
 struct GoalChartHeadline: Equatable, Sendable {
     var value: Double?
     var target: Double?
@@ -35,6 +41,27 @@ enum GoalChartPresentation {
     static func format(_ block: GoalJSON, _ value: Double?, trim: Bool = false) -> String {
         guard let value, value.isFinite else { return "—" }
         return block["format"]["prefix"].text + number(value, decimals: Int(block["format"]["decimals"].number ?? 0), trim: trim) + suffix(block)
+    }
+    /// Keep integer and fractional places stable even when precision or grouping changes.
+    static func counterParts(_ block: GoalJSON, value: Double?) -> [GoalCounterPart] {
+        guard let value, value.isFinite else { return [.init(id: "missing", text: "—", digit: nil)] }
+        let numeric = number(value, decimals: Int(block["format"]["decimals"].number ?? 0))
+        var integer = numeric.prefix { $0 != "." }.filter { $0.wholeNumberValue != nil }.count
+        var fraction = 0, decimal = false
+        var result: [GoalCounterPart] = []
+        if !block["format"]["prefix"].text.isEmpty { result.append(.init(id: "prefix", text: block["format"]["prefix"].text, digit: nil)) }
+        for (index, character) in numeric.enumerated() {
+            let key: String
+            if character.wholeNumberValue != nil {
+                if decimal { key = "f\(fraction)"; fraction += 1 }
+                else { integer -= 1; key = "i\(integer)" }
+            } else if character == "." { decimal = true; key = "decimal" }
+            else if character == "," { key = "g\(integer)" }
+            else { key = "symbol\(index)" }
+            result.append(.init(id: key, text: String(character), digit: character.wholeNumberValue))
+        }
+        if !suffix(block).isEmpty { result.append(.init(id: "suffix", text: suffix(block), digit: nil)) }
+        return result
     }
     private static func manualPrecision(_ block: GoalJSON, value: Double) -> Int {
         let parts = String(value).lowercased().split(separator: "e")

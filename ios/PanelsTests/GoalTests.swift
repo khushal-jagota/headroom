@@ -36,6 +36,18 @@ import XCTest
             }
         }
     }
+    func testCounterPlacesSurviveNewFractionDigitsAndGrouping() throws {
+        let block = try json(#"{"format":{"prefix":"Q4 ","suffix":" hours2"}}"#)
+        let before = GoalChartPresentation.counterParts(block, value: 999)
+        let after = GoalChartPresentation.counterParts(GoalChartPresentation.manualDisplayBlock(block, value: 1000.25), value: 1000.25)
+        XCTAssertEqual(before.first { $0.id == "i0" }?.digit, 9)
+        XCTAssertEqual(after.first { $0.id == "i0" }?.digit, 0)
+        XCTAssertEqual(after.first { $0.id == "f0" }?.digit, 2)
+        XCTAssertEqual(after.first { $0.id == "f1" }?.digit, 5)
+        XCTAssertNil(after.first { $0.id == "prefix" }?.digit)
+        XCTAssertNil(after.first { $0.id == "suffix" }?.digit)
+        XCTAssertEqual(after.map(\.text).joined(), "Q4 1,000.25 hours2")
+    }
     func testServerCalendarAndRecursiveChecklistProjectionKeepTheSavedDocument() throws {
         let original = try goal()
         XCTAssertEqual(GoalPresentation.deadlineTone(original.deadline, completed: false, today: original.statusDate), "attention")
