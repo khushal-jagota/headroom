@@ -683,8 +683,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     expect(title_editor).to_have_text("Owner title", timeout=WAIT_MS)
 
-    # An external revision must reach the mounted page without replacing a focused
-    # draft. Submitting that original revision must produce a real stale response.
+    # An external revision reaches the mounted page without replacing a focused
+    # draft. The later title-only save wins and preserves the remotely edited page.
     title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
     page.locator("[data-goal-page]").evaluate(
         "node => node.dataset.nativeEditProof = 'retained'"
@@ -719,22 +719,31 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     with page.expect_response(
         lambda reply: reply.url.endswith(path) and reply.request.method == "PATCH",
         timeout=WAIT_MS,
-    ) as stale_title:
+    ) as local_title:
         title_editor.press("Enter", timeout=WAIT_MS)
-    assert stale_title.value.status == 409
-    assert stale_title.value.request.post_data_json == {
+    assert local_title.value.status == 200, local_title.value.text()
+    assert local_title.value.request.post_data_json == {
         "title": "Unaccepted local title",
     }
     error = page.locator("[data-goal-page] .goal-heading .error-line")
-    expect(error).to_contain_text("goal changed", timeout=WAIT_MS)
-    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
-    accepted_remote = api.get(server, path)
-    assert accepted_remote["title"] == "Agent title"
-    assert accepted_remote["revision"] == remote.json()["revision"]
-    title_editor.press("Escape", timeout=WAIT_MS)
-    expect(title_editor).to_have_text("Agent title", timeout=WAIT_MS)
     expect(error).to_have_count(0, timeout=WAIT_MS)
-    assert api.get(server, path)["revision"] == accepted_remote["revision"]
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    accepted_local = api.get(server, path)
+    assert remote.json()["revision"] == current["revision"] + 1
+    assert accepted_local["title"] == "Unaccepted local title"
+    assert accepted_local["revision"] == remote.json()["revision"] + 1
+    assert accepted_local["page"] == reordered
+    expect(page.locator(f'a[data-goal-id="{goal["id"]}"] .row-title')).to_have_text(
+        "Unaccepted local title", timeout=WAIT_MS
+    )
+    expect(page.locator("[data-goal-page]")).to_have_attribute(
+        "data-native-edit-proof", "retained", timeout=WAIT_MS
+    )
+    title_editor.fill("Discard this unsaved title", timeout=WAIT_MS)
+    title_editor.press("Escape", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    expect(error).to_have_count(0, timeout=WAIT_MS)
+    assert api.get(server, path)["revision"] == accepted_local["revision"]
     expect(page.locator('[data-block="table"] tbody tr').first).to_contain_text(
         "Second", timeout=WAIT_MS
     )

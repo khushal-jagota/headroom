@@ -59,8 +59,8 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     )
     tickets = []
     for title, holder in (
-        ("Owner approval without Day membership", {"kind": "owner", "id": "owner"}),
-        ("Supervisor approval without Day membership", {"kind": "sprint_item", "id": item["id"]}),
+        ("Owner-held approval", {"kind": "owner", "id": "owner"}),
+        ("Manager-held approval", {"kind": "manager", "id": item["id"]}),
     ):
         ticket = _post(
             server,
@@ -68,7 +68,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             {
                 "title": title,
                 "worker_type": "coding",
-                "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+                "manager": {"kind": "manager", "id": item["id"]},
                 "brief": "The brief is agreed.",
             },
         )
@@ -88,7 +88,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         )
         assert response.is_success, response.text
         tickets.append(ticket)
-    # Active orchestrators remain represented without Day membership.
+    # Active Managers remain represented alongside their child Tickets.
     # The user-owned Feedback assignment is not a parked approval.
     feedback = _post(
         server,
@@ -96,16 +96,16 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         {
             "title": "User-owned Feedback",
             "worker_type": "initiative_review",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
             "brief": "Review is ready.",
         },
     )
     _bind(server, "feedback", feedback["id"])
     ticket = tickets[0]
-    for name in ("dot-ticket", "dot-supervisor", "dot-chief"):
+    for name in ("dot-ticket", "dot-manager", "dot-chief"):
         _conversation(server, name)
     _bind(server, "ticket", ticket["id"], "dot-ticket")
-    _bind(server, "agent", item["manager"]["agent_key"], "dot-supervisor")
+    _bind(server, "agent", item["manager"]["agent_key"], "dot-manager")
     _bind(server, "agent", "chief_of_staff", "dot-chief")
     _message(
         server, "dot-ticket", Principal(PrincipalKind.ticket, ticket["id"]), "Child direct message"
@@ -247,9 +247,9 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         )
         _message(
             server,
-            "dot-supervisor",
+            "dot-manager",
             Principal(PrincipalKind.manager, item["id"]),
-            "Supervisor direct message",
+            "Manager direct message",
         )
         page.reload()
         expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
@@ -262,14 +262,14 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         expect(owner_row).to_be_visible(timeout=WAIT_MS)
         expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
-        # Selecting the Item keeps the conversation at rest and does not claim a read.
+        # Selecting the Manager keeps the conversation at rest and does not claim a read.
         expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
-        assert _read_position(server, "dot-supervisor") == 0
-        capture_success(page, str(EVIDENCE / "supervisor-own-message-title-and-rail.png"))
+        assert _read_position(server, "dot-manager") == 0
+        capture_success(page, str(EVIDENCE / "manager-own-message-title-and-rail.png"))
         page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
         expect(right.locator(".manager-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_have_count(0, timeout=WAIT_MS)
-        assert _read_position(server, "dot-supervisor") == 1
+        assert _read_position(server, "dot-manager") == 1
         page.goto(server.base + "/#/workspace?view=items")
         _message(server, "dot-chief", CHIEF_PRINCIPAL, "Chief direct message")
         page.reload()

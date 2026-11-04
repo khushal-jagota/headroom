@@ -12,6 +12,7 @@ DOM, never on a sleep.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
 import httpx
@@ -93,12 +94,14 @@ def test_composing_survives_a_change_to_the_same_ticket(
 ) -> None:
     ticket_id = cli(
         server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Composer ticket before the change",
+        "ticket", "create", "--input-json", "-",
+        stdin=json.dumps({
+            "worker_type": "coding",
+            "title": "Composer ticket before the change",
+            "brief": "Agreed brief.",
+            "manager": {"kind": "chief", "id": "chief"},
+        }),
+        settle_brief=True,
     )["id"]
     _set_recap(server, ticket_id, RECAP_SEED)
 

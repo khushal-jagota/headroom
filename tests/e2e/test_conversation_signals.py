@@ -498,12 +498,14 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
     conversation = "history-read-credit-proof"
     ticket = cli(
         server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "History read credit proof",
+        "ticket", "create", "--input-json", "-",
+        stdin=json.dumps({
+            "worker_type": "coding",
+            "title": "History read credit proof",
+            "brief": "Agreed brief.",
+            "manager": {"kind": "chief", "id": "chief"},
+        }),
+        settle_brief=True,
     )["id"]
     _post(server, f"/api/test/signals/{conversation}/start")
     _bind(server, "ticket", ticket, conversation)

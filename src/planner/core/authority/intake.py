@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from fastapi import Request
+from starlette.requests import HTTPConnection
 
 from planner.core import authority
 from planner.core.authctx import request_context
@@ -190,8 +191,11 @@ def admit_command(
         check_rank(conn, principal, target)
 
 
-async def request_admission(request: Request) -> None:
-    """FastAPI runs this once after route matching and before the command handler."""
+async def request_admission(connection: HTTPConnection) -> None:
+    """Admit HTTP commands after route matching. WebSockets retain their own authentication."""
+    if not isinstance(connection, Request):
+        return
+    request = connection
     # Included FastAPI routes expose the unprefixed template. Admission needs
     # the served path, including /api, for resource and command families.
     route = request.url.path

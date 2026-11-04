@@ -36,7 +36,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
             "title": "Synthetic ticket with retained evidence",
             "worker_type": "coding",
             "brief": "A synthetic brief for browser verification.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
         },
     )
     ticket_id = str(ticket["id"])
