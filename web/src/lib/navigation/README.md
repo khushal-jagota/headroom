@@ -1,76 +1,25 @@
 # Browser navigation interface
 
-This module supplies the shared browser replica. `App.svelte` calls `provideNavigationApplication()` above its routes. The provider creates one collection, transport, owner, and coherent selector set. It starts the owner on mount and disposes the owner before the collection on application destruction.
+`App.svelte` calls `provideNavigationApplication()` above its routes. The provider creates one scoped owner with `createScopedNavigationOwner()`. It starts that owner on mount and disposes it when the application closes.
 
-`navigationApplication()` reads that context. An isolated component host without the provider receives `undefined`. It never creates another owner. Every successful existing `advanceOwnerRead` response triggers shared-owner recovery before the unread-message optimization or current-conversation check. Failed reads retain their existing behavior.
+`navigationApplication()` reads that context. An isolated component host without the provider receives `undefined`. It never creates another owner.
 
-The workspace sidebar, ordinary Manager headers and child lists, Chief child pagination, Review queue, Ticket masthead and current-stage section, and Chief conversation pointer use the shared view. Ordinary Manager body, artifacts, and conversation history use a separate content-only read. Proposal bodies use a detail query keyed by the exact published proposal identity. These consumer changes do not by themselves establish complete application recovery, UI parity, or a speed improvement.
+The owner requests bounded views through `/api/navigation/view/snapshot` and `/api/navigation/view/events`. Mounted consumers register their selected owner and required windows with the owner. The server supplies coherent records, window membership, global counts, and authority for that scope. A replacement scope retains the last coherent display until the new view arrives.
 
-The provider shares one presentation result per effective view identity. One pass indexes parent membership, identity joins, addresses, and Review facts. A knowledge-only change creates a new effective view and invalidates that result even when the publication stays the same.
+`publication.ts` defines the shared immutable publication. The current scoped owner publishes raw immutable views directly. No TanStack navigation collection or whole-workspace replay client runs beside it. Tests of active consumer projections use a synthetic publication fixture in `web/tests/support/navigation/collection.ts`.
 
-The Ticket current-stage section displays its loaded detail and Worker configuration. The server decides whether an action is valid. Private bodies remain detail reads.
+`selectors.effective` exposes fresh, retained, or unknown conversation facts with their publication and read provenance. Unknown has no Boolean value. A loss of runtime authority suppresses runtime knowledge immediately. A late callback from an obsolete scope cannot restore it. Durable message and failure facts remain independent.
 
-The Ticket masthead joins the assigned Manager's Project when a parent exists. Otherwise it uses the Ticket's own Project. Its title, type, and exact current conversation mark remain separate from the detail object that authorizes actions and supplies bodies. The shell reports navigation health. Independent detail or content errors keep their own existing error lines.
+The workspace sidebar, Manager headers and child lists, Chief child pages, Review queue, and Ticket masthead use this shared view. Private bodies remain separate detail reads. Ticket controls use that detail directly. The server accepts or refuses each save.
 
-The scoped owner carries client health separately from its mechanical connection state.
-A degraded snapshot preserves the server's availability and reason through the existing retry sequence.
-A transport or protocol failure reports reconnecting. Only accepted current data for the demanded scope clears the warning.
-Current frames from an older active scope cannot clear a warning for its pending replacement.
-Obsolete callbacks cannot update health. Rejected authority cannot supply a degraded reason or restore healthy status.
-Generation changes, runtime knowledge loss, and retry timing retain their existing rules.
-The application passes this health to both shell status mounts, alongside deployment and update messages.
+The provider shares one presentation result per effective view identity. A knowledge change invalidates that result even when the publication stays the same. `navigationWorkingAgentCount(view)` reads the global count from the scoped view. Filters and pages do not reduce that total.
 
-`navigationWorkingAgentCount(view)` in `presentation.ts` supplies the shared workspace-wide count as a number or `null`. It accepts an effective view, `null`, or `undefined`. An absent view or lost runtime authority returns `null`. A scoped view returns `counts.running_conversations` directly, including zero or `null`, without a resident-record scan. Filters and pagination do not reduce this global total.
+The owner carries health separately from its connection state. A degraded snapshot preserves the server availability and reason. A transport or protocol failure reports reconnecting. Only accepted current data for the demanded scope clears the warning. The shell displays that health beside its other connection messages.
 
-For a complete publication, the API deduplicates current Ticket, Chief, and Manager conversation pointers. It counts only fresh `working: true` facts. A missing, unknown, or retained working fact makes the total `null`. Historical-only and unlinked conversations do not contribute. `message_for_owner` does not affect the count.
+Successful owner reads request shared-owner recovery before the unread-message optimization. Failures retain their existing behavior. Current frames from an older active scope cannot clear a warning for its pending replacement.
 
-Review membership groups each Ticket's eligible proposal and unread conversations before page boundaries and counts.
-Message-only Tickets also use Ticket member keys. Manager and Chief cards retain address member keys.
-Each Ticket closure includes all eligible canonical addresses and exact conversations, with atomic budget admission.
-Review totals come from grouped membership. Ordinary unread membership and its distinct-conversation totals stay independent.
-A settled Manager excludes only its own messages. Ticket eligibility uses its own done and backlog state.
-The earliest constituent sets the Ticket card's queue position, deliberately bringing a new proposal forward beside an older message.
-Proposal timestamps and revisions remain separate approval identities. Address selection precedes owner-state filtering.
-Painted Review conversations request bounded canonical-owner context while a reply or read resolves.
-The server supplies the canonical address and owner even when unread membership clears or that owner becomes excluded.
-An explicit null address records absence. A missing address in an unrelated page does not establish canonical removal.
-This context preserves uncertain reply attempts without retaining a conversation after its canonical owner becomes excluded.
-It includes only the requested conversation identities and follows existing record, byte, and request budgets.
+Review membership groups proposals and unread conversations for each Ticket before page boundaries and counts. A settled Manager excludes only its own messages. An explicit null canonical address records absence. A missing address in an unrelated page does not establish removal.
 
-The existing Review field `runningConversationCount` delegates to this API. The exact unfiltered Worker out-claim sum remains separate. The API adds no display or placement. A pending collection handoff retains the last coherent display without dropping local proposal edits. Explicit authority loss still suppresses runtime knowledge.
+The server fences snapshots, streams, and response sends with the existing producer authority. Scoped delivery shares admission, retention, and source availability with the navigation runtime. Migration tests use synthetic databases or consistent read-only copies. They never open the live database writable.
 
-Snapshots have current or degraded mode. A current response contains complete attention, an exact authority profile, and a replay cursor. A degraded response contains coherent durable attention only, with a null cursor. Every batch carries the same complete authority profile as its accepted current snapshot. Producer permit scope and navigation cursor scope are independent namespaces. Authority checks precede duplicate suppression.
-
-Collection records and publication metadata enter one TanStack transaction. Metadata includes mode, authority, nullable cursor, and a local admission token. That token identifies pending publication independently of cursor equality. `selectors.effective` exposes the shared fresh, retained, or unknown conversation facts with exact publication and read-boundary provenance. Unknown has no Boolean value. An observed loss suppresses runtime knowledge synchronously before an admitted collection transaction drains. A late old commit cannot restore runtime knowledge.
-
-Durable message and failure knowledge remain independent. `owner.invalidateDurableFact` invalidates only the fact affected by a confirmed operation. An observation must cover its canonical owner-read or error-acknowledgment watermark before it restores fresh knowledge. A late read response preserves a newer fresh observation that already covers that read. No read, failure-acknowledgment, or Signal policy changes here.
-
-Create one collection with `createNavigationCollection()`. Create one owner with `createNavigationOwner({adapter, transport: createNavigationTransport()})` above routes and panes. Call `start()` once. On application disposal, dispose the owner, then destroy the collection.
-
-Only the owner writes canonical navigation records. Consumers must not call collection mutation methods, create optimistic transactions, or write detail responses into this collection.
-
-`createNavigationSelectors(adapter)` supplies a coherent publication from the Svelte live query. A publication contains records, continuity, and the canonical cursor. Metadata and records share one source transaction. Keep publication identity intact. Use `$state.raw` when a Svelte component retains a publication for a later DOM update.
-
-Connection state stays internal. `subscribed` means that the owner created a stream, not that the server acknowledged a live connection. The owner retains the last complete view during recovery. It closes transport and stops new admission immediately. The local generation and runtime gate change before an already admitted library transaction drains. Obsolete requests cannot enter a new source transaction. Recovery requires a complete current snapshot before a new stream starts. Degraded snapshots retry through the existing recovery schedule and never resume a stream.
-
-An atomic local publication number distinguishes identical replacement snapshots. It does not advance the server revision. This identity lets live selectors observe a replacement snapshot even when its facts match the previous view.
-
-Generate types with the worktree interpreter:
-
-```sh
-.venv/bin/python scripts/generate_navigation_browser_contracts.py
-.venv/bin/python scripts/generate_navigation_browser_contracts.py --check
-```
-
-Run focused browser verification:
-
-```sh
-cd web
-npm run test:vitest -- tests/navigation-contract.test.ts tests/navigation-collection.test.ts tests/navigation-owner.test.ts tests/navigation-transport.test.ts
-```
-
-The existing order, rail, child, and guidance browser hosts provide bounded consumer DOM evidence with synthetic sources. `scripts/navigation_browser_harness.py` now runs the actual built App and application lifetime with isolated synthetic source data and controlled backend adapters. It compares the original production browser with the candidate. It preserves source, dependency and asset hashes, raw network events, DOM observations and measurement limits. The older `navigation-browser.test.mjs` comparator remains separate supporting evidence. A harness run alone does not establish complete product acceptance.
-
-The owner permits local incorporation, implementation, and isolated validation under the recorded source dispositions. No push of any kind, staging/main merge or publication, deployment, or push-triggered CI is authorized. Retain the local candidate for owner inspection. Tests, reviews, completion, and agent approvals do not authorize publication. No rebase, cherry-pick, reset, or patch assembly is authorized.
-
-Migration tests never open `/home/vps/Deployments/Panels/current/data/planner.db` writable. Isolate whole runtimes. Use synthetic databases or consistent copies from explicitly read-only sources. No live fallback or real agent-home fixtures.
+The browser uses server shapes directly. `identity.ts` supplies revision comparison, authority identity, and record keys without a second schema validator. Generate shared types with `scripts/generate_navigation_browser_contracts.py`. Run the scoped owner and consumer tests in `web/tests/navigation-views.test.ts` and `web/tests/navigation-application.test.ts`.

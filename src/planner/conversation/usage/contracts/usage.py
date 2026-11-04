@@ -3,7 +3,6 @@
 from typing import Literal, NotRequired, TypedDict
 
 USAGE_CONTRACT_VERSION = 5
-USAGE_MERGE_COMPATIBLE_SINCE = 4
 UsageProviderKind = Literal["claude", "codex", "grok"]
 UsageDay = str
 UsageResolution = Literal["day", "hour"]

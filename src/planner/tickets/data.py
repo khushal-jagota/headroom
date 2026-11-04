@@ -50,7 +50,6 @@ from planner.tickets.contracts import (
     WorkerStepClaim,
 )
 from planner.tickets.integrity import TicketIntegrityError
-from planner.tickets.locale_configuration import require_locale_backend_compatibility
 from planner.tickets.logic import (
     admission,
     employee_configuration,
@@ -98,21 +97,10 @@ def _principal_from_json(raw: str) -> Principal:
     return Principal(PrincipalKind(str(stored["kind"])), str(stored["id"]))
 
 
-def _validate_ceiling_holder(
-    conn: sqlite3.Connection, holder: Principal, *, ticket_id: str
-) -> None:
-    if holder == Principal(PrincipalKind.ticket, ticket_id):
-        raise PlannerError(
-            ErrorCode.validation,
-            "a Ticket cannot hold its own ceiling",
-            {"ticket_id": ticket_id},
-        )
-    table = {
-        PrincipalKind.ticket: "tickets",
-        PrincipalKind.manager: "managers",
-    }.get(holder.kind)
-    if table is None:
+def _validate_ceiling_holder(conn: sqlite3.Connection, holder: Principal) -> None:
+    if holder.kind is not PrincipalKind.manager:
         return
+    table = "managers"
     row = conn.execute(f"SELECT 1 FROM {table} WHERE id = ?", (holder.id,)).fetchone()
     if row is None:
         raise PlannerError(
@@ -131,7 +119,7 @@ def _validate_review_holder(
     manager_id: str | None,
 ) -> None:
     """Validate a selected or default address against the resulting assignment."""
-    _validate_ceiling_holder(conn, holder, ticket_id=ticket_id)
+    _validate_ceiling_holder(conn, holder)
     if not can_hold_review(holder, manager_kind=manager_kind, manager_id=manager_id):
         raise PlannerError(
             ErrorCode.validation,
@@ -337,9 +325,6 @@ def resolve_ticket_creation_context(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         worker_runtime_definitions=worker_runtime_definitions,
     )
-    require_locale_backend_compatibility(
-        context.locale, context.launch_configuration.employee_backend
-    )
     return context
 
 
@@ -474,7 +459,7 @@ def _load_ticket_and_worker_type_definition_for_write(
         allow_historical_terminal_ceiling=startup_audit,
     )
     ticket = _row_to_ticket(row, worker_type_definition=worker_type_definition)
-    _validate_ceiling_holder(conn, ticket.ceiling_holder, ticket_id=ticket.id)
+    _validate_ceiling_holder(conn, ticket.ceiling_holder)
     fields_codec.validate_state(
         ticket.field_values,
         ticket.pending_proposal,
@@ -595,7 +580,7 @@ def _apply_decision(
 ) -> Ticket:
     new_stage = decision.stage
     new_ceiling = decision.ceiling
-    _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
+    _validate_ceiling_holder(conn, decision.ceiling_holder)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the removed DB CHECKs gave.
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
@@ -981,7 +966,6 @@ def create_ticket(
     stated_ceiling: str | None = None,
     stated_holder: Principal | None = None,
 ) -> Ticket:
-    admission.require_creatable_worker_type(worker_type)
     manager_kind = manager_kind or ("manager" if manager_id else "chief")
     if manager_kind not in {"chief", "manager"} or (
         (manager_kind == "manager") != (manager_id is not None)
@@ -1017,7 +1001,7 @@ def create_ticket(
         )
         launch_configuration = creation_context.launch_configuration
         project_id = creation_context.project_id
-        _validate_ceiling_holder(conn, ceiling_holder, ticket_id=ticket_id)
+        _validate_ceiling_holder(conn, ceiling_holder)
         # The one rule, asked here where the write happens, exactly as edit_ticket asks
         # it. Making a Ticket acts on nothing that exists, so nothing refuses that. The
         # three things creation arrives with each act on something, and each is asked
@@ -1640,18 +1624,6 @@ def delete_ticket_records(
     ).fetchone()
     if ticket is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
-    held_elsewhere = conn.execute(
-        "SELECT id FROM tickets WHERE id != ? "
-        "AND json_extract(ceiling_holder, '$.kind') = 'ticket' "
-        "AND json_extract(ceiling_holder, '$.id') = ? ORDER BY id LIMIT 1",
-        (ticket_id, ticket_id),
-    ).fetchone()
-    if held_elsewhere is not None:
-        raise PlannerError(
-            ErrorCode.validation,
-            "ticket cannot be deleted while it holds another Ticket ceiling",
-            {"ticket_id": ticket_id, "held_ticket_id": str(held_elsewhere["id"])},
-        )
     if not even_while_running and str(ticket["worker_step_claim"]) == WorkerStepClaim.out.value:
         raise PlannerError(
             ErrorCode.already_running,
@@ -1737,7 +1709,7 @@ def _release_a_holder_the_move_left_below(
     capture_ticket_attention(conn, ticket_id, now)
 
 
-def _resolve_holder_name(conn: sqlite3.Connection, holder: Principal) -> str:
+def _resolve_principal_name(conn: sqlite3.Connection, holder: Principal) -> str:
     if holder.kind is PrincipalKind.owner:
         return "The user"
     if holder.kind is PrincipalKind.chief:
@@ -1761,9 +1733,9 @@ def _review_transfer_notice(
         after.title,
         before.ceiling_holder,
         new_holder,
-        _resolve_holder_name(conn, new_holder),
+        _resolve_principal_name(conn, new_holder),
         notify_previous_holder,
-        _resolve_holder_name(conn, actor) if moved_by_someone_else else None,
+        _resolve_principal_name(conn, actor) if moved_by_someone_else else None,
     )
 
 

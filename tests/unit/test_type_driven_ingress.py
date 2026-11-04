@@ -25,6 +25,7 @@ from sqlite3 import Connection
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.probe import (
     install_probe_registry,
     seed_probe_worker_type,
@@ -32,7 +33,6 @@ from tests.support.probe import (
 )
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core import authority
 from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE

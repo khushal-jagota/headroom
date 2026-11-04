@@ -1,6 +1,6 @@
 import { describe,it,expect } from 'vitest';
 import { createNavigationPresentationCache } from '../src/lib/navigation/presentation';
-import { createNavigationCollection } from '../src/lib/navigation/collection';
+import { createNavigationCollection } from './support/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
 import { currentSnapshot,continuity,conversation } from './support/navigation/fixtures';
 import type { TicketRecord,NavigationRecord,ViewRecord } from '../src/lib/navigation/contracts';

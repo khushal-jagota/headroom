@@ -19,6 +19,7 @@ from time import monotonic, sleep
 from typing import cast
 
 import pytest
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import (
@@ -30,7 +31,6 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryUncertain,
 )
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
@@ -1023,7 +1023,11 @@ def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: s
         assert started.started
         assert ticket.worker_step_claim is WorkerStepClaim.out
         assert ticket.conversation_id is not None
-        assert len(world.conversations.backend_prompt_writes(ticket.conversation_id)) == 1
+        writes = world.conversations.backend_prompt_writes(ticket.conversation_id)
+        assert len(writes) == 1
+        skill_path = Path(world.db_path).parent / "skills/panels-worker-coding/SKILL.md"
+        assert f"Read your assigned Worker skill at {skill_path}." in writes[0].text
+        assert skill_path.is_file()
     else:
         assert not started.started
         assert ticket.worker_step_claim is WorkerStepClaim.none

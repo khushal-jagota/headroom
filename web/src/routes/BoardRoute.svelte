@@ -12,9 +12,7 @@
   import { stabilizeWorkspaceRail } from "../lib/workspaceRail";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import { lifecycleFor } from "../lib/lifecycle";
-
-  import type { NavigationPublication } from "../lib/navigation/collection";
-
+  import type { NavigationPublication } from "../lib/navigation/publication";
   import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";

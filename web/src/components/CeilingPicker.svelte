@@ -88,7 +88,7 @@
       .map((option) => ({ value:option.value, name:option.label }))
   ]);
   let holders = $derived(holderOptionsFor(manager, holder).map((option) => ({
-    value: option.value, name: pendingStage ? (holderLabel ? holderLabel(holderFromValue(option.value,manager)) : option.label) : `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, detail:pendingStage ? undefined : option.detail
+    value: option.value, name: pendingStage ? (holderLabel ? holderLabel(holderFromValue(option.value)) : option.label) : `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, detail:pendingStage ? undefined : option.detail
   })));
   let rows = $derived((showing === "ceiling" ? ceilingOptions : holders) as readonly ListboxPickerItem[]);
   let draftHolderValue = $derived(holderValue(draftHolder ?? holder));
@@ -150,7 +150,7 @@
       if (holderTouched) return commit();
       return show("holder");
     }
-    draftHolder = holderFromValue(value, manager);
+    draftHolder = holderFromValue(value);
     holderTouched = true;
     // The approve row starts with no ceiling at all and cannot approve without one, so
     // the unanswered half is asked for rather than guessed. A held stage cannot be

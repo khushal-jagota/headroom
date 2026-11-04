@@ -41,7 +41,6 @@ from planner.environments.cli import environment as environment_group
 from planner.executor.cli import executor_group
 from planner.goals.cli import goal as goal_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
-from planner.maintenance.cli import maintenance as maintenance_group
 from planner.measure_sources.cli import measure_source as measure_source_group
 from planner.measures.cli import measure as measure_group
 from planner.message_delivery.contracts import MessageDeliveryMode
@@ -69,8 +68,7 @@ def caller_principal() -> dict[str, str]:
     """The principal this process is, as a holder object.
 
     A caller who does not say where a ceiling goes next keeps it. Khushal keeps it as the
-    owner, and a Manager or a Ticket keeps it as itself, which is what the two approval
-    doors each defaulted to before they became one.
+    owner, and a Manager keeps it as itself. A Worker cannot hold a review.
     """
     actor = os.environ.get(_ACTOR_ENV, "").strip()
     ticket_id = os.environ.get(_TICKET_ID_ENV, "").strip()
@@ -96,10 +94,8 @@ def resolve_holder(raw: str, as_json: bool) -> dict[str, str]:
         return {"kind": alias[0], "id": alias[1]}
     if holder.startswith("si_"):
         return {"kind": "manager", "id": holder}
-    if holder.startswith("t_"):
-        return {"kind": "ticket", "id": holder}
     http.fail_validation(
-        "holder must be me, chief, a Manager id, or a Ticket id",
+        "holder must be me, chief, or a Manager id",
         as_json,
     )
     raise AssertionError("unreachable")
@@ -250,6 +246,7 @@ def _ticket_record(
         "title",
         "worker_type",
         "worker",
+        "worker_skill_path",
         "locale",
         "employee_backend",
         "employee_launch_model",
@@ -442,7 +439,6 @@ def main() -> None:
 
 main.add_command(executor_group)
 main.add_command(environment_group)
-main.add_command(maintenance_group)
 main.add_command(credential_group)
 main.add_command(goal_group)
 main.add_command(measure_group)
@@ -1752,6 +1748,9 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
         as_json=as_json,
     )
     header, parts = _ticket_record(data, part_names, as_json=as_json)
+    native_skills = os.environ.get("PLAN_NATIVE_SKILLS_DIR")
+    if native_skills and "worker" in data:
+        header["worker_skill_path"] = str(Path(native_skills) / data["worker"] / "SKILL.md")
     _emit_record(header, parts, part_names, as_json)
 
 

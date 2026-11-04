@@ -2,7 +2,7 @@
 from alembic import op
 
 revision = "remove_navigation_proof"
-down_revision = "remove_scheduled_tickets"
+down_revision = "remove_ticket_approvers"
 branch_labels = None
 depends_on = None
 
