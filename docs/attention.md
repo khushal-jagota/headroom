@@ -1,50 +1,40 @@
 # Historical attention
 
-The attention API answers where Khushal’s recorded involvement went between two dates. Chief can compare Projects, then inspect the work behind one Project.
+Historical attention answers one question: where did Khushal's recorded involvement go between two dates? Chief uses it to compare Projects, then look at the work behind one, before discussing another commitment. It looks backward only. It does not report what is waiting now, and it does not forecast capacity. [Review](review.md) and [Notifications](notifications.md) use the word "attention" for what is waiting on him now. This page is the history.
 
-```sh
-panels attention summary --first-date 2026-10-29 --last-date 2026-11-04 --group-by project --json
-panels attention summary --first-date 2026-10-29 --last-date 2026-11-04 --project PROJECT_ID --group-by ticket --json
+## What it counts
+
+For a date range, Headroom groups three things by Project, Manager, Ticket, or goal, and can scope the answer to one of them or to Chief:
+
+- **Owner messages.** Prompts Khushal sent.
+- **Owner approvals.** Explicit acceptances by him. Automatic acceptance and agent approval do not count.
+- **Approval waits.** Elapsed time that a Ticket sat at an open gate.
+
+Each group also shows the preceding period of equal length, the difference, its share of the total, and the share of active Tickets with no owner involvement. Dates are inclusive and fixed to the Europe/Berlin calendar. Today is partial.
+
+## Where the facts come from
+
+```
+ owner accepts a proposal ───────► approval event ──┐
+ a Ticket opens or leaves a gate ► gate interval ───┼─► calculator ─► summary
+ prompt events, with their sender ─────────────────┘
 ```
 
-The HTTP equivalent is `GET /api/attention/summary`. Its query accepts `first_date`, `last_date`, `group_by`, `scope_kind`, `scope_id`, `sort`, `limit`, and `offset`.
+Approval events and gate intervals are written when they happen, in the same transaction as the action. Messages are read from conversation events, where the authenticated sender decides whether a prompt is the owner's. Agent prompts and replays are not.
 
-Dates are inclusive Europe/Berlin dates. Without dates, the API selects the last seven local dates. It compares the selected range with the preceding range of equal length. Today ends at the snapshot time and remains partial.
+## Decisions that shape it
 
-`group_by` selects Project, Manager, Ticket, or goal. Scope selects all work, one Project, one Manager, one Ticket, one goal, or Chief. Group and scope are independent. The CLI uses `--project`, `--manager`, `--ticket`, `--goal`, or `--chief` for the scope. Select only one.
+- **No estimate of owner time.** Headroom sees messages and decisions, not reading time or work on the Mac. A gate wait is an elapsed delay, not hours of attention, so waits are never summed into a time figure. Chief asks Khushal about the rest.
+- **Unknown is not zero.** Older history can lack approvals, gates, or senders. A figure says what it covers and what it cannot know.
+- **Goals are partial.** Headroom has no link between Tickets and goals, so a goal figure covers only its own conversations. Other work stays unattributed.
+- **Totals are stable.** Paging and sorting never change totals or shares.
 
-Each group contains owner messages, explicit owner approvals, elapsed approval waits, and the share of active Tickets without owner involvement. It also contains the preceding period, differences, message share, and approval share. Titles and links identify the work. `sort` accepts `owner_messages`, `owner_approvals`, or `approval_wait_seconds`. Pagination never changes totals or share denominators.
+## Where it shows up
 
-Owner messages use authenticated sender metadata. Agent prompts and replay duplicates do not count as owner messages. Approval counts exclude automatic acceptance and agent approval. Active Tickets include recorded agent activity, so work without owner involvement remains visible.
+Only through `panels attention summary` and `GET /api/attention/summary`. No screen reads it. The same daily figures can also be retained as [measures](measures.md), so a goal chart can bind them. A setup command creates that collection source.
 
-Gate waits describe elapsed delays within the selected range. Overlapping gates produce summed waits and a separate union of elapsed time. Neither number measures hours of owner attention. Open gates contribute elapsed history through the snapshot, without a current-demand recommendation.
+## Code
 
-Each figure states its coverage and limits. Older approval and gate history can be unknown. Missing history stays null, not zero. A share without owner involvement remains unknown when its evidence cannot establish absence.
+`src/planner/attention/`: history capture, the calculator in `logic/`, the CLI, and the collection setup.
 
-Goal figures cover direct goal conversations. Panels has no Ticket-to-goal membership. Other work remains unattributed. Shared Project figures provide context and never enter direct goal totals.
-
-These reads do not report current demands or forecast capacity. Panels cannot see reading time or work on the Mac. Chief asks Khushal about those.
-
-## Retained daily figures
-
-The existing measure-source runtime can retain the same calculator’s daily results. A setup helper creates one source responsible to Chief, three datasets, and three scalar measures. Each output covers owner messages, explicit approvals, or elapsed approval waits.
-
-After installation, Chief or an authorized operator can configure collection through the CLI:
-
-```sh
-panels attention setup-collection --project PROJECT_ID --database-path /absolute/server/path/planner.db --json
-```
-
-The explicit path names the database on the Panels server. Use the server’s configured database path. The script opens it read-only and reports a real collection failure if it is unavailable. The command reuses its existing source and outputs on repeated calls. It uses existing source authority, script revision, and schedule APIs. The default schedule is 00:05 in the server’s local timezone. `--local-time HH:MM` selects another time.
-
-The saved script opens that database read-only. It never selects a database from inherited environment variables or upgrades a schema. Normal collection records yesterday and today, with today partial. A requested history range records those explicit dates. Source receipts retain query bounds, limitations, and provenance.
-
-Datasets separate metrics so unknown approvals cannot erase known message counts. Their dimensions preserve destination, Project, Manager, attribution basis, and coverage. Unknown values stay absent from numeric rows with an explicit limitation. Scalar measures retain nulls for unknown totals.
-
-The setup result identifies the source, dataset, and measure IDs. Use existing `panels dataset read` and `panels measure read` commands for retained results. Existing goal charts can bind the scalar measures. Range summaries use original facts, because daily distinct counts cannot be added to obtain range counts.
-
-Code: `src/planner/attention/`.
-
-New automatic prompts carry a trusted system marker from their original server admission. Public messages retain their authenticated sender, regardless of their display label. Legacy prompts without sender or system provenance keep unknown coverage. A queued prompt preserves its original provenance.
-
-A deleted Ticket can retain its title through an approval or gate snapshot. That snapshot does not establish the Project or Manager for another message. Such messages retain Ticket identity, but their missing relationships remain unattributed.
+_Last verified: 2026-11-04._
