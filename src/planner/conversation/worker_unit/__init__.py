@@ -24,6 +24,7 @@ from planner.conversation.worker_unit.config import (
     SLICE_MEMORY_MAX_BYTES,
     WORKER_MEMORY_MAX,
     WORKER_SLICE,
+    WORKER_TEMP_ROOT,
 )
 
 
@@ -144,12 +145,18 @@ class WorkerUnit:
                 raise WorkerUnitError(
                     "Install panels.slice with its lower CPU weight before Workers."
                 )
-        root = Path.home() / ".local" / "state" / "panels" / "worker-runs"
-        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # UNIX sockets have a short pathname limit. Keep the disk root short
+        # enough for pytest and tool-created subdirectories beneath TMPDIR.
+        # PrivateTmp also hides /var/tmp from the user manager. The real home
+        # is shared with that manager, and a direct child keeps socket paths short.
+        root = Path(WORKER_TEMP_ROOT).expanduser()
         _disk_directory(root)
-        directory = Path(tempfile.mkdtemp(prefix="worker-", dir=root))
+        directory = Path(tempfile.mkdtemp(prefix=".pw-", dir=root))
         try:
-            temporary = directory / "tmp"
+            directory.chmod(0o700)
+            if directory.stat().st_uid != os.getuid():
+                raise WorkerUnitError("Worker temporary directory has a different owner")
+            temporary = directory / "t"
             temporary.mkdir(mode=0o700)
             child_environment = dict(environment)
             child_environment.update(TMPDIR=str(temporary), TMP=str(temporary), TEMP=str(temporary))

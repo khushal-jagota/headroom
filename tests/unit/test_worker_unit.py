@@ -14,7 +14,7 @@ from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
 @pytest.fixture
 def unit_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncMock:
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(worker_unit, "WORKER_TEMP_ROOT", str(tmp_path))
     monkeypatch.setattr(worker_unit, "_disk_directory", lambda path: None)
     control = AsyncMock(return_value=(0, "LoadState=loaded\nMemoryMax=21474836480\nCPUWeight=10"))
     monkeypatch.setattr(worker_unit, "_control", control)
@@ -35,7 +35,7 @@ def test_missing_slice_refuses_worker_instead_of_uncontained_fallback(
         unit_setup.return_value = (0, "LoadState=not-found\nMemoryMax=infinity\nCPUWeight=100")
         with pytest.raises(WorkerUnitError, match="lacks its resource limits"):
             await WorkerUnit.create({"PLAN_TICKET_ID": "test"}, tmp_path)
-        assert not (tmp_path / ".local").exists()
+        assert not list(tmp_path.iterdir())
     asyncio.run(scenario())
 
 
@@ -56,7 +56,8 @@ def test_service_keeps_environment_private_and_temp_lifetime(
         assert argv[-2:] == (str(executable), "argument $with %specifiers")
         assert unit.environment["TMPDIR"] == unit.environment["TMP"] == unit.environment["TEMP"]
         assert Path(unit.environment["TMPDIR"]).is_dir()
-        assert unit.directory.is_relative_to(tmp_path / ".local" / "state")
+        assert unit.directory.parent == tmp_path
+        assert unit.directory.stat().st_mode & 0o777 == 0o700
         environment_file = unit.directory / "environment"
         assert environment_file.stat().st_mode & 0o777 == 0o600
         expected = 'SECRET="private \\$token \\"quoted\\" \\\\ slash\nsecond line"'
@@ -109,7 +110,7 @@ def test_parent_slice_must_deprioritize_workers_against_app_slice(
         ]
         with pytest.raises(WorkerUnitError, match="Install panels.slice"):
             await WorkerUnit.create({"PLAN_TICKET_ID": "test"}, tmp_path)
-        assert not (tmp_path / ".local").exists()
+        assert not list(tmp_path.iterdir())
     asyncio.run(scenario())
 
 
