@@ -7,7 +7,6 @@
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
-  import { lifecycleFor } from "../lib/lifecycle";
   import { RAIL_HOVER_RECAP_MAX_LINES } from "../lib/workspaceRailInteraction";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
@@ -25,11 +24,10 @@
     onKeepOpen?: () => void; onLeave?: () => void;
     element?: HTMLDivElement | null;
   } = $props();
-  const manifests = createQuery(() => queries.workerTypeManifests());
   let currentWorker = $derived(worker);
   const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
-  let stageSentence = $derived(unknownMac ? MACHINE_ACTIVITY_UNKNOWN : currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
+  let stageSentence = $derived(unknownMac ? MACHINE_ACTIVITY_UNKNOWN : currentWorker ? workspaceWorkerStageSentence(currentWorker) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
   let recapIdentity = $derived(recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null);
   let pointerVisit = $state<{ target: HTMLElement | null; recapIdentity: string | null } | null>(null);

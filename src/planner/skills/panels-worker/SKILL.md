@@ -11,7 +11,9 @@ Tickets generally have stages, these are not there to show all of your working, 
 
 ## Your ticket and your specialist
 
-Which Stages a Ticket has, and what each needs, depend on its Worker type. Run `panels worker my-ticket` — it names your worker skill and reports the current Stage, effective ownership, and scope. Invoke that skill.
+Each Ticket owns its workflow: its stages, result fields, ownership, and guidance. Run `panels worker my-ticket` to read the current Stage, ownership, scope, and workflow.
+
+If the Ticket names a specialist skill, invoke that skill as usual. A custom Ticket receives its complete guide at kickoff. Follow that guide without inventing or registering a specialist. After context recovery, read the Ticket workflow again before work resumes.
 
 Worker skills (non-exhaustive):
 
@@ -82,7 +84,9 @@ Store them in the live managed tree at `/home/vps/Deployments/Panels/current/dat
 
 ### Preview servers you leave running
 
-For VPS Tickets only, when the work is a running preview server, record it as an ordinary Markdown link to `/dev/tickets/<ticket-id>/<port>/`, for example `[take one](/dev/tickets/t_t8bu42wk/8791/)`. Panels serves that address and the user can open it. Never record `http://127.0.0.1:<port>/` or `http://localhost:<port>/`: that address is true only on this machine, and the user browses from another device. A recorded link goes out of date when the port dies, like any other stored value. Application previews are unavailable for Mac runs.
+When a Ticket's work is a running preview server, you cannot publish it yourself: publishing a port needs rights no Worker runtime has. Start the server bound to `127.0.0.1` on an available port, then send the Chief of Staff the port number and one line on what the user will see, and ask for it to be published. The Chief returns an address on `https://panels-vps.tail687c57.ts.net`; record that as an ordinary Markdown link. Tell the Chief when the Ticket is done so the publication can be withdrawn.
+
+Never record `http://127.0.0.1:<port>/` or `http://localhost:<port>/`: that address is true only on this machine, and the user browses from another device. Never ask the user to run a command to see your work. A recorded link goes out of date when the port dies, like any other stored value.
 
 
 ### The server is not yours

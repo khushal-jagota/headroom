@@ -37,6 +37,7 @@ from planner.conversation.events import (
 from planner.conversation.message_content import text_message_content
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import _alembic_config, _migration_engine
+from planner.managed_skills import seed_packaged_skills
 from planner.navigation import data, journal, snapshot
 from planner.navigation.contracts import HistoryUnavailable
 from planner.projects.data import seed_default_projects
@@ -160,7 +161,15 @@ def _seed_pre_lifecycle(path: Path) -> Engine:
             == []
         )
         seed_default_projects(conn)
-        seed_shipped_worker_types(conn)
+        # Current seed helpers use the ordinary Panels connection's named rows.
+        # Restore SQLAlchemy's tuple rows before the historical fixture continues.
+        original_row_factory = conn.row_factory
+        conn.row_factory = sqlite3.Row
+        try:
+            seed_packaged_skills(conn)
+            seed_shipped_worker_types(conn)
+        finally:
+            conn.row_factory = original_row_factory
         seed_historical_coding_definition(conn)
         seed_chief_settings(conn)
         conn.execute(
@@ -285,7 +294,7 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
     renamed = (
         conn.execute("SELECT 1 FROM sqlite_master WHERE name='managers'").fetchone() is not None
     )
-    assert current["schema_version"] == (9 if activated else 7 if renamed else 5)
+    assert current["schema_version"] == (10 if activated else 7 if renamed else 5)
     parent_kind = "manager" if renamed else "orchestrator"
     assignment_column = "manager_kind" if renamed else "orchestrator_kind"
     parent_column = "manager_id" if renamed else "sprint_item_id"
@@ -303,11 +312,15 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
         "conversation_id": None,
     }
     held = values["ticket", "held"]
+    snapshot_backed = "workflow_json" in {
+        str(column[1]) for column in conn.execute("PRAGMA table_info(tickets)")
+    }
     assert held == {
         "title": "held",
         "recap": "",
         "recap_preview": "",
         "worker_type": "coding",
+        **({"stage_label": "Plan", "workflow_label": "Coding"} if snapshot_backed else {}),
         "stage": "needs_plan",
         "ticket_status": "awaiting_approval",
         "blocked": True,
@@ -462,7 +475,7 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
             _assert_canonical(conn)
             records = _assert_projection(conn, activated=True)
             installed = snapshot(conn)
-            assert installed["semantics"] == "attention-knowledge-v9-review-messages"
+            assert installed["semantics"] == "attention-knowledge-v10-ticket-workflows"
             assert installed["epoch"] != physical["epoch"]
             assert installed["scope"] == physical["scope"]
             assert installed["revision"] == "0"

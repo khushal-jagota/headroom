@@ -107,6 +107,7 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.db import connect, create_schema
+from planner.worker_types.store import read_definition, workflow_from_preset, workflow_to_json
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
 
@@ -644,15 +645,17 @@ def _link_test_ticket_to_conversation(
         with conn:
             conn.execute(
                 "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,"
-                "ceiling,conversation_id,field_values,created_at,updated_at,ceiling_holder) "
+                "ceiling,conversation_id,field_values,created_at,updated_at,"
+                "ceiling_holder,workflow_json) "
                 "VALUES (?,?,?,'codex','needs_implementation','needs_implementation',"
-                "?,'{}',1,1,?)",
+                "?,'{}',1,1,?,?)",
                 (
                     ticket_id,
                     "Failed Ticket",
                     "coding",
                     conversation_id,
                     json.dumps({"kind": "chief", "id": "chief"}),
+                    workflow_to_json(workflow_from_preset(read_definition(conn, "coding"))),
                 ),
             )
     finally:

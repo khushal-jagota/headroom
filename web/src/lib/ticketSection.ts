@@ -2,7 +2,7 @@ import type { TicketRecord, TicketValue } from './navigation/contracts';
 import type { EffectiveNavigationView } from './navigation/knowledge';
 import type { NavigationPublication } from './navigation/collection';
 import type { TicketDetail } from './types';
-import type { WorkerTypeManifest } from './lifecycle';
+import type { WorkflowManifest } from './lifecycle';
 import { buildLifecycle, ticketStageVisualStateFor, type Lifecycle } from './lifecycle';
 import { navigationAgentState, navigationKnownBoolean, navigationConversationSignal } from './navigation/presentation';
 import { agentHoldsTicket } from './workAttentionPresentation';
@@ -16,7 +16,7 @@ export type TicketSection = {
 };
 
 /** Configuration describes controls; the stored row supplies category and current gate. */
-export function ticketSectionConfigurationMatches(record:TicketRecord,configuration:WorkerTypeManifest | undefined):boolean {
+export function ticketSectionConfigurationMatches(record:TicketRecord,configuration:WorkflowManifest | undefined):boolean {
   if('integrity_error' in record.value || !configuration || configuration.worker_type!==record.value.worker_type) return false;
   const row=record.value;
   const stage=configuration.stages.find(stage=>stage.id===row.stage);
@@ -40,7 +40,7 @@ export function ticketSectionDetailMatches(record:TicketRecord,detail:TicketDeta
 }
 
 export function admitTicketSection(view:EffectiveNavigationView | null | undefined,record:TicketRecord | undefined,
-  detail:TicketDetail | undefined,configuration:WorkerTypeManifest | undefined):TicketSection | undefined {
+  detail:TicketDetail | undefined,configuration:WorkflowManifest | undefined):TicketSection | undefined {
   if(!view || !record || 'integrity_error' in record.value || !detail || !configuration || !ticketSectionDetailMatches(record,detail)
     || !ticketSectionConfigurationMatches(record,configuration)) return undefined;
   return {record: record as TicketSection['record'],detail,lifecycle:buildLifecycle(configuration),publication:view.publication};

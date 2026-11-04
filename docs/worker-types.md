@@ -1,6 +1,6 @@
 # Worker types
 
-A Worker type is a way of paying attention. Coding, research, debugging, and designing a flow do not want the same stages or the same moments of human judgment. The type is chosen when a Ticket is created, never changes afterward, and gives that Ticket its shape.
+A Worker type is a way of paying attention. Coding, research, debugging, and designing a flow do not want the same stages or the same moments of human judgment. A type supplies a reusable preset. Each new Ticket owns the stages it copies from that preset. Custom work can define its own stages without a new type.
 
 ## What a type declares
 
@@ -34,21 +34,23 @@ A few retired types remain readable on old Tickets and schedules. They cannot be
 
 The database rows are the registry. A file shipped with the code seeds an empty database and is not read again. The server and the browser both read the rows, and the browser renders whatever ladder it is sent, with no special case per type.
 
-An amendment can add or remove stages even while unfinished Tickets use them. A Ticket on a removed stage moves back to the nearest earlier stage that survives, and so does a ceiling. This is the one place a stage moves outside the proposal resolver. It only ever moves a Ticket backward, so a change never grants a stage by accident. Stored text is kept, and nothing is approved on anyone's behalf. The definition and every affected Ticket are saved together. If any Ticket cannot move safely, the whole save is refused. The save reports each Ticket's old and new position.
+A preset edit changes future Tickets. Existing Tickets keep their stages, fields, ownership, approvals, and current position. Their workflow does not depend on the current registry definition.
+
+Preset instructions sit beside their stages as structured data. Panels assembles that record into the specialist skill, so the stage editor and skill share one source. Instructions remain ordinary prose, with room for guidance across the workflow.
 
 The New worker and Amend worker types are how these changes are usually made: a Worker drafts the definition and a person decides it.
 
 ## Decisions that shape it
 
-- **The type is fixed per Ticket.** A Ticket's stages are a promise about how its work will be reviewed. Switching type mid-flight would break that promise.
+- **The Ticket owns its stages.** A preset records where the initial workflow came from. It does not control an existing Ticket.
 - **Ownership and the ceiling are separate.** Ownership says who drafts a stage. The ceiling says whether the result waits for someone.
 - **Defaults are copied, not referenced.** A Ticket owns its launch setup from creation, so changing a type's defaults never changes running work.
-- **Amendments move backward or refuse.** A removed stage never pushes a Ticket forward past a gate a person did not approve.
+- **Creation has two routes.** Select and adapt a preset, or define stages, ownership, results, and instructions directly. Review the whole workflow before creation.
 - **Adding a type is a product decision, not a code change**: a new ladder and a specialist skill, saved as a new definition.
 
 ## Code
 
-- `src/planner/worker_types/`: definitions, the registry, the amendment rules (`logic/migration.py`), and the save (`store.py`).
+- `src/planner/worker_types/`: workflow definitions, preset registry, guidance assembly, and storage.
 - `src/planner/worker_types/shipped_worker_types.json`: the seed.
 - `web/src/routes/ConfigRoute.svelte`: the Settings screen for types and their defaults.
 

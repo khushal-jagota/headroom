@@ -18,7 +18,7 @@ The command name grants nothing. The process environment says who is calling: He
 
 ## How reads and writes work
 
-A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. A write that depends on what was read, such as backlog and resume, carries the record's fingerprint, so a stale write is refused instead of landing on a changed Ticket. `ticket create` sends one object to the same create route as the browser, which validates the whole Ticket before one write.
+A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. A write that depends on what was read, such as backlog and resume, carries the record's fingerprint, so a stale write is refused instead of landing on a changed Ticket. `ticket create` sends one object to the same create route as the browser. It accepts a preset or a custom workflow. Custom stages carry their result fields, ownership, and instructions together. The route validates the whole Ticket before one write.
 
 ## What the CLI feeds
 

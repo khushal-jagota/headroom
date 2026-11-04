@@ -292,7 +292,7 @@ def _ticket_record(
         "ceiling_holder",
     )
     header = {key: data[key] for key in header_keys if key in data}
-    manifest = _worker_type(str(data["worker_type"]), True)
+    manifest = data["workflow"]
     parts = {
         field["id"]: part(
             data["field_values"].get(field["id"]),
@@ -300,6 +300,7 @@ def _ticket_record(
         )
         for field in manifest["fields"]
     }
+    parts["workflow"] = part(data.get("workflow"))
     parts["proposal"] = part(data.get("pending_proposal"))
     parts["recap"] = part(data.get("recap", ""))
     # Current manifests deliberately omit retired fields. An explicit old-field
@@ -1671,7 +1672,7 @@ def _approve_ticket_proposal(
         params={"detail": "full", "id": tid},
     )
     stage = detail["stage"]
-    manifest = _worker_type(detail["worker_type"], as_json)
+    manifest = detail["workflow"]
     field = _gating_field_for_stage(manifest, stage)
     if field is None:
         http.fail_validation(

@@ -4,7 +4,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 
 ## What it is made of
 
-- **The skill row.** The text of each skill lives in the database. The row is the authority.
+- **The skill row.** Shared role text lives in the database. Structured preset guidance generates specialist skill rows.
 - **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. Every Hermes, Codex, and Claude home links to those copies, and a server with an explicit workspace links it there too.
 - **The seed.** The skill tree packaged with the code fills a database that has no skills yet. Nothing reads it after that.
 - **Skill history.** Each saved version is kept, and each Worker step records which versions it was sent with, so a later reader can see what that step was instructed to do.
@@ -18,15 +18,15 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 
 ## How it works
 
-Khushal and the Chief stand above skills, so both may edit them. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. Edits are revision-checked, and a reviewed batch applies in one transaction.
+Khushal and the Chief stand above skills, so both may edit them. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. Shared role edits are revision-checked, and a reviewed batch applies in one transaction. Specialist guidance changes through its structured preset editor.
 
-The specialist named on a [Worker type](worker-types.md) decides which skill a Worker step uses. A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
+The specialist reference saved on a Ticket decides which skill a preset Worker reads. A custom Ticket receives its assembled guide at kickoff. See [Worker types](worker-types.md). A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
 
 `panels skill check` reports a skill that names a command, stage, or skill this build lacks. It reports and does not rewrite.
 
 ## Decisions that shape it
 
-- The row wins. Editing the packaged tree changes the next fresh install, not a running agent.
+- Shared role rows and structured preset guidance are their respective sources. Specialist skills are generated output. Editing the packaged tree changes the next fresh install.
 - One copy for all three backends, so the same kind of agent gets the same words on Hermes, Codex, and Claude.
 - Agents that need a skill changed hand the text up. Only the owner and the Chief write skills.
 

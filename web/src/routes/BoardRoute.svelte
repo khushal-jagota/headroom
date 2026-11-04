@@ -1,4 +1,6 @@
 <script lang="ts">
+  import CreateTicket from "../components/CreateTicket.svelte";
+  let createTicketOpen = $state(false);
   import { workspaceRailWash } from "../lib/workspaceRailWash";
   import { viewWindow } from "../lib/navigation/views/owner";
   import { navigationScrollWindow } from "../lib/navigation/views/scrollWindow";
@@ -11,7 +13,6 @@
   import { navigationWindow, type NavigationPresentation } from "../lib/navigation/presentation";
   import { stabilizeWorkspaceRail } from "../lib/workspaceRail";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
-  import { lifecycleFor } from "../lib/lifecycle";
   import type { RenderObserver } from "../lib/navigation/visibility";
   import type { NavigationPublication } from "../lib/navigation/collection";
   import { railDomMatches, hoverDomMatches } from "../lib/workspaceRailDom";
@@ -45,7 +46,6 @@
     if (!context) throw new Error("Workspace requires the application navigation owner");
     return context;
   })();
-  const manifests = createQuery(() => queries.workerTypeManifests());
   // Chief recap is dedicated content outside navigation records, so the popover
   // reads it from the same settings query the Chief conversation pane already uses.
   const chiefSettings = createQuery(() => queries.chiefSettings());
@@ -367,7 +367,7 @@
     const title = currentHoverTitle;
     const kicker = currentHoverKicker;
     const recap = worker ? worker.recap ?? '' : hoverRecap;
-    const stage = worker ? workspaceWorkerStageSentence(worker,lifecycleFor(manifests.data,worker.worker_type)) : '';
+    const stage = worker ? workspaceWorkerStageSentence(worker) : '';
     const signal = worker?.conversation_signal ?? hoverSignal;
     const conversation = worker?.conversation_id ?? hoverConversationId;
     if (!hoverVisible || hoverGoalId || !root || !target?.isConnected || !sourceExists || !observer || !publication || !effective?.runtimeCurrent || effective.publication !== publication) return;
@@ -391,10 +391,12 @@
   }
 </script>
 
+{#if createTicketOpen}<CreateTicket initialManager={opening.openManagerId ?? ''} onClose={() => createTicketOpen = false} />{/if}
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section use:workspaceRailWash bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
+          <button type="button" class="new-ticket" onclick={() => createTicketOpen = true} data-new-ticket>+ New Ticket</button>
           <div class="rail-work">
           <ResourceState shape="block" layout="fill" loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
@@ -574,4 +576,9 @@
     .board-workspace-shell--destination .approved-rail { display:none; }
     .board-workspace-right--destination { display:flex; padding:0; }
   }
+
+  .new-ticket { flex: 0 0 auto; align-self: flex-start; padding: var(--space-3) var(--space-4); margin: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font: var(--type-xs) var(--font-ui); cursor: pointer; }
+  .new-ticket:hover { color: var(--text-default); background: var(--surface-2); }
+
+
 </style>

@@ -47,6 +47,7 @@ from planner.worker_settings.contracts import (
 from planner.worker_settings.logic.skill_edits import normalize_skill_patch
 from planner.worker_types.configuration import load_worker_runtime_definitions
 from planner.worker_types.contracts import TicketTypeMigration, WorkerProfile, WorkerTypeDefinition
+from planner.worker_types.guidance import render_workflow_guide
 from planner.worker_types.registry import WorkerTypeRegistry
 from planner.worker_types.store import definition_transaction, write_definition
 
@@ -269,12 +270,37 @@ def save_worker_type_definition(
     with skill_publication_lock(database_parent) as skills_home:
         rendered: str | None = None
         with definition_transaction(conn):
+            name = definition.worker_profile.specialist_skill
             if skill is not None:
-                name = definition.worker_profile.specialist_skill
                 patch = normalize_skill_patch(name, skill)
-                rendered = _render_skill_patch(conn, name, patch, allow_create=True)
-                parse_skill(rendered, name)
-                write_skill_source(conn, name, rendered, now=now)
+                if "markdown_body" in patch and patch["markdown_body"] != render_workflow_guide(
+                    definition
+                ):
+                    raise PlannerError(
+                        ErrorCode.validation,
+                        "specialist body is generated from the structured workflow",
+                        {"field": "markdown_body"},
+                    )
+                description = patch.get("description", definition.label)
+            else:
+                description = (
+                    read_skill(conn, name).description
+                    if has_skill(conn, name)
+                    else definition.label
+                )
+            body = render_workflow_guide(definition)
+            rendered = (
+                render_skill_from_existing_frontmatter(
+                    read_skill_source(conn, name),
+                    expected_skill_name=name,
+                    description=description,
+                    markdown_body=body,
+                )
+                if has_skill(conn, name)
+                else render_new_skill(name, description, body)
+            )
+            parse_skill(rendered, name)
+            write_skill_source(conn, name, rendered, now=now, generated_from_workflow=True)
             migrations = write_definition(conn, definition, now=now)
         load_worker_runtime_definitions(conn)
         if rendered is not None:
