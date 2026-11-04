@@ -330,8 +330,10 @@ struct GoalCompletion: View {
                                                 removal: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : -8, blur: reduceMotion ? 0 : 2, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1))))
                 }.animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: done)
             }
-            Label(done ? "Completed" : status == "bad" ? "Overdue" : status == "attention" ? "Due today" : "Not done", systemImage: "circle.fill")
-                .font(.footnote).foregroundStyle(PanelsTheme.Goal.tone(status))
+            HStack(spacing: 8) {
+                Circle().frame(width: 6, height: 6)
+                Text(done ? "Completed" : status == "bad" ? "Overdue" : status == "attention" ? "Due today" : "Not done")
+            }.font(.footnote).foregroundStyle(PanelsTheme.Goal.tone(done ? "good" : status))
         }
     }
 }
