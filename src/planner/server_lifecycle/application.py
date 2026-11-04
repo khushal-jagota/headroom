@@ -9,7 +9,7 @@ from types import FrameType
 import uvicorn
 
 from planner.core.clock import build_clock
-from planner.core.config import HOST, load_config
+from planner.core.config import DB_BUSY_TIMEOUT_MS, HOST, load_config
 from planner.core.db import connect
 from planner.core.server import create_app
 from planner.core.sse import close_open_change_streams
@@ -40,7 +40,7 @@ def run_application_process() -> None:
     clock = build_clock(config)
 
     def conn_factory() -> sqlite3.Connection:
-        return connect(config.db_path, config.db_busy_timeout_ms)
+        return connect(config.db_path, DB_BUSY_TIMEOUT_MS)
 
     app = create_app(config, clock, conn_factory)
     listener_fd = os.environ.get("PLAN_SERVER_LISTENER_FD")

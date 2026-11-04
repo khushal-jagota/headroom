@@ -47,7 +47,7 @@ from planner.core.authctx import (
     request_context,
 )
 from planner.core.clock import Clock
-from planner.core.config import Config
+from planner.core.config import DB_BUSY_TIMEOUT_MS, Config
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     JsonDict,
@@ -849,7 +849,7 @@ async def restart_ticket_worker(
     async def start_worker_step() -> WorkerStepStartResult:
         return await start_ready_worker_step(
             ticket_id,
-            connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
+            connect_database=lambda: connect(cfg.db_path, DB_BUSY_TIMEOUT_MS),
             conversation_system=conversations,
             worker_type_registry=configured_worker_type_registry(),
             now=clk.now_unix,
