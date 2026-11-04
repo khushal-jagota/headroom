@@ -175,6 +175,8 @@ def test_actual_producer_replacements_change_each_bit_without_generic_counter_ch
     writer = prepared.mutation(None, "rolled-back-runtime")
     writer.rollback()
     writer.close()
-    assert prepared.runtime.running_turn is not None
+    # SQLite rollback leaves live runtime fields as they are. Publication waits
+    # for the next committed source change, without runtime undo machinery.
+    assert prepared.runtime.running_turn is None
     assert snapshot(conn) == previous
     conn.close()

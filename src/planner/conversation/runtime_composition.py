@@ -37,6 +37,7 @@ from planner.core.db import (
 )
 from planner.core.read_connections import ReadConnections
 from planner.credentials.requests import data as credential_request_data
+from planner.navigation import data as navigation_data
 
 
 def _managed(connection: sqlite3.Connection) -> ChangeSignallingConnection:
@@ -91,10 +92,12 @@ class SignalRuntimeComposition:
                 # Old admission functions no longer exist. Remove their triggers
                 # before migrations and startup audit writes reach source tables.
                 persistence.remove_source_triggers(connection)
+                navigation_data.remove_source_admission_triggers(connection)
                 connection.commit()
                 create_schema(connection, startup_audit=startup_audit)
                 connection.execute("BEGIN IMMEDIATE")
                 try:
+                    navigation_data.install_source_triggers(connection)
                     persistence.create_schema(connection)
                     persistence.install_source_triggers(connection)
                     connection.commit()

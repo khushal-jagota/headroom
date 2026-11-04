@@ -81,6 +81,25 @@ def attach(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA recursive_triggers=ON")
 
 
+def remove_source_admission_triggers(conn: sqlite3.Connection) -> None:
+    """Remove obsolete source admission before migrations and startup seed writes."""
+    triggers = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' "
+        "AND name LIKE 'navigation_%' AND instr(sql,'navigation_transaction_active')>0"
+    ).fetchall()
+    for row in triggers:
+        conn.execute('DROP TRIGGER "' + str(row[0]).replace('"', '""') + '"')
+
+
+def install_source_triggers(conn: sqlite3.Connection) -> None:
+    """Restore source change capture after schema preparation."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
+        from planner.navigation import historical_data
+
+        historical_data._install_source_triggers(conn)
+    else:
+        _install_source_triggers(conn)
+
 def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
     if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
         from planner.navigation import historical_data
