@@ -38,9 +38,9 @@ Delete removes the Ticket’s record. Files under the Ticket’s file tree survi
 
 ## Where the Worker may run
 
-Each Ticket stores a locale, `vps` or `macos`. Creation uses an explicit locale when one is given. Otherwise a Mac requirement on the effective Project or the Worker type selects `macos`, and everything else selects `vps`. The chosen backend is checked against that locale before the Ticket exists. The Mac compatibility set starts empty, so Mac creation refuses until that configuration allows a backend. The VPS refuses to start a Ticket whose locale is somewhere else.
+Each Ticket stores a locale, `vps` or `macos`. Creation uses an explicit locale when one is given. Without an explicit locale, creation selects `vps`. The chosen backend is checked against that locale before the Ticket exists. The Mac compatibility set starts empty, so Mac creation refuses until that configuration allows a backend. The VPS refuses to start a Ticket whose locale is somewhere else.
 
-`panels ticket move` changes the locale of an idle Ticket: no Worker step, active turn, or accepted message may still need the current machine. The conversation and history stay. Repository files do not travel. Later edits to a Project or Worker requirement do not move Tickets or stored schedule locales that already exist.
+`panels ticket move` changes the locale of an idle Ticket: no Worker step, active turn, or accepted message may still need the current machine. The conversation and history stay. Repository files do not travel. Existing Tickets and schedules keep their stored locales.
 
 ## Assignment
 
@@ -69,4 +69,4 @@ This isolation applies to builds that contain the fix. Earlier builds retain the
 
 `src/planner/tickets/` holds the record, the derived status, and the writers. Stage ladders live in `src/planner/worker_types/shipped_worker_types.json`. Locale checks live in `src/planner/tickets/locale_configuration.py`. The Ticket screen is `web/src/routes/TicketRoute.svelte`.
 
-_Last verified: 2026-11-01._
+_Last verified: 2026-11-04._

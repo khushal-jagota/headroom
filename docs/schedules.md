@@ -8,7 +8,7 @@ New schedules are daily. The template holds the title, Worker type, kickoff note
 
 The loop evaluates the current local minute and does not backfill minutes the host missed. Each schedule and minute has one occurrence receipt: created, failed, or otherwise settled. Repeating the poll returns the same receipt. A failure records its error and the other schedules in that minute still run. There is no suppression because a similar Ticket already exists. Two schedules may create two Tickets with the same type or title. The receipt prevents only its own replay.
 
-Due creation acts as the owner. The usual Ticket validation and approval gates still apply inside that creation. The stored locale is passed through explicitly, so a later change to a Project or Worker requirement does not retarget occurrences that were already templated. Set the locale at creation, or with `panels schedule set`.
+Due creation acts as the owner. The usual Ticket validation and approval gates still apply inside that creation. A new schedule without an explicit locale defaults to VPS. Each occurrence uses the stored locale. Set the locale at creation, or with `panels schedule set`.
 
 ## Retired supply
 
@@ -22,4 +22,4 @@ Settings → Scheduled tasks, `#/settings/scheduled-tasks`. The editor shows the
 
 `src/planner/scheduled_tickets/` and the loop started from `src/planner/core/loops.py`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

@@ -29,7 +29,6 @@ def test_http_native_provider_creation_allowed_offline_but_both_execution_doors_
         "create",
         "--name",
         "Compatible Mac project",
-        "--requires-macos",
     )
     request: JsonObject = {
         "title": "Compatible offline Mac request",
@@ -40,7 +39,7 @@ def test_http_native_provider_creation_allowed_offline_but_both_execution_doors_
         "employee_launch_model": "scripted-compatible-model",
         "ceiling": "needs_what_changes",
     }
-    for choices in ({"locale": "macos"}, {"project_id": project["id"]}):
+    for choices in ({"locale": "macos", "project_id": project["id"]},):
         response = httpx.post(server.base + "/api/tickets", json={**request, **choices}, timeout=10)
         assert response.status_code == 200, response.text
         created = response.json()

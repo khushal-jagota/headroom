@@ -23,20 +23,16 @@ def test_schedule_persists_resolved_locale_and_occurrences_keep_it(
         TicketLocale.macos,
         frozenset({"hermes", "codex", "claude"}),
     )
-    tmp_db.execute("UPDATE worker_types SET requires_macos=1 WHERE worker_type='coding'")
-    tmp_db.commit()
     schedule = actions.create_schedule(
         tmp_db,
         principal=OWNER_PRINCIPAL,
         enabled=True,
         cadence=ScheduleCadence.daily,
         local_time="14:30",
-        template=_template(),
+        template=replace(_template(), locale=TicketLocale.macos),
         now=1,
     )
     assert schedule.template.locale is TicketLocale.macos
-    tmp_db.execute("UPDATE worker_types SET requires_macos=0 WHERE worker_type='coding'")
-    tmp_db.commit()
     edited = actions.update_schedule(
         tmp_db, schedule.id, {"title": "Changed title"}, principal=OWNER_PRINCIPAL, now=2
     )
@@ -52,16 +48,14 @@ def test_schedule_persists_resolved_locale_and_occurrences_keep_it(
     assert changed.template.locale is TicketLocale.vps
 
 
-def test_schedule_explicit_locale_beats_worker_requirement(tmp_db: Connection) -> None:
-    tmp_db.execute("UPDATE worker_types SET requires_macos=1 WHERE worker_type='coding'")
-    tmp_db.commit()
+def test_schedule_without_explicit_locale_defaults_to_vps(tmp_db: Connection) -> None:
     schedule = actions.create_schedule(
         tmp_db,
         principal=OWNER_PRINCIPAL,
         enabled=True,
         cadence=ScheduleCadence.daily,
         local_time="14:30",
-        template=replace(_template(), locale=TicketLocale.vps),
+        template=_template(),
         now=1,
     )
     assert data.read_schedule(tmp_db, schedule.id).template.locale is TicketLocale.vps
