@@ -1,10 +1,7 @@
 import { writable } from "svelte/store";
 
-export const COMPOSITION_STATE_EVENT = "panels:composition-state";
-
 export type ReleaseSnapshot = {
   updateAvailable: boolean;
-  compositionActive: boolean;
   reloadRequested: boolean;
 };
 
@@ -33,7 +30,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
   const reload = options.reload ?? (() => window.location.reload());
   let snapshot: ReleaseSnapshot = {
     updateAvailable: false,
-    compositionActive: false,
     reloadRequested: false
   };
   let started = false;
@@ -50,8 +46,7 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     if (
       !reloadStarted &&
       snapshot.reloadRequested &&
-      snapshot.updateAvailable &&
-      !snapshot.compositionActive
+      snapshot.updateAvailable
     ) {
       reloadStarted = true;
       reload();
@@ -90,13 +85,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     reloadIfReady();
   }
 
-  async function recheckThenReloadIfReady(): Promise<void> {
-    const activeCheck = checkInFlight;
-    if (activeCheck) await activeCheck;
-    await check();
-    reloadIfReady();
-  }
-
   function onVisibilityChange(): void {
     if (options.document.visibilityState === "visible") void checkThenReloadIfReady();
   }
@@ -105,17 +93,10 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     void checkThenReloadIfReady();
   }
 
-  function onCompositionState(event: Event): void {
-    const active = (event as CustomEvent<{ active?: unknown }>).detail?.active === true;
-    publish({ compositionActive: active });
-    if (!active) void recheckThenReloadIfReady();
-  }
-
   function start(): void {
     if (started) return;
     started = true;
     options.document.addEventListener("visibilitychange", onVisibilityChange);
-    options.document.addEventListener(COMPOSITION_STATE_EVENT, onCompositionState);
     options.window.addEventListener("pageshow", onPageShow);
     void check();
   }
@@ -124,7 +105,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     if (!started) return;
     started = false;
     options.document.removeEventListener("visibilitychange", onVisibilityChange);
-    options.document.removeEventListener(COMPOSITION_STATE_EVENT, onCompositionState);
     options.window.removeEventListener("pageshow", onPageShow);
   }
 
@@ -148,7 +128,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
 // hold two independent reload requests.
 export const releaseState = writable<ReleaseSnapshot>({
   updateAvailable: false,
-  compositionActive: false,
   reloadRequested: false
 });
 

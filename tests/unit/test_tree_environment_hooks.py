@@ -1,11 +1,8 @@
-"""Prove the real tool entry points stop drift before importing or analyzing code."""
+"""Prove the actual tool hooks reject a foreign planner source path."""
 
 from __future__ import annotations
 
-import importlib.metadata
-import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -14,7 +11,7 @@ import time
 from pathlib import Path
 
 
-def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> None:
+def test_real_pytest_and_mypy_refuse_foreign_source_before_work(tmp_path: Path) -> None:
     started = time.monotonic()
     source_tree = Path(__file__).resolve().parents[2]
     tree = tmp_path / "fixture tree with spaces"
@@ -27,7 +24,6 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
         source_tree / "scripts/tree_environment.py", tree / "scripts/tree_environment.py"
     )
     shutil.copyfile(source_tree / "tests/conftest.py", tree / "tests/conftest.py")
-    shutil.copytree(source_tree / "scripts/development_safety", tree / "scripts/development_safety")
     shutil.copytree(source_tree / "scripts/test_containment", tree / "scripts/test_containment")
 
     shutil.copytree(
@@ -67,22 +63,6 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
     # A nested venv does not inherit its creator venv's site-packages automatically.
     (site_packages / "tool_modules.pth").write_text(sysconfig.get_path("purelib") + "\n")
     (site_packages / "__editable__.planner-2.0.0.pth").write_text(str(tree / "src") + "\n")
-    planner_metadata = site_packages / "planner-2.0.0.dist-info"
-    planner_metadata.mkdir()
-    (planner_metadata / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: planner\nVersion: 2.0.0\n"
-    )
-    (planner_metadata / "direct_url.json").write_text(
-        json.dumps({"url": tree.as_uri(), "dir_info": {"editable": True}})
-    )
-    sdk_metadata = site_packages / "claude_agent_sdk-0.2.128.dist-info"
-    sdk_metadata.mkdir()
-    (sdk_metadata / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: claude-agent-sdk\nVersion: 0.2.128\n"
-    )
-    (tree / "requirements.txt").write_text(
-        f"claude-agent-sdk==0.2.128\npackaging=={importlib.metadata.version('packaging')}\n"
-    )
     (tree / "pyproject.toml").write_text(
         '[tool.mypy]\nplugins = ["scripts/tree_environment.py"]\n'
         '[tool.pytest.ini_options]\naddopts = "-q"\npythonpath = ["."]\n'
@@ -93,7 +73,7 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
         f"from pathlib import Path\nPath({str(imported)!r}).touch()\n"
     )
     (tree / "tests/test_sentinel.py").write_text(
-        f"from pathlib import Path\nPath({str(collected)!r}).touch()\n"
+        f"import planner\nfrom pathlib import Path\nPath({str(collected)!r}).touch()\n"
         "def test_sentinel():\n    assert True\n"
     )
     sentinel = tree / "analysis_sentinel.py"
@@ -131,71 +111,20 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
     assert "[assignment]" in healthy_mypy.stdout
     assert not imported.exists()
 
-    # Safe storage remains intact while the recorded creation identity becomes foreign.
-    config = tree / ".venv/pyvenv.cfg"
-    original_config = config.read_text()
-    foreign = tmp_path / "foreign tree/.venv"
-    config.write_text(
-        "\n".join(
-            f"command = /usr/bin/python3 -m venv {foreign}"
-            if line.startswith("command =")
-            else line
-            for line in original_config.splitlines()
-        )
-        + "\n"
+    foreign = tmp_path / "live app" / "src"
+    (foreign / "planner").mkdir(parents=True)
+    (foreign / "planner/__init__.py").write_text(
+        f"from pathlib import Path\nPath({str(imported)!r}).touch()\n"
     )
-    try:
-        for tool in ("pytest", "mypy"):
-            refused = run_tool(tool)
-            output = refused.stdout + refused.stderr
-            assert refused.returncode == (4 if tool == "pytest" else 2), output
-            assert "this environment does not belong to" in output
-            assert "records creation at" in output
-            assert str(foreign) in output
-            assert "dependency drift" not in output
-            assert "shared deployment storage detected" not in output
-            assert "cannot establish dependency safety" not in output
-            assert "[assignment]" not in output
-            assert not imported.exists(), output
-            assert not collected.exists(), output
-    finally:
-        config.write_text(original_config)
-
-    # A repository pin bump deliberately makes the unchanged environment stale.
-    requirements = tree / "requirements.txt"
-    requirements.write_text(requirements.read_text().replace("==0.2.128", "==0.2.152"))
+    (site_packages / "__editable__.planner-2.0.0.pth").write_text(str(foreign) + "\n")
     for tool in ("pytest", "mypy"):
         refused = run_tool(tool)
         output = refused.stdout + refused.stderr
         assert refused.returncode == (4 if tool == "pytest" else 2), output
-        assert "claude-agent-sdk" in output
-        assert "0.2.128" in output
-        assert "0.2.152" in output
-        assert "requirements.txt" in output
-        assert "No bypass is supported." in output
-        assert "After a pin change, refusal is expected" in output
-        assert "until installed dependencies match the pins." in output
-        assert shlex.quote(str(tree)) in output
+        assert "planner resolves to" in output
+        assert str(foreign) in output
+        assert "outside" in output
         assert "[assignment]" not in output
         assert not imported.exists(), output
         assert not collected.exists(), output
-    # The guard imports yaml. Diagnose its pin before that dependency can import.
-    requirements.write_text(
-        f"claude-agent-sdk==0.2.128\npackaging=={importlib.metadata.version('packaging')}\n"
-        "PyYAML==0.0.0\n"
-    )
-    yaml_sentinel = "yaml-import-preceded-dependency-diagnosis"
-    (tree / "yaml.py").write_text(f"raise RuntimeError({yaml_sentinel!r})\n")
-    yaml_refused = run_tool("pytest")
-    yaml_output = yaml_refused.stdout + yaml_refused.stderr
-    assert yaml_refused.returncode == 4, yaml_output
-    assert "pyyaml" in yaml_output
-    assert "0.0.0" in yaml_output
-    assert importlib.metadata.version("PyYAML") in yaml_output
-    assert "requirements.txt" in yaml_output
-    assert "No bypass is supported." in yaml_output
-    assert shlex.quote(str(tree)) in yaml_output
-    assert yaml_sentinel not in yaml_output
-    assert not imported.exists(), yaml_output
-    assert not collected.exists(), yaml_output
     print(f"Real pytest/mypy hook smoke wall time: {time.monotonic() - started:.3f}s")

@@ -397,3 +397,72 @@ def test_restored_panels_starts_and_reads_and_writes_tickets(tmp_path: Path, leg
             assert not (destination.parent / artifact_path).exists()
     with closing(connect(str(destination))) as conn:
         assert tickets_data.read_ticket(conn, ticket.id).title == "Recovered and editable"
+
+
+def test_nightly_backup_warns_on_changed_app_files_but_still_creates_snapshot(
+    tmp_path: Path,
+) -> None:
+    import shlex
+    import subprocess
+    import sys
+
+    from planner.environments.app import (
+        AppValidationError,
+        _write_app_entrypoints,
+        digest_app_artifact,
+        validate_app_manifest,
+    )
+    from planner.environments.app_launcher import build_app_launch_env
+
+    current = tmp_path / "Deployments" / "Panels" / "current"
+    source = current / "data" / "planner.db"
+    _seed_database(source)
+    app = current / "app"
+    app.mkdir()
+    app_file = app / "version.txt"
+    app_file.write_text("installed")
+    revision = "a" * 40
+    _write_app_entrypoints(app, app_sha=revision)
+    python = app / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    # Keep a regular file in the app while executing this test tree's interpreter.
+    python.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} \"$@\"\n")
+    python.chmod(0o755)
+    (app / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "panels-app-v1",
+                "app_sha": revision,
+                "source_digest": "b" * 64,
+                "artifact_digest": digest_app_artifact(app),
+            }
+        )
+    )
+    app_file.write_text("changed after install")
+
+    service_path = (
+        Path(__file__).parents[2] / "ops" / "panels-environments" / "panels-db-backup.service"
+    )
+    command = next(
+        line.removeprefix("ExecStart=")
+        for line in service_path.read_text().splitlines()
+        if line.startswith("ExecStart=")
+    )
+    result = subprocess.run(
+        shlex.split(command.replace("%h", str(tmp_path))),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Warning: app artifact digest does not match its manifest" in result.stderr
+    snapshot = Path(result.stdout.strip())
+    assert (snapshot / "database.sqlite").is_file()
+    assert json.loads((snapshot / "metadata.json").read_text())["deployed_revision"] == revision
+    # The install validator still rejects the very same changed files.
+    with pytest.raises(AppValidationError, match="artifact digest"):
+        validate_app_manifest(app / "manifest.json")
+
+    with pytest.raises(AppValidationError, match="artifact digest"):
+        build_app_launch_env(app, ambient={})

@@ -139,7 +139,6 @@ export type StatusCardKey =
   | "Problem"
   | "Deployment outcome unknown"
   | "update-ready"
-  | "update-held"
   | "owner-update";
 
 export function resolveStatusCard(
@@ -151,7 +150,7 @@ export function resolveStatusCard(
   if (statusState === "problem") return "Problem";
   if (statusState === "unknown") return "Deployment outcome unknown";
   if (release.updateAvailable) {
-    return release.reloadRequested && release.compositionActive ? "update-held" : "update-ready";
+    return "update-ready";
   }
   if (statusState === "preparing" || statusState === "restarting") return "Deploying";
   if (statusState === "back_up") return "Deployed";

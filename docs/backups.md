@@ -12,14 +12,16 @@ The temporary directory is published only after the database integrity check and
 
 The format is `panels-backup-v2`. Metadata lists the roots actually captured. Older snapshots that included `files/` can still restore that root. A new snapshot’s restore leaves an existing `files/` tree alone. On a fresh machine, excluded artifacts are simply absent. The app can still start from the restored database.
 
-Nightly and pre-deployment automation both call the deployed launcher:
+Nightly and pre-deployment automation both call the deployed CLI wrapper:
 
 ```sh
-"$HOME/Deployments/Panels/current/app/bin/panels-launcher" environment backup-current \
+"$HOME/Deployments/Panels/current/app/bin/panels" environment backup-current \
   --source-db ~/Deployments/Panels/current/data/planner.db \
   --backup-dir ~/Deployments/Panels/current/data/backups \
   --current-app ~/Deployments/Panels/current/app
 ```
+
+If app files differ from the install record, the command logs a warning and still takes the backup. The strict file check at install time stays.
 
 The user timer runs that as `vps`. Deployment runs the same command before it replaces `current/app`. If the backup fails, the live app is unchanged.
 

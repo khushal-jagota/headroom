@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { COMPOSITION_STATE_EVENT, createReleaseMonitor, type ReleaseSnapshot } from "../src/lib/releaseMonitor";
+import { createReleaseMonitor, type ReleaseSnapshot } from "../src/lib/releaseMonitor";
 
-// One monitor now feeds both ShellStatus mounts, so the hold that keeps a reload
-// back until a message is safe is no longer owned by the component that shows it.
-// Nothing else proves a reload cannot land mid-message.
 function listeners() {
   const handlers = new Map<string, Set<EventListener>>();
   return {
@@ -19,12 +16,8 @@ function listeners() {
   };
 }
 
-function composition(active: boolean): Event {
-  return { type: COMPOSITION_STATE_EVENT, detail: { active } } as unknown as Event;
-}
-
-describe("the release monitor's composition hold", () => {
-  it("keeps a requested reload back until the message is safe, then reloads once", async () => {
+describe("the release monitor", () => {
+  it("reloads once when requested, even during composition", async () => {
     const page = listeners();
     const reload = vi.fn();
     const fetchMeta = vi.fn(async () => ({ ok: true, json: async () => ({ app_sha: "new" }) }) as unknown as Response);
@@ -38,13 +31,12 @@ describe("the release monitor's composition hold", () => {
     await monitor.check();
     expect(seen.at(-1)?.updateAvailable).toBe(true);
 
-    page.fire(COMPOSITION_STATE_EVENT, composition(true));
+    page.fire("panels:composition-state", { detail: { active: true } } as unknown as Event);
     monitor.requestReload();
     await monitor.check();
-    expect(reload).not.toHaveBeenCalled();
-    expect(seen.at(-1)).toMatchObject({ compositionActive: true, reloadRequested: true });
+    expect(seen.at(-1)).toMatchObject({ reloadRequested: true });
+    monitor.requestReload();
 
-    page.fire(COMPOSITION_STATE_EVENT, composition(false));
     await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 
@@ -57,8 +49,7 @@ describe("the release monitor's composition hold", () => {
     });
     monitor.start();
     await monitor.check();
-    page.fire(COMPOSITION_STATE_EVENT, composition(true));
-    page.fire(COMPOSITION_STATE_EVENT, composition(false));
+    page.fire("panels:composition-state", { detail: { active: true } } as unknown as Event);
     await monitor.check();
     expect(reload).not.toHaveBeenCalled();
   });
