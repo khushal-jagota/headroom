@@ -21,6 +21,7 @@ struct ChiefView: View {
                     AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: chief?.conversationSignal)
                     AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "", target: Principal(kind: "chief", id: "chief"), refresh: { await store.refresh() }, actions: actions)
                 }
+                ChiefGoals()
                 if chief != nil {
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                         if let active {

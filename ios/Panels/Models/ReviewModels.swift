@@ -43,6 +43,7 @@ struct ReviewItem: Codable, Identifiable, Sendable {
         case "chief": return .chief
         case "manager": return ownerId.map(ConversationOwner.manager)
         case "ticket": return ownerId.map(ConversationOwner.ticket)
+        case "goal": return ownerId.map(ConversationOwner.goal)
         default: return nil
         }
     }

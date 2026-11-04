@@ -96,6 +96,7 @@ struct AppShell: View {
             }
         case .ticket(let id): selectedTab = .workspace; workspacePath = [.ticket(id)]
         case .orchestrator(let id): selectedTab = .workspace; workspacePath = [.orchestrator(id)]
+        case .goal(let id): selectedTab = .workspace; workspacePath = [.goal(id)]
         case .chief: selectedTab = .workspace; workspacePath = [.chief]
         }
     }

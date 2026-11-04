@@ -18,6 +18,7 @@ protocol NativePushRegistering: Sendable {
 
 enum NotificationDestination: Equatable, Sendable {
     case review(ticketID: String?)
+    case goal(String)
     case ticket(String)
     case orchestrator(String)
     case chief

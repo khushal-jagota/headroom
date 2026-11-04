@@ -20,16 +20,16 @@ struct ArtifactTarget: Hashable, Identifiable, Sendable {
             let query = preview.queryItems ?? []
             func value(_ name: String) -> String? { query.first { $0.name == name }?.value }
             let source = value("source")
-            let kind: ArtifactOwner.Kind = source == "ticket" ? .ticket : .manager
-            let ownerKey = source == "ticket" ? "ticket" : source == "sprint-item" ? "item" : "manager"
-            guard ["ticket", "manager", "sprint-item"].contains(source ?? ""),
+            let kind: ArtifactOwner.Kind = source == "goal" ? .goal : source == "ticket" ? .ticket : .manager
+            let ownerKey = source == "goal" ? "goal" : source == "ticket" ? "ticket" : source == "sprint-item" ? "item" : "manager"
+            guard ["ticket", "manager", "sprint-item", "goal"].contains(source ?? ""),
                   let id = value(ownerKey), isSafePath(id), !id.contains("/"),
                   let path = value("path"), isSafePath(path) else { return nil }
             return Self(owner: .init(kind: kind, id: id), path: path, title: title ?? (path as NSString).lastPathComponent)
         }
         let parts = url.path.split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count >= 5, parts[1] == "files",
-              let kind = ["tickets": ArtifactOwner.Kind.ticket, "managers": .manager, "sprint-items": .manager][String(parts[2])] else { return nil }
+              let kind = ["tickets": ArtifactOwner.Kind.ticket, "managers": .manager, "sprint-items": .manager, "goals": .goal][String(parts[2])] else { return nil }
         let id = String(parts[3])
         let path = parts.dropFirst(4).joined(separator: "/")
         guard isSafePath(id), !id.contains("/"), isSafePath(path) else { return nil }
@@ -48,7 +48,7 @@ struct ArtifactTarget: Hashable, Identifiable, Sendable {
         var preview = URLComponents()
         preview.path = "/preview"
         preview.queryItems = [URLQueryItem(name: "source", value: owner.kind.rawValue),
-                              URLQueryItem(name: owner.kind == .ticket ? "ticket" : "manager", value: owner.id),
+                              URLQueryItem(name: owner.kind.rawValue, value: owner.id),
                               URLQueryItem(name: "path", value: path)]
         var result = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         result.percentEncodedFragment = preview.string

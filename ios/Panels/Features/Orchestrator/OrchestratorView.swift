@@ -84,11 +84,12 @@ enum AgentPageLayout {
 /// Page controls belong to the scrolling content, with no bar or duplicate title.
 struct AgentPageControls<Actions: View>: View {
     @Environment(\.dismiss) private var dismiss
+    var beforeBack: (() -> Void)? = nil
     @ViewBuilder let actions: () -> Actions
 
     var body: some View {
         HStack {
-            Button { dismiss() } label: {
+            Button { beforeBack?(); dismiss() } label: {
                 Image(systemName: "chevron.left")
                     .frame(width: 44, height: 44, alignment: .leading)
                     .contentShape(Rectangle())

@@ -98,3 +98,12 @@ the sender identity and attachments. Reconnect, queue acceptance and explicit re
 preserve that boundary. Review drafts are scoped to the conversation separately
 from the full conversation composer. The draft clears after accepted delivery; a
 refusal or uncertain response keeps it available.
+
+Goal pages retain accepted readings and unfinished text or manual commands while
+the app runs. These edits use the Goal and measure APIs directly, outside the
+message outbox. There is no automatic replay after reconnect or relaunch. A failed
+manual write keeps its exact request identity and payload for an explicit retry.
+Conflicts load the accepted reading and require discarding the old edit before a
+new write. A failed page edit keeps its captured revision; Retry save cannot
+overwrite a newer server page. Goal conversation messages use the same durable
+message outbox as other conversations.

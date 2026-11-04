@@ -4,7 +4,7 @@ Review shows one card per Ticket, ordered by its oldest pending proposal or mess
 A card can contain a proposal, unread conversations, or both. On a combined card,
 the selector switches between the existing proposal and message screens. It stays
 locked during editing, recording, or a decision. Completing one part keeps the other
-parts available; Skip skips the whole Ticket for this visit. Chief and Manager
+parts available; Skip skips the whole Ticket for this visit. Chief, Manager and Goal
 conversations remain separate cards, each containing its complete unread message run.
 The proposal keeps its own field and timestamp even when an older message determines
 the card's position in the queue.
@@ -75,7 +75,7 @@ a terminal refusal receives a new identity while retaining the original read bou
 
 Mark read acknowledges only the displayed run and does not send a reply. Both
 Mark read and Open conversation use the existing secondary action style. Open
-conversation follows a link through the owning Ticket, Orchestrator or Chief page
+conversation follows a link through the owning Ticket, Orchestrator, Chief or Goal page
 and opens that page's normal conversation. Back or a left-edge swipe returns to
 that owner page. An older conversation whose owner has moved on remains read-only
 inside the same conversation page. Message cards retain their Review fade, swipe
