@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from tests.unit.test_db import _migration_tree_through
 
 from planner.core import db
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -24,13 +25,13 @@ def _rows(conn: sqlite3.Connection) -> dict[str, list[tuple[object, ...]]]:
 def test_upgrade_keeps_work_children_indexes_and_triggers_and_narrows_holders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    previous = tmp_path / "migrations"
-    shutil.copytree(db.MIGRATIONS_DIRECTORY, previous)
-    (previous / "versions" / "remove_ticket_approvers.py").unlink()
+    shipped = db.MIGRATIONS_DIRECTORY
+    # Test only this restriction and its ancestors. Later migrations can remove tables.
+    tree = _migration_tree_through(tmp_path, monkeypatch, "remove_ticket_approvers")
+    target = tree / "versions" / "remove_ticket_approvers.py"
+    target.unlink()
     conn = db.connect(str(tmp_path / "upgrade.db"))
-    with monkeypatch.context() as prior:
-        prior.setattr(db, "MIGRATIONS_DIRECTORY", previous)
-        db.create_schema(conn)
+    db.create_schema(conn)
     parent = data.create_ticket(
         conn, title="Keep proposal and records", worker_type="coding", brief="Exact brief",
         principal=OWNER_PRINCIPAL, now=1, title_max_chars=200,
@@ -54,6 +55,7 @@ def test_upgrade_keeps_work_children_indexes_and_triggers_and_narrows_holders(
         "SELECT name,sql FROM sqlite_master WHERE type IN ('index','trigger') "
         "AND sql IS NOT NULL"
     ))
+    shutil.copy(shipped / "versions" / target.name, target)
     db.create_schema(conn)
     assert _rows(conn) == before
     assert dict(conn.execute(
