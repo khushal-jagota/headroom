@@ -78,7 +78,12 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
     from planner.navigation.data import rebuild
 
-    rebuild(conn)
+    previous_factory = conn.row_factory
+    try:
+        conn.row_factory = sqlite3.Row
+        rebuild(conn)
+    finally:
+        conn.row_factory = previous_factory
 
 
 def downgrade() -> None:

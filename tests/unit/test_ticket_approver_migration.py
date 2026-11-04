@@ -26,6 +26,7 @@ def test_upgrade_keeps_work_children_indexes_and_triggers_and_narrows_holders(
 ) -> None:
     previous = tmp_path / "migrations"
     shutil.copytree(db.MIGRATIONS_DIRECTORY, previous)
+    (previous / "versions" / "canonical_manager_identities.py").unlink()
     (previous / "versions" / "remove_ticket_approvers.py").unlink()
     conn = db.connect(str(tmp_path / "upgrade.db"))
     with monkeypatch.context() as prior:
@@ -54,7 +55,12 @@ def test_upgrade_keeps_work_children_indexes_and_triggers_and_narrows_holders(
         "SELECT name,sql FROM sqlite_master WHERE type IN ('index','trigger') "
         "AND sql IS NOT NULL"
     ))
-    db.create_schema(conn)
+    # Isolate the holder migration from later navigation rebuilds.
+    shutil.copy(db.MIGRATIONS_DIRECTORY / "versions" / "remove_ticket_approvers.py",
+                previous / "versions" / "remove_ticket_approvers.py")
+    with monkeypatch.context() as target:
+        target.setattr(db, "MIGRATIONS_DIRECTORY", previous)
+        db.create_schema(conn)
     assert _rows(conn) == before
     assert dict(conn.execute(
         "SELECT name,sql FROM sqlite_master WHERE type IN ('index','trigger') "
