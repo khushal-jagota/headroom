@@ -91,42 +91,65 @@ after the tools stop. Worker OOM errors appear in the existing conversation erro
 path. The unit boundary controls resources, not access to files or credentials.
 Worker units retain `NoNewPrivileges=yes` from the previous live-service launch path.
 
-The operator must install `panels.slice` and `panels-workers.slice` alongside `panels-live.service`
-before activation. The operator then reloads the user manager and restarts Panels.
-Workers must not reload or restart the live service. Existing agents remain in
-their original units until the operator restarts Panels. The operator must check
-that no old Worker tools remain before activation.
+Activation has three required steps. Complete them in this order.
 
-The scratch verification record for the containment change records measured peaks
-and the selected budgets. These limits leave about 7 GiB plus swap outside the Worker
-budget on the 31 GiB VPS. Future changes must preserve headroom for Panels and
-the host.
+1. **Install the slices before installing the application release.** Copy the two
+   slice files from the prepared release source, then reload the user manager:
 
-For activation, the operator runs these commands from this directory after the
-application release is ready:
+   ```sh
+   mkdir -p "$HOME/.config/systemd/user"
+   cp panels.slice panels-workers.slice "$HOME/.config/systemd/user/"
+   systemctl --user daemon-reload
+   ```
+
+   The new code has no uncontained fallback. It cannot launch Workers until the
+   slices exist with the required limits. Updates restarts Panels on the new code
+   during installation, so this step must precede an Updates install.
+
+2. **Install the application release.** Use Updates or the approved release route
+   only after the slices are installed and the user manager reload is complete.
+   Updates performs its application restart during this step.
+
+3. **Install the live-service change and restart Panels.** After the release install
+   finishes, copy the prepared live-service file, reload the user manager, and
+   perform the operator-owned restart:
+
+   ```sh
+   cp panels-live.service "$HOME/.config/systemd/user/"
+   systemctl --user daemon-reload
+   systemctl --user restart panels-live.service
+   ```
+
+   This applies `OOMPolicy=continue` and the live service's memory protection request.
+   Workers must not perform these live operations. Check that no old Worker tools
+   remain after shutdown.
+
+The scratch verification record records measured peaks and the selected budgets.
+These limits leave about 7 GiB plus swap outside the Worker budget on the 31 GiB
+VPS. Future changes must preserve headroom for Panels and the host.
+
+### Optional extra memory protection
+
+The following ancestor allocations are optional extra protection. They do not gate
+Worker isolation or release installation. The independent Worker cap preserves
+headroom without them.
+
+If the operator wants an effective 1 GiB `MemoryLow` reservation, apply the same
+protection through the full cgroup hierarchy on this UID-1000 VPS:
 
 ```sh
-# Reserve one GiB through the full cgroup hierarchy on this UID-1000 VPS.
 sudo systemctl set-property user.slice MemoryLow=1G
 sudo systemctl set-property user-1000.slice MemoryLow=1G
 sudo systemctl set-property user@1000.service MemoryLow=1G
 systemctl --user set-property app.slice MemoryLow=1G
-cp panels.slice panels-workers.slice panels-live.service "$HOME/.config/systemd/user/"
-systemctl --user daemon-reload
-systemctl --user restart panels-live.service
 ```
 
-These commands stop the live app and its existing children. Do not run them from
-a Worker. Keep the prepared files with the release until the operator selects
-the activation time.
+The three system-manager commands protect existing ancestors. They do not create
+another service or account. The user-manager command protects the foreground slice.
+Each command persists its property. These optional host changes require operator
+authority. Without them, the live unit's `MemoryLow` alone does not supply an
+effective reservation.
 
-The three system-manager commands set resource protection on existing ancestors.
-They do not create another service or account. The user-manager command protects
-the foreground slice. Each command persists its property. These host changes
-require operator authority. Without them, the live unit's `MemoryLow` alone
-does not supply an effective reservation. The independent Worker memory cap
-still preserves headroom.
-
-After activation, the operator checks `memory.low` along the ancestor chain and
-checks that each Worker cgroup is outside `panels-live.service`. The operator
-also checks `memory.max`, `memory.oom.group`, CPU weights, and disk `TMPDIR`.
+After activation, check that each Worker cgroup is outside `panels-live.service`.
+Check `memory.max`, `memory.oom.group`, CPU weights, and disk `TMPDIR`. If optional
+memory protection was applied, also check `memory.low` along the ancestor chain.
