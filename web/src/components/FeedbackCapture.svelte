@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { keyboardInsetBottom, observeVisibleViewport } from "../lib/keyboardViewport";
   import { mutateJson } from "../lib/mutate";
   import type { FeedbackNote, FeedbackPageContext } from "../lib/feedback";
   import Button from "./Button.svelte";
@@ -111,12 +112,7 @@
   }
 
   function syncVisualViewport(): void {
-    const viewport = window.visualViewport;
-    if (!viewport) {
-      viewportBottom = "";
-      return;
-    }
-    viewportBottom = `${Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)}px`;
+    viewportBottom = `${keyboardInsetBottom()}px`;
   }
 
   let anchorLeft = $state(0);
@@ -138,12 +134,7 @@
   onMount(() => {
     text = localStorage.getItem(DRAFT_KEY) || "";
     syncVisualViewport();
-    window.visualViewport?.addEventListener("resize", syncVisualViewport);
-    window.visualViewport?.addEventListener("scroll", syncVisualViewport);
-    return () => {
-      window.visualViewport?.removeEventListener("resize", syncVisualViewport);
-      window.visualViewport?.removeEventListener("scroll", syncVisualViewport);
-    };
+    return observeVisibleViewport(syncVisualViewport);
   });
 </script>
 
