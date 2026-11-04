@@ -12,7 +12,6 @@ from unittest.mock import Mock
 import pytest
 
 from planner.core import change_signal
-from planner.core.commit_observers import CommitObserver
 from planner.core.db import (
     ChangeSignallingConnection,
     UncertainTransactionError,
@@ -96,9 +95,6 @@ def test_registered_guard_covers_all_retained_outer_paths(tmp_path: Path, route:
     registration = register_transaction_guard(str(path), factory)
     token = object()
     conn._participants = (lambda db: factory.events.append("finalize"),)
-    conn._commit_observers = (
-        CommitObserver(lambda db, results: factory.events.append("observe"), lambda results: None),
-    )
     with bind_transaction_admission(conn, token):
         if route == "standalone":
             conn.execute("INSERT INTO source VALUES (1)")
@@ -122,7 +118,7 @@ def test_registered_guard_covers_all_retained_outer_paths(tmp_path: Path, route:
             else:
                 conn.execute({"sql": "COMMIT", "end": "END", "release": "RELEASE outer"}[route])
     assert factory.events[0] == ("enter", token)
-    assert factory.events[-4:] == ["finalize", ("settle", "committed", None), "release", "observe"]
+    assert factory.events[-3:] == ["finalize", ("settle", "committed", None), "release"]
     assert len(factory.leases) == 1
     registration.close()
     with pytest.raises(RuntimeError, match="unavailable"):
@@ -144,10 +140,8 @@ def test_settlement_failure_poison_precedes_notifications(
     conn = open_database(path)
     factory = Factory()
     registration = register_transaction_guard(str(path), factory)
-    observer = Mock()
     signal = Mock()
     monkeypatch.setattr(change_signal, "emit", signal)
-    conn._commit_observers = (observer,)
     conn.execute("BEGIN")
     conn.execute("INSERT INTO source VALUES (1)")
     lease = factory.leases[-1]
@@ -161,7 +155,6 @@ def test_settlement_failure_poison_precedes_notifications(
     with pytest.raises(ValueError, match="settle" if failure == "invalidate" else failure):
         conn.commit()
     assert factory.events.count("release") == 1
-    observer.assert_not_called()
     signal.assert_not_called()
     with pytest.raises(RuntimeError, match="unavailable"):
         conn.execute("BEGIN")
@@ -174,7 +167,7 @@ def test_settlement_failure_poison_precedes_notifications(
 
 
 @pytest.mark.parametrize("route", ["method", "context", "quiet", "sql", "end", "release"])
-def test_uncertain_commit_is_not_reclassified_or_observed(tmp_path: Path, route: str) -> None:
+def test_uncertain_commit_is_not_reclassified(tmp_path: Path, route: str) -> None:
     class FailedResult(ChangeSignallingConnection):
         def _sqlite_commit(self) -> None:
             super()._sqlite_commit()
@@ -208,8 +201,6 @@ def test_uncertain_commit_is_not_reclassified_or_observed(tmp_path: Path, route:
     conn.execute("CREATE TABLE source (value INTEGER)")
     factory = CapturedFactory()
     registration = register_transaction_guard(str(path), factory)
-    observer = Mock()
-    conn._commit_observers = (observer,)
     if route == "context":
         conn.__enter__()
     else:
@@ -233,7 +224,6 @@ def test_uncertain_commit_is_not_reclassified_or_observed(tmp_path: Path, route:
         object.__setattr__(caught.value, "reconciliation_handle", object())
     assert ("settle", "uncertain", "OSError") in factory.events
     assert factory.events.count("release") == 1
-    observer.assert_not_called()
     registration.close()
     conn.close()
 

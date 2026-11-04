@@ -1,8 +1,8 @@
-import { MACHINE_ACTIVITY_UNKNOWN } from "./machines/config";
-import { type WorkspaceRail, type WorkspaceChief, type WorkspaceTicketGroup } from './workspaceRail';
-import type { WorkItemTicketFacts } from './workItemPresentation';
-import type { ConversationSignal } from './conversationSignal';
-import { actualMark, expectedMark } from './conversationSignalDom';
+import { MACHINE_ACTIVITY_UNKNOWN } from "../../src/lib/machines/config";
+import { type WorkspaceRail, type WorkspaceChief, type WorkspaceTicketGroup } from '../../src/lib/workspaceRail';
+import type { WorkItemTicketFacts } from '../../src/lib/workItemPresentation';
+import type { ConversationSignal } from '../../src/lib/conversationSignal';
+import { actualMark, expectedMark } from '../../src/lib/conversationSignalDom';
 function groupsMatch(root: Element,groups: readonly WorkspaceTicketGroup[]) {
   const buckets=[...root.querySelectorAll(':scope > .bucket')];
   if(buckets.length!==groups.length) return false;

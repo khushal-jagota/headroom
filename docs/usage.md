@@ -14,7 +14,7 @@ The two numbers come from different places and do not mix. Recorded usage comes 
 
 ```
  provider login ──► Limits (saved observation, refreshed on request)
- local transcripts ─► Tokens and Cost (totalled on the server)
+ local transcripts ─► server summary ─► browser totals and charts
 ```
 
 ## Allowance and spend

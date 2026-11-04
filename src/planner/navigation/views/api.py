@@ -37,17 +37,10 @@ def router(runtime: ScopedDeliveryRuntime) -> APIRouter:
     async def snapshot(
         view: str,
         ctx: Annotated[RequestContext, Depends(request_context)],
-        fence: str | None = None,
     ) -> Response:
         value = parse(view)
-        if fence and len(fence.encode()) > runtime.parent.config.proof_request_bytes:
-            raise HTTPException(413, "navigation fence is too large")
         try:
-            proof = json.loads(fence) if fence else None
-        except (ValueError, RecursionError) as exc:
-            raise HTTPException(400, "invalid navigation fence") from exc
-        try:
-            content, access = await runtime.snapshot(value, proof)
+            content, access = await runtime.snapshot(value)
         except DeliveryUnavailable as exc:
             raise HTTPException(503, "navigation view is unavailable") from exc
         # Encoding runs off the event loop, while the existing response owns send fencing.

@@ -1,8 +1,7 @@
 <script lang="ts">
   import { untrack, tick, onDestroy } from "svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { managerChildrenImpact } from "../lib/workspaceNavigationImpact";
-  import { childrenSectionDomMatches } from "../lib/managerSectionDom";
+
   import { railPreview } from "../lib/workspaceRailInteraction";
   import { chiefChildrenPage, filterManagerChildren } from "../lib/managerChildren";
   import { managerPageGroups } from "../lib/managerPage";
@@ -63,11 +62,7 @@
   onDestroy(()=>navigation?.owner.setDemand(demand,undefined));
   let observedGroups = $derived(filter === "active" ? groups : [{key:filter === "backlogged" ? "backlog" : "done",tickets:rows}]);
   let observedOpen = $derived(filter === "active" ? groupOpen : {[filter === "backlogged" ? "backlog" : "done"]:sectionOpen});
-  const observer = navigation?.registerRenderBoundary(`manager-section:${crypto.randomUUID()}`, impact => {
-    const view = navigation?.state.effective;
-    return managerChildrenImpact(impact,principal,view && navigation ? navigation.presentationFor(view) : undefined,rows,observedGroups,observedOpen);
-  });
-  onDestroy(() => { if (observer) navigation?.disposeRenderBoundary(observer); });
+
   let count = $derived(scopedWindow?.total ?? page?.match_count ?? rows.length);
   let label = $derived(filter === "backlogged" ? "Backlogged" : "Done");
   $effect(() => {
@@ -86,23 +81,7 @@
       }
     });
   });
-  $effect(() => {
-    const view = effective, element = root, generation = navigation?.state.generation;
-    const expectedRows = rows, expectedGroups = groups, expectedPage = page;
-    const expectedFilter = filter, expectedPrincipal = principal;
-    const expectedOpen = {...groupOpen}, expectedSectionOpen = sectionOpen;
-    const expectedCount = count;
-    if (!navigation || !observer || !view?.runtimeCurrent || !element || generation === undefined
-      || navigation.selectors.effective !== view || (tickets !== undefined && publication !== view.publication)) return;
-    const observation = observer.observeSelectors(view.publication,generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (obsolete || !element.isConnected || navigation.state.generation !== generation || navigation.selectors.effective !== view) return;
-      if (childrenSectionDomMatches(element,expectedPrincipal,expectedFilter,expectedRows,expectedGroups,expectedPage,expectedOpen,expectedSectionOpen,expectedCount,scopedWindow,principal.kind!=='chief'))
-        observer.acknowledgeRender(view.publication,observation);
-    });
-    return () => { obsolete = true; };
-  });
+
 </script>
 
 <div bind:this={root} data-worker-section={filter} use:navigationScrollWindow={{window:principal.kind==='chief'||scopedGroups||(filter!=='active'&&!sectionOpen)?undefined:scopedWindow,activate:()=>navigation?.owner.prioritizeWindow(scopedWindow?.request),selector:'[data-worker-ticket-id]',key:node=>node.dataset.workerTicketId ?? '',move:(next,nextDirection)=>{anchor=next;direction=nextDirection;}}}>

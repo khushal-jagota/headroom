@@ -16,10 +16,6 @@ The provider shares one presentation result per effective view identity. A knowl
 
 The owner carries health separately from its connection state. A degraded snapshot preserves the server availability and reason. A transport or protocol failure reports reconnecting. Only accepted current data for the demanded scope clears the warning. The shell displays that health beside its other connection messages.
 
-Feature modules own their DOM assertions and command dependencies. Register render observers with `registerRenderBoundary` and dispose them with `disposeRenderBoundary`. Capture relevant mounted observers before a command starts. A new route instance cannot acknowledge a publication for an old observer.
-
-Use `application.runCommand(impact, request, label)` for commands. Pass its response metadata to the existing HTTP helper. Command visibility reports `included`, `no_op`, or `unknown`. It never delays domain success, resends a command, or infers display from the domain result. A Svelte `tick()` alone does not prove that the expected DOM appears.
-
 Successful owner reads request shared-owner recovery before the unread-message optimization. Failures retain their existing behavior. Current frames from an older active scope cannot clear a warning for its pending replacement.
 
 Review membership groups proposals and unread conversations for each Ticket before page boundaries and counts. A settled Manager excludes only its own messages. An explicit null canonical address records absence. A missing address in an unrelated page does not establish removal.
