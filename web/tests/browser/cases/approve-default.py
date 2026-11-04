@@ -199,7 +199,8 @@ def run(browser, urls):
         return {
             **source,
             "locale": "en-US",
-            "manager": {"kind": "manager", "id": "item_one"},
+            "manager": ({"kind": "manager", "id": source["manager_id"]}
+                        if source["manager_id"] else {"kind": "chief", "id": "chief"}),
             "record_sha256": source.get("record_sha256", "record-initial"),
             "field_values": {gate: source["field_values"].get(gate, "")} if gate else {},
             "field_summaries": {
@@ -473,15 +474,16 @@ def run(browser, urls):
     assert page.evaluate("location.hash") == hash_before
     assert approvals == [] and scope_writes == []
     page.get_by_role("listbox").press("Escape")
-    tickets["t_worker_holder"] = ticket(
-        "t_worker_holder", "coding", "needs_plan", "plan", "Worker-held plan", 10
+    tickets["t_user_holder"] = ticket(
+        "t_user_holder", "coding", "needs_plan", "plan", "User-held plan", 10
     )
-    tickets["t_worker_holder"]["ceiling_holder"] = {"kind": "ticket", "id": "t_holder"}
-    page.evaluate("window.__showTicket('t_worker_holder')")
-    expect(block().locator("[data-reviewer-heading]")).to_have_text("Worker")
+    tickets["t_user_holder"]["ceiling_holder"] = {"kind": "owner", "id": "owner"}
+    page.evaluate("window.__showTicket('t_user_holder')")
+    expect(block().locator("[data-reviewer-heading]")).to_have_text("User")
     block().locator("[data-reviewer-heading]").click()
-    expect(page.get_by_role("option", name="Worker", exact=True)).to_have_attribute(
-        "data-ceiling-picker-choice", "t_holder"
+    expect(page.get_by_role("option", name="Worker", exact=True)).to_have_count(0)
+    expect(page.get_by_role("option", name="User", exact=True)).to_have_attribute(
+        "data-ceiling-picker-choice", "owner"
     )
     expect(page.get_by_role("option", name="Manager", exact=True)).to_have_attribute(
         "data-ceiling-picker-choice", "item_one"
@@ -491,10 +493,10 @@ def run(browser, urls):
     page.evaluate("window.__showTicket('t_coding')")
     block().locator("[data-reviewer-heading]").click()
     expect(page.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
-    page.locator('[data-ceiling-picker-choice="chief"]').click()
+    page.locator('[data-ceiling-picker-choice="item_one"]').click()
     wait_count(scope_writes, 1)
     page.evaluate("window.__refresh()")
-    assert scope_writes[-1] == {"ceiling_holder": {"kind": "chief", "id": "chief"}}
+    assert scope_writes[-1] == {"ceiling_holder": {"kind": "manager", "id": "item_one"}}
     assert approvals == []
     open_approval()
     page.locator('[data-ceiling-part="holder"]').click()
@@ -574,10 +576,10 @@ def run(browser, urls):
             scope_count = len(scope_writes)
             block().locator("[data-reviewer-heading]").click()
             expect(page.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
-            page.locator('[data-ceiling-picker-choice="chief"]').click()
+            page.locator('[data-ceiling-picker-choice="owner"]').click()
             wait_count(scope_writes, scope_count + 1)
             page.evaluate("window.__refresh()")
-            expect(block().locator("[data-reviewer-heading]")).to_have_text("Chief")
+            expect(block().locator("[data-reviewer-heading]")).to_have_text("User")
             assert len(approvals) == count
         expected_holder = dict(tickets[ticket_id]["ceiling_holder"])
         expected_revision = tickets[ticket_id]["pending_proposal"]["revision"]
@@ -690,15 +692,14 @@ def run(browser, urls):
             {"kind": "owner", "id": "owner"},
             {"kind": "chief", "id": "chief"},
             {"kind": "manager", "id": "si_assigned"},
-            {"kind": "manager", "id": "si_foreign"},
-            {"kind": "ticket", "id": "t_foreign"},
         ]
     ):
         identity = "t_principal_" + str(index)
         value = ticket(
             identity, "coding", "needs_plan", "plan", "Literal principal proposal", 100 + index
         )
-        value["manager_id"] = "si_assigned"
+        value["manager_id"] = None if principal["kind"] == "chief" else "si_assigned"
+        value["manager_kind"] = "chief" if principal["kind"] == "chief" else "manager"
         value["ceiling_holder"] = principal
         tickets[identity] = value
         page.evaluate("(id) => window.__showTicket(id)", identity)

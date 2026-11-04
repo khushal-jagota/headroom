@@ -7,7 +7,6 @@ def run(browser, urls):
     from pathlib import Path
 
     from planner.navigation.contracts import SCHEMA_VERSION, SUPPORTED_SEMANTICS
-    from planner.navigation.delivery_contracts import encode_cursor
 
     fixture = runpy.run_path(
         str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
@@ -381,7 +380,6 @@ def run(browser, urls):
             last_records = authored
         response["snapshot"]["revision"] = str(source_revision)
         navigation_response.__globals__["_navigation_revision"] = source_revision
-        response["cursor"] = encode_cursor(response["snapshot"])
         return response
 
     def finish_read(route, result):
@@ -483,9 +481,8 @@ def run(browser, urls):
         elif path.split("?")[0] == "test/navigation-publication":
             assert route.request.method == "POST"
             result = review_snapshot(force_publication=True)
-            if "?view=" in path:
-                result = scoped_navigation_response(result, json.loads(parse_qs(path.split("?", 1)[1])["view"][0]))
-        elif path.split("?")[0] in {"navigation/snapshot", "navigation/view/snapshot"}:
+            result = scoped_navigation_response(result, json.loads(parse_qs(path.split("?", 1)[1])["view"][0]))
+        elif path.split("?")[0] == "navigation/view/snapshot":
             if snapshot_unavailable:
                 route.fulfill(
                     status=503,
@@ -502,12 +499,11 @@ def run(browser, urls):
                 )
                 return
             result = review_snapshot()
-            if path.startswith("navigation/view/"):
-                descriptor = json.loads(parse_qs(path.split("?", 1)[1])["view"][0])
-                result = scoped_navigation_response(result, descriptor)
-                if hold_next_review_window and any(window.get("anchor") for window in descriptor["windows"]):
-                    held_review_windows.append((route, result))
-                    return
+            descriptor = json.loads(parse_qs(path.split("?", 1)[1])["view"][0])
+            result = scoped_navigation_response(result, descriptor)
+            if hold_next_review_window and any(window.get("anchor") for window in descriptor["windows"]):
+                held_review_windows.append((route, result))
+                return
         elif path.startswith("resource-versions?"):
             keys = json.loads(parse_qs(path.split("?", 1)[1])["keys"][0])
             result = {"epoch": "fixture", "resources": [{"key": key, "revision": None} for key in keys]}
@@ -555,8 +551,6 @@ def run(browser, urls):
             result = {"backend_key": "codex", "model": None, "reasoning_effort": None}
         elif path == "review":
             raise AssertionError("competing review summary query remains")
-        elif path.startswith("navigation/events"):
-            return
         elif path == "tickets/t_review":
             if hold_detail and route.request.method == "GET":
                 held_details.append(route)
