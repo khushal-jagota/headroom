@@ -383,7 +383,10 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     )
     request_store = FileUpdateRequestStore(database.parent / "owner-update-request.json")
     request_store.create(
-        OwnerUpdateRequest("request", release(), "now", "applying", datetime.now(UTC).isoformat())
+        OwnerUpdateRequest(
+            "request", release(), "now", "applying", datetime.now(UTC).isoformat(),
+            deadline_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        )
     )
     progress = DeploymentLifecycleStore(database.parent / "deployment-lifecycle.json")
     progress.path.write_text("unreadable progress")
@@ -413,7 +416,43 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         assert "Chief review is required" in held_status["detail"]
         assert held_status["installation_confirmed"] is False
         assert held_status["unknown_display_until"] is None
+        # A killed runner leaves the candidate paused. The old page can retry
+        # the exact pinned release without opening ordinary stale-page writes.
+        # Publication reads remain available even while all ordinary work waits.
+        discovery = Provider()
+        discovery.offered = replace(
+            discovery.offered, manifest=replace(discovery.offered.manifest, app_sha="c" * 40)
+        )
+        app.state.updates.provider = discovery
+        assert app.state.updates.refresh_available(force=True) == discovery.offered
+        app.state.updates.provider = Provider()
+        app.state.updates.refresh_available(force=True)
+        failed = client.get("/api/updates").json()
+        assert failed["state"] == "failed" and failed["allowed_actions"] == ["retry"]
+        pinned = release()
+        recovered = client.post(
+            "/api/updates/requests",
+            headers={"X-Panels-App-SHA": SHA_A},
+            json={
+                "publication_run_id": pinned.publication_run_id,
+                "artifact_id": pinned.artifact_id,
+                "proof_artifact_id": pinned.proof_artifact_id,
+                "app_sha": pinned.manifest.app_sha,
+                "artifact_digest": pinned.manifest.artifact_digest,
+                "archive_sha256": pinned.archive_sha256,
+                "mode": "now", "confirm_activity": True,
+            },
+        )
+        assert recovered.status_code == 201, recovered.text
+        recovered_id = recovered.json()["request_id"]
         progress.start("runner", SHA_B, prior_sha=SHA_A)
+        claimed = client.post(
+            f"/api/updates/requests/{recovered_id}/claim",
+            headers={"X-Panels-App-SHA": SHA_A},
+            json={"deployment_id": "runner"},
+        )
+        assert claimed.status_code == 200, claimed.text
+        assert app.state.update_admission_closed
         progress.transition("runner", "verifying")
         assert client.get("/api/worker-types").status_code == 503
         progress.transition("runner", "app_healthy", serving_sha=SHA_B)
@@ -422,6 +461,9 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         assert client.get("/api/worker-types").status_code == 200
         admitted_status = client.get("/api/deployment-status").json()
         assert admitted_status["installation_confirmed"] is True
+        assert SHA_B not in json.loads(
+            (database.parent / "update-admission.json").read_text()
+        )["app_shas"]
         assert admitted_status["unknown_display_until"] is not None
         # A new admission hold must invalidate the harmless notice's proof too.
         app.state.update_admission_closed = True
@@ -743,7 +785,8 @@ def test_runner_preflight_failure_preserves_cancellation_and_uncertain_admission
     else:
         assert receipt.state == state
     if state == "applying" and lifecycle_identity != "request":
-        assert "Recovery required" in (receipt.detail or "")
+        # The runner leaves uncertain authority untouched. Server settlement owns its deadline.
+        assert receipt.detail is None
 
 
 def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(

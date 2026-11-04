@@ -57,7 +57,11 @@ from planner.datasets.api import router as datasets_router
 from planner.environments.deployment_attention import DeploymentAttentionObserver
 from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
-from planner.environments.update_admission import matching_commit, startup_requires_commit
+from planner.environments.update_admission import (
+    UncommittedAppStore,
+    matching_commit,
+    startup_requires_commit,
+)
 from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
 from planner.environments.update_api import router as updates_router
 from planner.environments.update_provider import GitHubUpdateProvider
@@ -340,6 +344,7 @@ def create_app(
                 async def observe_deployment_attention() -> None:
                     while True:
                         try:
+                            await asyncio.to_thread(app.state.updates.reconcile)
                             observed = await attention.poll()
                             if observed != app.state.deployment_attention:
                                 app.state.deployment_attention = observed
@@ -355,7 +360,12 @@ def create_app(
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, loops, metrics
                     # A matching runner commit is irreversible even if later setup fails.
+                    if config.app_sha is not None and matching_commit(
+                        deployment_lifecycle_store, config.app_sha
+                    ):
+                        uncommitted_apps.commit(config.app_sha)
                     app.state.update_startup_pending = False
+                    app.state.update_admission_closed = False
                     change_signal.emit()
                     conversation.live_tail.views.cleanup_stale_epochs()
                     if config.workspace_root is not None:
@@ -537,12 +547,19 @@ def create_app(
     recorded_update = update_request_store.read()
     applying_candidate = bool(
         recorded_update is not None
-        and recorded_update.state == "applying"
         and recorded_update.release.manifest.app_sha == config.app_sha
+    )
+    uncommitted_apps = UncommittedAppStore(
+        deployment_lifecycle_path.with_name("update-admission.json")
     )
     app.state.update_startup_pending = startup_requires_commit(
         deployment_lifecycle_store, config.app_sha
-    ) or (applying_candidate and not matching_commit(deployment_lifecycle_store, config.app_sha))
+    ) or (
+        (applying_candidate or uncommitted_apps.contains(config.app_sha))
+        and not matching_commit(deployment_lifecycle_store, config.app_sha)
+    )
+    if app.state.update_startup_pending and config.app_sha is not None:
+        uncommitted_apps.retain(config.app_sha)
     app.state.update_admission_closed = False
     app.state.update_startup_detail = None
     app.state.deployment_attention = None
@@ -553,7 +570,8 @@ def create_app(
         connection_factory=conn_factory,
         current_app_sha=config.app_sha,
         availability_path=deployment_lifecycle_path.with_name("owner-update-availability.json"),
-        can_refresh=lambda: not app.state.update_startup_pending,
+        lifecycle_store=deployment_lifecycle_store,
+        recovery_admission=lambda: app.state.update_startup_pending,
     )
 
     app.add_middleware(UpdateAdmissionMiddleware, config=config)

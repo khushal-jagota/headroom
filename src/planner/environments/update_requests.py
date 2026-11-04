@@ -5,15 +5,23 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
 from planner.core import change_signal
 from planner.environments.app import AppManifest
 from planner.environments.deployment_lifecycle import _atomic_write, _exclusive_lock
+from planner.environments.logic.update_experience import instant, request_deadline
 from planner.environments.runtime_contracts import parse_optional_runtime_contract
-from planner.environments.update_configuration import MAX_CANCELLED_UPDATE_REPORTS
+from planner.environments.update_configuration import (
+    MAX_CANCELLED_UPDATE_REPORTS,
+    UPDATE_ATTEMPT_TIMEOUT_SECONDS,
+)
 from planner.environments.update_contracts import (
     OwnerUpdateRequest,
     PublishedUpdate,
@@ -70,6 +78,9 @@ class FileUpdateRequestStore:
             created_at=payload["created_at"],
             detail=payload.get("detail"),
             confirm_activity=payload.get("confirm_activity", False),
+            dispatched_at=payload.get("dispatched_at"),
+            deadline_at=payload.get("deadline_at"),
+            deployment_id=payload.get("deployment_id"),
         )
 
     def _cancelled_path(self, request_id: str) -> Path:
@@ -124,14 +135,90 @@ class FileUpdateRequestStore:
         state: UpdateRequestState,
         *,
         detail: str | None = None,
+        deployment_id: str | None = None,
     ) -> OwnerUpdateRequest:
         with _exclusive_lock(self.lock_path):
             current = self.read()
-            if current is None or current.request_id != request_id or current.state not in expected:
+            if current is None or current.request_id != request_id:
                 raise UpdateConflict("The update request changed or application already began.")
+            if current.state in {"applied", "failed", "cancelled"}:
+                if state == current.state:
+                    return current
+                raise UpdateConflict("The update already ended.")
+            if current.state not in expected:
+                raise UpdateConflict("The update request changed or application already began.")
+            now = datetime.now(UTC)
+            deadline = request_deadline(current) if state in {"dispatched", "applying"} else None
+            if state in {"dispatched", "applying"} and deadline is not None and deadline <= now:
+                raise UpdateConflict("The update attempt expired.")
+            dispatched_at = current.dispatched_at
+            deadline_at = current.deadline_at
+            if state == "dispatched" and current.state == "pending":
+                dispatched_at = now.isoformat()
+                deadline_at = (now + timedelta(seconds=UPDATE_ATTEMPT_TIMEOUT_SECONDS)).isoformat()
             updated = replace(
-                current, state=state, detail=CANCELLED_DETAIL if state == "cancelled" else detail
+                current, state=state, detail=CANCELLED_DETAIL if state == "cancelled" else detail,
+                dispatched_at=dispatched_at, deadline_at=deadline_at,
+                deployment_id=deployment_id or current.deployment_id,
             )
             _atomic_write(self.path, asdict(updated))
             change_signal.emit()
             return updated
+
+
+    def settle(
+        self, decide: Callable[[OwnerUpdateRequest], tuple[UpdateRequestState, str] | None],
+    ) -> OwnerUpdateRequest | None:
+        with _exclusive_lock(self.lock_path):
+            current = self.read()
+            if current is None:
+                return None
+            outcome = decide(current)
+            if current.state in {"applied", "failed", "cancelled"} or outcome is None:
+                return current
+            updated = replace(current, state=outcome[0], detail=outcome[1])
+            _atomic_write(self.path, asdict(updated))
+            change_signal.emit()
+            return updated
+
+    def promote(self, request_id: str, *, confirm_activity: bool) -> OwnerUpdateRequest:
+        if not confirm_activity:
+            raise UpdateConflict("Confirm active work before Update now.")
+        with _exclusive_lock(self.lock_path):
+            current = self.read()
+            if (current is None or current.request_id != request_id
+                    or current.state != "pending" or current.mode != "idle"):
+                raise UpdateConflict("The waiting update changed or already began.")
+            if instant(current.release.expires_at) <= datetime.now(UTC):
+                raise UpdateConflict("The waiting update expired.")
+            updated = replace(current, mode="now", confirm_activity=True)
+            _atomic_write(self.path, asdict(updated))
+            change_signal.emit()
+            return updated
+
+    @contextmanager
+    def dispatch_guard(self, request_id: str) -> Iterator[None]:
+        with self._authority_guard(request_id, "dispatched"):
+            yield
+
+    @contextmanager
+    def installation_guard(self, request_id: str) -> Iterator[None]:
+        with self._authority_guard(request_id, "applying"):
+            yield
+
+    @contextmanager
+    def _authority_guard(self, request_id: str, expected: UpdateRequestState) -> Iterator[None]:
+        """Serialize candidate cutover and health commit with terminal settlement.
+
+        Never hold this lock during downloads, backup, or health polling. A stale
+        runner can recover its fallback under the deployment lock, but cannot
+        install a candidate or commit health after this authority ends.
+        """
+        with _exclusive_lock(self.lock_path):
+            current = self.read()
+            if current is None or current.request_id != request_id or current.state != expected:
+                raise UpdateConflict("The runner no longer owns installation authority.")
+            deadline = request_deadline(current)
+            if deadline is not None and deadline.timestamp() <= time.time():
+                raise UpdateConflict("The update attempt expired before installation committed.")
+            yield

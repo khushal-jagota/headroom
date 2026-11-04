@@ -10,7 +10,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
-  import { startReleaseMonitor, stopReleaseMonitor } from "./lib/releaseMonitor";
+  import { releaseState, observeRunningAppSha, startReleaseMonitor, stopReleaseMonitor } from "./lib/releaseMonitor";
   import type { WorkspaceAddress } from "./lib/workspaceAddress";
   import type { UsageTab } from "./lib/usageAddress";
   import BoardRoute from "./routes/BoardRoute.svelte";
@@ -18,6 +18,9 @@
   import FeedbackCapture from "./components/FeedbackCapture.svelte";
   import FeedbackToast from "./components/FeedbackToast.svelte";
   import { feedbackPageContext } from "./lib/feedback";
+  import { atUpdateDeadline } from "./lib/updates/deadline";
+  import { UPDATE_RECOVERY_POLL_MS } from "./lib/updates/config";
+  import { updatePresentation, dimsUpdatePage } from "./lib/updates/logic/presentation";
   import { mutateJson } from "./lib/mutate";
 
   import { parseShellDestination, type ShellDestination } from "./lib/shellDestination";
@@ -53,6 +56,27 @@
     return () => { obsolete = true; };
   });
 
+  const updates = createQuery(() => ({ ...queries.updates(),
+    refetchInterval: (query) => $connectionStatus !== "connected" || ["waiting", "updating", "restarting"].includes(query.state.data?.body.state ?? "")
+      ? UPDATE_RECOVERY_POLL_MS : false,
+    refetchIntervalInBackground: true, retry: false
+  }));
+  let updateClock = $state(Date.now());
+  $effect(() => {
+    const status = updates.data;
+    observeRunningAppSha(status?.app_sha ?? null);
+    updateClock = Date.now();
+    const deadline = Date.parse(status?.restart_deadline_at ?? status?.deadline_at ?? "");
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) return;
+    const timer = window.setTimeout(() => { updateClock = Date.now(); }, deadline - Date.now() + 1);
+    return () => window.clearTimeout(timer);
+  });
+  $effect(() => {
+    const expires = Date.parse(updates.data?.available?.expires_at ?? "");
+    if (!Number.isFinite(expires) || expires <= Date.now()) return;
+    return atUpdateDeadline(expires, () => { void updates.refetch(); });
+  });
+  const updateState = $derived(updatePresentation(updates.data, $connectionStatus, $releaseState, updateClock));
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let route = $state<ShellDestination>(parseRoute());
   const routeModule = $derived.by(() => {
@@ -229,7 +253,7 @@
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} onfocusin={onWindowFocusIn} />
 
 <div class="shell">
-  <main class="shell-content">
+  <main class="shell-content" class:update-dimmed={dimsUpdatePage(updateState)}>
     <BoardRoute address={workspaceRouteAddress} onDismissed={showDismissedToast} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} />
   </main>
   {#if moreOpen}<button type="button" class="compact-scrim" aria-label="Close navigation menu" onclick={closeMore}></button>{/if}
@@ -250,7 +274,7 @@
         {/each}
       </div>
     {/if}
-    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={updateState} />
     <div class="compact-bar-row">
       <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined} use:observeReviewLink={"review"}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
@@ -265,7 +289,7 @@
 
 {#snippet foot()}
   <div class="rail-foot" bind:this={desktopFoot}>
-    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={updateState} />
     <nav class="rail-utilities workspace-utility-nav" aria-label="Destinations">
       {#each SHELL_DESTINATIONS as destination}
         {#if destination.key === "feedback"}
@@ -310,3 +334,11 @@
     </div>
   {/key}
 {/snippet}
+
+<style>
+  .shell-content :global(.board-workspace-right) { transition: opacity var(--motion-slow) var(--motion-ease); }
+  .shell-content.update-dimmed :global(.board-workspace-right) { opacity: .5; }
+  @media (prefers-reduced-motion: reduce) {
+    .shell-content :global(.board-workspace-right) { transition: none; }
+  }
+</style>

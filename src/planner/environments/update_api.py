@@ -17,6 +17,14 @@ from planner.environments.update_service import UpdateService
 router = APIRouter(prefix="/updates")
 
 
+class ClaimBody(BaseModel):
+    deployment_id: str | None = None
+
+
+class PromoteBody(BaseModel):
+    confirm_activity: bool = False
+
+
 class UpdateRequestBody(BaseModel):
     publication_run_id: int
     artifact_id: int
@@ -81,11 +89,24 @@ async def cancel(request: Request, request_id: str) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
 
-@router.post("/requests/{request_id}/claim")
-async def claim(request: Request, request_id: str) -> JSONResponse:
+@router.post("/requests/{request_id}/now")
+async def promote(request: Request, request_id: str, body: PromoteBody) -> JSONResponse:
     service = _service(request)
     try:
-        receipt = await service.claim(request_id)
+        receipt = service.promote(request_id, confirm_activity=body.confirm_activity)
+        await asyncio.to_thread(service.dispatch_pending)
+        return JSONResponse(asdict(service.store.read() or receipt))
+    except UpdateConflict as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+
+@router.post("/requests/{request_id}/claim")
+async def claim(request: Request, request_id: str, body: ClaimBody | None = None) -> JSONResponse:
+    service = _service(request)
+    try:
+        receipt = await service.claim(
+            request_id, deployment_id=body.deployment_id if body is not None else None
+        )
         request.app.state.update_admission_closed = True
         return JSONResponse(asdict(receipt))
     except UpdateConflict as exc:
