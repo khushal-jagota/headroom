@@ -3,7 +3,7 @@
 from alembic import op
 
 revision = "remove_macos_requirements"
-down_revision = "manager_launch_defaults"
+down_revision = "attention_history"
 branch_labels = None
 depends_on = None
 
