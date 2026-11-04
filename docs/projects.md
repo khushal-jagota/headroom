@@ -1,27 +1,25 @@
 # Projects
 
-A Project is a named catalog entry: a stable id, a display name, an optional folder on disk, and a summary. The catalog is data. Adding a Project does not require a code change, and the set is not a fixed enum. The summary is the context humans and agents should remember: what the project is, what matters, and which paths are worth knowing. Headroom does not manage the folder’s contents and does not create the folder. A path that starts with `~` is stored absolute. The folder may be missing. Clearing the path stores null.
+A Project is a named catalog entry that classifies work and points at a folder. Projects exist so Tickets, Managers, Ideas, goals, and measures can say what they belong to, and so agents start work in the right place. The catalog is data: adding a Project needs no code change.
 
-A repository can live inside that folder. The folder is not implied by the Project’s name.
+## What it is made of
 
-## How classification works
+A stable id, a display name, a summary, and an optional folder on disk. The summary is context for people and agents: what the Project is and which paths matter. Headroom stores the folder but does not create it or manage its contents. A repository can live inside it, and the folder is not implied by the name. The catalog has no delete and no archive. It grows by create and changes by edit.
 
-Managers, Ideas, and standalone Tickets store a project id. A Ticket that sits under a Manager takes its effective Project from that Manager. Moving the Manager moves the children’s effective Project, and it updates schedule templates assigned to that Manager so later occurrences follow. Writes accept a project id or the legacy display name. Sending both, pointed at different rows, is rejected.
+## How work is classified
 
-There is no delete and no archive. The catalog grows by create and changes by editing the name, summary, or folder.
+Managers, standalone Tickets, and Ideas each store a Project. A Ticket under a Manager takes its effective Project from that Manager. Moving a Manager moves its children, and its schedule templates, so later occurrences follow. Goals and measure sources are scoped to a Project too. A source's datasets must match its Project.
 
-## What it feeds
+## What the folder does
 
-Project choice feeds Ticket and Idea capture and Manager headers. The summary feeds anyone who reads the Project, including an agent that loads it into a prompt on purpose. Headroom does not push the summary into a conversation by itself.
-
-The removed global Workers page used to filter by Project. Workspace now groups by Chief and Manager. Project remains visible text on the Ticket and the Manager.
+The folder is where a Worker's conversation starts. On the VPS, an existing folder becomes the conversation's working directory, and a missing one falls back to the default workspace. On the Mac the folder path is used as given. The same folder is where a Ticket's application preview is found. The summary does not enter a prompt by itself. An agent that wants it reads the Project.
 
 ## Where it shows up
 
-Selectors on Idea capture, Ticket and Manager editing, and schedule templates. `panels project` and `/api/projects` are the same catalog. A list read must say whether it wants a summary or the full record.
+Project selectors on Idea capture, Ticket and Manager editing, and schedule templates. `panels project` and `/api/projects` read and write the same catalog.
 
-## Pointers
+## Code
 
-`src/planner/projects/`. Selectors in the Ticket, Ideas, and Manager screens read that resource.
+`src/planner/projects/`. The folder rule is in `src/planner/runtime/conversation_start.py`, and previews read it in `src/planner/previews/`.
 
 _Last verified: 2026-11-04._
