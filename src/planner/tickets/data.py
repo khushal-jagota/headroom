@@ -62,10 +62,7 @@ from planner.tickets.logic import (
 )
 from planner.tickets.logic.decisions import Decision
 from planner.tickets.logic.locale import resolve_ticket_locale
-from planner.worker_settings.service import (
-    read_worker_launch_defaults_for_ticket_creation,
-    read_worker_requires_macos,
-)
+from planner.worker_settings.service import read_worker_launch_defaults_for_ticket_creation
 from planner.worker_types.configuration import (
     ConfiguredWorkerRuntimeDefinitions,
     configured_worker_runtime_definitions,
@@ -301,16 +298,7 @@ def resolve_ticket_draft_context(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
-    project = (
-        conn.execute("SELECT requires_macos FROM projects WHERE id=?", (project_id,)).fetchone()
-        if project_id is not None
-        else None
-    )
-    resolved_locale = resolve_ticket_locale(
-        locale,
-        project_requires_macos=bool(project["requires_macos"]) if project is not None else False,
-        worker_requires_macos=read_worker_requires_macos(conn, worker_type),
-    )
+    resolved_locale = resolve_ticket_locale(locale)
     return ResolvedTicketCreationContext(resolved_locale, launch_configuration, project_id)
 
 
