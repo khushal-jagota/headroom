@@ -76,7 +76,7 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
         }
         return options.bootSha === null;
       } catch {
-        // A failed check cannot authorize a mutation or disturb the current app.
+        // A failed update check leaves the current app unchanged.
         return false;
       } finally {
         checkInFlight = null;
@@ -178,19 +178,9 @@ export function requestReleaseReload(): void {
   sharedMonitor?.requestReload();
 }
 
-/** Recheck on the write path. Never reload or discard the current page. */
-export async function checkReleaseBeforeMutation(): Promise<string | null> {
-  if (!sharedMonitor || !sharedBootSha) return null;
-  if (!await sharedMonitor.check()) {
-    throw new Error("Cannot confirm this page is current. Refresh page before making changes.");
-  }
-  return sharedBootSha;
-}
-
-/** One write preflight and version header for JSON, voice, and upload transports. */
+/** Attach the page version. The server rejects an outdated browser. */
 export async function mutationHeaders(headers?: HeadersInit): Promise<Record<string, string>> {
   const result = Object.fromEntries(new Headers(headers).entries());
-  const bootSha = await checkReleaseBeforeMutation();
-  if (bootSha) result["X-Panels-App-SHA"] = bootSha;
+  if (sharedBootSha) result["X-Panels-App-SHA"] = sharedBootSha;
   return result;
 }

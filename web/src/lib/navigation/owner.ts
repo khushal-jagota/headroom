@@ -1,6 +1,6 @@
 import type { Fence, SnapshotResponse, CurrentAuthority, DegradedAuthority, NoncurrentAvailability } from './contracts';
 import type { NavigationCollectionAdapter, NavigationPublication } from './collection';
-import { compareRevision, assertCursorMatches, parseBatchEnvelope, parseSnapshotResponse, sameAuthority } from './validation';
+import { compareRevision, sameAuthority } from './identity';
 import { navigationConfiguration } from './configuration';
 import { NavigationRequestError, type NavigationTransport } from './transport';
 import { createVisibilityTracker, type Certification, type VisibilityResult } from './visibility';
@@ -137,9 +137,8 @@ export function createNavigationOwner(options: {
         if (!current(generation) || paused) return;
         try {
           // Reject contradictory authority synchronously, including duplicate revisions.
-          const envelope = parseBatchEnvelope(data);
+          const envelope = data;
           if (!sameAuthority(authority,envelope.authority)) throw new Error('navigation authority changed');
-          assertCursorMatches(eventCursor,envelope.batch);
           if (pending >= maximumPending) throw new Error('navigation queue overflow');
           pending += 1;
           void enqueue(async () => {
@@ -170,7 +169,7 @@ export function createNavigationOwner(options: {
     const {generation,signal} = await nextGeneration('snapshot');
     try {
       // HTTP awaits stay outside the provider queue. Only admitted commits must drain.
-      const response: SnapshotResponse = parseSnapshotResponse(await transport.snapshot(signal,fence));
+      const response: SnapshotResponse = await transport.snapshot(signal,fence);
       if (!current(generation) || paused) throw new Error('obsolete navigation snapshot');
       checkAuthority(response.authority);
       const previous = state.publication;

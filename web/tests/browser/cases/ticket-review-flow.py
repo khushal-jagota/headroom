@@ -150,6 +150,7 @@ def run(browser, urls):
     fail_field_save = False
     hold_field_save = False
     hold_detail = False
+    refuse_scope_save = False
     snapshot_unavailable = False
     runtime_working = False
     server_revision = None
@@ -576,6 +577,9 @@ def run(browser, urls):
                         return
                 elif "ceiling" in body or "ceiling_holder" in body:
                     ceiling_writes.append(body)
+                    if refuse_scope_save:
+                        route.fulfill(status=409, content_type="application/json", body=json.dumps({"error":{"code":"validation","message":"Server refused this action","detail":None}}))
+                        return
                     if (
                         "ceiling_holder" in body
                         and body["ceiling_holder"] != ticket["ceiling_holder"]
@@ -853,13 +857,19 @@ def run(browser, urls):
     expect(page.locator("[data-worker-live-card] h2")).to_contain_text("Success")
     assert page.locator("[data-stage-fold]").evaluate("(element)=>element.open")
     assert page.locator("[data-stage-fold] [data-field=brief]").evaluate("(element)=>element.open")
+    # The browser sends the save despite navigation/detail disagreement.
+    # The server remains the authority and its refusal stays visible.
+    refuse_scope_save = True
     page.locator("[data-reviewer-heading]").click()
     page.locator("[data-ceiling-picker-choice=owner]").click()
     expect(page.locator("[data-approval-block] .error-line")).to_contain_text(
-        "the Ticket changed; read it again before this action"
+        "Server refused this action"
     )
     expect(page.locator("[data-approval-block] .error-code")).to_have_text("validation")
-    assert ceiling_writes == [] and approvals == []
+    assert len(ceiling_writes) == 1 and approvals == []
+    ceiling_writes.clear()
+    refuse_scope_save = False
+    page.evaluate("window.__detail()")
     for _ in range(100):
         if held_details:
             break
@@ -875,9 +885,11 @@ def run(browser, urls):
             finish_read(route, ticket)
     held_details.clear()
     expect(page.locator("[data-ticket-section]")).to_have_attribute(
-        "data-section-stage", "needs_success_condition"
+        "data-section-stage", "needs_consequences"
     )
-    expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
+    expect(page.locator("[data-worker-live-card] h2")).to_have_text("Currently working on Outcome")
+    expect(page.get_by_text("Loading ticket...", exact=True)).to_have_count(0)
+    expect(page.locator("[data-approval-block]")).to_have_count(0)
     for stage in manifest["worker_types"][1]["stages"]:
         if stage["id"] == "needs_consequences":
             stage["gating_field"] = "consequences"
