@@ -32,7 +32,6 @@ LEGACY_SUPERVISOR_RECOVERIES: dict[str, str] = {
 # ``[OPTIONS]`` synopsis.
 COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels send-message": "panels send-message --owner --message TEXT",
-    "panels schedule set": "panels schedule set SCHEDULE_ID FIELD --value VALUE",
     "panels worker-type save": "panels worker-type save < RECORD_FILE",
     "panels worker-type skill": (
         "panels worker-type skill WORKER_TYPE --description TEXT < SKILL_FILE"

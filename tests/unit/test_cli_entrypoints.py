@@ -171,25 +171,6 @@ def test_issued_manager_reply_alias_remains_executable_without_teaching_old_flag
     assert len(targets) == 2
 
 
-def test_schedule_issued_assignment_field_normalizes_before_canonical_choice_validation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    writes: list[dict[str, Any]] = []
-
-    def sent(method: str, path: str, **kwargs: Any) -> dict[str, str]:
-        assert (method, path) == ("PATCH", "/api/schedules/schedule_example")
-        writes.append(kwargs["json_body"])
-        return {"id": "schedule_example"}
-
-    monkeypatch.setattr(http, "send", sent)
-    result = CliRunner().invoke(
-        cli_main.main,
-        ["schedule", "set", "schedule_example", "sprint-item", "--value", "si_example"],
-    )
-    assert result.exit_code == 0, result.output
-    assert writes == [{"manager": {"kind": "manager", "id": "si_example"}}]
-
-
 @pytest.mark.parametrize("prefix", [("manager",), ("orchestrator",), ("sprint", "item")])
 def test_manager_state_survives_cli_reads_and_filters(
     monkeypatch: pytest.MonkeyPatch, prefix: tuple[str, ...]
