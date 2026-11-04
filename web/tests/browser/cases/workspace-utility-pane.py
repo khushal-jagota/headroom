@@ -59,11 +59,21 @@ def run(browser, urls):
 
     fold = {"enabled": False, "count": 3, "overflow": False, "active_count": 1, "release_sha": "fixture-boot"}
     card_fixture = {"enabled": False}
+    artifact_owner = {"id": "t_fixture", "title": "Wide artifact owner", "worker_type": "coding",
+                      "conversation_id": None, "locale": "vps"}
     fixture = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
 
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        # The standalone artifact resolves its owner and launch settings. Keep these
+        # exact: an unrelated ticket read must still fail this case's request guard.
+        if route.request.method == "GET" and path == "/api/tickets" and parse_qs(parts.query) == {"detail": ["full"], "id": [artifact_owner["id"]]}:
+            route.fulfill(json=artifact_owner)
+            return
+        if route.request.method == "GET" and path == "/api/tickets/t_fixture/conversation/start-values" and not parts.query:
+            route.fulfill(json={"backend_key": "codex", "model": None, "reasoning_effort": None})
+            return
         if (fold["enabled"] or card_fixture["enabled"]) and path == "/api/navigation/view/snapshot":
             board = {"managers": [
                 {"id": f"fold_{index}", "title": ("Settled" + "UnbrokenTitle" * 12) if fold["overflow"] else f"Settled fixture {index}", "created_at": index + 1,
@@ -285,7 +295,12 @@ def run(browser, urls):
     page.route("**/files/tickets/t_fixture/artifacts/wide.html", lambda route: route.fulfill(
         content_type="text/html", body="<html><body style='width:3000px;height:3000px'>Wide artifact</body></html>"))
     page.evaluate("location.hash='#/preview?source=ticket&ticket=t_fixture&path=artifacts%2Fwide.html'")
-    expect(pane.locator('[data-file-preview-route] iframe')).to_be_visible()
+    preview = pane.locator('[data-file-preview-route]')
+    expect(preview.locator('iframe')).to_be_visible()
+    expect(preview.locator('[data-artifact-recipient]')).to_have_text("Message Wide artifact owner")
+    expect(preview.locator('[data-conversation-pane]')).to_have_attribute("data-conversation-state", "rest")
+    expect(preview.get_by_placeholder("Message Wide artifact owner...", exact=True)).to_be_visible()
+    expect(preview.locator('[data-artifact-owner-unavailable]')).to_have_count(0)
     assert rail.evaluate("node => node === window.__persistentRail")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     bounds = pane.bounding_box()
