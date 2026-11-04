@@ -121,7 +121,7 @@ def test_second_supervisor_with_different_socket_cannot_replace_owner(
     tmp_path: Path,
 ) -> None:
     application_pid = _wait_for_one_child(server.proc.pid)
-    second_socket = Path("/tmp") / f"panels-second-{server.port}.sock"
+    second_socket = Path(os.environ.get("TMPDIR", "/tmp")) / f"panels-second-{server.port}.sock"
     second_socket.unlink(missing_ok=True)
 
     result = subprocess.run(

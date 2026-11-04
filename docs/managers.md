@@ -6,7 +6,7 @@ A Manager is an agent that holds one direction and the Tickets that serve it. It
 
 - **A goal**: the sentence that says why this Manager exists. This is a field on the Manager, not a [goal](goals.md) with a deadline and a page.
 - **A recap**: the current status line. Each new recap replaces the old one.
-- **An optional project.** A Manager's project is also the project of its Tickets and of the schedules assigned to it.
+- **An optional project.** A Manager's project is also the effective project of its Tickets.
 - **Child Tickets**: the Tickets assigned to it.
 - **Artifacts** and **its own conversation**, on the ordinary [conversation system](conversations.md).
 - **A launch setup**: the backend, model, and reasoning its conversation uses.

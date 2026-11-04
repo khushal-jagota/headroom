@@ -6,7 +6,7 @@ An open Headroom screen moves when the record moves, without a manual refresh. L
 
 - **The change signal.** Every ordinary database commit announces that something was written. The announcement names no record and carries no data.
 - **The change stream.** The browser hears the signal over one stream. It asks which of the resources mounted on screen have a new revision, and refetches only those. A body and its revision enter the browser's cache together, from one read.
-- **The navigation index.** The rail, Review membership and order, attention marks, and masthead signals are a derived index with its own feed. The browser loads a snapshot and then follows numbered batches of changes, so it can resume or start over cleanly. The signal speeds that feed up, and polling backs it.
+- **The navigation index.** The rail, Review membership and order, attention marks, and masthead signals are a derived index with its own feed. The browser requests the mounted scope and follows its snapshots and changes. The signal speeds that feed up, and polling backs it.
 - **The conversation tail.** Each open conversation pane has its own stream of the running turn's text and new rows. It does not wait for the shared signal.
 
 ```
@@ -37,6 +37,8 @@ The browser uses server messages directly, with TypeScript types during developm
 - No domain code calls a wake. The database connection announces its own commits, so a new writer cannot forget to.
 - The signal is best-effort. The database and periodic loops remain the answer, so a missed announcement delays an update and never loses a write.
 - Message text comes from the conversation when a card or pane opens. The index stays small enough to keep honest without loading every conversation.
+- The browser uses server messages directly. TypeScript describes those messages during development without runtime description tables.
+- The Ticket screen displays loaded detail and Worker configuration. The server decides whether saves and approvals are valid.
 
 ## Code
 

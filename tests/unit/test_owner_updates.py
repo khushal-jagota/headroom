@@ -336,7 +336,6 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     from planner.core.response_compression import CompressExceptEventStreams
     from planner.core.server import create_app
     from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
-    from planner.navigation.middleware import NavigationCommandFenceMiddleware
     from planner.projects import api as projects_api
     from planner.projects.contracts import CreateProjectBody
 
@@ -377,7 +376,6 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         UpdateAdmissionMiddleware,
         TrustedIngressMiddleware,
         ConversationSendBodyLimitMiddleware,
-        NavigationCommandFenceMiddleware,
     ]
     assert registered == expected
     with TestClient(app) as client:

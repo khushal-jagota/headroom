@@ -51,6 +51,10 @@ The browser offers a refresh when its loaded app differs from the server. Each w
 
 A finalizer records the installed commit, application health, and each later check separately. It runs from checked-out source with the host's own Python, never from the app it judges. Missing evidence stays uncertain.
 
+Each browser write carries the version of the loaded page. The server rejects an outdated version without a separate version request before each save.
+
+An upgrade refuses a database that still contains cancelled Tickets. Resolve those records through the prior supported version before retry.
+
 The deploy workflow never changes Tailscale Serve. A separate manual workflow restores the private route if it is lost.
 
 ## Decisions that shape it

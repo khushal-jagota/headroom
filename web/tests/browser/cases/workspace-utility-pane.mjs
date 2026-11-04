@@ -22,7 +22,7 @@ import {Chart} from 'chart.js';
       y: (chart.chartArea.top + chart.chartArea.bottom) / 2,
     } : null} : null;
 };
-import { railDomMatches } from '../src/lib/workspaceRailDom';
+import { railDomMatches } from '../tests/support/workspaceRailDom';
 import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 (globalThis as any).__railDomMatches = (cards, managers, chief) => railDomMatches(
   document.querySelector('.workspace-rail'), buildWorkspaceRail(cards, managers), chief, false,

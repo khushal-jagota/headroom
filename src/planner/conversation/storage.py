@@ -87,7 +87,6 @@ from planner.conversation.publication.coordinator import (
 )
 from planner.conversation.publication.mutations import SignalRuntimeMutation
 from planner.conversation.views.writer import append_projection
-from planner.core.commit_capture import register_capture_task, run_in_capture_thread
 from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import (
@@ -627,7 +626,7 @@ class ConversationStore:
         async def finish() -> T:
             while True:
                 try:
-                    return await run_in_capture_thread(invoke)
+                    return await asyncio.to_thread(invoke)
                 except sqlite3.OperationalError as error:
                     code = getattr(error, "sqlite_errorcode", None)
                     if code is None or code & 0xFF != sqlite3.SQLITE_BUSY:
@@ -643,7 +642,6 @@ class ConversationStore:
         finally:
             if token is not None:
                 self._signal_attempt.reset(token)
-        register_capture_task(task)
         self._write_operations.add(task)
         task.add_done_callback(self._write_operations.discard)
         try:

@@ -86,7 +86,6 @@ from planner.measures.api import router as measures_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
-from planner.navigation.middleware import NavigationCommandFenceMiddleware
 from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
 from planner.previews.api import handle_preview_error
@@ -480,11 +479,6 @@ def create_app(
     app.state.previews = preview_service
     app.state.preview_transport = preview_transport
     app.state.video_uploads = video_uploads
-    app.add_middleware(
-        NavigationCommandFenceMiddleware,
-        conn_factory=conn_factory,
-        db_path=config.db_path,
-    )
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))

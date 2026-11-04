@@ -3,10 +3,8 @@
   import VpsPage from "./components/vps/VpsPage.svelte";
   import { cachedImport } from "./lib/lazyViews";
   import ErrorLine from "./components/ErrorLine.svelte";
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import { provideNavigationApplication } from "./lib/navigation/application.svelte";
-  import { reviewBadgeImpact } from "./lib/reviewNavigationImpact";
-  import { reviewBadgeDomMatches } from "./lib/shellDom";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
   import { startReleaseMonitor, stopReleaseMonitor } from "./lib/releaseMonitor";
   import type { WorkspaceAddress } from "./lib/workspaceAddress";
@@ -21,31 +19,6 @@
   let displayed = $state.raw<import("./lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let reviewCount = $derived(displayed ? navigation.presentationFor(displayed).globalCounts?.review ?? navigation.presentationFor(displayed).review.items.length : 0);
-  const reviewBadgeObserver = navigation.registerRenderBoundary(`review-badge:${crypto.randomUUID()}`,reviewBadgeImpact);
-  onDestroy(() => navigation.disposeRenderBoundary(reviewBadgeObserver));
-  let reviewLinks = $state<HTMLElement[]>([]);
-  function observeReviewLink(element: HTMLElement, key: string) {
-    if (key !== "review") return;
-    reviewLinks = [...reviewLinks, element];
-    return { destroy() { reviewLinks = reviewLinks.filter(value => value !== element); } };
-  }
-  $effect(() => {
-    // Width changes choose the visible Review control for the same render boundary.
-    void compact;
-    const effective = displayed;
-    const generation = navigation.state.generation;
-    const element = reviewLinks.find(element => element.getClientRects().length > 0) ?? reviewLinks[0];
-    const count = reviewCount;
-    if (!effective?.runtimeCurrent || !element) return;
-    const publication = effective.publication;
-    const observation = reviewBadgeObserver.observeSelectors(publication,generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (!obsolete && element.isConnected && navigation.state.generation === generation
-        && navigation.selectors.effective === effective && reviewBadgeDomMatches(element,count)) reviewBadgeObserver.acknowledgeRender(publication,observation);
-    });
-    return () => { obsolete = true; };
-  });
 
   let route = $state<ShellDestination>(parseRoute());
   const routeModule = $derived.by(() => {
@@ -126,7 +99,7 @@
       if (restoreFocus) void tick().then(() => {
         let target: HTMLElement | null = null;
         if (focusedScreen === "review") {
-          target = reviewLinks.find(element => element.getClientRects().length > 0) ?? null;
+          target = Array.from(document.querySelectorAll<HTMLElement>('a[data-screen="review"]')).find(element => element.getClientRects().length > 0) ?? null;
         } else if (!compact && focusedScreen === "workspace") {
           target = document.querySelector<HTMLElement>('.workspace-rail [aria-current="page"]')
             ?? document.querySelector<HTMLElement>(".workspace-rail [data-chief-destination]");
@@ -176,7 +149,7 @@
     {/if}
     <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} />
     <div class="compact-bar-row">
-      <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined} use:observeReviewLink={"review"}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
+      <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
       <button type="button" class="bar-item" data-screen="more" bind:this={moreButtonElement} aria-expanded={moreOpen} aria-controls="destination-sheet" onclick={toggleMore}>More <span class="bar-caret" aria-hidden="true">▾</span></button>
     </div>
@@ -188,7 +161,7 @@
     <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} />
     <nav class="rail-utilities workspace-utility-nav" aria-label="Destinations">
       {#each SHELL_DESTINATIONS as destination}
-        <a href={destination.href} class="utility" data-screen={destination.key} aria-label={destination.label} aria-current={selectedDestination === destination.key ? "page" : undefined} use:observeReviewLink={destination.key}>
+        <a href={destination.href} class="utility" data-screen={destination.key} aria-label={destination.label} aria-current={selectedDestination === destination.key ? "page" : undefined}>
           <DestinationIcon name={destination.key} />
           {#if destination.key === "review"}<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span>{/if}
           <span class="utility-label">{destination.label}</span>
