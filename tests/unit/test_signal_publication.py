@@ -126,6 +126,7 @@ class _Harness:
             CREATE TABLE conversation_error_acknowledgements(conversation_id TEXT,
                                                             through_sequence INTEGER);
             CREATE TABLE conversation_lifecycle_facts(conversation_id TEXT PRIMARY KEY);
+            CREATE TABLE conversation_background_tasks(conversation_id TEXT,task_id TEXT);
             CREATE TABLE tickets(id TEXT PRIMARY KEY,conversation_id TEXT);
             CREATE TABLE ticket_conversations(ticket_id TEXT,conversation_id TEXT);
             CREATE TABLE agents(agent_key TEXT PRIMARY KEY,conversation_id TEXT);

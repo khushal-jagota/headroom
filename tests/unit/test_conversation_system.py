@@ -33,7 +33,10 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
+    BackendStreamEnded,
     BackendUserInputRequest,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     ContextCompacted,
     NeedsRebind,
     PermissionAnswerWriteFailed,
@@ -3348,5 +3351,111 @@ def test_system_prompt_provenance_keeps_agent_only_attention_share_usable(
         assert figures["owner_messages"]["coverage_status"] == "complete"
         assert figures["active_ticket_count"]["value"] == 1
         assert figures["without_owner_involvement_share"]["value"] == 1
+
+    _run(exercise)
+
+
+# --- background tasks ------------------------------------------------------------------
+
+
+async def _report_background_task_started(
+    harness: _Harness, conversation_id: str, task_id: str, task_description: str
+) -> None:
+    sink = harness.backend(conversation_id).sink
+    assert sink is not None
+    await sink.report(
+        None, BackgroundTaskStarted(task_id=task_id, task_description=task_description)
+    )
+    await harness.settle()
+
+
+def test_a_live_background_task_keeps_the_child_and_shows_working_after_the_turn(
+    harness: _Harness,
+) -> None:
+    """The janitor leaves a busy session alone, and its clock restarts at the task's end."""
+    from planner.conversation.signals import read_conversation_signals
+
+    async def exercise() -> None:
+        await _start(harness, backend_key=ConversationBackendKey.claude)
+        await harness.system.send("c", text_message_content("run the suite"), sender_label="o")
+        await _report_background_task_started(harness, "c", "task-1", "Run the test suite")
+        await harness.complete_turn("c")
+        backend = harness.backend("c")
+
+        harness.clock.advance(31 * 60)
+        await harness.system._sweep_idle_children()
+        assert backend.stops == 0
+        assert await harness.system.is_running("c") is False
+        signals = await read_conversation_signals(harness.system, harness.store, {"c"})
+        assert signals["c"].signal["working"] is True
+
+        assert backend.sink is not None
+        await backend.sink.report(
+            None, BackgroundTaskEnded(task_id="task-1", task_status="completed")
+        )
+        await harness.settle()
+        signals = await read_conversation_signals(harness.system, harness.store, {"c"})
+        assert signals["c"].signal["working"] is False
+        await harness.system._sweep_idle_children()
+        assert backend.stops == 0
+        harness.clock.advance(31 * 60)
+        await harness.system._sweep_idle_children()
+        assert backend.stops == 1
+        assert [prompt[0] for prompt in await harness.recorded_prompts("c")] == ["run the suite"]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("how", ("stream_ended", "child_replaced", "server_restarted", "killed"))
+def test_a_background_task_lost_with_its_session_is_told_to_the_agent(
+    harness: _Harness, tmp_path: Path, how: str
+) -> None:
+    """One exact Panels prompt per lost task; a killed conversation is not woken."""
+    lost_prompt = (
+        'Your background task "Run the test suite" stopped because your session ended. '
+        "It did not finish. Read its output, then start it again or report what happened."
+    )
+
+    async def exercise() -> None:
+        await _start(harness, backend_key=ConversationBackendKey.claude)
+        await harness.system.send("c", text_message_content("run the suite"), sender_label="o")
+        await _report_background_task_started(harness, "c", "task-1", "Run the test suite")
+        if how != "killed":
+            await harness.complete_turn("c")
+        system = harness.system
+        if how == "stream_ended":
+            sink = harness.backend("c").sink
+            assert sink is not None
+            await sink.report(None, BackendStreamEnded())
+        elif how == "child_replaced":
+            harness.backend("c").needs_rebind_once = True
+            await system.send(
+                "c", text_message_content("switch model"), sender_label="o", model_change="m2"
+            )
+            # The notice waits behind the turn that replaced the child.
+            await harness.complete_turn("c")
+        elif how == "server_restarted":
+            await system.shutdown()
+            restarted = _Harness(tmp_path / "conversations.db")
+            restarted.backends = harness.backends
+            system = restarted.system
+            await system.tell_agents_of_background_tasks_lost_at_restart()
+        else:
+            # A cancel that fails makes the kill stop the child itself, mid-kill.
+            harness.backend("c").cancels_raise_something_unnamed = True
+            await system.kill("c")
+        await system.wait_until_quiescent()
+
+        prompts = [
+            (message_content_text(event.payload.content), event.payload.sender_label)
+            for event in await harness.store.read_events_after("c", 0)
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        told = [prompt for prompt in prompts if prompt[0] == lost_prompt]
+        assert told == ([] if how == "killed" else [(lost_prompt, "Panels")])
+        facts = await harness.store.attention_facts({"c"})
+        assert facts["c"].has_live_background_task is False
+        if how == "server_restarted":
+            await system.shutdown()
 
     _run(exercise)

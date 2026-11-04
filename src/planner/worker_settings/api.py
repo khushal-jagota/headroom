@@ -156,7 +156,11 @@ async def add_agent_conversation_signals(
         signal = (
             facts.signal
             if facts
-            else conversation_signal(is_running=False, unread_message_to_owner=False)
+            else conversation_signal(
+                turn_is_running=False,
+                has_live_background_task=False,
+                unread_message_to_owner=False,
+            )
         )
         agent["conversation_signal"] = signal
         agent["awaiting_reply"] = signal["message_for_owner"]
