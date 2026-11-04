@@ -119,6 +119,15 @@ def run(browser, urls):
             response = metrics.client.request(route.request.method, path + ("?" + parts.query if parts.query else ""))
             route.fulfill(status=response.status_code, content_type="application/json", body=response.content)
             return
+        if path == "/api/resource-versions":
+            keys = json.loads(parse_qs(parts.query)["keys"][0])
+            assert isinstance(keys, list) and all(isinstance(key, str) for key in keys), keys
+            # Fixture bodies change directly, without source revisions. A null
+            # revision uses their existing guarded body reads for this exact scope.
+            route.fulfill(json={"epoch": "fixture", "resources": [
+                {"key": key, "revision": None} for key in keys
+            ]})
+            return
         if path == "/api/resource-body":
             # Versioned reads arrive wrapped. The screen only needs the body.
             key = parse_qs(parts.query).get("key", [""])[0]
