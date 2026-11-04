@@ -1,0 +1,6 @@
+{
+  "oldest_supported_build": 1,
+  "decision": "compatible",
+  "contract_sha256": "56276a8c08b3f0ffa3bb0a301dc5b7e6b5df3762dcb6678a2dea93299e1e43e8",
+  "evidence": "Initial build 1 source review: native request header coverage, grouped Review decoding and ticket-owned workflow adaptation. Focused backend gate tests prove accepted reads/actions and refused old writes/streams without side effects. APNs registration and delivery tests pass. Native macOS host tests and simulator build run in CI; signed TestFlight, live ingress and real Apple delivery remain unverified and require owner validation before live readiness."
+}
