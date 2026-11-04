@@ -569,4 +569,3 @@ def _alembic_config(connection: Connection) -> Config:
     config.set_main_option("script_location", str(MIGRATIONS_DIRECTORY))
     config.attributes["connection"] = connection
     return config
-
