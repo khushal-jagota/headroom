@@ -101,3 +101,14 @@ The map, with one line for each page, is [docs/README.md](docs/README.md).
 ## Development
 
 The backend is Python/FastAPI with SQLite; the browser app is Svelte/Vite. Start with [`AGENTS.md`](AGENTS.md) for code ownership and the working rules. Run `./verify` for the repository's full integration check.
+
+The full candidate build and startup test is opt-in. Ordinary integration runs do not build an installed copy.
+Run it explicitly when the installed-runtime boundary needs a check:
+
+```sh
+scripts/dev pytest tests/opt_in/test_candidate_bootstrap.py -s
+```
+
+Pytest keeps private credential homes. Package installers use the launch environment's `PIP_CACHE_DIR` and `npm_config_cache` instead.
+Without overrides, pip uses `$XDG_CACHE_HOME/pip` (or `$HOME/.cache/pip`) and npm uses `$HOME/.npm` from before home isolation.
+Keep these shared caches on disk, outside temporary test homes. The first install fills them; later installs reuse downloads and built wheels.
