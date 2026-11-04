@@ -210,7 +210,6 @@ def _require_unassociated_send_conversation(
         "worker",
         "chief",
         "manager",
-        "sprint_item_supervisor",
         "goal",
     }:
         raise HTTPException(

@@ -825,13 +825,8 @@ def read_manager_conversation_history(
             if isinstance(pair, list) and len(pair) == 2
         }
         if (
-            values.get("PLAN_ACTOR") not in {"manager", "sprint_item_supervisor"}
-            or values.get("PLAN_MANAGER_ID", values.get("PLAN_SPRINT_ITEM_ID")) != manager_id
-            or (
-                "PLAN_MANAGER_ID" in values
-                and "PLAN_SPRINT_ITEM_ID" in values
-                and values["PLAN_MANAGER_ID"] != values["PLAN_SPRINT_ITEM_ID"]
-            )
+            values.get("PLAN_ACTOR") != "manager"
+            or values.get("PLAN_MANAGER_ID") != manager_id
         ):
             continue
         history.append(
@@ -898,8 +893,7 @@ async def start_agent_conversation(
                 "UPDATE agents SET conversation_id=? WHERE agent_key=? "
                 "AND conversation_id IS NULL AND EXISTS ("
                 "SELECT 1 FROM managers WHERE id=? "
-                "AND ('manager_' || id=agents.agent_key "
-                "OR 'sprint_item_supervisor_' || id=agents.agent_key))",
+                "AND 'manager_' || id=agents.agent_key)",
                 (conversation_id, agent_key, required_manager_id),
             )
             missing_supervisor = (

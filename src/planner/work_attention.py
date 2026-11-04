@@ -33,8 +33,7 @@ async def read_running_conversation_count(
         "UNION SELECT conversation_id FROM agents WHERE agent_key = ? "
         "AND conversation_id IS NOT NULL "
         "UNION SELECT a.conversation_id FROM managers si JOIN agents a "
-        "ON a.agent_key = coalesce((SELECT agent_key FROM agents WHERE agent_key="
-        "'sprint_item_supervisor_' || si.id),'manager_' || si.id) "
+        "ON a.agent_key = 'manager_' || si.id "
         "WHERE a.conversation_id IS NOT NULL",
         (CHIEF_SETTINGS_KEY,),
     ).fetchall()
@@ -189,8 +188,7 @@ async def add_work_attention(
         placeholders = ",".join("?" for _ in item_ids)
         rows = conn.execute(
             "SELECT si.id, a.conversation_id FROM managers si LEFT JOIN agents a "
-            "ON a.agent_key = coalesce((SELECT agent_key FROM agents WHERE agent_key="
-            "'sprint_item_supervisor_' || si.id),'manager_' || si.id) "
+            "ON a.agent_key = 'manager_' || si.id "
             f"WHERE si.id IN ({placeholders})",
             tuple(sorted(item_ids)),
         ).fetchall()

@@ -378,7 +378,7 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
                 "VALUES ('supervisor','codex','/tmp','full',?,200,1)",
                 (
                     json.dumps(
-                        [["PLAN_ACTOR", "sprint_item_supervisor"], ["PLAN_SPRINT_ITEM_ID", "item"]]
+                        [["PLAN_ACTOR", "manager"], ["PLAN_MANAGER_ID", "item"]]
                     ),
                 ),
             )

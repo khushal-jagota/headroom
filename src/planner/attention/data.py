@@ -114,8 +114,6 @@ def load_evidence(conn: sqlite3.Connection, *, first_at: int, last_at: int) -> E
         kind = str(row["owner_kind"])
         if kind == "worker":
             kind = "ticket"
-        elif kind == "sprint_item":
-            kind = "manager"
         if kind in ("ticket", "manager", "goal", "chief") and row["owner_id"] is not None:
             by_conversation.setdefault(str(row["conversation_id"]), (kind, str(row["owner_id"])))
     for row in conn.execute(
@@ -131,7 +129,6 @@ def load_evidence(conn: sqlite3.Connection, *, first_at: int, last_at: int) -> E
         if agent_key == CHIEF_SETTINGS_KEY:
             identity = "chief", "chief"
         for prefix, kind in (
-            ("sprint_item_supervisor_", "manager"),
             ("manager_", "manager"),
             ("goal_", "goal"),
         ):

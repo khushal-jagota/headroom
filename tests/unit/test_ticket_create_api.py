@@ -216,11 +216,11 @@ def effort_catalogue(create_api: tuple[TestClient, Path], monkeypatch: pytest.Mo
     )
 
 
-def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
+def test_manager_assignment_rejects_old_names(
     create_api: tuple[TestClient, Path],
 ) -> None:
     client, db_path = create_api
-    project = client.post("/api/projects", json={"name": "Compatibility"}).json()
+    project = client.post("/api/projects", json={"name": "Managers"}).json()
     manager = client.post(
         "/api/managers", json={"title": "Retained Manager", "project_id": project["id"]}
     ).json()
@@ -229,9 +229,9 @@ def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
     created = client.post(
         "/api/tickets",
         json={
-            "title": "Issued input",
+            "title": "Canonical input",
             "worker_type": "coding",
-            "orchestrator": issued,
+            "manager": assignment,
             "ceiling_holder": assignment,
         },
     )
@@ -245,15 +245,20 @@ def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
         "/api/tickets",
         params={
             "detail": "summary",
-            "orchestrator_kind": "sprint_item",
-            "orchestrator_id": manager["id"],
+            "manager_kind": "manager",
+            "manager_id": manager["id"],
         },
     ).json()
     assert [row["id"] for row in listed["tickets"]] == [ticket["id"]]
     compatible = client.patch(
         f"/api/tickets/{ticket['id']}", json={"manager": assignment, "orchestrator": issued}
     )
-    assert compatible.status_code == 200, compatible.text
+    assert compatible.status_code == 400, compatible.text
+    old_kind = client.post(
+        "/api/tickets",
+        json={"title": "Old kind", "worker_type": "coding", "manager": issued},
+    )
+    assert old_kind.status_code == 400, old_kind.text
     before = _snapshot(db_path)
     conflict = {"manager": assignment, "orchestrator": {"kind": "chief", "id": "chief"}}
     for endpoint, body in (

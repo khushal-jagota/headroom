@@ -3970,6 +3970,8 @@ class SqliteProcessConversationSystem:
         of it, because there is no run of words at the front to join it to.
         """
         role_text = state.record.role_text
+        if dict(state.record.identity_environment_variables).get("PLAN_ACTOR") == "manager":
+            return prefix_message_content_text(content, role_text or "", ROLE_TEXT_PROMPT_SEPARATOR)
         if role_text is None or state.has_delivered_prompt:
             return content
         if await self._persist(

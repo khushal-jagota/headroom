@@ -5,7 +5,7 @@ from typing import cast
 
 from alembic import op
 
-from planner.navigation.data import upgrade_compact_lifecycle
+from planner.core.migrations.historical_navigation.data import upgrade_compact_lifecycle
 
 revision = "compact_navigation_lifecycle"
 down_revision = "transactional_navigation"

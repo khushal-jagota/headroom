@@ -86,12 +86,12 @@ def _principal_headers(seed: Seed) -> dict[str, dict[str, str]]:
         "owner": {},
         "chief": {"X-Plan-Actor": "chief"},
         "outcome_parent": {
-            "X-Plan-Actor": "sprint_item_supervisor",
-            "X-Plan-Sprint-Item-ID": seed.item_a,
+            "X-Plan-Actor": "manager",
+            "X-Plan-Manager-ID": seed.item_a,
         },
         "outcome_stranger": {
-            "X-Plan-Actor": "sprint_item_supervisor",
-            "X-Plan-Sprint-Item-ID": seed.item_b,
+            "X-Plan-Actor": "manager",
+            "X-Plan-Manager-ID": seed.item_b,
         },
         "ticket_self": {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": seed.ticket_a},
         "ticket_stranger": {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": seed.ticket_b},
@@ -135,7 +135,7 @@ def _seed(db_path: Path) -> Seed:
                     "worker_type": "coding",
                     "title": "Target ticket",
                     "brief": "Start here.",
-                    "orchestrator": {"kind": "sprint_item", "id": item_a["id"]},
+                    "manager": {"kind": "manager", "id": item_a["id"]},
                 },
             )
         )
@@ -146,7 +146,7 @@ def _seed(db_path: Path) -> Seed:
                     "worker_type": "coding",
                     "title": "Stranger ticket",
                     "brief": "Start here.",
-                    "orchestrator": {"kind": "sprint_item", "id": item_b["id"]},
+                    "manager": {"kind": "manager", "id": item_b["id"]},
                 },
             )
         )
@@ -184,7 +184,7 @@ def _seed(db_path: Path) -> Seed:
                     "worker_type": "coding",
                     "title": "A user-owned gate",
                     "brief": "Start here.",
-                    "orchestrator": {"kind": "sprint_item", "id": item_a["id"]},
+                    "manager": {"kind": "manager", "id": item_a["id"]},
                 },
             )
         )
@@ -245,19 +245,19 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
     # --- making a Ticket, and the three things it can arrive with
     ("POST   /tickets (bare)", lambda s: _create()),
     (
-        "POST   /tickets orchestrator",
-        lambda s: _create(orchestrator={"kind": "sprint_item", "id": s.item_a}),
+        "POST   /tickets manager",
+        lambda s: _create(manager={"kind": "manager", "id": s.item_a}),
     ),
     (
         "POST   /tickets ceiling",
         lambda s: _create(
-            orchestrator={"kind": "sprint_item", "id": s.item_a}, ceiling="needs_consequences"
+            manager={"kind": "manager", "id": s.item_a}, ceiling="needs_consequences"
         ),
     ),
     (
         "POST   /tickets ceiling_holder",
         lambda s: _create(
-            orchestrator={"kind": "sprint_item", "id": s.item_a}, ceiling_holder=_OWNER_HOLDER
+            manager={"kind": "manager", "id": s.item_a}, ceiling_holder=_OWNER_HOLDER
         ),
     ),
     # --- a Ticket, through its ordinary address
@@ -270,11 +270,11 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("PATCH", f"/api/tickets/{s.ticket_a}", {"title": "Renamed"}),
     ),
     (
-        "PATCH  /tickets/{t} orchestrator",
+        "PATCH  /tickets/{t} manager",
         lambda s: Call(
             "PATCH",
             f"/api/tickets/{s.ticket_a}",
-            {"orchestrator": {"kind": "sprint_item", "id": s.item_b}},
+            {"manager": {"kind": "manager", "id": s.item_b}},
         ),
     ),
     (

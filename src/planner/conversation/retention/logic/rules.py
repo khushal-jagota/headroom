@@ -53,18 +53,9 @@ def identity_values(identity_json: str) -> dict[str, str]:
             "PLAN_TICKET_ID",
             "PLAN_GOAL_ID",
             "PLAN_MANAGER_ID",
-            "PLAN_SPRINT_ITEM_ID",
         }:
             raise ValueError("unknown or duplicate identity key")
         values[key] = value
-    manager_id = values.get("PLAN_MANAGER_ID")
-    legacy_id = values.pop("PLAN_SPRINT_ITEM_ID", None)
-    if manager_id and legacy_id and manager_id != legacy_id:
-        raise ValueError("conflicting Manager identities")
-    if legacy_id:
-        values["PLAN_MANAGER_ID"] = legacy_id
-    if values.get("PLAN_ACTOR") == "sprint_item_supervisor":
-        values["PLAN_ACTOR"] = "manager"
     return values
 
 
@@ -147,10 +138,7 @@ def classify_conversation(
         if key == "chief_of_staff":
             reasons.add("chief")
         elif not (
-            any(
-                key.startswith(prefix) and key.removeprefix(prefix) in manager_ids
-                for prefix in ("manager_", "sprint_item_supervisor_")
-            )
+            key.startswith("manager_") and key.removeprefix("manager_") in manager_ids
         ):
             reasons.add("unknown_agent_owner")
 

@@ -327,8 +327,7 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
     agent_rows = conn.execute(
         "SELECT a.agent_key, a.conversation_id, i.id AS item_id, i.title AS item_title "
         "FROM agents a LEFT JOIN managers i "
-        "ON a.agent_key = coalesce((SELECT agent_key FROM agents WHERE agent_key="
-        "'sprint_item_supervisor_' || i.id),'manager_' || i.id) "
+        "ON a.agent_key = 'manager_' || i.id "
         "WHERE a.agent_key = ? OR i.id IS NOT NULL",
         (CHIEF_SETTINGS_KEY,),
     ).fetchall()

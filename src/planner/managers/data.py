@@ -30,23 +30,7 @@ PERSONAL_PROJECT_ID = "project_personal"
 
 
 def manager_agent_key(item_id: str, conn: sqlite3.Connection | None = None) -> str:
-    canonical = f"manager_{item_id}"
-    if conn is None:
-        return canonical
-    legacy = f"sprint_item_supervisor_{item_id}"
-    rows = conn.execute(
-        "SELECT agent_key,conversation_id FROM agents WHERE agent_key IN (?,?)",
-        (canonical, legacy),
-    ).fetchall()
-    identities = {str(row[0]): row[1] for row in rows}
-    if len(identities) == 2 and identities[canonical] != identities[legacy]:
-        raise PlannerError(
-            ErrorCode.validation,
-            "conflicting Manager conversation identities",
-            {"manager_id": item_id},
-        )
-    # Prefer the issued identity. Its bytes remain stable even when both aliases agree.
-    return legacy if legacy in identities else canonical
+    return f"manager_{item_id}"
 
 
 def _create_manager_agent(conn: sqlite3.Connection, item_id: str) -> str:

@@ -122,16 +122,9 @@ def build_report(
         str(row[0]): TicketOwner(str(row[0]), str(row[1]), str(row[2]))
         for row in connection.execute("SELECT id,stage,worker_step_claim FROM tickets")
     }
-    manager_table = (
-        "managers"
-        if connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managers'"
-        ).fetchone()
-        else "sprint_items"
-    )
     managers = {
         str(row[0]): ManagerOwner(str(row[0]), row[1] == 1)
-        for row in connection.execute(f"SELECT id,settled FROM {manager_table}")
+        for row in connection.execute("SELECT id,settled FROM managers")
     }
     decisions = []
     for conversation in conversations:
@@ -160,10 +153,9 @@ def build_report(
             )
         )
         manager_ids = {
-            key.removeprefix(prefix)
+            key.removeprefix("manager_")
             for key in agent_keys
-            for prefix in ("manager_", "sprint_item_supervisor_")
-            if key.startswith(prefix)
+            if key.startswith("manager_")
         }
         if "PLAN_MANAGER_ID" in identity:
             manager_ids.add(identity["PLAN_MANAGER_ID"])

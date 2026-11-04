@@ -63,3 +63,5 @@ Multiple legacy matches report ambiguity with metadata candidates. The owner can
 `src/planner/cli/main.py` is the tree. HTTP handlers under each domain are the writers the commands call.
 
 _Last verified: 2026-10-30._
+
+Manager commands accept `panels manager` and `--manager`. The old Sprint Item and Orchestrator spellings are removed.

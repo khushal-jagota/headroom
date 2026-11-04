@@ -9,24 +9,6 @@ from typing import Any, NoReturn, TextIO
 
 import click
 
-LEGACY_SUPERVISOR_RECOVERIES: dict[str, str] = {
-    "show": "panels manager show ITEM_ID",
-    "context": "panels manager workspace ITEM_ID",
-    "ticket-context": "panels ticket show TICKET_ID",
-    "history": "panels ticket history TICKET_ID",
-    "message-worker": "panels send-message --ticket TICKET_ID --message TEXT",
-    "restart-worker": "panels ticket restart-worker TICKET_ID",
-    "set-item": "panels manager set ITEM_ID FIELD --value VALUE",
-    "set-ticket": "panels ticket edit TICKET_ID --input-json FILE",
-    "artifact-list": "panels manager artifact list ITEM_ID",
-    "artifact-write": ("panels manager artifact write ITEM_ID ARTIFACT_PATH --body-file FILE"),
-    "artifact-delete": "panels manager artifact delete ITEM_ID ARTIFACT_PATH",
-    "send": "panels send-message --manager ITEM_ID --message TEXT",
-    "reset": "panels manager conversation reset ITEM_ID",
-    "approve": "panels ticket proposal TICKET_ID accept --ceiling STAGE",
-    "reject": "panels ticket proposal TICKET_ID revise < GUIDANCE_FILE",
-}
-
 # These commands enforce one input rule after Click parses their options. Their shortest
 # usable forms are kept here so a validation error never points back to an incomplete
 # ``[OPTIONS]`` synopsis.
@@ -147,13 +129,6 @@ def _context_for_child(ctx: click.Context, name: str) -> click.Context | None:
     return click.Context(child, info_name=name, parent=ctx)
 
 
-def _legacy_supervisor_recovery(args: Sequence[str]) -> str | None:
-    prefix = ("sprint", "item", "supervisor")
-    if tuple(args[:3]) != prefix or len(args) < 4:
-        return None
-    return LEGACY_SUPERVISOR_RECOVERIES.get(args[3])
-
-
 def _show_usage_error(error: click.UsageError, args: Sequence[str]) -> None:
     ctx = error.ctx
     if isinstance(error, click.exceptions.NoArgsIsHelpError):
@@ -188,7 +163,7 @@ def _show_usage_error(error: click.UsageError, args: Sequence[str]) -> None:
             )
             return
         path = _canonical_command_path(ctx) if ctx is not None else "panels"
-        recovery = _legacy_supervisor_recovery(args)
+        recovery = None
         if recovery is None and ctx is not None and error.possibilities:
             child_ctx = _context_for_child(ctx, error.possibilities[0])
             recovery = command_shape(child_ctx) if child_ctx is not None else None
@@ -259,45 +234,8 @@ def _show_click_exception(
     render_human_error(message, recovery=command_shape(ctx))
 
 
-class CompatibilityChoice(click.Choice[str]):
-    """Normalize issued Manager field names before canonical choice validation."""
-
-    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
-        if value in {"sprint-item", "orchestrator"} and "manager" in self.choices:
-            value = "manager"
-        return super().convert(value, param, ctx)
-
-
-class CompatibilityOption(click.Option):
-    """Keep issued spellings executable while help teaches the first spelling."""
-
-    def get_help_record(self, ctx: click.Context) -> tuple[str, str] | None:
-        original = self.opts
-        self.opts = original[:1]
-        try:
-            return super().get_help_record(ctx)
-        finally:
-            self.opts = original
-
-
-def _check_manager_options(args: Sequence[str]) -> None:
-    identities: dict[str, set[str]] = {}
-    aliases = {"--manager", "--sprint-item", "--orchestrator"}
-    for index, token in enumerate(args):
-        option, separator, value = token.partition("=")
-        if option in aliases:
-            if not separator and index + 1 < len(args):
-                value = args[index + 1]
-            identities.setdefault(option, set()).add(value)
-    if len(identities) > 1 and len({frozenset(values) for values in identities.values()}) > 1:
-        raise click.UsageError("conflicting Manager identity options")
-
-
 class PanelsGroup(click.Group):
     """Root group that replaces Click's usage walls with two-line errors."""
-
-    def list_commands(self, ctx: click.Context) -> list[str]:
-        return [name for name in super().list_commands(ctx) if name not in {"orchestrator"}]
 
     def main(
         self,
@@ -309,7 +247,6 @@ class PanelsGroup(click.Group):
         **extra: Any,
     ) -> Any:
         supplied_args = list(sys.argv[1:] if args is None else args)
-        _check_manager_options(supplied_args)
         if not standalone_mode:
             return super().main(
                 args=supplied_args,

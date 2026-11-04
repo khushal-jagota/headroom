@@ -11,7 +11,6 @@ from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
-from planner.managers.assignment import normalize_assignment
 from planner.projects import data as projects_data
 from planner.scheduled_tickets import actions, data, views
 from planner.scheduled_tickets.contracts import (
@@ -125,7 +124,6 @@ async def create_schedule(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     authority.require_above(conn, ctx.principal, authority.owner_only("scheduled_ticket_schedules"))
-    raw = normalize_assignment(raw)
     _reject_unknown(raw, _CREATE_KEYS)
     template = _template_from_create(raw, conn)
     launch = tickets_data.requested_ticket_launch_configuration(
@@ -173,7 +171,6 @@ async def patch_schedule(
     clk: Clk,
 ) -> JsonDict:
     authority.require_above(conn, ctx.principal, authority.owner_only("scheduled_ticket_schedules"))
-    raw = normalize_assignment(raw)
     _reject_unknown(raw, _PATCH_KEYS)
     if not raw:
         raise PlannerError(ErrorCode.validation, "no schedule fields to update", {})

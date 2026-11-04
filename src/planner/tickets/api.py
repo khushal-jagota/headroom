@@ -65,7 +65,6 @@ from planner.list_reads.detail import (
     reject_parameters,
     require_full_for_one,
 )
-from planner.managers.assignment import normalize_assignment
 from planner.message_delivery import service as message_delivery_service
 from planner.message_delivery.contracts import MessageDeliveryResult, MessageRecordedToOwner
 from planner.projects import data as projects_data
@@ -337,7 +336,6 @@ def _marshal_settled_field_values(
 
 
 def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicketBody:
-    raw = normalize_assignment(raw)
     obsolete = set(raw) & {"sprint_id", "manager_id", "sprint_item_id", "day", "day_id"}
     if obsolete:
         raise PlannerError(
@@ -483,7 +481,7 @@ def write_create_ticket(
     now = clk.now_unix()
     manager = (
         _parse_manager(body["manager"])
-        if "manager" in raw or "orchestrator" in raw
+        if "manager" in raw
         else Principal(PrincipalKind.chief, "chief")
     )
     project = projects_data.resolve_project(
@@ -548,25 +546,10 @@ async def read_tickets(
     project_id: str | None = None,
     manager_id: str | None = None,
     manager_kind: str | None = None,
-    sprint_item_id: Annotated[str | None, Query(include_in_schema=False)] = None,
-    orchestrator_kind: Annotated[str | None, Query(include_in_schema=False)] = None,
-    orchestrator_id: Annotated[str | None, Query(include_in_schema=False)] = None,
     limit: int | None = None,
     offset: int | None = None,
 ) -> JsonDict:
     """Read Tickets at the level the caller asks for, or one Ticket by id."""
-    for legacy_id in (sprint_item_id, orchestrator_id):
-        if legacy_id is not None:
-            if manager_id is not None and manager_id != legacy_id:
-                raise PlannerError(ErrorCode.validation, "conflicting Manager filters")
-            manager_id = legacy_id
-    if manager_kind == "sprint_item":
-        manager_kind = "manager"
-    if orchestrator_kind is not None:
-        previous_kind = "manager" if orchestrator_kind == "sprint_item" else orchestrator_kind
-        if manager_kind is not None and manager_kind != previous_kind:
-            raise PlannerError(ErrorCode.validation, "conflicting Manager filters")
-        manager_kind = previous_kind
     level = parse_read_detail(detail)
     scope = {
         "stage": stage,
@@ -923,7 +906,6 @@ def write_patch_ticket(
     *,
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
 ) -> JsonDict:
-    body = normalize_assignment(body)
     recognized = (
         "title",
         "deadline",

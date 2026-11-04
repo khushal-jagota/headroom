@@ -174,7 +174,7 @@ async def history_page(
         canonical = "ticket"
     elif kind == "goal":
         canonical = "goal"
-    elif kind in {"manager", "sprint_item", "orchestrator"}:
+    elif kind == "manager":
         canonical = "manager"
     else:
         raise PlannerError(ErrorCode.validation, "unknown conversation history owner kind", {})

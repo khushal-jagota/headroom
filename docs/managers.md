@@ -46,6 +46,10 @@ The owner, Chief, and Managers talk to each other, and to Workers, through Send 
 
 Creation, goal and recap edits, child Ticket activity, and wakes feed the Manager. The Manager feeds child Tickets, messages, and its own recap. Workspace shows Chief first, then active Managers with their Workers grouped by attention, then a Settled fold. A Manager page is the header, the recap, the conversation, and the children. `#/workspace/chief-of-staff` opens Chief. `#/workspace/manager/<id>` opens a Manager. Older `#/workspace/item/…` and `#/agents/chief-of-staff` addresses still redirect.
 
+Current agent identities use `PLAN_ACTOR=manager` and `PLAN_MANAGER_ID`. The forward migration preserves each Manager and its conversation. Retained conversations receive the current role instructions on their next turn. Old actor names, command aliases, request headers, and environment names do not select a Manager.
+
+Manager files retain `/files/sprint-items/` addresses so that existing Ticket links still open. Historical migration backfills remain isolated from current navigation writes.
+
 ## Pointers
 
 `src/planner/managers/` is the record. Wakes live in `src/planner/manager_wakes/`. The screens are `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`.

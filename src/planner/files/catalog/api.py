@@ -10,7 +10,6 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 from urllib.parse import quote, unquote, urlsplit
 
 import anyio.to_thread
@@ -262,13 +261,12 @@ def _read(
 @router.get("/artifact-catalog/{kind}/{owner_id}")
 async def artifact_catalog(
     request: Request,
-    kind: ArtifactOwnerKind | Literal["sprint_item"],
+    kind: ArtifactOwnerKind,
     owner_id: str,
     directory: str = "",
     offset: int = 0,
     limit: int = PAGE_SIZE,
 ) -> ArtifactDirectoryPage:
-    canonical_kind: ArtifactOwnerKind = "manager" if kind == "sprint_item" else kind
     return await anyio.to_thread.run_sync(
-        _read, request, canonical_kind, owner_id, directory, offset, limit
+        _read, request, kind, owner_id, directory, offset, limit
     )

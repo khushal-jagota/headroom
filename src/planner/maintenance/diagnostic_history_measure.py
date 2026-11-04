@@ -142,13 +142,6 @@ def independent_removal_oracle(connection: sqlite3.Connection, cutoff_unix: int)
             environment = dict(pairs)
             if len(environment) != len(pairs):
                 continue
-            legacy_id = environment.pop("PLAN_SPRINT_ITEM_ID", None)
-            if legacy_id:
-                if environment.get("PLAN_MANAGER_ID", legacy_id) != legacy_id:
-                    continue
-                environment["PLAN_MANAGER_ID"] = legacy_id
-            if environment.get("PLAN_ACTOR") == "sprint_item_supervisor":
-                environment["PLAN_ACTOR"] = "manager"
             if set(environment) not in (
                 {"PLAN_ACTOR", "PLAN_TICKET_ID"},
                 {"PLAN_ACTOR", "PLAN_MANAGER_ID"},
@@ -172,8 +165,6 @@ def independent_removal_oracle(connection: sqlite3.Connection, cutoff_unix: int)
         for key in agents.get(identity, set()):
             if key.startswith("manager_"):
                 manager_ids.add(key.removeprefix("manager_"))
-            elif key.startswith("sprint_item_supervisor_"):
-                manager_ids.add(key.removeprefix("sprint_item_supervisor_"))
             else:
                 unknown_agent = True
         if unknown_agent or not (owners or manager_ids):

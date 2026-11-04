@@ -404,9 +404,7 @@ def capture_conversation_attention(
     for row in conn.execute(
         "SELECT CASE WHEN i.id IS NULL THEN 'agent' ELSE 'manager' END subject_kind, "
         "COALESCE(i.id, a.agent_key) subject_id FROM agents a "
-        "LEFT JOIN managers i ON a.agent_key=coalesce((SELECT agent_key FROM agents "
-        "WHERE agent_key="
-        "'sprint_item_supervisor_' || i.id),'manager_' || i.id) "
+        "LEFT JOIN managers i ON a.agent_key='manager_' || i.id "
         "WHERE a.conversation_id=? AND (a.agent_key='chief_of_staff' OR i.id IS NOT NULL)",
         (conversation_id,),
     ):
