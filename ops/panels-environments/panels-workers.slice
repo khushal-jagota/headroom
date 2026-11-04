@@ -3,6 +3,6 @@ Description=Panels Worker resource budget
 
 [Slice]
 MemoryAccounting=yes
-MemoryMax=20G
+MemoryMax=24G
 CPUAccounting=yes
 CPUWeight=10

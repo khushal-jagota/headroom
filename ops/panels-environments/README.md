@@ -79,7 +79,7 @@ Backup and restore instructions are in [backup-restore.md](backup-restore.md).
 
 Linux Ticket agents run in transient user services under `panels-workers.slice`.
 Their tools inherit that unit. Each service limits memory to 6 GiB and stops its
-whole cgroup on OOM. The slice limits all Workers to 20 GiB and gives them
+whole cgroup on OOM. The slice limits all Workers to 24 GiB and gives them
 CPU weight 10. Its parent `panels.slice` also uses weight 10, below the
 foreground `app.slice`. Panels uses weight 100 and a 1 GiB memory reservation.
 `MemoryLow` protects memory under pressure only when every ancestor supplies
@@ -98,7 +98,7 @@ their original units until the operator restarts Panels. The operator must check
 that no old Worker tools remain before activation.
 
 The scratch verification record for the containment change records measured peaks
-and the selected budgets. These limits leave about 11 GiB outside the Worker
+and the selected budgets. These limits leave about 7 GiB plus swap outside the Worker
 budget on the 31 GiB VPS. Future changes must preserve headroom for Panels and
 the host.
 
