@@ -396,7 +396,7 @@ def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
         )
 
 
-def test_full_skill_batch_retry_republishes_only_the_exact_applied_target(
+def test_full_skill_batch_retry_republishes_and_later_writes_replace_saved_source(
     tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
@@ -435,8 +435,12 @@ def test_full_skill_batch_retry_republishes_only_the_exact_applied_target(
         now=23,
         database_parent=tmp_path,
     )
-    with pytest.raises(PlannerError, match="hash changed"):
-        service.apply_skills(database, batch, now=24, database_parent=tmp_path)
+    service.apply_skills(database, batch, now=24, database_parent=tmp_path)
+    assert read_skill_source(database, "panels") == target
+    assert (tmp_path / "skills/panels/SKILL.md").read_text() == target
+    assert database.execute(
+        "SELECT updated_at FROM managed_skills WHERE skill_name='panels'"
+    ).fetchone()[0] == 24
 
 
 def test_manager_skill_primary_identity_matches_the_generated_role() -> None:
@@ -550,8 +554,11 @@ def test_workspace_skill_setup_rechecks_exclusive_creation_race(
     exposed = workspace / ".agents/skills"
     real_symlink = os.symlink
 
-    def concurrent_creator(src: str | Path, dst: str, *, dir_fd: int | None = None) -> None:
-        real_symlink(src, dst, dir_fd=dir_fd)
+    def concurrent_creator(
+        src: str | Path, dst: str, target_is_directory: bool = False,
+        *, dir_fd: int | None = None,
+    ) -> None:
+        real_symlink(src, dst, target_is_directory, dir_fd=dir_fd)
         raise FileExistsError(dst)
 
     monkeypatch.setattr("planner.skill_sources.os.symlink", concurrent_creator)

@@ -43,9 +43,11 @@ def test_accepted_completion_dates_follow_transitions_and_keep_unknown_history(
     assert reopened.completion_date is None and not reopened.active
     completed = edit(tmp_db, reopened, now=NOW + 2 * 86400, completed=True)
     assert completed.completion_date == "2026-10-29" and not completed.active
-    with pytest.raises(PlannerError, match="goal changed"):
-        edit(tmp_db, reopened, completed=False)
-    assert data.read_goal(tmp_db, completed.id) == completed
+    revised = edit(tmp_db, reopened, completed=False)
+    assert data.read_goal(tmp_db, completed.id) == revised
+    assert revised.completion_date is None and not revised.active
+    completed = edit(tmp_db, revised, now=NOW + 2 * 86400, completed=True)
+    assert completed.completion_date == "2026-10-29"
 
     # An already-complete legacy record keeps its unknown date on ordinary edits.
     tmp_db.execute("UPDATE goals SET completion_date=NULL WHERE id=?", (completed.id,))
