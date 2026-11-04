@@ -1,5 +1,5 @@
 import { actualMark, expectedMark } from './conversationSignalDom';
-import type { ManagerPrincipal, ListPageFacts } from './types';
+import type { ManagerPrincipal } from './types';
 import { workItemTicketOrder, type WorkItemTicketFacts } from './workItemPresentation';
 import { workspaceAddress } from './workspaceAddress';
 
@@ -8,7 +8,7 @@ export function childrenSectionDomMatches(
   root: HTMLElement, principal: ManagerPrincipal, filter: string,
   rows: readonly WorkItemTicketFacts[],
   groups: readonly {key:string; label:string; count?:number; tickets:readonly WorkItemTicketFacts[]}[],
-  page: ListPageFacts | undefined, open: Readonly<Record<string,boolean>>,
+  open: Readonly<Record<string,boolean>>,
   sectionOpen: boolean, count: number, scopedWindow?:import("./navigation/contracts").ViewWindow, scrolling=false,
 ): boolean {
   if (root.dataset.workerSection !== filter) return false;
@@ -48,15 +48,8 @@ export function childrenSectionDomMatches(
   if ((filter==='active' && scrolling ? count===0 : rows.length===0) ? empty?.textContent !== expectedEmpty : empty !== null) return false;
   const controls = root.querySelector('.child-pages');
   if(scopedWindow && scrolling)return controls===null;
-  if(scopedWindow){
-    if(!scopedWindow.previous && !scopedWindow.next)return controls===null;
-    const buttons=controls?.querySelectorAll('button');
-    return controls?.querySelector('span')?.textContent===`${scopedWindow.members.length} of ${scopedWindow.total}`
-      && buttons?.[0].disabled===!scopedWindow.previous && buttons?.[1].disabled===!scopedWindow.next;
-  }
-  if (!page || !(page.omitted_before > 0 || page.omitted_after > 0)) return controls === null;
-  const buttons = controls?.querySelectorAll('button');
-  return controls?.querySelector('span')?.textContent === `${page.return_count ? page.omitted_before+1 : 0}–${page.omitted_before+page.return_count} of ${page.match_count}`
-    && buttons?.[0].disabled === (page.omitted_before === 0)
-    && buttons?.[1].disabled === (page.next_offset === null);
+  if(!scopedWindow || (!scopedWindow.previous && !scopedWindow.next))return controls===null;
+  const buttons=controls?.querySelectorAll('button');
+  return controls?.querySelector('span')?.textContent===`${scopedWindow.members.length} of ${scopedWindow.total}`
+    && buttons?.[0].disabled===!scopedWindow.previous && buttons?.[1].disabled===!scopedWindow.next;
 }
