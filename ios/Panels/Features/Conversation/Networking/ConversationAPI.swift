@@ -3,7 +3,7 @@ import Foundation
 extension APIClient: ConversationServing {
     func changeHeldPrompt(_ id: String, heldID: String, discard: Bool) async throws -> ConversationHeldChange {
         let path = "/api/conversation/conversations/\(id)/held-prompts/\(heldID)" + (discard ? "" : "/promote")
-        var request = try request(try url(path))
+        var request = try self.request(try url(path))
         request.httpMethod = discard ? "DELETE" : "POST"
         if !discard {
             request.httpBody = Data(#"{"mode":"steer"}"#.utf8)
@@ -14,7 +14,7 @@ extension APIClient: ConversationServing {
         return try Self.decoder().decode(ConversationHeldChange.self, from: data)
     }
     func interruptConversation(_ id: String) async throws {
-        var request = try request(try url("/api/conversation/conversations/\(id)/interrupt"))
+        var request = try self.request(try url("/api/conversation/conversations/\(id)/interrupt"))
         request.httpMethod = "POST"
         let (data, response) = try await session.data(for: request)
         try Self.validate(response, data: data)
@@ -55,7 +55,7 @@ extension APIClient: ConversationServing {
         return text
     }
     func sendConversation(_ owner: ConversationOwner, message: ConversationSend) async throws -> ConversationDelivery {
-        var request = try request(try url(owner.path + "/send"))
+        var request = try self.request(try url(owner.path + "/send"))
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -75,7 +75,7 @@ extension APIClient {
         AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let task = Task {
                 do {
-                    var request = try request(try url("/api/conversation/conversations/\(id)/view/tail", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]))
+                    var request = try self.request(try url("/api/conversation/conversations/\(id)/view/tail", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]))
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.timeoutInterval = 120
                     let (bytes, response) = try await session.bytes(for: request)

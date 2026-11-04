@@ -54,7 +54,7 @@ struct APIClient: Sendable {
     }
 
     func responseData(_ path: String, query: [URLQueryItem] = []) async throws -> (Data, URL) {
-        var request = try request(try url(path, query: query))
+        var request = try self.request(try url(path, query: query))
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 25
         let (data, response) = try await session.data(for: request)

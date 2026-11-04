@@ -82,7 +82,7 @@ extension APIClient {
     }
 
     private func ticketWrite<Body: Encodable>(_ path: String, method: String, body: Body) async throws -> Data {
-        var request = try request(try url(path))
+        var request = try self.request(try url(path))
         request.httpMethod = method
         request.httpBody = try JSONEncoder().encode(body)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

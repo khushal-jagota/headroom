@@ -65,7 +65,7 @@ extension APIClient {
     }
 
     func reviewWrite<T: Encodable>(_ path: String, method: String = "POST", body: T) async throws -> Data {
-        var request = try request(try url(path))
+        var request = try self.request(try url(path))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 25

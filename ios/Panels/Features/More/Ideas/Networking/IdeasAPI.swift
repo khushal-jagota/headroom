@@ -27,7 +27,7 @@ extension APIClient: IdeasServing {
     }
 
     func captureIdea(_ capture: IdeaCapture) async throws -> Idea {
-        var request = try request(try url("/api/ideas"))
+        var request = try self.request(try url("/api/ideas"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(capture)
