@@ -39,6 +39,7 @@ import Observation
     private var manualEditors: [String: GoalManualEditor] = [:]
     init(id: String, api: APIClient, goal: GoalRecord? = nil) { self.id = id; self.api = api; self.goal = goal }
     var baseURL: URL { api.baseURL }
+    var nextRefreshAt: Double? { [goal?.nextRefreshAt, readings?.nextRefreshAt].compactMap { $0 }.min() }
     func preference(_ id: String) -> GoalChartPreference { preferences[id] ?? .init() }
     func remember(_ id: String, _ preference: GoalChartPreference) { preferences[id] = preference }
     func manual(_ block: GoalJSON) -> GoalManualEditor {

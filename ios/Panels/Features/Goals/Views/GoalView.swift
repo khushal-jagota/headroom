@@ -54,10 +54,7 @@ private struct GoalDetailContent: View {
             .screenLoadState("goal", hasContent: session.goal != nil, error: session.readError, showsRefreshError: false) { await session.refresh() }
             .panelsRefreshable { await session.refresh() }
             .task(id: "\(store.revision):\(scenePhase == .active)") { if scenePhase == .active { await session.refresh(); await loadProjects() } }
-            .task(id: session.readings?.nextRefreshAt ?? session.goal?.nextRefreshAt) {
-                guard let boundary = session.readings?.nextRefreshAt ?? session.goal?.nextRefreshAt else { return }
-                do { try await Task.sleep(for: .seconds(max(0, boundary - Date().timeIntervalSince1970) + 0.05)); await session.refresh() } catch { }
-            }
+            .modifier(GoalBoundaryRefresh(at: session.nextRefreshAt) { await session.refresh() })
             .environment(\.openURL, OpenURLAction { url in
                 if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selectedArtifact = target; return .handled }
                 return .systemAction

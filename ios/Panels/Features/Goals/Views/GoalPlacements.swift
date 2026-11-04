@@ -5,18 +5,20 @@ struct WorkspaceGoals: View {
     let open: (AppRoute) -> Void
     @Environment(AppStore.self) private var store
     @State private var goals: [GoalRecord] = []
+    @State private var nextRefreshAt: Double?
     @State private var error: String?
     var body: some View {
         VStack(spacing: 0) {
             ForEach(goals.filter(\.active)) { goal in GoalWorkspaceRow(goal: goal, open: open) }
             if let error { LoadErrorView(message: error) { await load() } }
         }.task(id: "\(store.baseURL):\(store.revision)") { await load() }
+            .modifier(GoalBoundaryRefresh(at: nextRefreshAt, refresh: load))
     }
     private func load() async {
         let api = store.client
         do {
             let response = try await api.goals(); try Task.checkCancellation()
-            guard api.baseURL == store.baseURL else { return }; goals = response.goals; error = nil
+            guard api.baseURL == store.baseURL else { return }; goals = response.goals; nextRefreshAt = response.nextRefreshAt; error = nil
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
 }
@@ -47,6 +49,7 @@ private struct GoalWorkspaceRow: View {
                     .panelsScaledFont(size: 11).foregroundStyle(PanelsTheme.Goal.tone(GoalPresentation.deadlineTone(accepted.deadline, completed: accepted.completed, today: accepted.statusDate)))
             }.frame(maxWidth: .infinity, minHeight: 60, alignment: .leading).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityIdentifier("workspace-goal-\(goal.id)")
+            .modifier(GoalBoundaryRefresh(at: session?.nextRefreshAt) { if let session { await session.refresh() } })
             .contextMenu {
                 Button("Open") { open(.goal(goal.id)) }
                 if let session {
@@ -105,6 +108,7 @@ private struct GoalPeek: View {
 struct ChiefGoals: View {
     @Environment(AppStore.self) private var store
     @State private var goals: [GoalRecord] = []
+    @State private var nextRefreshAt: Double?
     @State private var projects: [GoalJSON] = []
     @State private var error: String?
     var body: some View {
@@ -118,6 +122,7 @@ struct ChiefGoals: View {
             if goals.filter(\.active).isEmpty, error == nil { Text("No active goals").font(.footnote).foregroundStyle(PanelsTheme.Goal.faint) }
             if let error { LoadErrorView(message: error) { await load() } }
         }.task(id: "\(store.baseURL):\(store.revision)") { await load() }
+            .modifier(GoalBoundaryRefresh(at: nextRefreshAt, refresh: load))
     }
     private func load() async {
         let api = store.client
@@ -125,7 +130,7 @@ struct ChiefGoals: View {
             async let response = api.goals()
             async let projectResponse: GoalJSON = api.get("/api/projects")
             let (list, projects) = try await (response, projectResponse); try Task.checkCancellation()
-            guard api.baseURL == store.baseURL else { return }; goals = list.goals; self.projects = projects["projects"].array; error = nil
+            guard api.baseURL == store.baseURL else { return }; goals = list.goals; nextRefreshAt = list.nextRefreshAt; self.projects = projects["projects"].array; error = nil
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
 }
@@ -149,7 +154,8 @@ private struct ChiefGoalCard: View {
                     GoalSaveFailure(session: session)
                 }.padding(.horizontal, 20).padding(.vertical, 24)
             }
-        }.background(PanelsTheme.surface).clipShape(RoundedRectangle(cornerRadius: 12))
+        }.modifier(GoalBoundaryRefresh(at: session?.nextRefreshAt) { if let session { await session.refresh() } })
+            .background(PanelsTheme.surface).clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(PanelsTheme.border))
             .task(id: "\(store.baseURL):\(store.revision)") { let selected = GoalSession.session(id: goal.id, api: store.client, initial: goal); session = selected; await selected.refresh() }
     }

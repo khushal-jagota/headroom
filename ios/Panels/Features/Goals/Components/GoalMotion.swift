@@ -159,3 +159,20 @@ struct GoalInspectionDismissal: UIViewRepresentable {
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
     }
 }
+
+/// The server supplies the next calendar boundary; suspension cancels the wait.
+struct GoalBoundaryRefresh: ViewModifier {
+    let at: Double?
+    let refresh: () async -> Void
+    @Environment(\.scenePhase) private var scenePhase
+    func body(content: Content) -> some View {
+        content.task(id: "\(at ?? 0):\(scenePhase == .active)") {
+            guard scenePhase == .active, let at else { return }
+            do {
+                try await Task.sleep(for: .seconds(max(0, at - Date().timeIntervalSince1970) + 0.05))
+                try Task.checkCancellation()
+                await refresh()
+            } catch { }
+        }
+    }
+}

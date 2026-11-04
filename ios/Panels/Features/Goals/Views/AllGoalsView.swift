@@ -11,6 +11,7 @@ struct AllGoalsView: View {
     @State private var selectedFilter: Int?
     @State private var sheet = false
     @State private var loaded = false
+    @State private var nextRefreshAt: Double?
     @State private var error: String?
     private let columns = ["Goal", "Current", "Target", "Project", "Due", "State"]
     private func readings(_ goal: GoalRecord) -> (Double?, Double?) {
@@ -48,6 +49,7 @@ struct AllGoalsView: View {
             .screenLoadState("goals", hasContent: loaded, error: error) { await load() }
             .panelsRefreshable { await load() }
             .task(id: "\(store.baseURL):\(store.revision):\(scenePhase == .active)") { if scenePhase == .active { await load() } }
+            .modifier(GoalBoundaryRefresh(at: nextRefreshAt, refresh: load))
             .sheet(isPresented: $sheet) { filterSheet }
             .accessibilityIdentifier("all-goals-screen")
     }
@@ -136,7 +138,7 @@ struct AllGoalsView: View {
             async let projectResponse: GoalJSON = api.get("/api/projects")
             let (list, projects) = try await (response, projectResponse); try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
-            goals = list.goals; self.projects = projects["projects"].array; loaded = true; error = nil
+            goals = list.goals; nextRefreshAt = list.nextRefreshAt; self.projects = projects["projects"].array; loaded = true; error = nil
             for goal in goals { sessions[goal.id] = GoalSession.session(id: goal.id, api: api, initial: goal) }
             await withTaskGroup(of: Void.self) { group in
                 for session in sessions.values { group.addTask { await session.refresh() } }
