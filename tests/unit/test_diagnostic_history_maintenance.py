@@ -11,6 +11,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.support.migration_head import shipped_migration_head
+from tests.support.ticket_workflows import preset_workflow_json
 from tests.unit.test_db import _migration_tree_through
 
 from planner.conversation.lifecycle_storage import (
@@ -39,10 +41,19 @@ def seed_archive(database: Path) -> None:
             "('history','codex','/tmp','full',?,4,1)",
             (json.dumps([["PLAN_ACTOR", "worker"], ["PLAN_TICKET_ID", "ticket"]]),),
         )
+        ticket = {
+            "id": "ticket", "title": "Completed work", "worker_type": "coding",
+            "employee_backend": "codex", "stage": "done", "ceiling": "done",
+            "conversation_id": "history", "field_values": "{}", "created_at": 1,
+            "updated_at": 1,
+        }
+        # The archive fixture runs on retained older schemas and on the current one.
+        # Only the current schema stores a saved workflow on each Ticket.
+        if "workflow_json" in {row[1] for row in conn.execute("PRAGMA table_info(tickets)")}:
+            ticket["workflow_json"] = preset_workflow_json(conn)
         conn.execute(
-            "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
-            "conversation_id,field_values,created_at,updated_at) VALUES "
-            "('ticket','Completed work','coding','codex','done','done','history','{}',1,1)"
+            f"INSERT INTO tickets({','.join(ticket)}) VALUES ({','.join('?' * len(ticket))})",
+            tuple(ticket.values()),
         )
         for sequence, kind, payload in (
             (1, "prompt", {"sender_label": "owner", "mode": "queue", "text": "Work"}),
@@ -523,7 +534,10 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     _run(exercise)
 
 
-@pytest.mark.parametrize("schema_revision", ["mac_vps_execution", "executor_default_workspace"])
+@pytest.mark.parametrize(
+    "schema_revision",
+    ["mac_vps_execution", "executor_default_workspace", shipped_migration_head()],
+)
 def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
     archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schema_revision: str,
 ) -> None:

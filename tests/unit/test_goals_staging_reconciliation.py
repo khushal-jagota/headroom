@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from tests.support.measure_sources import NOW, configured_source
+from tests.support.migration_head import shipped_migration_head
 from tests.unit.test_conversation_api import _Harness
 from tests.unit.test_db import _migration_tree_through
 from tests.unit.test_measure_source_dispatcher import HeldRuntime
@@ -118,7 +119,7 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
         db.create_schema(conn)
         assert {
             str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")
-        } == {"goal_outcomes"}
+        } == {shipped_migration_head()}
         assert {
             "goals",
             "measure_sources",

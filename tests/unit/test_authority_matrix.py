@@ -32,6 +32,7 @@ from typing import Any, Final, cast
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.retired_workers import seed_historical_worker_type
+from tests.support.ticket_workflows import preset_workflow_json
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
@@ -201,8 +202,14 @@ def _seed(db_path: Path) -> Seed:
                 initial_stage = definition.stage_ids()[0]
                 conn.execute(
                     "UPDATE tickets SET worker_type=?,stage=?,ceiling=?,field_values='{}',"
-                    "pending_proposal=NULL WHERE id=?",
-                    (worker_type, initial_stage, initial_stage, ticket["id"]),
+                    "pending_proposal=NULL,workflow_json=? WHERE id=?",
+                    (
+                        worker_type,
+                        initial_stage,
+                        initial_stage,
+                        preset_workflow_json(conn, worker_type),
+                        ticket["id"],
+                    ),
                 )
     return Seed(
         gating_field=str(ticket_a["stage"]).removeprefix("needs_"),

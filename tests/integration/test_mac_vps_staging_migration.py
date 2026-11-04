@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -18,11 +19,13 @@ from tests.integration.test_navigation_cumulative_migration import (
     _raw,
     _seed_pre_lifecycle,
 )
+from tests.support.migration_head import shipped_migration_head
 
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
+from planner.navigation.contracts import SCHEMA_VERSION
 
-FINAL_HEAD = "manager_launch_defaults"
+FINAL_HEAD = shipped_migration_head()
 SENTINELS: dict[str, tuple[object, ...]] = {
     "mac_inbox_positions": (
         "sender",
@@ -176,6 +179,17 @@ def test_migration_drops_unused_model_catalog_tables(tmp_path: Path) -> None:
         engine.dispose()
 
 
+def _without_guidance(definition: dict[str, Any]) -> dict[str, Any]:
+    stages = [
+        {key: value for key, value in stage.items() if key != "instructions"}
+        for stage in definition["stages"]
+    ]
+    return {
+        **{key: value for key, value in definition.items() if key != "guidance"},
+        "stages": stages,
+    }
+
+
 def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_path: Path) -> None:
     path = tmp_path / "executor-workspace.db"
     _seed_pre_lifecycle(path).dispose()
@@ -207,32 +221,86 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
             rows = {name: list(conn.execute(f'SELECT * FROM "{name}"')) for name in tables}
             ticket_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(tickets)"))
             manager_columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(managers)"))
+            # remove_macos_requirements drops this one column from both tables.
+            macos_columns = {
+                table: [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+                for table in ("projects", "worker_types")
+            }
             assert [row[0] for row in conn.execute("SELECT id FROM tickets ORDER BY id")] == [
                 "alias", "blocker", "held",
             ]
-            refresh_rows = {("tickets", "alias"), ("tickets", "blocker"), ("tickets", "held")}
             schema = list(
                 conn.execute(
                     "SELECT name,sql FROM sqlite_master WHERE type IN ('index','trigger') "
                     "AND tbl_name='conversations' ORDER BY name"
                 )
             )
+            (navigation_version,) = conn.execute(
+                "SELECT schema_version FROM navigation_meta"
+            ).fetchone()
             command.upgrade(config, "head")
             for name, before in rows.items():
                 current = list(conn.execute(f'SELECT * FROM "{name}"'))
-                if name == "navigation_dirty":
-                    # The integrity migration queues exactly these existing Tickets
-                    # for a later projection refresh. Every prior dirty row survives.
-                    expected = set(before) | refresh_rows
-                    assert len(current) == len(expected), name
-                    assert set(current) == expected, name
+                if name == "navigation_meta":
+                    # The workflow migration raises version 9 to the new wire version and
+                    # leaves an older projection for the runtime's own install step.
+                    expected_version = (
+                        SCHEMA_VERSION if navigation_version == 9 else navigation_version
+                    )
+                    assert conn.execute(
+                        "SELECT schema_version FROM navigation_meta"
+                    ).fetchall() == [(expected_version,)]
+                elif name == "navigation_records":
+                    # Rebuilt from each Ticket's saved workflow and its stage labels.
+                    assert len(current) == len(before), name
+                elif name == "navigation_dependencies":
+                    # Tickets stop depending on their creation preset. Nothing else moves.
+                    assert sorted(current) == sorted(
+                        row for row in before if row[0] != "worker_types"
+                    ), name
+                elif name == "navigation_dirty":
+                    # The rebuild settles every queued refresh, including the integrity ones.
+                    assert current == [], name
                 elif name == "tickets":
-                    # Keep every old column exact and prove the sole added column is
-                    # nullable, rather than excluding the Ticket table from comparison.
+                    # Keep every old column exact. The integrity reason stays empty and
+                    # each Ticket snapshots the stages and fields of its own Worker type.
                     assert tuple(
                         row[1] for row in conn.execute("PRAGMA table_info(tickets)")
-                    ) == (*ticket_columns, "integrity_error_reason")
-                    assert current == [(*row, None) for row in before], name
+                    ) == (*ticket_columns, "integrity_error_reason", "workflow_json")
+                    assert [row[:-1] for row in current] == [(*row, None) for row in before]
+                    presets = {
+                        str(row[0]): json.loads(row[1])
+                        for row in conn.execute(
+                            "SELECT worker_type,definition_json FROM worker_types"
+                        )
+                    }
+                    worker_type = ticket_columns.index("worker_type")
+                    for row in current:
+                        saved = json.loads(row[-1])
+                        preset = presets[row[worker_type]]
+                        assert saved["stages"] == [
+                            {"instructions": "", **stage} for stage in preset["stages"]
+                        ], name
+                        assert saved["fields"] == preset["fields"], name
+                elif name in macos_columns:
+                    kept = [
+                        index
+                        for index, column in enumerate(macos_columns[name])
+                        if column != "requires_macos"
+                    ]
+                    old_rows = [tuple(row[index] for index in kept) for row in before]
+                    if name == "worker_types":
+                        # The workflow migration converts each definition in place. It adds
+                        # guidance and stage instructions and keeps everything else exact.
+                        definition = macos_columns[name].index("definition_json")
+                        position = kept.index(definition)
+                        for old_row, new_row in zip(old_rows, current, strict=True):
+                            assert _without_guidance(
+                                json.loads(new_row[position])
+                            ) == _without_guidance(json.loads(old_row[position])), name
+                        old_rows = [row[:position] + row[position + 1 :] for row in old_rows]
+                        current = [row[:position] + row[position + 1 :] for row in current]
+                    assert current == old_rows, name
                 elif name == "managers":
                     # The new flag defaults to false. Every historical field stays exact.
                     assert tuple(

@@ -133,6 +133,14 @@ def build_report(
         str(row[0]): ManagerOwner(str(row[0]), row[1] == 1)
         for row in connection.execute(f"SELECT id,settled FROM {manager_table}")
     }
+    # Every schema from mac_vps_execution on keeps mac_runs. A VPS-side ending does not
+    # prove that a Mac child stopped, so an open run holds its history on each of them.
+    tracks_mac_runs = (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mac_runs'"
+        ).fetchone()
+        is not None
+    )
     decisions = []
     for conversation in conversations:
         conversation_id = str(conversation["conversation_id"])
@@ -202,9 +210,7 @@ def build_report(
             0 if ack is None else int(ack[0]),
             linked_ticket_ids,
             read_facts(connection, conversation_id),
-            retained_run_is_unresolved(connection, conversation_id)
-            if revisions <= {"mac_vps_execution", "executor_default_workspace"}
-            else False,
+            tracks_mac_runs and retained_run_is_unresolved(connection, conversation_id),
         )
         decisions.append(classify_conversation(source, cutoff_unix=as_of_unix - RETENTION_SECONDS))
     return RetentionReport(
