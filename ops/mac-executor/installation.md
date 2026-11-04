@@ -1,12 +1,13 @@
 # Mac executor installation and updates
 
 The executor uses a native Panels app, one Python environment, one source checkout, and one GUI LaunchAgent.
-The app provides the proposed owner-local permission identity. Python remains internal to the existing installation.
+The app is meant to be the owner-local identity that macOS attributes permission requests to. Python remains internal to the existing installation.
 Apple Development signing does not establish a distributable or notarized release.
 Native requester attribution and consent persistence require the separate native checks below.
 The operator installs and updates it with ordinary package and service commands.
 This procedure preserves the existing persistent executor root.
 It supplies no automatic updater, deployment transaction, or automatic rollback.
+[The Mac executor](../../docs/executor.md) explains what the executor is and why it is built this way.
 
 Run host commands only under separate authorization for the target Mac.
 Code review and this runbook grant no live authority.
@@ -37,8 +38,7 @@ SERVICE="gui/$(id -u)/$JOB_LABEL"
 If the installed executor uses an explicit different persistent root, preserve that root in every command and plist.
 Never substitute a new empty root to bypass existing work or incompatible evidence.
 
-A separate installation can select explicit source, environment, app, job label, and bundle identity inputs.
-The following production layout is a proposal for later authorized native review:
+A separate installation selects its own source, environment, app, job label, bundle identity, and persistent root. For example:
 
 ```sh
 INSTALL_ROOT="$HOME/Deployments/PanelsExecutorProduction"
@@ -56,17 +56,15 @@ Select one complete layout before the commands below. Preserve each installed en
 Use the same selected paths and identities for build, verification, and LaunchAgent generation.
 Keep the real account HOME. Do not substitute HOME, redirect provider homes, use symlink workarounds, or edit the plist manually.
 The selected state root controls the workspace, spool, artifacts, skills, socket, and logs.
-No current Mac observation establishes that the proposed production destinations are absent or available.
-Native inspection under separate authority must establish a genuine fresh installation before any production write.
-The production installation attempt remains unused. These examples grant no installation, adoption, retry, or recovery authority.
-Never copy the isolated journal into the production root or perform service actions against the isolated job.
+Establish that a new installation's destinations are absent before its first write.
+Never copy one installation's journal into another's root, or run service actions against another installation's job.
 
 Separate installations still share the account's provider homes and credentials.
 Canonical skill publication updates links in those homes, but its lock covers only one executor root.
 Two installations can therefore contend for account skill links even with separate immutable snapshots.
 This configuration does not establish safe concurrent skill publication or full account isolation.
-Native coexistence approval requires a separate review of these shared account resources.
-Do not infer production permission grants from the isolated app's grants.
+Review these shared account resources before running two installations side by side.
+Do not infer one installation's permission grants from another's.
 
 Set operator-reviewed values for these inputs:
 
@@ -75,13 +73,15 @@ Set operator-reviewed values for these inputs:
 - `NATIVE_PYTHON`: the absolute native ordinary CPython 3.14.3 executable.
 - `BACKEND_PATH`: explicit absolute directories for native Node and the installed provider commands, plus required system commands.
 - `EVIDENCE`: an absolute private directory outside the source, environment, and persistent executor root.
-- The HTTPS app origin and logical executor ID from the reviewed application handoff.
+- `PANELS_SERVER_URL`: the HTTPS app origin of the intended VPS app.
+- `EXECUTOR_ID`: the logical executor ID that the VPS is configured to admit.
+- `LOCAL_IDENTITY`: the SHA-1 hash of the owner's Apple Development signing identity, as listed by `security find-identity -v -p codesigning`.
 
 Use the existing Tailscale Serve route only when it targets the intended endpoint and durable state.
 The owner's normal app URL targets production. It does not select an isolated verification database.
 The executor ID selects routing under the existing allowed Serve login. It is not another credential or hardware attestation.
 To enable Mac execution on the VPS, set `executor_id: <the same logical executor ID>` in its `data/config.yaml` (or the YAML file selected by `PLAN_CONFIG_PATH`) and restart Panels; remove the line and restart to return to local execution.
-See [app service prerequisites](executor.md#app-service-prerequisites-and-boundaries).
+See [the Mac executor](../../docs/executor.md) for how the connection is admitted.
 
 Check the actual native host before installation:
 
@@ -135,23 +135,15 @@ PY
 
 Check that the resolved commit equals the reviewed full SHA.
 Record the constants printed from the exact candidate source; they govern compatibility.
-The current candidate uses wire protocol 18 and outbox format 5.
-The shared timestamp, payload, and Worker identity helpers do not change either
-format. They ship in the standard executor package; no separate helper install is
-needed.
+At the time of writing the candidate uses wire protocol 18 and outbox format 5.
 Both Mac and VPS peers must match the candidate's wire protocol before work, and
-the existing journal must pass the candidate's SQLite version check below. Coordinate
-the peer transition through the Manager and installation Worker before any application.
+the existing journal must pass the candidate's SQLite version check below. Plan the
+VPS and Mac updates together when the protocol changes.
 
-Each new native Worker start retains exact canonical database skills.
-It repairs canonical entries in the normal account's Codex skills home and preserves unrelated account skills and credentials.
-Review that account path before authorized application. Do not redirect HOME or CODEX_HOME to bypass a conflict.
+Each new native Worker start installs the canonical database skills into the selected provider's normal skills home.
+It repairs canonical entries there and preserves unrelated account skills and credentials.
+Review those account paths before the update. Do not redirect HOME, CODEX_HOME, or CLAUDE_CONFIG_DIR to bypass a conflict.
 Retain the existing executor root and journal. The bootstrap uses local copies beneath that root.
-
-After authorized application, check an ordinary native Worker without a packaged-skill exception in its prompt.
-Check that it reads canonical skills and writes an artifact through `PLAN_TICKET_FILES_DIR`.
-Check that the served Ticket link opens the expected artifact.
-Isolated software tests do not replace this installed-account check.
 
 Read fresh installed Mac health through the installed console:
 
@@ -228,39 +220,9 @@ launchctl bootout "$SERVICE"
 
 Do not use bootout, kickstart with `-k`, or a signal as the shutdown method.
 
-## First transition from installed revision 30ce7317
-
-The retained installation evidence names `30ce73179782a9203ab82a15ac5ac77a3f264a1a` as the Mac revision.
-Check fresh evidence before action. That retained statement is not a current host observation.
-
-This installed revision checks all work counts, including unsent entries, before it stops idle native producers.
-An idle catalog producer can therefore prevent the queue from draining after ordinary task completion.
-Correction `442c38c4` stops idle producers before queue drain and accounts for in-flight source work.
-The correction exists only in the candidate before installation.
-Do not assume corrected shutdown behavior in the installed process.
-Do not install the candidate to obtain permission to stop that process.
-
 If ordinary quiescence cannot commit exit, stop installation and preserve the exact returned evidence.
 Retain the installed app, runtimes, plist, intent records, spool, and repair evidence.
-
-The earlier authorized seam operation documents an existing operator disposition:
-
-1. Obtain fresh non-exit quiescence and bind it to the current executor identity.
-2. Establish zero active turns, callbacks, and uncertain operations.
-3. Establish no source write or transfer in flight and identify the exact idle native child.
-4. Under separate explicit seam authority, terminate only that exact idle child with ordinary TERM.
-5. Preserve every queued byte and let outbound replay drain normally.
-6. Obtain fresh normal quiescence with matching committed successful exit and all work counts zero.
-
-That prior operation sent no signal to the executor, helper, server, or process group.
-It grants no general signal authority and authorizes no new operation from this coding Ticket.
-If current seam authority does not cover the observed state, return the exact dependency to the Manager.
-Do not discard the queue, force executor exit, or add another lifecycle mechanism.
-
-The existing evidence remains in the owning Ticket artifacts:
-`/files/tickets/t_kvj3689g/artifacts/finite-replay-update-result.md` and
-`/files/tickets/t_kvj3689g/artifacts/finite-replay-update-dependency.md`.
-Keep those historical procedures intact.
+Do not discard the queue, force executor exit, or install the candidate to obtain permission to stop the old process.
 
 ## Install at the final paths
 
@@ -334,25 +296,21 @@ PY
 ```
 
 If inspection refuses, preserve the root and stop. Do not repair or convert it through this installation procedure.
-Earlier draft journal formats have no reader or converter. Databases that ran earlier Mac/VPS branch migrations must be rebuilt.
+There is no reader or converter for other journal formats.
 
 ## Prepare the signed Panels app
 
-These commands are a procedure for a separately authorized native window.
-Source approval does not authorize compilation, signing, installation, prompts, or service changes on the Mac.
-The existing application owner coordinates the window and preserves the current installation.
-The isolated dogfood and startup investigation are outside this procedure.
+Run these commands only in an authorized window on the Mac. Source approval alone does not authorize compilation, signing, installation, prompts, or service changes.
 
 Use the normal owner account. Do not copy or export signing keys.
-The reviewed metadata check found one valid Apple Development identity, not Developer ID Application.
-Use that identity only for the owner-local route. Do not claim outside-App-Store distribution.
+Sign with the owner's Apple Development identity, not a Developer ID Application identity.
+Use it only for the owner-local route. Do not claim outside-App-Store distribution.
 A later distribution channel or certificate change needs a separate decision.
 
-After the current runbook's source and environment preparation, choose an absent candidate path outside the installed app:
+After source and environment preparation, choose an absent candidate path outside the installed app:
 
 ```sh
 CANDIDATE_APP="$EVIDENCE/Panels.app"
-LOCAL_IDENTITY="A374793985387F82D90D9EAFED73D60D907C26DC"
 "$VENV/bin/python" -I -B -m planner.environments.mac_app build \
   --home "$HOME" --output "$CANDIDATE_APP" --revision "$CANDIDATE_SHA" \
   --python "$VENV/bin/python" --installed-app "$APP" --bundle-id "$BUNDLE_ID"
@@ -385,10 +343,10 @@ For an update, preserve the old signed app before replacement. Verify both signa
   > "$EVIDENCE/update-signature-compatibility.txt"
 ```
 
-A missing or invalid previous signature stops an update. The first transition from the Python console has no previous signed app.
-That first transition does not establish transfer of existing Python consent.
+A missing or invalid previous signature stops an update. A first installation has no previous signed app, so it omits `--previous`.
+Consent granted to an executor that ran without the app does not carry over to it.
 Never invent a compatible requirement or weaken the signature check to continue.
-Use `--previous` only for an update of the same installation, not for a new production identity.
+Use `--previous` only for an update of the same installation, not for a new installation identity.
 The verifier checks the selected bundle identity and, with `--python`, the embedded interpreter bytes.
 
 Only after identity-bound graceful exit, preserved state, and an authorized installation window, install the verified app at `$APP`.
@@ -467,12 +425,10 @@ For an explicitly approved compatible recovery, select the recorded prior SHA in
 Repeat the pinned pip commands, build-cache removal, forced source reinstall, pip check, and npm ci sequence above.
 Check spool compatibility with that prior package before startup.
 Render a plist for the prior SHA and its recorded inputs, then follow the same bootstrap and proof procedure.
-The first transition retains the old app and runtimes as recovery inputs, not as an automatic fallback command.
+Retained old apps and runtimes are recovery inputs, not an automatic fallback command.
 An incompatible prior package must not open the current journal.
 Never delete pending work or automatically convert the journal for rollback.
 
-Files use verified HTTP transfers through the app service. Application previews
-are unavailable for Mac runs.
 The installed Mac needs no open browser or SSH authentication step.
 This procedure changes no account or network policy.
 
@@ -480,8 +436,10 @@ This procedure changes no account or network policy.
 
 Use an isolated Ticket and compatible VPS package before approving ordinary work.
 Check native commands, canonical skills, files in both directions, and the original
-permission and question callbacks. Check a short link loss and a VPS restart against
-[the restart rules](executor.md#a-lost-connection-supplies-no-answer).
+permission and question callbacks. Check that an ordinary Worker reads canonical skills,
+writes an artifact through `PLAN_TICKET_FILES_DIR`, and that the served Ticket link opens it.
+Check a short link loss and a VPS restart against
+[the restart rules](../../docs/executor.md#when-the-connection-drops).
 A Mac service restart must also establish that launchd ends its provider processes;
 scripted tests cannot prove that host behavior. Mac application previews remain
 unavailable. Retain evidence separately from production and preserve pending bytes.
@@ -490,9 +448,6 @@ This runbook does not authorize changing application routes or account policy.
 Code paths: `src/planner/environments/mac_executor.py`, `src/planner/executor/cli.py`,
 `src/planner/executor/mac_outbox.py`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
-
-_Last verified: 2026-10-31. Commands checked against source; no live Mac operation occurred._
-
 
 ## Narrow permission setup and native evidence
 
@@ -527,28 +482,10 @@ If a requester appears as Python or a provider, stop and return the failed attri
 If an update changes attribution or consent, retain the result without a persistence claim.
 Linux tests prove argument handling, package contents, and configuration only.
 A local development signature does not prove distribution readiness, successful provider attribution, or permission persistence.
-Future instance links must state disabled capabilities and test limits in the same message.
 
 Apple references: [file permissions and responsible code](https://developer.apple.com/forums/thread/678819),
 [native trampoline example](https://developer.apple.com/forums/thread/720057),
 [designated requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements),
 and [certificate types](https://developer.apple.com/help/account/certificates/certificates-overview/).
 
-_Last verified: 2026-10-31. Source and Linux software checks only; no native build, signing, installation, or consent check._
-
-
-## Persistent default workspace
-
-An unconfigured Mac Worker uses `<executor data root>/workspace`. The standard
-path is `~/Library/Application Support/Panels/executor/workspace`. An explicit
-`PLAN_EXECUTOR_ROOT` selects the root for this path. The workspace survives source,
-virtual environment, and signed application replacement. Native admission creates
-this one directory on demand. Explicit workspace choices are never created or
-replaced by this rule. A missing explicit path still refuses the start.
-
-This selector requires protocol 18 on both VPS and Mac. Spool format 5 remains
-unchanged. Quiesce through supported controls and retain the current database and
-spool before the coordinated update. Upgrade the populated database through its
-forward migration. Do not reset it. Verify matched peer identities before the
-normal disposable Worker attempt. The old Mac cannot interpret `executor_default`.
-A rollback requires a coordinated compatible pair and the retained database backup.
+_Last verified: 2026-11-04. Commands checked against source; no live Mac operation, native build, signing, installation, or consent check occurred._

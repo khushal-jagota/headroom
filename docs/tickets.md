@@ -1,72 +1,88 @@
-# Tickets
+# Ticket lifecycle
 
-A Ticket is one piece of work small enough to hand to a single AI Worker. It is the unit Headroom can stage, pause, approve, and come back to. The title and recap orient a person. The Worker type supplies the ladder of stages. The conversation is where the Worker is actually told things. Artifacts are the plans, documents, images, and prototypes the work produced.
+A Ticket is one piece of work small enough to hand to a single AI Worker. It is the unit Headroom can stage, pause, approve, and come back to. Its lifecycle answers one product question for every piece of work: how far may this Worker go before a person has to look?
 
-## Why a Ticket is a ladder
+## What a Ticket is made of
 
-Each non-terminal stage has exactly one blank. Filling that blank, and having the fill accepted, moves the Ticket one stage forward. The ladder always starts at Brief and always ends at Done. The stages between belong to the Worker type: a coding Ticket walks What Changes, Implementation, and Consequences; a research Ticket walks Research Plan, Findings, and Consequences. The shapes are listed in [Worker types](worker-types.md).
+- **A Worker type and its ladder.** The type is chosen at creation and never changes. It declares the stages, from Brief to Done, and which stages are collaborative. See [Worker types](worker-types.md).
+- **Stage text.** Each stage before Done has one blank. Filling it, and having that fill settle, moves the Ticket one stage forward. Brief holds the intake: the original ask, its boundaries, and advice that should stay readable beside the later stages.
+- **A ceiling and a holder.** The ceiling is the stage at which the Worker's proposals start waiting for a person. The holder is who that person is.
+- **An assignment** to Chief or one ordinary Manager. This is who the work sits under.
+- **A conversation**, the Worker's only input. See [Conversations](conversations.md).
+- **A launch setup**: backend, model, and reasoning, copied from the Worker type at creation and fixed once the conversation exists.
+- **A locale**: the VPS or Khushal's Mac, chosen at creation.
+- **Blockers**, other Tickets that must be Done before this one may start a step.
+- **A recap**, the Worker's short status for a person, and **artifacts**, the plans, documents, images, and prototypes the work produced.
 
-Brief holds intake: the original wording, the boundaries, and the advice that should stay readable beside the later stages. The title is ordinary metadata, not part of the Brief proposal. After Brief is settled, editing the title stays a metadata edit. Editing Brief text uses the ordinary field path.
+## How a stage advances
 
-The Ticket also stores the backend, model, and reasoning its next conversation should start with. Creation copies the Worker type’s three starting values. Those controls stay editable while the Ticket has no conversation and the worker-step claim is not out. That covers a new Ticket, and it covers a Ticket whose conversation was reset, on whatever stage it is in. Naming a conversation, or taking the claim, freezes them. Hermes has a model and no reasoning control. Codex and Claude Code show the reasoning values their selected model supports.
+```text
+Worker files a proposal for the current stage
+                │
+        proposal resolver
+         │                 │
+  stage before the     stage at or past
+  ceiling              the ceiling
+         │                 │
+  text settles,        proposal parks for the holder
+  next stage           │
+                       ├─ approve: text settles, next stage,
+                       │  and the approver sets the next ceiling and holder
+                       └─ send back: stage stays, optional guidance
+                          goes out with the Worker's next step
+```
 
-There is no retirement state. Done is the end. Historical text for a field the Worker type no longer declares stays in storage. Reads and search show declared fields. New proposals must use declared fields.
+Only the Ticket's own Worker files proposals. Khushal, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Every approval moves exactly one stage and names how far the Worker may go next, so the ceiling is chosen again at each gate.
+
+By default a new Ticket's ceiling is on Brief and its holder is whoever created it. The Brief then waits for that person, and their approval sets the first real ceiling. A creator can set a later ceiling up front, but never Done.
+
+On a collaborative stage, the person can also complete the gate directly, without a Worker proposal. That uses the same resolver and still moves one stage. A reply typed into the conversation never decides a proposal.
+
+Each settled stage remembers who approved it: a named person or agent, or auto-accepted when it settled below the ceiling. Editing the text clears that approval.
+
+## Ceiling, holder, and assignment
+
+These are three separate facts.
+
+- The **assignment** says where the work sits in the Workspace, and so which Manager stands above it.
+- The **holder** says who is on the hook to look when a proposal parks: Khushal, Chief for a Chief-assigned Ticket, or the assigned Manager. A parked proposal for Khushal appears in [Review](review.md). One for Chief or a Manager arrives in that agent's conversation as a real prompt. See [Managers and Chief](managers.md).
+- **Who may approve** is wider than the holder. Anyone who stands above the Ticket may approve or send back. See [Who may act](authority.md).
+
+Moving a Ticket to another Manager can make the old holder illegal. Then the holder returns to Khushal unless the move names a new one.
 
 ## How status is read
 
-The stored control fact is the worker-step claim: none, out, or errored. Everything a person calls “status” is derived on read, first match wins:
+A Ticket stores one control fact, the worker-step claim: at rest, out, or errored. [Worker steps](worker-steps.md) owns it. Everything a person calls status is derived on read, in this order: errored, awaiting approval, agent (a step is out), blocked (at rest behind an unfinished blocker), and empty (ready for the next step). Whether the agent is working right now is a separate question, answered by the conversation.
 
-| Derived status | What is true right now |
-| --- | --- |
-| errored | The claim is errored. Delivery was uncertain, or a restart is required. |
-| awaiting_approval | A proposal is parked. |
-| agent | The claim is out. Headroom has handed the Worker a step. |
-| blocked | The Ticket would otherwise be at rest, and a live blocker remains. |
-| empty | At rest, so readiness may start the next step. |
+An errored claim stops automatic progress. Restarting the Worker is the explicit repair.
 
-A live blocker is another Ticket that is not Done. While the Worker is mid-step or a proposal is parked, the person sees agent or awaiting approval. The blocker shows up again when the Ticket returns to rest. Finishing or removing the blocker clears the blocked reading by itself.
+## Backlog and delete
 
-A second, quieter fact is whether the agent is working, idle, or errored. That blends the derived status with the live conversation: a running turn reads as working even while the claim still says the step is out. The claim is not a heartbeat. See [Worker steps](worker-steps.md).
+Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and nothing else.
 
-## Backlog, resume, delete
+Tickets come from Khushal, Chief, or Managers. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate.
 
-Backlog is an explicit pause of the next automatic Worker step. The stage, the parked proposal, the holder, the assignment, the history, the conversation, and the artifacts stay. Messages and approvals stay available. A turn that was already delivered keeps running. Resume clears only the backlog flag. Ordinary readiness and approval rules apply again.
+Delete removes the Ticket's record and leaves its files. It is available from the command line and the API, not the browser, to anyone who stands above the Ticket. It refuses while the Worker is still busy, unless the caller forces it or is the Ticket's own Manager. Then the Worker is stopped first, so it never outlives its Ticket.
 
-The Ticket page offers Backlog ticket and Resume ticket. Each has one writer. The browser sends a hash of the record it displayed, and a stale request is refused inside the write.
+## Where the Worker runs
 
-Delete removes the Ticket’s record. Files under the Ticket’s file tree survive. The browser does not offer delete. `panels ticket delete` does, and it refuses while a Worker step or a live turn still needs the Ticket, unless the caller forces it or a Manager is deleting its own child.
-
-## Where the Worker may run
-
-Each Ticket stores a locale, `vps` or `macos`. Creation uses an explicit locale when one is given. Without an explicit locale, creation selects `vps`. The chosen backend is checked against that locale before the Ticket exists. The Mac compatibility set starts empty, so Mac creation refuses until that configuration allows a backend. The VPS refuses to start a Ticket whose locale is somewhere else.
-
-`panels ticket move` changes the locale of an idle Ticket: no Worker step, active turn, or accepted message may still need the current machine. The conversation and history stay. Repository files do not travel. Existing Tickets keep their stored locales.
-
-## Assignment
-
-A Ticket names Chief or one ordinary Manager. That assignment is who the work sits under in the Workspace. It is a different fact from the ceiling holder, who is addressed when a proposal parks. Chief’s global authority does not imply that every Ticket is assigned to Chief.
-
-## What feeds a Ticket, and what it feeds
-
-People, Chief, and Managers create Tickets. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate from Ticket creation. Blockers are named at creation or added later. The readiness loop feeds the conversation its next opener when the Ticket reads empty. The Worker feeds proposals. The resolver feeds settled stage text and the next stage. Attention flags feed Review and notifications. Artifacts land in the Ticket file tree and open in the viewer.
-
-Settled fields remember who approved the current text. Explicit approval says Approved by Khushal, Chief, or the Manager’s title. A field that settled below the ceiling says Auto-accepted, including a Brief that settled at creation. Older rows and some direct completions say Approval unknown. Unknown is not auto-accepted. An edit that changes the text clears the approval. An identical edit keeps it.
+The locale is chosen at creation and does not change. A VPS Ticket's agent runs on the VPS. A Mac Ticket's agent runs on the Mac, and starts only while the Mac is connected and ready. Either way the VPS keeps the record and decides when to start. See [Mac execution](executor.md).
 
 ## Where it shows up
 
-The Workspace rail and each Manager page list Tickets by the kind of attention they need. The Ticket itself is the inspector: masthead, lifecycle, blockers, the stage spine, the current gate, artifacts, and the conversation dock. Backlogged Tickets leave the rail’s attention groups and appear in the Manager’s Backlogged section. `#/backlog` opens the Workspace. There is no separate backlog screen and no global New Ticket form in the browser. Creation is the command line, the API, or a Manager or Chief doing it in conversation.
+The Ticket page is the inspector: the stage ladder, the current gate with its proposal card, blockers, artifacts, and the conversation beside them. The Workspace rail and each Manager page list Tickets by the attention they need. Creation happens from the command line, the API, or by asking Chief or a Manager. The browser has no new-Ticket form.
 
-Artifact links in stage text and in the conversation open in the Ticket viewer when the format can be previewed. JSON receipts and unsupported formats keep their download. HTML links inside an artifact stay in the viewer only when they resolve to HTML inside that same artifact directory. A link that leaves the directory, or a symlink that escapes it, leaves the current document up and the parent shows a rejection. The frame is sandboxed with scripts allowed, because the artifact is trusted Ticket output, not an arbitrary page from the web.
+## Decisions that shape it
 
-A shared file link can also open at `#/preview`. Inline preview on the Ticket keeps the Ticket’s address.
+- **The ceiling is the product choice.** A person decides, Ticket by Ticket and gate by gate, how much the Worker may do alone.
+- **One door moves a stage.** The resolver is the only stage writer in normal operation. The one exception is a Worker type amendment, which may move Tickets backward when their stage is removed. See [Worker types](worker-types.md).
+- **Status is derived, not stored.** The claim, a parked proposal, and live blockers are enough to say what a Ticket is doing.
+- **Holding a review is not authority.** The holder says who must look. It grants no private approval route, and a Worker, which stands above nothing, can never decide its own proposal.
 
-If the startup audit finds an invalid Ticket, it records a structural reason in the dedicated nullable error field. The audit clears that field when the Ticket validates. The recap and Worker claim remain unchanged. Other Tickets remain usable, and Chief receives a system notice when the audit first records the fault.
+## Code
 
-This isolation applies to builds that contain the fix. Earlier builds retain their original startup behavior, and failed notice delivery does not block startup or create an automatic retry workflow.
-
-
-## Pointers
-
-`src/planner/tickets/` holds the record, the derived status, and the writers. Stage ladders live in `src/planner/worker_types/shipped_worker_types.json`. Locale checks live in `src/planner/tickets/locale_configuration.py`. The Ticket screen is `web/src/routes/TicketRoute.svelte`.
+- `src/planner/tickets/`: the record, derived status, and writers (`data.py`).
+- `src/planner/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.py`, `proposal_routing.py`, `resolution.py`).
+- `web/src/routes/TicketRoute.svelte` and `web/src/components/WorkerProposalCard.svelte`: the Ticket page and its gate.
 
 _Last verified: 2026-11-04._

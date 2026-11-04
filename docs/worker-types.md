@@ -1,77 +1,55 @@
 # Worker types
 
-A Worker type is a way of paying attention. Coding, research, debugging, and designing a flow do not want the same stages or the same moments of human judgment. The type is chosen when the Ticket is created and does not change afterward. It declares the ladder, which stages the Worker fills and which stages open a collaborative turn, the specialist skill, and the backend, model, and reasoning a new Ticket copies as its starting setup.
+A Worker type is a way of paying attention. Coding, research, debugging, and designing a flow do not want the same stages or the same moments of human judgment. The type is chosen when a Ticket is created, never changes afterward, and gives that Ticket its shape.
 
-The Ticket then owns its launch setup. Later edits to launch defaults affect future Tickets. They do not rewrite an existing Ticket’s launch setup or locale. A change to the type’s ladder applies to all its Tickets, under the migration rules below.
+## What a type declares
 
-## The ladder every type shares
+- **The ladder.** Every type starts at Brief and ends with Consequences, then Done. Consequences is where the follow-through happens: merge, follow-up Tickets, bookkeeping, and a report. Deployment stays a separate owner action. The stages between are the type's own argument for how that kind of work should unfold.
+- **Stage ownership.** A worker-owned stage is the Worker's to draft. A user-owned stage is collaborative: the Worker gets one automatic opening turn, then the person and the Worker continue in the same conversation until the gate is filled. Ownership does not decide whether a proposal waits. The [ceiling](tickets.md) does.
+- **A specialist skill**, the instructions this kind of Worker reads on top of the shared Worker skill. See [Skills](skills.md).
+- **Launch defaults**: the backend, model, and reasoning a new Ticket copies as its starting setup. Khushal can change them in Settings. A change affects future Tickets only.
 
-Every shipped type starts at Brief and ends at Done, with a Consequences stage before Done. Consequences is where the applicable follow-through is proposed: merge, deploy, spawned Tickets, bookkeeping, a report. What sits between Brief and Consequences is the type’s own argument for how that kind of work should unfold.
+## The shipped types
 
-A stage marked worker-owned is the Worker’s to draft. A stage marked user-owned receives one automatic opening turn, then continues with the person in the same conversation until the gate is filled or the person completes it. See [Proposals and gates](proposals.md). The ceiling can still park a worker-owned stage. That is how a coding Ticket stops before Implementation even though every coding stage is worker-owned: set the ceiling on What Changes.
+User-owned stages are marked with `*`.
 
-Ten types ship. `probe` exists only in tests, with unfamiliar stage names, so a coding-shaped assumption fails loudly. `personal`, `planning-day`, `planning-midday-check`, and `planning-sprint` remain readable history. They cannot be created.
+| Type | For | Stages between Brief and Consequences |
+| --- | --- | --- |
+| Coding | Product and repository work | What Changes, Implementation |
+| General | Work that needs no special process | Work Done |
+| Debugging | Finding a cause and defining a fix, without implementing it | Problem Understanding, Root Cause, Proposed Fix |
+| Research | A framed question and a sourced synthesis | Research Plan, Findings |
+| Exploration | An unclear question worked through with the person | Understanding\*, Research Plan, Findings, Answer\*, Proposed Follow-up |
+| Product design | Flows and interactive artifacts before a coding handoff | Wireframe, Design |
+| Initiative planning | Turning a confirmed direction into a set of Tickets | Rough Split into Parts, Question Tree, Question Answers\*, Proposed Tickets |
+| Initiative review | Reviewing a delivered initiative and agreeing follow-up | Review, Feedback\*, Follow-ups |
+| New worker | Designing and landing another Worker type | Purpose and Boundaries\*, Stages, What Good Looks Like at Each Stage, Model and Effort\*, Drafting |
+| Amend worker | Changing an existing type in place | Amendment\*, Drafting |
 
-Launch defaults below are what a fresh database copies onto a new Ticket. The owner can change prospective defaults and the specialist text in Settings. Hermes ignores reasoning.
+The user-owned stages are where the person's view is the product. Exploration does not race ahead of a shared picture, and does not declare its answer alone. Planning settles open questions with Khushal before Tickets are proposed. On types with no user-owned stage, a person stays involved through the ceiling, for example by stopping a coding Ticket at What Changes.
 
-## Amendments and existing Tickets
+A few retired types remain readable on old Tickets. They cannot be used for new work.
 
-A Worker type save can remove stages and fields even when unfinished Tickets use them. A Ticket on a removed stage moves to the nearest earlier stage that survives, using the old order. A ceiling on a removed stage follows the same rule. Its holder stays the same. For example, a Ticket at What Changes with a Plan ceiling gets a What Changes ceiling when Plan disappears. The save never grants Implementation by accident.
+## Changing a type
 
-The save preserves stored text in removed fields. It does not invent field values or accept proposals. Finished Tickets stay finished. Their ceilings follow the same backward rule, so no Ticket retains a ceiling outside the replacement ladder. Stored text and approval evidence remain intact. A Ticket whose current stage survives stays there.
+The database rows are the registry. A file shipped with the code seeds an empty database and is not read again. The server and the browser both read the rows, and the browser renders whatever ladder it is sent, with no special case per type.
 
-The definition and all Ticket migrations save in one transaction. If a Ticket has no earlier destination, an incompatible proposal, or dispatched work whose step or authority changes, the save refuses and names it. Unsafe changes to stage order also refuse. The save checks every affected Ticket against the replacement definition before commit, with the same strict rules as startup. Any failure leaves the definition and Tickets unchanged. Obsolete paired-stage openers and revision feedback disappear when their step changes. This also covers a change to the gate or owner of a stage whose name stays the same.
+An amendment can add or remove stages even while unfinished Tickets use them. A Ticket on a removed stage moves back to the nearest earlier stage that survives, and so does a ceiling. This is the one place a stage moves outside the proposal resolver. It only ever moves a Ticket backward, so a change never grants a stage by accident. Stored text is kept, and nothing is approved on anyone's behalf. The definition and every affected Ticket are saved together. If any Ticket cannot move safely, the whole save is refused. The save reports each Ticket's old and new position.
 
-The save result contains each affected Ticket’s title, old and new stage, and old and new ceiling. Field-only effects also appear, even when both positions stay the same. The CLI prints the mapping, and JSON output preserves it. The caller must retain that result in the amendment’s evidence. Migration records do not enter Ticket guidance, which remains instructions for the Worker.
+The New worker and Amend worker types are how these changes are usually made: a Worker drafts the definition and a person decides it.
 
-## Coding
+## Decisions that shape it
 
-Product and repository work. The ladder is Brief, What Changes, Implementation, Consequences, Done. All non-terminal stages are worker-owned. The usual way to keep a person in the loop is the ceiling: stop at What Changes, or stop again at Implementation before Consequences. Default launch is Codex, `gpt-5.6-sol`, medium. Skill: `panels-worker-coding`.
+- **The type is fixed per Ticket.** A Ticket's stages are a promise about how its work will be reviewed. Switching type mid-flight would break that promise.
+- **Ownership and the ceiling are separate.** Ownership says who drafts a stage. The ceiling says whether the result waits for someone.
+- **Defaults are copied, not referenced.** A Ticket owns its launch setup from creation, so changing a type's defaults never changes running work.
+- **Amendments move backward or refuse.** A removed stage never pushes a Ticket forward past a gate a person did not approve.
+- **Adding a type is a product decision, not a code change**: a new ladder and a specialist skill, saved as a new definition.
 
-## General
+## Code
 
-The short ladder for work that does not deserve a special process: Work Done, then Consequences. Worker-owned throughout. Same Codex default as coding. Skill: `panels-worker-general`.
+- `src/planner/worker_types/`: definitions, the registry, the amendment rules (`logic/migration.py`), and the save (`store.py`).
+- `src/planner/worker_types/shipped_worker_types.json`: the seed.
+- `web/src/routes/ConfigRoute.svelte`: the Settings screen for types and their defaults.
 
-## Debugging
-
-Diagnosis and a proposed fix, without an implementation stage. The Worker writes Problem Understanding, Root Cause, and Proposed Fix, then Consequences. The point is to know the cause and the fix well enough to hand implementation elsewhere, or to continue only after a person agrees. Worker-owned, with reasoning defaulting to high on the same Codex model. Skill: `panels-worker-debugging`.
-
-## Research
-
-A framed question and a sourced synthesis. Research Plan, Findings, Consequences. Worker-owned. Default launch is Claude, `opus`, high, because the workflow wants a long careful read more than a coding agent. Skill: `panels-worker-research`.
-
-## Exploration
-
-An unclear question that should pause and think with the person. Understanding is user-owned, then the Worker drafts a Research Plan and Findings, then Answer is user-owned again, then Proposed Follow-up and Consequences. The two user-owned stages are the product: do not let an open-ended Ticket race ahead of a shared picture, and do not let it declare the answer alone. Codex, medium. Skill: `panels-worker-exploration`.
-
-## Product design
-
-Flows and interactive artifacts before a coding handoff. Wireframe, Design, Consequences. Both middle stages are worker-owned in the shipped declaration. The human review is the ceiling, typically set so Wireframe or Design parks, plus the artifacts opened beside the conversation. Default launch is Claude, `opus`, medium. Skill: `panels-worker-product-design`.
-
-## Initiative planning
-
-Turn a confirmed direction into a set of Tickets. Rough Split into Parts, Question Tree, then Question Answers (user-owned), then Proposed Tickets and Consequences. The user-owned answers are where Khushal settles the questions the split uncovered before Tickets are proposed. Codex, medium. Skill: `panels-worker-initiative-planning`.
-
-## Initiative review
-
-Look at a delivered initiative, capture feedback, and create the follow-up that was actually agreed. Review, then Feedback (user-owned), then Follow-ups and Consequences. Codex, `gpt-6-astra`, high. Skill: `panels-worker-initiative-review`.
-
-## New worker and amend worker
-
-New Worker designs and lands another Worker type. After Brief, Purpose and Boundaries is user-owned, then the Worker drafts Stages and what good looks like, then Model and Effort is user-owned, then Drafting and Consequences. The person owns the purpose and the model choice. The Worker owns the stage design and the draft. Skill: `panels-worker-new-worker`.
-
-Amend Worker changes an existing type in place. Amendment is user-owned, then Drafting and Consequences. The person states the amendment. The Worker drafts the change. Skill: `panels-worker-amend-worker`. Both default to Codex at medium.
-
-## What feeds a type, and where it shows up
-
-The shipped JSON seeds an empty database. After that, the database rows are the registry the server and the browser both read. Settings → Config lists each type, its stage ownership, its specialist skill, and its launch defaults. The Brief controls on a brand-new Ticket are the Ticket’s own copy of those defaults.
-
-A specialist skill is what this kind of Worker reads on top of the shared Worker skill. How those files stay authoritative is [Skills](skills.md). `panels skill check` reports a skill row that names a command, stage, or skill this build does not have. It does not rewrite the row.
-
-Adding a type is a product decision: a new ladder, a specialist skill, and one registration the server already knows how to serve. The browser does not grow a special case per type. It renders whatever ladder the manifest sends.
-
-## Pointers
-
-`src/planner/worker_types/shipped_worker_types.json` is the seed. `src/planner/worker_types/registry.py` is the registry the process serves. Settings UI is `web/src/routes/ConfigRoute.svelte`.
-
-_Last verified: 2026-10-31._
+_Last verified: 2026-11-04._

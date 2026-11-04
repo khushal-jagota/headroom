@@ -1,80 +1,89 @@
 # Deployment
 
-Deployment is how a commit on `main` becomes the app the live host runs, without the host rebuilding it and without a push installing itself. Publication and installation are separate. A push creates a retained release on disposable hosted runners. The live workspace changes only after an owner asks for that exact release. The buttons and the idle-or-now choice are [Updates](updates.md). The Python inside the sealed archive is [Archive runtime](archive-runtime.md).
+Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. The live workspace changes only when Khushal asks for one of those releases, and then it gets exactly those bytes. The host never builds code, and a push never installs itself.
 
 ```text
-main → checks → build once → seal archive → smoke → disposable rehearsal
-                                                          ↓
-                                              retained archive and proof
-                                                          ↓
-owner request → dedicated runner → stop → verified backup → replace app → health
-                                                          ↓
-                                        admit work → skills → published HTTP/2
+push to main → checks → build once → seal archive → prove on clean root → smoke → rehearsal
+                                                                                    │
+                                                              retained release (archive + proof)
+                                                                                    │
+owner asks (now or when idle) → pinned request → host runner → admit → stop → snapshot
+                                                                                    │
+                          replace app → health → commit → reopen work → skills → route check
 ```
 
-## The live tree
+## What it is made of
 
-Production runs one Git-free application as the existing `vps` user:
+- **Publication.** A GitHub workflow on hosted machines. It runs the checks and suites against one commit, builds once, seals the archive, and proves it before anyone can install it.
+- **The sealed release.** An archive plus a proof record. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages, including the Claude Code and Codex CLIs.
+- **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. Replacement changes only `app`. See [Environments](environments.md).
+- **The deployment runner.** A self-hosted GitHub runner on the VPS, used only to install.
+- **The owner's install request.** A small file beside the live data, outside the database and its snapshots, and the update actions in the shell status pill.
+- **The lifecycle record.** Durable evidence of each install attempt and how it ended. The status pill, the [VPS](vps.md) summary, and Chief read it.
 
-```text
-~/Deployments/Panels/current/
-├── app/     the executable release
-├── data/    database, configuration, managed files, deployment records
-└── logs/
-```
+## What a release needs from the host
 
-Replacement changes `app`. Data and logs stay. Backups taken on this path include the database and the managed configuration roots. They exclude uploads and Ticket artifacts under `data/files`. See [Backups](backups.md).
+A release brings its own Python, so installation never runs a package installer and the host's Python does not matter. Packaging refuses a native library it cannot resolve; that is a broken release, not something the host repairs. Before publication, a separate proof runs the archive on a minimal Debian root with no Python 3.12 and no network.
 
-The live service is the user unit `panels-live.service`, started with `systemctl --user`. The deployment runner is its own user unit. The workflow does not provision the host and does not change Tailscale Serve. Health is `http://127.0.0.1:8767/api/health`. The database file is `current/data/planner.db`. Agent homes stay `~/.hermes`, `~/.codex`, and `~/.claude`. Provider secrets stay in the service environment, including `~/.config/panels/panels-live.env`. Replacing `app` does not replace that file.
+The host supplies the glibc loader and a short named list of system libraries, Node 22, Hermes, media tools such as `ffprobe`, and every credential. Credentials live in the host's service environment and agent homes, so replacing the app never replaces them. Each release states its needs in a versioned runtime contract. Installation checks that contract against the host and refuses anything else, including any host other than the supported Debian and Ubuntu x86-64 releases. A release without a contract has to be republished.
 
-Video uploads need `ffprobe` on the host path. Missing, they refuse new videos. The rest of the app still runs.
+## How an install happens
 
-Workers never stop the service that hosts them. The operator stops the unit. A systemd-launched supervisor accepts ordinary shutdown signals only from its verified manager. Installers run outside the unit they replace. `nohup` does not leave that cgroup. Owner adoption uses a separate short-lived user unit so stopping Headroom cannot kill the installer.
+Khushal chooses **Start update** or **Update when idle** for a retained release. The request is pinned to that release and never slides forward. To move ahead or back, he picks another retained release; there is no rebuild and no arbitrary-commit rollback. Only the owner can ask. Chief, Managers, and Workers are refused. Without an update source configured on the host, owner updates are unavailable.
 
-## What a push proves
+The existing readiness loop asks GitHub to run the install job on the host runner, so there is no second scheduler. An uncertain dispatch is never resent on its own. Khushal can cancel until the runner claims the request, and that cancellation is neutral, not a failure.
 
-Publication runs on GitHub-hosted Ubuntu with Python 3.12 and Node 22. It runs Ruff, mypy, the Svelte check, typechecked Vitest, and the browser catalog. Unit, integration, end-to-end, and browser suites run as separate jobs so one failure does not cancel the others. They all build from the same requested commit. The app is packed once into `panels-app.tar.gz` plus a proof artifact. Smoke and a disposable rehearsal consume that archive. The rehearsal uses synthetic records on an ephemeral machine. It does not touch production. Artifacts are requested for about 30 days. The repository can drop them sooner. A release whose artifacts are gone disappears from the owner’s list.
+The installer runs in its own short-lived user service, so stopping Headroom cannot kill it. While the old app still serves, it checks the download against the request, checks the runtime contract, and refuses a database whose schema history it does not recognise or that is too old. Then it asks the server for a final claim. The server rechecks workspace activity under the same barrier that guards new conversations and background work, and runs the startup Ticket integrity check. An idle request that finds work running goes back to waiting. A failed integrity check fails the request before any downtime.
 
-A pull request’s merged-tree mypy check is not publication. Publication is the push to `main`.
+Once claimed, the installer stops the service, captures interrupted agent sessions, and takes a verified [backup](backups.md). It keeps the prior app, moves the new one into place, restarts, and waits for the new app to report its exact commit. Meanwhile ordinary requests, CLI work, and background loops stay closed; only health and status answer. When the new app proves healthy, the runner records the commit and work reopens. Interrupted conversations then get one recovery prompt ([Conversations](conversations.md)). Last, the job refreshes the agents' skill links and checks the private HTTPS route over HTTP/2.
 
-## Replacement and what can be undone
+## What can be undone
 
-The runner downloads the pinned archive and proof. It does not rebuild. It checks the archive, the runtime contract, and the database schema ancestry before downtime. The schema floor is `video_upload_ledger`. An older or unknown ancestry is refused before the service stops.
+The commit is the boundary.
 
-The candidate is staged while production is still serving. The runner then stops writers and takes a verified snapshot. Only after that snapshot succeeds does it keep the prior app and replace `current/app`. Uploads and Ticket artifacts are outside the snapshot and outside the replacement.
+- **Before the swap.** If stopping the service or the backup fails, the runner restarts the untouched prior app and proves it is back.
+- **After the swap, before the commit.** If the new app fails its health proof, the runner restores the snapshot and the prior app, then proves the prior commit. A failed recovery is reported with what was kept, never as success.
+- **After the commit.** The database is never restored. A failed skill refresh or route check leaves the new app installed and the job incomplete, not the app unhealthy.
 
-Until the runner records the local commit, ordinary HTTP, CLI work, conversation recovery, background loops, and file cleanup stay closed. Health and status are up so the candidate can be proved. Each requested-app and prior-app health proof gets 300 seconds after the restart command returns. The installed smoke budget is 45 seconds. Neither number is a promise about how long the site is down.
+If the runner disappears before the commit, work stays closed. Expired evidence becomes an unconfirmed installation that needs Chief review. Expiry never reopens the app or restores data, and no maximum outage is promised. Unresolved evidence reaches Chief once, as a real prompt through the ordinary conversation path.
 
-Failure before that commit restores the snapshot and the prior app, then proves the prior SHA. A failed recovery reports the retained paths. It is not reported as success.
+A finalizer records the installed commit, application health, and each later check separately. It runs from checked-out source with the host's own Python, never from the app it judges. Missing evidence stays uncertain.
 
-After the commit, ordinary work opens. A later skill failure or a failed published-route check leaves the installed app in place and reports the workflow incomplete. Those failures do not restore the database and do not mark the app unhealthy. The finalizer records the exact attempt, the observed health and recovery failures, the installed SHA, and each workflow check on its own. A confirmed cancellation before installation is reported as neutral. Missing evidence stays uncertain. A stale finalizer cannot overwrite a replacement attempt. If the report itself cannot be read, the saved evidence remains authoritative and the report says it is uncertain. A reporting failure does not change what the update does. An intentional later code rollback does not rewind the database by itself. There is no arbitrary-SHA rollback button. The owner selects another retained release.
+Each browser write carries the version of the loaded page. The server rejects an outdated version without a separate version request before each save.
 
-Both lifecycle finalizers run with host Python and source from the checked-out control revision. They do not use the disposable deployment environment or the installed app. The launcher excludes ambient Python packages. A missing source file or a failed report write fails the reporting step. It does not restart the app or restore data.
+An upgrade refuses a database that still contains cancelled Tickets. Resolve those records through the prior supported version before retry.
 
-Cleanup rejects any removal target that overlaps the control checkout or the resolved Python interpreter. It checks all targets before a service action or deletion. Publication cleanup also requires retained proof. If a rehearsal attempted installation, cleanup requires a terminal record for that exact attempt. If either condition fails, cleanup preserves the temporary evidence and reports its refusal. This protects a report from future step reorders. These startup checks do not promise race-free containment of concurrent filesystem changes.
+The deploy workflow never changes Tailscale Serve. A separate manual workflow restores the private route if it is lost.
 
-The published route check runs after skill reconciliation. The operator sets the Actions variable `PANELS_PUBLISHED_ORIGIN` to the private HTTPS origin. The helper requests `/api/meta` with HTTP/2 and rejects anything that did not negotiate HTTP/2. That check is separate from the loopback health check.
+## Decisions that shape it
 
-Interrupted agent sessions are captured outside the snapshot. After admission, eligible conversations get one recovery prompt through the normal send path. Nothing uncertain is replayed. See [Conversations](conversations.md).
+- Build once, prove those bytes, install the same bytes.
+- A push publishes. Only an owner request installs.
+- A release carries its own interpreter and dependencies. The host provides a declared, checked minimum.
+- Data is restorable only until the new app is proven. A later code rollback is a new install and does not rewind data.
+- Uncertain evidence stays uncertain. Nothing guesses success, re-dispatches, or replays a prompt.
 
-If the runner disappears before commit, work stays closed. Expired lifecycle evidence reports an unconfirmed installation and required Chief review. Expiry does not admit traffic, restore data, or prove that a restart is necessary. No maximum outage is promised. When a recorded commit matches the available app and admission is open, only the final report remains uncertain. That owner notice ends after five minutes without changing the evidence. See [Updates](updates.md) for the display rules.
+## When `scripts/dev` refuses
 
-Deployment attention stays beside the lifecycle, outside database snapshots and temporary cleanup. Panels sends the Chief a real system prompt through the normal conversation path. Its durable message identity prevents duplicate prompts after a lost receipt. A pending record never means that delivery occurred. If startup or conversation admission holds agent work, attention remains pending until admission permits delivery. An uncertain delivery stays uncertain and does not automatically resend.
+Development worktrees must never share dependency storage with the installed app, because a shared `node_modules` or `.venv` can write into the deployed tree and break its integrity proof. `scripts/dev` guards setup, npm, pytest, and mypy before the tool starts. No flag turns it off.
 
-## An older database that still has cancelled Tickets
+A refusal prints the command and one of two findings: shared deployment storage detected, or dependency safety could not be established. It names the path examined, what it resolved to, the protected deployment path, and the signal used.
 
-An upgrade refuses a database that contains cancelled Tickets. Resolve these records through the prior supported version before retry.
+- **The sharing is real.** Make a fresh worktree and run `scripts/dev setup`. Do not delete dependencies through an unresolved link or mount.
+- **Independent dependencies were refused.** Fix the detector and add a regression check.
+- **Evidence was missing.** Restore it, then retry.
 
-## Development must not share the deployed tree
+Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still write into the deployed tree. The archive digest shows the damage afterwards; it does not prevent it. If a write reaches the installed tree, leave it in place and report it. Never clean the installed tree to force an install through.
 
-Worktrees install their own `.venv` and their own `web/` and `agent_backends/` dependencies. A shared `node_modules` can write caches into the deployed app and break its integrity proof. Use `scripts/dev` for setup, npm, pytest, and mypy. Setup refuses to delete a `.venv` or a Node directory that is already there. No flag turns the guard off.
+## Code
 
-A refusal names the command, the path it examined, the path it resolved to, and the protected deployment path. If the sharing is real, make a fresh worktree. Do not delete dependencies through an unresolved link or mount. If independent dependencies are refused by mistake, fix the detector and add a regression check. If the detector cannot see the mount evidence, restore that evidence and retry. Direct Ruff or Python invocations outside these entry points can still write into the deployed tree. The archive digest can show damage afterward. It does not prevent the write. If a write reaches the installed tree, leave it in place and report it. Do not clean the installed tree to force an install through.
+- `.github/workflows/deploy.yml`: publication, rehearsal, and owner adoption. `recover-private-route.yml`: route repair.
+- `src/planner/environments/deployment.py`: replacement and the restore boundary. `update_runner.py`: the host-side install.
+- `src/planner/environments/update_service.py`, `update_requests.py`, `update_admission.py`: the owner request, final claim, and admission hold.
+- `src/planner/environments/runtime_packaging.py`, `runtime_contracts.py`, `runtime_admission.py`, and `scripts/runtime_target_proof.py`: the private runtime and host contract.
+- `src/planner/environments/deployment_lifecycle.py`, `deployment_attention.py`, `scripts/deployment_finalize.py`: evidence and reporting.
+- `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the owner's actions.
+- `scripts/dev`, `scripts/development_safety/`: the worktree guard.
+- `ops/panels-environments/`: user units and runner setup.
 
-The guarded commands and the reason they exist are also in [`AGENTS.md`](../AGENTS.md). This section is the diagnostic meaning of a refusal.
-
-## Pointers
-
-`.github/workflows/deploy.yml` is publication and adoption. `src/planner/environments/deployment.py` and `update_runner.py` perform the replacement. `scripts/dev` and `scripts/development_safety/` are the worktree guard. `ops/panels-environments/` holds the user units.
-
-_Last verified: 2026-10-30 against source. This page does not claim a hosted publication or a production adoption was run from here._
+_Last verified: 2026-11-04._
