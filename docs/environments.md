@@ -15,7 +15,7 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 
 - **Live.** The installed release from [Deployment](deployment.md), run by a systemd user service on loopback port 8767 behind the existing Tailscale Serve route. Only the verified service manager can stop it by signal. Workers never stop the server that hosts them. The interactive `panels` command on the host follows the installed app.
 - **Staging.** A foreground server from the source checkout with fake data that persists between runs. It runs only while someone needs it and has no service. `panels environment prepare`, `run`, and `reset` manage it.
-- **Ticket servers.** A Worker's own `panels serve` from its isolated git worktree, with every `PLAN_*` path pointing into that worktree. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends and removes its state at Consequences.
+- **Ticket servers.** A Worker's own `panels serve` from its isolated git worktree, with every `PLAN_*` path pointing into that worktree. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends and removes its state at Consequences. Anything left behind is removed after the Ticket is done, as [Ticket scratch](#ticket-scratch) describes.
 - **A local checkout.** One source checkout, one Python environment, one loopback server, and one SQLite file under `data/`. It runs the source, not a sealed release. The install steps are in the repository README.
 
 Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the worktree and its `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
@@ -35,7 +35,13 @@ Live and staging launches rebuild the process environment from a fixed allowlist
 The user units in `ops/panels-environments/` cover the live service, the deployment runner, and two daily timers:
 
 - **Backup.** Takes a verified snapshot of live data with the installed app. See [Backups](backups.md).
-- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized logs, removes expired backup temporaries, and prunes old verified backups. It re-proves every target when it runs and never stops a process or removes a worktree, environment, or the installed app.
+- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized logs, removes expired backup temporaries, prunes old verified backups, and removes [Ticket scratch](#ticket-scratch) that the server pass left. It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
+
+## Ticket scratch
+
+Each Ticket keeps its worktrees in `repository-worktrees/<ticket-id>[-name]` and every other file that must outlive one Worker run in `task-tmp/<ticket-id>/`. Both sit under the folder named by `ticket_scratch_root`, which on the VPS is `~/projects/panels`. Older Workers also used `~/pct/<ticket-id>/`, `~/panels-session-evidence/<ticket-id>/`, and `worktrees/`. Each Worker run also gets its own temporary directory, which is removed when the run ends.
+
+When `ticket_scratch_root` is set, the server checks every ten minutes for Tickets that are deleted, or done for at least ten minutes. It removes their entries in those folders, their worktrees anywhere else, and their branches that `origin/staging` already contains. It never removes work. It keeps an entry, and logs why, when a checkout inside it has uncommitted changes, has commits that no remote has, or belongs to a live Ticket. Unmerged branches stay. The daily cleanup does the same pass. Set `ticket_scratch_root` only for the live server. Any other database counts the live Tickets as deleted.
 
 Renaming the account, moving host state, or changing Tailscale Serve is operator work outside this code.
 

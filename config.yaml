@@ -4,6 +4,7 @@
 
 db_path: data/planning.db          # SQLite database location (§13)
 workspace_root: null              # optional existing absolute default workspace (PLAN_WORKSPACE_ROOT)
+ticket_scratch_root: null         # optional: where Ticket worktrees and scratch live; set to clean up after done and deleted Tickets (PLAN_TICKET_SCRATCH_ROOT)
 port: 8767                         # server port; bind host is fixed at 127.0.0.1 (§2)
 tick_seconds: 60                   # background schedule/readiness poll interval
 dispatch_enabled: true             # single-owner schedule and readiness loop startup switch

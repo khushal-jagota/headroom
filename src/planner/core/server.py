@@ -208,6 +208,7 @@ def create_app(
         lifecycle_observer: asyncio.Task[None] | None = None
         attention_observer: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
+        ticket_scratch_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
         executor_endpoint = None
@@ -239,6 +240,8 @@ def create_app(
                 await attempt(cancel_task(release_task))
             if video_cleanup_task is not None:
                 await attempt(cancel_task(video_cleanup_task))
+            if ticket_scratch_task is not None:
+                await attempt(cancel_task(ticket_scratch_task))
             if recovery_task is not None:
                 await attempt(cancel_task(recovery_task))
             await attempt(scoped_navigation.close())
@@ -348,7 +351,8 @@ def create_app(
                 attention_observer = asyncio.create_task(observe_deployment_attention())
 
                 async def release_normal_work() -> None:
-                    nonlocal recovery_task, video_cleanup_task, loops, metrics
+                    nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
+                    nonlocal loops, metrics
                     # A matching runner commit is irreversible even if later setup fails.
                     app.state.update_startup_pending = False
                     change_signal.emit()
@@ -387,6 +391,10 @@ def create_app(
                     app.state.conversation = conversation
                     await asyncio.to_thread(video_uploads.recover_and_cleanup)
                     video_cleanup_task = asyncio.create_task(_clean_video_uploads())
+                    if config.ticket_scratch_root is not None and not config.test_mode:
+                        ticket_scratch_task = asyncio.create_task(
+                            _clean_ticket_scratch(config.ticket_scratch_root)
+                        )
                     # Worker tests can supply a held conversation system.
                     # Production always uses the real system.
                     if not config.test_mode:
@@ -478,6 +486,28 @@ def create_app(
                 with system.workspace_admission.operation() as admitted:
                     if admitted:
                         await asyncio.to_thread(video_uploads.recover_and_cleanup)
+
+    async def _clean_ticket_scratch(root: Path) -> None:
+        from planner.environments import ticket_scratch
+
+        layout = ticket_scratch.ScratchLayout.under(root)
+        already_kept: set[str] = set()
+        logger = logging.getLogger(__name__)
+        while True:
+            await asyncio.sleep(ticket_scratch.CLEANUP_INTERVAL_SECONDS)
+            try:
+                result = await asyncio.to_thread(
+                    ticket_scratch.clean_finished_ticket_scratch,
+                    layout,
+                    config.db_path,
+                    clock.now_unix(),
+                    already_kept,
+                )
+            except Exception:
+                logger.exception("Ticket scratch cleanup failed")
+                continue
+            if result.removed or result.deleted_branches or result.skipped:
+                logger.info("Ticket scratch cleanup: %s", result.as_dict())
 
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
