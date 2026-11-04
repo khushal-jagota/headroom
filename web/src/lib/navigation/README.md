@@ -8,9 +8,9 @@ The workspace sidebar, ordinary Manager headers and child lists, Chief child pag
 
 The provider shares one presentation result per effective view identity. One pass indexes parent membership, identity joins, addresses, and Review facts. A knowledge-only change creates a new effective view and invalidates that result even when the publication stays the same.
 
-The Ticket current-stage section admits private detail only when its public identity, gate, proposal revision, and control facts match the shared record. Worker configuration must describe that exact stage. The retained section preserves its original detail and local edits. It cannot certify a newer publication or authorize a gesture against a replaced identity. Private bodies remain detail reads.
+The Ticket current-stage section admits private detail only when its public identity, gate, proposal revision, and control facts match the shared record. Worker configuration must describe that exact stage. The retained section preserves its original detail and local edits. It cannot authorize a gesture against a replaced identity. Private bodies remain detail reads.
 
-The Ticket masthead joins the assigned Manager's Project when a parent exists. Otherwise it uses the Ticket's own Project. Its title, type, and exact current conversation mark remain separate from the detail object that authorizes actions and supplies bodies. A retained header after deletion cannot acknowledge a current publication. The shell reports navigation health. Independent detail or content errors keep their own existing error lines.
+The Ticket masthead joins the assigned Manager's Project when a parent exists. Otherwise it uses the Ticket's own Project. Its title, type, and exact current conversation mark remain separate from the detail object that authorizes actions and supplies bodies. The shell reports navigation health. Independent detail or content errors keep their own existing error lines.
 
 The scoped owner carries client health separately from its mechanical connection state.
 A degraded snapshot preserves the server's availability and reason through the existing retry sequence.
@@ -53,7 +53,7 @@ Only the owner writes canonical navigation records. Consumers must not call coll
 
 Connection state stays internal. `subscribed` means that the owner created a stream, not that the server acknowledged a live connection. The owner retains the last complete view during recovery. It closes transport and stops new admission immediately. The local generation and runtime gate change before an already admitted library transaction drains. Obsolete requests cannot enter a new source transaction. Recovery requires a complete current snapshot before a new stream starts. Degraded snapshots retry through the existing recovery schedule and never resume a stream.
 
-An atomic local publication number distinguishes identical replacement snapshots. It does not advance the server revision. This identity lets live selectors observe a new certified snapshot even when its facts match the previous view.
+An atomic local publication number distinguishes identical replacement snapshots. It does not advance the server revision. This identity lets live selectors observe a replacement snapshot even when its facts match the previous view.
 
 Generate types with the worktree interpreter:
 
