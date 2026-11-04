@@ -40,9 +40,10 @@ except ContainmentRefusal as error:
         f"Test containment refused: {error}. Use scripts/run_contained_pytest.py."
     ) from error
 
-# Default discovery must omit opt-in probes entirely: publication requires every
-# selected file to execute tests. Explicit paths still load their refusal conftest.
-collect_ignore = ["containment"] if _BOUNDARY is None else []
+# Default discovery omits the full installed build. Explicit paths opt in.
+# Containment probes also stay out of ordinary discovery; their conftest refuses
+# explicit execution outside a contained process.
+collect_ignore = ["opt_in"] + (["containment"] if _BOUNDARY is None else [])
 
 from tests.support.skill_tree_protection.pytest_plugin import bootstrap  # noqa: E402
 
