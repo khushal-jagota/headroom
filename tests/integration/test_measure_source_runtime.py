@@ -112,7 +112,7 @@ time.sleep(30)
     except FileNotFoundError:
         pass  # Reaping can remove the process between an existence check and a read.
     else:
-        assert process_state == "Z"
+        assert process_state in {"Z", "X"}  # Both states describe a terminated process.
     assert result.metrics.elapsed_milliseconds < 3000
 
 
